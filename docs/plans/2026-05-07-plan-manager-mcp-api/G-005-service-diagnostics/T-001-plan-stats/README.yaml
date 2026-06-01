@@ -1,0 +1,101 @@
+format: tactical_step
+status: pending
+step_id: T-001
+name: plan-stats
+title: Plan statistics collector
+parent_step_id: G-005
+parent_step_name: service-diagnostics
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-005-service-diagnostics/README.yaml
+intent: 'Implement the plan statistics collector: node counts by level (G/T/A),
+
+  vectorization coverage (how many plan nodes have chunk embeddings in the
+
+  code_analysis DB), and active editor lock count per plan.
+
+  Vectorization coverage is read from code_analysis DB via CodeAnalysisDbClient (G-004/T-001).
+
+  No .vec files on disk. Pure data-access module; no MCP command in this step.
+
+  '
+context_from_technical_spec:
+  vector_file_convention: 'Missing: no .vec sibling. Outdated: .md commit timestamp
+    newer than .vec.
+
+    Vectorized: .vec exists and is up to date.
+
+    '
+  lock_file_count: 'Count .lock files in editor_lock_dir matching this plan''s files
+    (alive PID only).
+
+    editor_lock_dir from PlanManagerConfigSection.
+
+    '
+  plans_root_convention: 'plans_root from server config; never from MCP params.
+
+    '
+depends_on:
+- G-001/T-001
+- G-004/T-001
+- G-004/T-002
+responsibilities:
+- Count nodes by level (G/T/A) per plan
+- Count .vec status per plan (vectorized/outdated/missing)
+- Count active editor lock files per plan
+- Return PlanStatsRecord list for T-003 aggregation
+- Disk-read only; no session; no MCP command
+owned_code_paths:
+- plan_manager/diagnostics/plan_stats.py
+owned_test_paths:
+- tests/test_diag_plan_stats.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/
+- plan_manager/vectorizer.py (read-only)
+- .venv/
+atomic_steps:
+- id: A-001
+  name: node-counter
+  summary: count_nodes_by_level helper
+- id: A-002
+  name: vec-coverage
+  summary: vec_coverage_status, lock_file_count, PlanStatsRecord, collect_plan_stats
+model_assignment_spec:
+  task: 'Implement plan_manager/diagnostics/plan_stats.py.
+
+    collect_plan_stats(plans_root, editor_lock_dir) -> list[PlanStatsRecord]
+
+    Per plan: plan_id, node counts by level, vectorized/outdated/missing counts,
+
+    lock_file_count (active editor locks).
+
+    Disk-read only; no session; no MCP command.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/diagnostics/plan_stats.py
+  - tests/test_diag_plan_stats.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/
+  - plan_manager/commands/
+  - plan_manager/vectorizer.py
+  - .venv/
+  consumed_contracts:
+  - resolve_node_id from G-001/T-001 (plan_manager/path_resolver.py)
+  deliverables:
+  - PlanStatsRecord dataclass with plan_id, G/T/A counts, vec coverage counts, lock_file_count
+  - collect_plan_stats(plans_root, editor_lock_dir) -> list[PlanStatsRecord]
+verification:
+- collect_plan_stats returns correct node counts for a known plan
+- Coverage counts match actual .vec file state
+- lock_file_count reflects active editor locks
+acceptance_criteria:
+- All coverage categories reported per plan
+- No MCP command created in this step
+- Disk-read only
+observations_template:
+- Did collect_plan_stats return correct node counts by level?
+- Were vectorization coverage counts accurate?
+- Was lock_file_count correct?

@@ -1,0 +1,17 @@
+import os, glob, base64, sys
+
+root = '/home/vasilyvz/projects/tools/plan_manager'
+plan_dir = os.path.join(root, 'docs/plans/2026-05-07-plan-manager-mcp-api')
+
+files = sorted(glob.glob(os.path.join(plan_dir, '**', '*.yaml'), recursive=True))
+result = []
+for f in files:
+    rel = os.path.relpath(f, plan_dir)
+    with open(f) as fh:
+        content = fh.read()
+    encoded = base64.b64encode(content.encode()).decode()
+    result.append(f'{rel}|||{encoded}')
+
+for line in result:
+    print(line)
+print(f'COUNT:{len(result)}')

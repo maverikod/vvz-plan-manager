@@ -1,0 +1,149 @@
+format: tactical_step
+status: pending
+step_id: T-008
+name: validate
+title: Validation -- plan and node
+parent_step_id: G-001
+parent_step_name: mcp-api-surface
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-001-mcp-api-surface/README.yaml
+intent: 'Implement plan_validate and plan_validate_node.
+
+  plan_manager is responsible for tree-walk and node existence checks (MISSING_FILE).
+
+  File content validation (EMPTY_FILE, STUB_FILE) is delegated to the editor via
+
+  editor.validate_file(file_path) HTTP call.
+
+  plan_validate orchestrates: walk tree -> for each node: check existence, then
+
+  call editor.validate_file -> aggregate all errors -> return.
+
+  Both commands are disk-read only; no session required.
+
+  '
+context_from_technical_spec:
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, error
+    wrapping.
+
+    '
+  plans_root_convention: 'plans_root resolved from server config; never from MCP command
+    params.
+
+    '
+  editor_validate_file:
+    editor_api_url: Base URL of yaml_editor OpenAPI HTTP endpoint. From PlanManagerConfigSection;
+      never from MCP params.
+    editor_identity: 'yaml_editor MCP server (project yaml_editor, project_id: 84ec55c8-cefd-480d-beb6-fa1d35e60362).
+
+      Built on mcp_proxy_adapter. Internally uses AbstractFormatter (YAML formatter
+      for .yaml/.yml).
+
+      plan_manager calls via direct HTTP OpenAPI, NOT via MCP.
+
+      '
+    editor_validate_file_response: "Nested success semantics (mcp-proxy-adapter pattern):\n\
+      \  HTTP 200 is NOT success by itself.\n  Must check: data[\"result\"][\"success\"\
+      ] == True\n  status field values: present | empty | stub | error\n  Errors to\
+      \ surface: MISSING_FILE (plan_manager), EMPTY_FILE, STUB_FILE,\n    VALIDATE_ERROR\
+      \ (status=error or result.success=False),\n    EDITOR_CONTRACT_VIOLATION (missing\
+      \ result.success),\n    EDITOR_TIMEOUT (requests.Timeout),\n    EDITOR_UNAVAILABLE\
+      \ (requests.RequestException)\n  All editor errors are non-fatal: add error\
+      \ entry and continue tree walk.\n"
+    http_call: GET <editor_api_url>/validate?file=<absolute_path>
+  node_existence: 'plan_manager checks required file existence directly on disk (no
+    editor call needed).
+
+    MISSING_FILE: required file does not exist on disk.
+
+    '
+  error_codes:
+    MISSING_FILE: required node file does not exist
+    EMPTY_FILE: file exists but editor reports it is empty
+    STUB_FILE: file exists but editor reports only heading present
+  validation_result: 'Returns list of {node_id, error_code, message} dicts.
+
+    Empty list means plan or node is clean.
+
+    '
+depends_on:
+- T-001
+- T-003
+responsibilities:
+- plan_validate: walk full plan tree, check existence, call editor.validate_file per
+    node
+- plan_validate_node: validate single node (existence + editor.validate_file)
+- Collect and return all errors as list of {node_id, error_code, message}
+- Return empty list when plan or node is clean
+- All operations disk-read only; no writes
+non_goals:
+- Semantic quality checks (G-003 scope)
+- Vectorization coverage checks (G-005 scope)
+- Reading file body content directly (delegated to editor)
+owned_code_paths:
+- plan_manager/commands/plan_validate.py
+owned_test_paths:
+- tests/test_plan_validate.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/nav_shared.py (read-only; owned by T-003)
+- plan_manager/vectorization/
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: plan-validator
+  summary: validate_node and validate_plan_tree helpers; editor.validate_file HTTP
+    call
+- id: A-002
+  name: validate-commands
+  summary: PlanValidateCommand and PlanValidateNodeCommand
+model_assignment_spec:
+  task: 'Implement plan_validate and plan_validate_node MCP commands.
+
+    plan_manager checks node file existence (MISSING_FILE) directly on disk.
+
+    For existing files, call editor.validate_file(absolute_path) via HTTP GET
+
+    to check content (EMPTY_FILE, STUB_FILE).
+
+    editor_api_url from PlanManagerConfigSection; never from params.
+
+    Returns list of {node_id, error_code, message}. Empty list = clean.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/commands/plan_validate.py
+  - tests/test_plan_validate.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - plan_manager/commands/nav_shared.py (read-only)
+  - plan_manager/vectorization/
+  - .venv/
+  consumed_contracts:
+  - resolve_node_id from T-001 (plan_manager/path_resolver.py)
+  - list_children from T-003 (plan_manager/commands/nav_shared.py)
+  - editor.validate_file via HTTP GET editor_api_url/validate?file=<path>
+  deliverables:
+  - validate_node helper checking existence + calling editor.validate_file
+  - validate_plan_tree helper walking full tree
+  - PlanValidateCommand with required plan_id
+  - PlanValidateNodeCommand with required plan_id and node_id
+  - Both return {errors, count, clean} response
+verification:
+- plan_validate returns empty errors for a well-formed plan with content
+- plan_validate reports MISSING_FILE for G directory with no README.md
+- plan_validate reports EMPTY_FILE when editor returns empty for a node
+- plan_validate reports STUB_FILE when editor returns stub
+- plan_validate_node scopes to the requested node only
+acceptance_criteria:
+- MISSING_FILE detected by plan_manager without editor call
+- EMPTY_FILE and STUB_FILE determined by editor.validate_file only
+- Empty errors list returned for a complete non-stub plan
+- No writes to disk
+observations_template:
+- Did plan_validate find all structural errors (MISSING_FILE) without editor?
+- Did plan_validate correctly call editor.validate_file for existing nodes?
+- Did plan_validate_node correctly scope to the requested node only?

@@ -1,0 +1,100 @@
+format: tactical_step
+status: pending
+step_id: T-003
+name: status-command
+title: plan_service_status command
+parent_step_id: G-005
+parent_step_name: service-diagnostics
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-005-service-diagnostics/README.yaml
+intent: 'Implement plan_service_status: the only MCP command in G-005.
+
+  Aggregates data from T-001 (plan_stats) and T-002 (git_health) collectors,
+
+  plus reads worker state from G-004/T-002 (VectorizationWorker).
+
+  Returns a single ServiceStatusResponse.
+
+  Clearly distinct from plan_status (G-001/T-003) which is per-node fill status.
+
+  '
+context_from_technical_spec:
+  scope_distinction: 'plan_service_status: service-level diagnostic across all plans.
+
+    plan_status (G-001/T-003): per-node fill status for one plan.
+
+    Do NOT confuse the two.
+
+    '
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, error
+    wrapping.
+
+    '
+  plans_root_convention: 'plans_root and editor_lock_dir from PlanManagerConfigSection;
+    never from MCP params.
+
+    '
+depends_on:
+- G-005/T-001
+- G-005/T-002
+- G-004/T-002
+responsibilities:
+- Call collect_plan_stats from T-001
+- Call collect_git_health from T-002
+- Read VectorizationWorker state from G-004/T-002
+- Assemble and return ServiceStatusResponse
+- No session required; read-only
+non_goals:
+- Session tracking (no sessions in plan_manager)
+owned_code_paths:
+- plan_manager/commands/plan_service_status.py
+owned_test_paths:
+- tests/test_plan_service_status.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/plan_status.py (nav command; separate)
+- .venv/
+atomic_steps:
+- id: A-001
+  name: status-command
+  summary: PlanServiceStatusCommand aggregating plan_stats, git_health, worker state
+model_assignment_spec:
+  task: 'Implement plan_service_status MCP command.
+
+    No required params. Calls collect_plan_stats, collect_git_health, reads
+
+    VectorizationWorker state. Returns ServiceStatusResponse.
+
+    Distinct from plan_status (G-001/T-003) by name and schema.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/commands/plan_service_status.py
+  - tests/test_plan_service_status.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - plan_manager/commands/plan_status.py
+  - .venv/
+  consumed_contracts:
+  - collect_plan_stats from G-005/T-001 (plan_manager/diagnostics/plan_stats.py)
+  - collect_git_health from G-005/T-002 (plan_manager/diagnostics/git_health.py)
+  - VectorizationWorker state from G-004/T-002 (plan_manager/worker.py)
+  - PlanManagerConfigSection from G-006/T-001
+  deliverables:
+  - PlanServiceStatusCommand with no required params
+  - ServiceStatusResponse with plan_stats list, git_health list, worker_status, service_version
+verification:
+- plan_service_status returns plan_stats, git_health, and worker_status sections
+- Response reflects current plan, git, and worker state
+- Command requires no session
+- Clearly distinct from plan_status by name and schema
+acceptance_criteria:
+- All required diagnostic sections present in ServiceStatusResponse
+- No session required
+- plan_service_status schema has no overlap with plan_status schema
+observations_template:
+- Did plan_service_status return all three diagnostic sections?
+- Was vectorization coverage from collect_plan_stats accurate?
+- Was worker state correctly reflected in the response?

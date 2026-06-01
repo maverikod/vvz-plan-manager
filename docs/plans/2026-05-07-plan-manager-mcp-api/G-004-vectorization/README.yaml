@@ -1,0 +1,52 @@
+format: global_step
+status: pending
+step_id: G-004
+name: code-analysis-client
+title: Code analysis DB client
+parent_plan: 2026-05-07-plan-manager-mcp-api
+parent_step_id: null
+intent: "Implement a read-only client for the code_analysis postgres database.\nplan_manager\
+  \ does NOT own vectorization or chunking - those are performed\nby the code_analysis\
+  \ background worker. G-004 only provides:\n1. A read-only psycopg3 connection pool\
+  \ to the code_analysis postgres DB.\n2. A resolver that maps a plan_id (directory\
+  \ name) to the code_analysis\n   project UUID, needed by G-003 and G-005 to scope\
+  \ their DB queries.\n"
+depends_on:
+- G-001
+responsibilities:
+- Implement CodeAnalysisDbClient: read-only psycopg3 connection from config
+- Implement resolve_plan_project_id(plans_root, plan_id) -> UUID
+- Connection parameters come from PlanManagerConfigSection (code_analysis_db_dsn or
+  code_analysis_db_host/port/dbname/user/password_env)
+non_goals:
+- Do not write to the code_analysis database
+- Do not implement vectorization, chunking, or FAISS index operations
+- Do not start or manage the code_analysis server or worker
+- Do not reimplement the code_analysis driver layer
+code_analysis_db_convention: "The code_analysis postgres DB is already running and\
+  \ populated by the\ncode_analysis server. plan_manager connects as a read-only client\
+  \ using\npsycopg3 directly (no code_analysis driver process, no RPC).\nConnection\
+  \ config in PlanManagerConfigSection:\n  code_analysis_db_dsn: optional DSN string\
+  \ (takes priority)\n  code_analysis_db_host: host (default localhost)\n  code_analysis_db_port:\
+  \ port (default 5432)\n  code_analysis_db_name: database name\n  code_analysis_db_user:\
+  \ user\n  code_analysis_db_password_env: env var name for password\nresolve_plan_project_id\
+  \ queries:\n  SELECT id FROM projects WHERE root_path = <plans_root_parent>\n  or\
+  \ matches by watching the projects table for root_path LIKE plans_root.\n"
+tactical_decomposition:
+- id: T-001
+  name: db-client
+  summary: 'CodeAnalysisDbClient: read-only psycopg3 connection pool, query helpers'
+- id: T-002
+  name: project-id-resolver
+  summary: resolve_plan_project_id(plans_root, plan_id) -> UUID from projects table
+implementation_notes: 'T-001 must be implemented before T-002.
+
+  G-006/T-001 (PlanManagerConfigSection) must exist first for DB connection config.
+
+  G-003 and G-005 both depend on G-004/T-002 for project_id resolution.
+
+  '
+observations_template:
+- Does CodeAnalysisDbClient open a read-only psycopg3 connection from config?
+- Does resolve_plan_project_id correctly match plans_root path to project UUID?
+- Are all DB operations SELECT-only (no INSERT/UPDATE/DELETE)?

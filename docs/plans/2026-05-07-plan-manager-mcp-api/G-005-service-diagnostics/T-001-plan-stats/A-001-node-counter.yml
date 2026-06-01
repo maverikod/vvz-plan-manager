@@ -1,0 +1,46 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: node-counter
+title: count_nodes_by_level helper in plan_stats.py
+parent_step_id: T-001
+parent_step_name: plan-stats
+parent_global_id: G-005
+parent_global_name: service-diagnostics
+technical_specification_excerpt: 'Per plan: count nodes at each level (spec=1 if README.md
+  exists, G, T, A).
+
+  Disk-read only. plans_root from config.
+
+  '
+global_step_context: 'G-005: Service diagnostics. plan_stats.py provides node counts
+  for plan_service_status.
+
+  '
+tactical_step_context: "T-001: Plan stats. A-001 owns count_nodes_by_level in plan_manager/diagnostics/plan_stats.py.\n\
+  A-002 owns vec_coverage_status, lock_file_count, PlanStatsRecord, collect_plan_stats.\n\
+  \ncount_nodes_by_level(plan_dir) -> dict\n  spec: 1 if plan_dir/README.md exists\
+  \ else 0\n  G: count G-NNN-* directories\n  T: total T-NNN-* directories across\
+  \ all G dirs\n  A: total A-NNN-*.md files across all T dirs\n  Return {spec, G,\
+  \ T, A}\n"
+atomic_operation: Implement count_nodes_by_level in plan_manager/diagnostics/plan_stats.py
+intent: 'Create plan_manager/diagnostics/plan_stats.py with count_nodes_by_level.
+
+  '
+responsibilities:
+- Implement count_nodes_by_level(plan_dir) returning dict with spec/G/T/A counts
+- Read-only; no writes; no MCP command
+code_file_target: plan_manager/diagnostics/plan_stats.py
+estimated_lines: 45
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on: []
+deliverables:
+- count_nodes_by_level(plan_dir) -> dict
+constraints:
+- Read-only; no MCP command
+- Do not implement vec_coverage or collect_plan_stats here (A-002)
+acceptance_criteria:
+- Returns correct counts for a known plan structure
+- spec=1 when README.md exists
+observations_template:
+- Did count_nodes_by_level return correct counts by level?

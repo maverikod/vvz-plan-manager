@@ -1,0 +1,62 @@
+format: atomic_step
+status: pending
+step_id: A-002
+name: plan-create-command
+title: PlanCreateCommand class
+parent_step_id: T-005
+parent_step_name: structure-create
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: 'plan_create(plan_id, title?) -> {plan_id, repo_path,
+  commit_sha}
+
+  plan_id required. title optional (default = plan_id).
+
+  PLAN_ALREADY_EXISTS on duplicate.
+
+  plans_root from config; never from MCP params.
+
+  '
+global_step_context: 'G-001: MCP API surface.
+
+  Helpers from G-001/T-005/A-001 in same file.
+
+  '
+tactical_step_context: "T-005: Structure create.\nA-002 owns PlanCreateCommand in\
+  \ plan_manager/commands/plan_create.py.\nA-001 (same file) provides init_plan_repo,\
+  \ create_stub_readme, make_initial_commit.\n\nexecute() workflow:\n  1. Resolve\
+  \ plans_root from config\n  2. init_plan_repo(plans_root, plan_id) -> plan_dir\n\
+  \  3. create_stub_readme(plan_dir, title or plan_id)\n  4. sha = make_initial_commit(plan_dir)\n\
+  \  5. Return {plan_id, repo_path: str(plan_dir), commit_sha: sha}\n"
+atomic_operation: Implement PlanCreateCommand in plan_manager/commands/plan_create.py
+intent: 'Add PlanCreateCommand to plan_manager/commands/plan_create.py
+
+  orchestrating git repo initialization via helpers from A-001.
+
+  '
+responsibilities:
+- Implement PlanCreateCommand with name plan_create
+- get_schema: required plan_id (string), optional title (string)
+- execute calls helpers in correct order
+- PLAN_ALREADY_EXISTS propagated cleanly
+code_file_target: plan_manager/commands/plan_create.py
+estimated_lines: 55
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-005/A-001 init_plan_repo, create_stub_readme, make_initial_commit in same
+  file
+deliverables:
+- PlanCreateCommand with complete MCP command interface
+- Returns plan_id, repo_path, commit_sha
+- PLAN_ALREADY_EXISTS on duplicate plan_id
+constraints:
+- total file including A-001 helpers under 300 lines
+- plans_root never from MCP params
+acceptance_criteria:
+- plan_create produces valid git repo with one commit
+- README.md present with heading stub
+- Duplicate plan_id returns PLAN_ALREADY_EXISTS
+observations_template:
+- Did plan_create initialize a valid git repo?
+- Is README.md present with a heading stub after creation?
+- Is duplicate plan_id rejected correctly?

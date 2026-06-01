@@ -1,0 +1,139 @@
+format: tactical_step
+status: pending
+step_id: T-001
+name: node-id-model
+title: Node ID model
+parent_step_id: G-001
+parent_step_name: mcp-api-surface
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml (technical_spec.node_id_format,
+  technical_spec.plans_root_convention)
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-001-mcp-api-surface/README.yaml
+intent: 'Implement deterministic mapping between public node_id strings and files/directories
+
+  in a plan git repository. All other G-001 tactical steps depend on this foundation
+
+  module for path resolution.
+
+  '
+context_from_technical_spec:
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, and error
+    wrapping. Do not patch
+
+    or reimplement mcp_proxy_adapter internals. plan_manager/node_id.py and
+
+    plan_manager/path_resolver.py are pure utility modules with no MCP dependency.
+
+    '
+  node_id_format:
+    spec: README.md
+    G-NNN: G-NNN-*/README.md
+    G-NNN/T-NNN: G-NNN-*/T-NNN-*/index.md
+    G-NNN/T-NNN/A-NNN: G-NNN-*/T-NNN-*/A-NNN-*.md
+    note: Resolution uses numeric prefix only. Slug after the dash is ignored for
+      matching.
+  plans_root_convention: 'plans_root is configured once in the server config (PlanManagerConfigSection.plans_root,
+
+    default ./plans) and is NOT passed as a parameter in any MCP command. All commands
+    resolve
+
+    plans_root from config automatically. resolve_node_id always receives plans_root
+    as a
+
+    resolved Path from its caller, never from MCP command parameters.
+
+    '
+depends_on: []
+responsibilities:
+- 'Define node_id grammar for forms: spec, G-NNN, G-NNN/T-NNN, G-NNN/T-NNN/A-NNN'
+- Parse and validate node_id strings
+- Resolve node_id to concrete file path in the plan git repo using numeric prefix
+  only
+- Treat duplicate numeric prefixes at any level as a validation error
+- Accept plans_root as a resolved Path from caller (not from MCP params)
+path_resolution_rules:
+  spec: README.md
+  G-NNN: G-NNN-*/README.md
+  G-NNN/T-NNN: G-NNN-*/T-NNN-*/index.md
+  G-NNN/T-NNN/A-NNN: G-NNN-*/T-NNN-*/A-NNN-*.md
+  note: 'Resolution uses numeric prefix only. Slug after the dash is ignored. plans_root
+    is
+
+    always resolved from server config, never from MCP command params.
+
+    '
+owned_code_paths:
+- plan_manager/node_id.py
+- plan_manager/path_resolver.py
+owned_test_paths:
+- tests/test_node_id.py
+- tests/test_path_resolver.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/
+- plan_manager/buf_commands/
+- plan_manager/nav_commands/
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: node-id-dataclass
+  summary: NodeId dataclass with level, g_num, t_num, a_num fields in node_id.py
+- id: A-002
+  name: parse-node-id-function
+  summary: parse_node_id(s) -> NodeId function raising ValidationError on malformed
+    input
+- id: A-003
+  name: path-resolver-foundation
+  summary: find_directories_with_prefix and check_duplicate_prefixes helpers in path_resolver.py
+- id: A-004
+  name: resolve-node-id-main
+  summary: resolve_node_id(plans_root, plan_id, node_id) -> Path using numeric prefix
+    matching
+model_assignment_spec:
+  task: 'Implement the node ID parser and path resolver for the Plan Manager.
+
+    All other commands depend on these two modules for stable addressing of plan nodes.
+
+    plans_root is always a resolved Path passed by the caller from server config -
+
+    never from MCP command parameters.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/node_id.py
+  - plan_manager/path_resolver.py
+  - tests/test_node_id.py
+  - tests/test_path_resolver.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file - do not patch internals)
+  - plan_manager/commands/ (any command file - not in scope for this step)
+  - plan_manager/buf_commands/
+  - plan_manager/nav_commands/
+  - .venv/
+  deliverables:
+  - NodeId dataclass with level, g_num, t_num, a_num fields
+  - 'parse_node_id(s: str) -> NodeId raising ValidationError on malformed input'
+  - 'resolve_node_id(plans_root: Path, plan_id: str, node_id: str) -> Path'
+  - error on duplicate numeric prefix at any directory level
+  - plans_root is not a MCP command parameter - it is always injected from server
+    config by the caller
+verification:
+- parse_node_id returns correct level for each node_id form (spec, G, T, A)
+- resolve_node_id returns correct path for known plan structure using numeric prefix
+  only
+- duplicate prefix at any level raises error
+- malformed node_id raises ValidationError
+- plans_root is never accepted as an MCP command parameter in any command using this
+  module
+acceptance_criteria:
+- All four node_id forms parse and resolve correctly
+- Numeric prefix uniqueness enforced at each directory level
+- No dependency on buf_* or plan_* command implementations
+- plans_root resolved from config by caller, not from MCP params
+observations_template:
+- Does parse_node_id correctly identify spec, G, T, A levels?
+- Does resolve_node_id use only the numeric prefix for directory matching?
+- Are duplicate numeric prefixes detected and reported?
+- Is plans_root never passed as an MCP command parameter?

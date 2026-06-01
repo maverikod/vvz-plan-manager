@@ -1,0 +1,118 @@
+format: tactical_step
+status: pending
+step_id: T-002
+name: plan-find-duplicates
+title: Semantic duplicate detection
+parent_step_id: G-003
+parent_step_name: semantic-analysis
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-003-semantic-analysis/README.yaml
+intent: 'Implement plan_find_duplicates: load chunk embeddings from the code_analysis
+
+  postgres DB for all nodes in a given plan, compute pairwise cosine similarity
+
+  in numpy, and return pairs of node_ids whose similarity exceeds the threshold.
+
+  No FAISS needed at plan scale (hundreds of nodes at most). Disk-read only.
+
+  '
+context_from_technical_spec:
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, error
+    wrapping.
+
+    Do not patch mcp_proxy_adapter internals.
+
+    '
+  plans_root_convention: 'plans_root resolved from server config; never from MCP command
+    params.
+
+    '
+  code_analysis_db: "Read chunk embeddings from code_analysis postgres DB via CodeAnalysisDbClient\
+    \ (G-004/T-001).\nQuery pattern:\n  SELECT c.chunk_uuid, c.embedding_vector, f.path\
+    \ AS file_path\n  FROM code_chunks c\n  JOIN files f ON f.id = c.file_id\n  WHERE\
+    \ f.project_id = <plan_manager_project_id>\n    AND f.path LIKE '%/<plan_id>/%'\n\
+    \    AND c.embedding_vector IS NOT NULL\nembedding_vector is TEXT (JSON-encoded\
+    \ float32 array).\nParse: numpy.array(json.loads(embedding_vector), dtype=float32).\n\
+    Average per file_path to get one vector per node (mean pooling over chunks).\n\
+    Then compute pairwise cosine similarity matrix.\n"
+depends_on:
+- G-001/T-001
+- G-004/T-001
+- G-004/T-002
+responsibilities:
+- Query code_analysis DB for chunk embeddings scoped to the plan
+- Parse embedding_vector TEXT as float32 numpy array
+- Average chunk vectors per node (mean pooling) to get one vector per node_id
+- Build pairwise cosine similarity matrix over all node vectors
+- Filter pairs above threshold; exclude self-pairs
+- Map file_path back to node_id using path_resolver
+- Return list of {node_id_a, node_id_b, similarity_score} sorted descending
+owned_code_paths:
+- plan_manager/commands/plan_find_duplicates.py
+owned_test_paths:
+- tests/test_plan_find_duplicates.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/nav_shared.py
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: embedding-loader
+  summary: query code_analysis DB for chunk embeddings scoped to plan; mean pooling
+    per node
+- id: A-002
+  name: similarity-matrix
+  summary: pairwise cosine similarity matrix over node vectors; threshold filter
+- id: A-003
+  name: find-duplicates-command
+  summary: PlanFindDuplicatesCommand MCP command class
+model_assignment_spec:
+  task: 'Implement plan_find_duplicates MCP command in plan_manager/commands/plan_find_duplicates.py.
+
+    Required params: plan_id. Optional: threshold (float, default 0.9).
+
+    Load chunk embeddings from code_analysis DB via CodeAnalysisDbClient.
+
+    Mean-pool chunks per file_path to get one vector per node.
+
+    Compute pairwise cosine similarity; filter above threshold; exclude self-pairs.
+
+    Map file_path to node_id. Return pairs sorted by score descending.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/commands/plan_find_duplicates.py
+  - tests/test_plan_find_duplicates.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - plan_manager/commands/nav_shared.py
+  - .venv/
+  consumed_contracts:
+  - resolve_node_id from G-001/T-001 (plan_manager/path_resolver.py)
+  - CodeAnalysisDbClient from G-004/T-001 (plan_manager/code_analysis_client.py)
+  - resolve_plan_project_id from G-004/T-002 (plan_manager/code_analysis_client.py)
+  deliverables:
+  - PlanFindDuplicatesCommand with required plan_id and optional threshold (default
+    0.9)
+  - Returns list of {node_id_a, node_id_b, similarity_score} sorted by score descending
+  - Empty list when no pairs exceed threshold or no embeddings available
+  - DB_UNAVAILABLE error when code_analysis DB is unreachable
+verification:
+- plan_find_duplicates returns correct pairs for plan with known similar nodes
+- Self-pairs excluded from results
+- Empty result when all similarities below threshold
+- Empty result when code_analysis DB has no embeddings for plan nodes
+- No session required; disk-read only
+acceptance_criteria:
+- All returned pairs have similarity_score >= threshold
+- No self-pairs in results
+- No session required
+- DB unreachability returns stable error, not exception
+observations_template:
+- Did plan_find_duplicates correctly load and parse embedding_vector TEXT as float32?
+- Was mean pooling applied correctly per node (file_path)?
+- Were self-pairs excluded from results?
+- Was DB_UNAVAILABLE returned cleanly when code_analysis DB was unreachable?

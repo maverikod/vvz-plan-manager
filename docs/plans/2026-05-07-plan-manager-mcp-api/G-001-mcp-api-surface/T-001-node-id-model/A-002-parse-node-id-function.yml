@@ -1,0 +1,83 @@
+format: atomic_step
+status: pending
+step_id: A-002
+name: parse-node-id-function
+title: parse_node_id function implementation
+parent_step_id: T-001
+parent_step_name: node-id-model
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: "Plan Manager MCP API implements structured-tree\
+  \ plan editor. Plans are git repositories on disk.\nNode IDs are stable string identifiers\
+  \ mapped to files and directories by numeric prefix.\nFramework: mcp_proxy_adapter\
+  \ handles routing, validation, serialization, error wrapping.\n\nNode ID Format:\n\
+  - \"spec\": maps to README.md\n- \"G-123\": maps to G-123-*/README.md  \n- \"G-123/T-456\"\
+  : maps to G-123-*/T-456-*/index.md\n- \"G-123/T-456/A-789\": maps to G-123-*/T-456-*/A-789-*.md\n\
+  \nResolution uses numeric prefix only. Slug after dash ignored for matching.\nCommands\
+  \ must validate node_id format and raise ValidationError for malformed input.\n"
+global_step_context: 'G-001: MCP API surface
+
+  Define and implement the complete public MCP command surface for plan_manager.
+
+  Node IDs are stable string identifiers mapped to files and directories by numeric
+  prefix.
+
+  In-memory buffer commands prefixed buf_* distinguish from disk-read navigation commands.
+
+  All other G-001 tactical steps depend on this foundation module for path resolution.
+
+  '
+tactical_step_context: "T-001: Node ID model\nImplement deterministic mapping between\
+  \ public node_id strings and files/directories\nin a plan git repository. Pure utility\
+  \ modules with no MCP dependency.\n\nDeliverables from T-001:\n- NodeId dataclass\
+  \ with level, g_num, t_num, a_num fields\n- parse_node_id(s: str) -> NodeId raising\
+  \ ValidationError on malformed input\n- resolve_node_id(plans_root: Path, plan_id:\
+  \ str, node_id: str) -> Path\n- Error on duplicate numeric prefix at any directory\
+  \ level\n\nNodeId dataclass structure (from A-001):\n- level: str (\"spec\", \"\
+  G\", \"T\", \"A\")\n- g_num: Optional[int]\n- t_num: Optional[int]  \n- a_num: Optional[int]\n"
+atomic_operation: Implement parse_node_id function with regex parsing and validation
+intent: 'Implement parse_node_id(s: str) -> NodeId function in plan_manager/node_id.py.
+
+  Parse and validate node_id string into NodeId dataclass instance.
+
+  Handle all four node_id forms with proper validation and error reporting.
+
+  '
+responsibilities:
+- Parse node_id string using regex patterns for four forms
+- Validate format and raise ValidationError for malformed input
+- Extract numeric components correctly (G-123 -> g_num=123)
+- Return appropriate NodeId instance with proper level
+- Handle edge cases and provide clear error messages
+code_file_target: plan_manager/node_id.py
+estimated_lines: 80
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- A-001 (NodeId dataclass must exist in same file)
+node_id_parsing_patterns:
+  spec_pattern: '"spec" -> NodeId(level="spec", g_num=None, t_num=None, a_num=None)'
+  global_pattern: '"G-123" -> NodeId(level="G", g_num=123, t_num=None, a_num=None)'
+  tactical_pattern: '"G-123/T-456" -> NodeId(level="T", g_num=123, t_num=456, a_num=None)'
+  atomic_pattern: '"G-123/T-456/A-789" -> NodeId(level="A", g_num=123, t_num=456,
+    a_num=789)'
+deliverables:
+- 'parse_node_id(s: str) -> NodeId function'
+- Regex patterns for all four node_id forms
+- ValidationError import and usage for malformed input
+- Proper numeric extraction with int() conversion
+- Clear error messages for debugging
+constraints:
+- Pure utility function - no MCP dependencies
+- Must handle all four forms exactly as specified
+- ValidationError must include original string in message
+- Function must be importable by other modules
+acceptance_criteria:
+- All four node_id forms parse correctly
+- Malformed strings raise ValidationError with clear message
+- Numeric components extracted accurately as integers
+- Function signature matches specification exactly
+observations_template:
+- Does parse_node_id handle "spec" string correctly?
+- Does "G-123" parse to level="G", g_num=123?
+- Does "G-123/T-456/A-789" parse all three numbers?
+- Are malformed inputs rejected with ValidationError?

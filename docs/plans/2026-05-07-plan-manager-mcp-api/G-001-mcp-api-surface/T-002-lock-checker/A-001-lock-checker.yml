@@ -1,0 +1,101 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: lock-checker
+title: is_node_locked, get_lock_status, check_subtree_unlocked in lock_checker.py
+parent_step_id: T-002
+parent_step_name: lock-checker
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: "Plan Manager MCP API - editor lock convention:\n\
+  The editor (separate MCP server, shared filesystem) places a lock file when it\n\
+  opens a file for editing. plan_manager reads these lock files before any tree\n\
+  mutation (delete, move) to prevent structural changes to open files.\n\nLock file\
+  \ path:\n  <editor_lock_dir>/<escaped_file_path>.lock\n  where escaped_file_path\
+  \ = absolute_file_path.replace(os.sep, \"__\")\n\nLock file JSON content:\n  {\"\
+  pid\": <int>, \"node_id\": \"<str>\", \"file\": \"<absolute_path_str>\"}\n\nA node\
+  \ is locked when:\n  1. The lock file exists, AND\n  2. os.kill(pid, 0) does not\
+  \ raise OSError (process is alive)\n\nStale lock: file exists but PID is dead ->\
+  \ treated as unlocked.\nplan_manager NEVER creates, modifies, or deletes lock files.\n\
+  \neditor_lock_dir: from PlanManagerConfigSection.editor_lock_dir; never from MCP\
+  \ params.\nlock_status values: locked_by_editor or unlocked.\n"
+global_step_context: 'G-001: MCP API surface.
+
+  plan_manager owns tree structure only. File content is the editor domain.
+
+  Lock check is required before plan_delete_node and plan_move_node (T-007).
+
+  Navigation commands (T-003, T-004) include lock_status in every node record
+
+  using get_lock_status from this module.
+
+  '
+tactical_step_context: "T-002: Editor lock file checker.\nThis is the only atomic\
+  \ step; it owns plan_manager/lock_checker.py entirely.\n\nConsumed contracts from\
+  \ T-001:\n  resolve_node_id(plans_root, plan_id, node_id) -> Path from plan_manager/path_resolver.py\n\
+  \  parse_node_id from plan_manager/node_id.py (for level detection)\n\nNote: list_children\
+  \ is provided by G-001/T-003/nav_shared.py which does not\nexist yet when T-002\
+  \ is implemented. check_subtree_unlocked must either inline\nchild enumeration or\
+  \ accept a list_children callable as parameter.\nRecommended: implement _list_child_file_paths(plans_root,\
+  \ plan_id, node_id) -> list[Path]\nas a private helper inside lock_checker.py to\
+  \ avoid circular import.\n\nFunctions to implement:\n\ndef _escape_path(file_path:\
+  \ Path) -> str:\n  Replace os.sep with double-underscore.\n  Return escaped string.\n\
+  \ndef _lock_file_path(file_path: Path, editor_lock_dir: Path) -> Path:\n  Return\
+  \ editor_lock_dir / (_escape_path(file_path) + \".lock\")\n\ndef _read_lock_pid(lock_path:\
+  \ Path) -> int or None:\n  Read JSON from lock_path. Return pid int or None on any\
+  \ error.\n\ndef _pid_alive(pid: int) -> bool:\n  Try os.kill(pid, 0). Return True\
+  \ if no OSError raised. Return False otherwise.\n\ndef is_node_locked(plans_root,\
+  \ plan_id, node_id, editor_lock_dir) -> bool:\n  Resolve node file path via resolve_node_id.\n\
+  \  Build lock file path. If lock file missing -> return False.\n  Read PID. If PID\
+  \ None -> return False (stale/corrupt).\n  Return _pid_alive(pid).\n\ndef get_lock_status(plans_root,\
+  \ plan_id, node_id, editor_lock_dir) -> str:\n  Return \"locked_by_editor\" if is_node_locked(...)\
+  \ else \"unlocked\".\n\ndef check_subtree_unlocked(plans_root, plan_id, node_id,\
+  \ editor_lock_dir) -> None:\n  Check node itself. Then walk all descendants recursively.\n\
+  \  Raise NodeLockedError(node_id) on first locked node found.\n  NodeLockedError:\
+  \ custom exception with node_id attribute and error_code NODE_LOCKED.\n"
+atomic_operation: Implement the complete lock_checker.py module with all lock-check
+  functions
+intent: 'Create plan_manager/lock_checker.py as a self-contained module for reading
+
+  editor lock files and checking PID liveness. Provides is_node_locked,
+
+  get_lock_status, and check_subtree_unlocked used by navigation and mutation commands.
+
+  '
+responsibilities:
+- Implement _escape_path, _lock_file_path, _read_lock_pid, _pid_alive private helpers
+- Implement is_node_locked returning bool
+- Implement get_lock_status returning locked_by_editor or unlocked string
+- Implement check_subtree_unlocked raising NodeLockedError on first locked node
+- Implement NodeLockedError exception with node_id and error_code=NODE_LOCKED
+- Implement _list_child_node_ids private helper for subtree walk (no circular import)
+- Never create, modify, or delete lock files
+code_file_target: plan_manager/lock_checker.py
+estimated_lines: 110
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-001/A-002 parse_node_id from plan_manager/node_id.py
+- G-001/T-001/A-004 resolve_node_id from plan_manager/path_resolver.py
+deliverables:
+- is_node_locked(plans_root, plan_id, node_id, editor_lock_dir) -> bool
+- get_lock_status(plans_root, plan_id, node_id, editor_lock_dir) -> str
+- check_subtree_unlocked(plans_root, plan_id, node_id, editor_lock_dir) -> None
+- NodeLockedError exception class with node_id and error_code attributes
+- All private helpers documented inline
+constraints:
+- No circular imports; child enumeration inlined or via private helper
+- Never write or delete lock files
+- Stale locks treated as unlocked
+- editor_lock_dir always comes from config, never from MCP params
+acceptance_criteria:
+- is_node_locked returns True only when lock file exists AND PID is alive
+- is_node_locked returns False when lock file missing
+- is_node_locked returns False when lock file exists but PID is dead
+- check_subtree_unlocked raises NodeLockedError on first locked node in subtree
+- check_subtree_unlocked passes silently when all nodes unlocked
+- NodeLockedError.error_code equals NODE_LOCKED
+observations_template:
+- Does is_node_locked correctly detect live PID via os.kill(pid, 0)?
+- Are stale locks (dead PID) correctly treated as unlocked?
+- Does check_subtree_unlocked walk all descendants before passing?
+- Is NodeLockedError raised with the correct node_id?

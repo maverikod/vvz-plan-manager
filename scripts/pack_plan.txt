@@ -1,0 +1,10 @@
+import tarfile, os, sys
+
+plan_dir = sys.argv[1] if len(sys.argv) > 1 else "docs/plans/2026-05-07-plan-manager-mcp-api"
+out = sys.argv[2] if len(sys.argv) > 2 else "/tmp/plan_2026-05-07.tar.gz"
+
+with tarfile.open(out, "w:gz") as tar:
+    tar.add(plan_dir, arcname=os.path.basename(plan_dir))
+
+print(f"Created: {out}")
+print(f"Size: {os.path.getsize(out)} bytes")

@@ -1,0 +1,17 @@
+---
+description: Universal project rules — docs/PROJECT_RULES.md (template + IDs)
+alwaysApply: true
+---
+
+# Project rules pointer
+
+1. **Canonical template:** `docs/PROJECT_RULES.md` — fill **§0 Project profile** per repo; obey `CR-*`, `LAYOUT-*`, `NAME-*`.
+2. **Context files:** `docs/agents/universal_project_context.md`, `docs/agents/project_overlay.md`, `docs/agents/common_agent_rules.md` (index: `docs/agents/README.md`).
+3. **Optional:** `docs/assistant_rules_inventory.md` (if present).
+4. **Subagents:** `.cursor/agents/*.md` — top block lists context files; body is role rules.
+
+**After code edits:** `CR-005` (venv), `CR-007` (linters/typecheck), `CR-006` (indexing if `USE_CODE_MAP` = yes). **Missing `projectid` (when used):** `CR-003` — report and stop.
+
+**Python:** on import/`pip` errors, verify **`VENV_DIR`** is active (`CR-005`). **Never** `--break-system-packages` / PEP 668 overrides without explicit user approval of that command (`CR-015`).
+
+**Parallelism:** independent subtasks → **parallel** when safe; do not serialize without a reason (`CR-016`).

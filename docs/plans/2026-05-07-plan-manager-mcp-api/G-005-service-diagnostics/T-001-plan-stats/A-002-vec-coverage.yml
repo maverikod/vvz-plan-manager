@@ -1,0 +1,62 @@
+format: atomic_step
+status: pending
+step_id: A-002
+name: vec-coverage
+title: vec_coverage_status, lock_file_count, PlanStatsRecord, collect_plan_stats
+parent_step_id: T-001
+parent_step_name: plan-stats
+parent_global_id: G-005
+parent_global_name: service-diagnostics
+technical_specification_excerpt: "Per plan vectorization coverage:\n  vectorized:\
+  \ .vec exists and .md commit timestamp <= .vec commit timestamp\n  outdated: .md\
+  \ commit timestamp > .vec commit timestamp\n  missing: no .vec sibling\nlock_file_count:\
+  \ count .lock files in editor_lock_dir where PID is alive AND\n  belongs to a file\
+  \ in this plan.\nPlanStatsRecord: plan_id, G/T/A counts, vectorized/outdated/missing,\
+  \ lock_file_count.\n"
+global_step_context: 'G-005: Service diagnostics.
+
+  count_nodes_by_level from G-005/T-001/A-001 in same file.
+
+  '
+tactical_step_context: "T-001: Plan stats.\nA-002 owns the remaining functions and\
+  \ the PlanStatsRecord dataclass.\n\nvec_coverage_status(plan_dir) -> {vectorized,\
+  \ outdated, missing}\n  Walk all .md files. For each: check .vec sibling and git\
+  \ timestamps.\n\nlock_file_count(plan_dir, editor_lock_dir) -> int\n  Scan editor_lock_dir\
+  \ for .lock files.\n  For each: read PID, check os.kill(pid,0), check if file field\
+  \ is inside plan_dir.\n  Return count of alive locks for this plan.\n\ncollect_plan_stats(plans_root,\
+  \ editor_lock_dir) -> list[PlanStatsRecord]\n  Walk all plan directories. For each:\n\
+  \    counts = count_nodes_by_level(plan_dir)\n    vec = vec_coverage_status(plan_dir)\n\
+  \    locks = lock_file_count(plan_dir, editor_lock_dir)\n    Append PlanStatsRecord.\n"
+atomic_operation: Implement vec_coverage_status, lock_file_count, PlanStatsRecord,
+  collect_plan_stats
+intent: 'Add vec_coverage_status, lock_file_count, PlanStatsRecord dataclass, and
+
+  collect_plan_stats to plan_manager/diagnostics/plan_stats.py.
+
+  '
+responsibilities:
+- Implement vec_coverage_status returning coverage counts dict
+- Implement lock_file_count returning int
+- Implement PlanStatsRecord dataclass
+- Implement collect_plan_stats returning list of records
+code_file_target: plan_manager/diagnostics/plan_stats.py
+estimated_lines: 90
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-005/T-001/A-001 count_nodes_by_level in same file
+deliverables:
+- vec_coverage_status(plan_dir) -> dict
+- lock_file_count(plan_dir, editor_lock_dir) -> int
+- PlanStatsRecord dataclass
+- collect_plan_stats(plans_root, editor_lock_dir) -> list[PlanStatsRecord]
+constraints:
+- total file including A-001 under 300 lines
+- Read-only; no MCP command
+acceptance_criteria:
+- Coverage counts match actual .vec file state
+- lock_file_count reflects active editor locks for this plan
+- collect_plan_stats covers all plans in plans_root
+observations_template:
+- Were vectorization coverage counts accurate?
+- Was lock_file_count correct for active editor locks?
+- Did collect_plan_stats cover all plans?

@@ -1,0 +1,86 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: ancestor-walker
+title: Ancestor chain walker for plan_branch
+parent_step_id: T-001
+parent_step_name: branch-retrieval
+parent_global_id: G-002
+parent_global_name: plan-analysis
+technical_specification_excerpt: 'Plan Manager MCP API - branch retrieval:
+
+  - plan_branch(plan_id, node_id) returns the full ancestor chain from spec to node_id
+
+  - Node ID ancestor chain: spec -> G-NNN -> G-NNN/T-NNN -> G-NNN/T-NNN/A-NNN
+
+  - Each chain record contains: node_id, file_path (plan-relative), content (str),
+  lock_status
+
+  - spec (README.md) is always first; requested node is always last
+
+  - Disk-read only; no session required
+
+  - plans_root from server config; never from MCP command params
+
+  '
+global_step_context: 'G-002: Plan analysis.
+
+  plan_branch is the primary context assembly command for AI executors.
+
+  It returns the full ancestor chain from spec down to the requested node.
+
+  Node ID resolution provided by G-001/T-001 (plan_manager/path_resolver.py).
+
+  Lock status from nav_shared (G-001/T-009, plan_manager/commands/nav_shared.py).
+
+  '
+tactical_step_context: "T-001: Branch retrieval.\nThis atomic step A-001 owns the\
+  \ ancestor walker helper in plan_manager/commands/plan_branch.py.\nA-002 owns PlanBranchCommand\
+  \ in the same file.\n\nConsumed contracts:\n  resolve_node_id from plan_manager/path_resolver.py\
+  \ (G-001/T-001)\n  get_lock_status from plan_manager/commands/nav_shared.py (G-001/T-009)\n\
+  \nHelper function to implement:\n  build_ancestor_chain(plans_root, plan_id, node_id)\
+  \ -> list of ChainRecord dicts\n    - Parse node_id to determine level (spec/G/T/A)\n\
+  \    - Build ordered list of ancestor node_ids:\n        spec level -> [spec]\n\
+  \        G level -> [spec, G-NNN]\n        T level -> [spec, G-NNN, G-NNN/T-NNN]\n\
+  \        A level -> [spec, G-NNN, G-NNN/T-NNN, G-NNN/T-NNN/A-NNN]\n    - For each\
+  \ ancestor node_id:\n        resolve file path via resolve_node_id\n        read\
+  \ file content\n        get lock_status via get_lock_status\n        build ChainRecord\
+  \ dict\n    - Return ordered list\n\nChainRecord dict fields: node_id, file_path,\
+  \ content, lock_status\n"
+atomic_operation: Implement build_ancestor_chain helper function in plan_manager/commands/plan_branch.py
+intent: 'Create the build_ancestor_chain helper function in plan_manager/commands/plan_branch.py.
+
+  It builds the ordered list of ancestor context records from spec down to the requested
+  node.
+
+  '
+responsibilities:
+- Implement build_ancestor_chain(plans_root, plan_id, node_id) returning list of ChainRecord
+  dicts
+- Determine correct ancestor sequence based on node_id level
+- Read file content for each ancestor
+- Include lock_status in every ChainRecord
+- Return spec-first, requested-node-last ordering
+code_file_target: plan_manager/commands/plan_branch.py
+estimated_lines: 70
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-001/A-002 parse_node_id from plan_manager/node_id.py
+- G-001/T-001/A-004 resolve_node_id from plan_manager/path_resolver.py
+- G-001/T-009/A-001 get_lock_status from plan_manager/commands/nav_shared.py
+deliverables:
+- build_ancestor_chain function returning ordered list of ChainRecord dicts
+- ChainRecord with node_id, file_path, content, lock_status
+constraints:
+- Read-only; no writes to disk
+- Do not implement command class here (that is in A-002)
+acceptance_criteria:
+- build_ancestor_chain for G node returns exactly 2 records (spec, G)
+- build_ancestor_chain for T node returns exactly 3 records (spec, G, T)
+- build_ancestor_chain for A node returns exactly 4 records (spec, G, T, A)
+- spec is always first; requested node is always last
+- lock_status present in every ChainRecord
+observations_template:
+- Did build_ancestor_chain return the correct chain length for each node level?
+- Is spec always the first element and requested node always the last?
+- Is lock_status present in all chain records?

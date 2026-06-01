@@ -1,0 +1,70 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: plan-scanner
+title: nav_shared.py - scan_plans, build_node_record, list_children, get_lock_status
+parent_step_id: T-003
+parent_step_name: nav-list-tree
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: "Plan Manager MCP API - navigation shared utilities:\n\
+  - plans_root from server config; never from MCP params.\n- Node ID format: spec->README.md,\
+  \ G-NNN->G-NNN-*/README.md,\n  G-NNN/T-NNN->G-NNN-*/T-NNN-*/index.md, G-NNN/T-NNN/A-NNN->A-NNN-*.md\n\
+  - lock_status: locked_by_editor or unlocked (from lock_checker module)\n- All navigation\
+  \ is disk-read only; no writes.\n- editor_lock_dir from PlanManagerConfigSection;\
+  \ never from MCP params.\n"
+global_step_context: 'G-001: MCP API surface. plan_manager owns tree structure only.
+
+  nav_shared.py is the shared utility module for all navigation commands.
+
+  lock_checker.py (T-002) provides get_lock_status.
+
+  '
+tactical_step_context: "T-003: Navigation list and tree.\nA-001 owns plan_manager/commands/nav_shared.py.\n\
+  A-002 owns plan_manager/commands/plan_list.py.\nA-003 owns plan_manager/commands/plan_tree.py.\n\
+  A-004 owns plan_manager/commands/plan_status.py.\n\nConsumed contracts from T-001:\n\
+  \  parse_node_id from plan_manager/node_id.py\n  resolve_node_id from plan_manager/path_resolver.py\n\
+  Consumed contracts from T-002:\n  get_lock_status from plan_manager/lock_checker.py\n\
+  \nFunctions to implement in nav_shared.py:\n\nscan_plans(plans_root: Path) -> list[str]\n\
+  \  List directory names under plans_root. Each is a plan_id.\n\nlist_children(plans_root,\
+  \ plan_id, node_id) -> list[str]\n  Return direct child node_ids.\n  spec -> list\
+  \ of G-NNN node_ids\n  G-NNN -> list of G-NNN/T-NNN node_ids\n  G-NNN/T-NNN -> list\
+  \ of G-NNN/T-NNN/A-NNN node_ids\n  A-NNN -> [] (leaf)\n\nbuild_node_record(plans_root,\
+  \ plan_id, node_id, editor_lock_dir) -> dict\n  Resolve file path. Extract title\
+  \ from first line starting with #.\n  Determine level from parse_node_id.\n  Get\
+  \ lock_status from get_lock_status.\n  List children via list_children.\n  Return\
+  \ {node_id, title, level, lock_status, children}\n"
+atomic_operation: Implement nav_shared.py with scan_plans, list_children, build_node_record
+intent: 'Create plan_manager/commands/nav_shared.py with shared navigation utilities
+
+  consumed by plan_list, plan_tree, and plan_status command modules.
+
+  '
+responsibilities:
+- Implement scan_plans returning list of plan_ids
+- Implement list_children returning direct child node_ids by level
+- Implement build_node_record returning complete node dict with lock_status
+- Read-only; no writes to disk
+code_file_target: plan_manager/commands/nav_shared.py
+estimated_lines: 100
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-001/A-002 parse_node_id from plan_manager/node_id.py
+- G-001/T-001/A-004 resolve_node_id from plan_manager/path_resolver.py
+- G-001/T-002/A-001 get_lock_status from plan_manager/lock_checker.py
+deliverables:
+- scan_plans(plans_root) -> list[str]
+- list_children(plans_root, plan_id, node_id) -> list[str]
+- build_node_record(plans_root, plan_id, node_id, editor_lock_dir) -> dict
+constraints:
+- Read-only; no writes to disk
+- Do not implement command classes here (A-002..A-004)
+- lock_status from get_lock_status only; never hardcoded
+acceptance_criteria:
+- scan_plans returns all plan directory names from plans_root
+- list_children returns empty list for A-level nodes
+- build_node_record includes lock_status in every returned dict
+observations_template:
+- Does scan_plans correctly enumerate all plans under plans_root?
+- Does list_children return correct child node_ids at each level?
+- Does build_node_record include all required fields including lock_status?

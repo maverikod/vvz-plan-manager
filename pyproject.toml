@@ -1,0 +1,13 @@
+[project]
+name = "plan_manager"
+version = "0.1.0"
+description = "MCP server for managing project plans as a structured tree."
+authors = [{name = "Vasiliy Zdanovskiy", email = "vasilyvz@gmail.com"}]
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+strict = true

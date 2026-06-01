@@ -1,0 +1,64 @@
+format: atomic_step
+status: pending
+step_id: A-002
+name: validate-commands
+title: PlanValidateCommand and PlanValidateNodeCommand
+parent_step_id: T-008
+parent_step_name: validate
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: 'plan_validate(plan_id) -> {errors, count, clean}
+
+  plan_validate_node(plan_id, node_id) -> {errors, count, clean}
+
+  errors: list of {node_id, error_code, message}
+
+  No session required. Disk-read only (plus HTTP call to editor).
+
+  plans_root and editor_api_url from config; never from MCP params.
+
+  '
+global_step_context: 'G-001: MCP API surface.
+
+  Validator helpers from G-001/T-008/A-001 in same file.
+
+  '
+tactical_step_context: "T-008: Validate.\nA-002 owns two command classes in plan_manager/commands/plan_validate.py.\n\
+  A-001 (same file) provides validate_node and validate_plan_tree.\n\nplan_validate.execute():\n\
+  \  1. Resolve plans_root, editor_api_url from config\n  2. errors = validate_plan_tree(plans_root,\
+  \ plan_id, editor_api_url)\n  3. Return {errors, count: len(errors), clean: len(errors)\
+  \ == 0}\n\nplan_validate_node.execute():\n  1. Resolve plans_root, editor_api_url\
+  \ from config\n  2. errors = validate_node(plans_root, plan_id, node_id, editor_api_url)\n\
+  \  3. Return {errors, count: len(errors), clean: len(errors) == 0}\n"
+atomic_operation: Implement PlanValidateCommand and PlanValidateNodeCommand in plan_validate.py
+intent: 'Add PlanValidateCommand and PlanValidateNodeCommand to plan_validate.py
+
+  using validation helpers from A-001.
+
+  '
+responsibilities:
+- Implement PlanValidateCommand with name plan_validate
+- Implement PlanValidateNodeCommand with name plan_validate_node
+- Both delegate to A-001 helpers
+- Return {errors, count, clean} response
+code_file_target: plan_manager/commands/plan_validate.py
+estimated_lines: 70
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-008/A-001 validate_node, validate_plan_tree in same file
+deliverables:
+- PlanValidateCommand with required plan_id
+- PlanValidateNodeCommand with required plan_id and node_id
+- Both return {errors, count, clean}
+constraints:
+- total file including A-001 helpers under 300 lines
+- No session required; disk-read only plus HTTP
+- editor_api_url always from config
+acceptance_criteria:
+- plan_validate returns empty errors for complete non-stub plan
+- plan_validate_node scopes to requested node only
+- Both commands callable without session
+observations_template:
+- Did plan_validate find all structural and content errors?
+- Did plan_validate return empty errors for a clean plan?
+- Did plan_validate_node correctly scope to the requested node only?

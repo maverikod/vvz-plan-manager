@@ -1,0 +1,16 @@
+import os, glob, tarfile, io
+
+root = '/home/vasilyvz/projects/tools/plan_manager'
+plan_dir = os.path.join(root, 'docs/plans/2026-05-07-plan-manager-mcp-api')
+out_path = '/tmp/plan_2026-05-07.tar.gz'
+
+with tarfile.open(out_path, 'w:gz') as tar:
+    tar.add(plan_dir, arcname='2026-05-07-plan-manager-mcp-api')
+
+size = os.path.getsize(out_path)
+print(f'OK: {out_path} ({size} bytes)')
+
+import hashlib
+with open(out_path, 'rb') as f:
+    sha = hashlib.sha256(f.read()).hexdigest()
+print(f'SHA256: {sha}')

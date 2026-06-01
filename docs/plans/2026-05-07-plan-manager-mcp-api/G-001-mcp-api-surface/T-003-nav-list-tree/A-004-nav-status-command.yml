@@ -1,0 +1,131 @@
+format: atomic_step
+status: pending
+step_id: A-004
+name: nav-status-command
+title: PlanStatusCommand in plan_status.py - walk tree + editor.validate_file per
+  node
+parent_step_id: T-003
+parent_step_name: nav-list-tree
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: 'plan_status(plan_id) -> list of per-node fill status
+  records
+
+  plan_id required. No session required. Disk-read only.
+
+
+  plan_manager checks node file existence directly (MISSING_FILE).
+
+  For existing files: calls editor.validate_file(file_path) via HTTP.
+
+  editor_api_url from PlanManagerConfigSection; never from MCP params.
+
+  Result: flat list of {node_id, fill_status, lock_status}
+
+  fill_status values: present, empty, stub, missing, unknown (on editor error)
+
+  '
+editor_identity: 'The editor is yaml_editor MCP server (project yaml_editor,
+
+  project_id: 84ec55c8-cefd-480d-beb6-fa1d35e60362).
+
+  yaml_editor is built on mcp_proxy_adapter and uses AbstractFormatter internally
+
+  (YAML formatter for .yaml/.yml files, text formatter for others).
+
+  plan_manager does NOT call yaml_editor via MCP; it calls via direct HTTP OpenAPI.
+
+  '
+editor_validate_file_contract: "HTTP GET <editor_api_url>/validate?file=<absolute_path>\n\
+  \nyaml_editor response shape (nested success semantics from mcp-proxy-adapter):\n\
+  \  {\n    \"success\": <bool>,           # top-level transport success\n    \"result\"\
+  : {\n      \"success\": <bool>,         # MUST be checked; false = content validation\
+  \ failed\n      \"status\": \"present\" | \"empty\" | \"stub\" | \"error\",\n  \
+  \    \"message\": \"<str>\",\n      \"diagnostics\": [...]       # optional per-line\
+  \ issues from formatter\n    }\n  }\n\nCRITICAL: HTTP 200 alone is NOT success.\n\
+  plan_manager MUST check result.success:\n  - result.success=True, status=present\
+  \  -> fill_status=present\n  - result.success=True, status=empty    -> fill_status=empty\n\
+  \  - result.success=True, status=stub     -> fill_status=stub\n  - result.success=False\
+  \                 -> fill_status=unknown, note editor error\n  - Missing result.success\
+  \ field         -> fill_status=unknown, error_code=EDITOR_CONTRACT_VIOLATION\n \
+  \ - requests.Timeout                     -> fill_status=unknown, error_code=EDITOR_TIMEOUT\n\
+  \  - requests.RequestException            -> fill_status=unknown, error_code=EDITOR_UNAVAILABLE\n\
+  \nHTTP errors and timeouts are non-fatal:\n  Return unknown fill_status with error_code\
+  \ in the node record.\n  Do NOT abort the full plan_status walk; continue to other\
+  \ nodes.\n"
+global_step_context: 'G-001: MCP API surface. Content validation delegated to yaml_editor.
+
+  nav_shared from G-001/T-003/A-001. lock_checker from G-001/T-002/A-001.
+
+  '
+tactical_step_context: "T-003: Navigation list and tree.\nA-004 owns plan_manager/commands/plan_status.py.\n\
+  A-001 (nav_shared.py) provides list_children and build_node_record.\n\nexecute()\
+  \ workflow:\n  1. Resolve plans_root, editor_lock_dir, editor_api_url from config\n\
+  \  2. Walk all nodes recursively using list_children\n  3. For each node:\n    \
+  \ a. Check file existence on disk -> fill_status=missing if absent (no editor call)\n\
+  \     b. If file exists:\n        - HTTP GET editor_api_url/validate?file=<absolute_path>\n\
+  \        - Check nested result.success FIRST\n        - Map result.status to fill_status\n\
+  \        - Handle timeout/error as fill_status=unknown (non-fatal)\n     c. Get\
+  \ lock_status from get_lock_status\n  4. Return flat list of {node_id, fill_status,\
+  \ lock_status, error_code?}\n\nImplementation:\n  import requests\n  try:\n    \
+  \  resp = requests.get(\n          editor_api_url + \"/validate\",\n          params={\"\
+  file\": str(file_path)},\n          timeout=5\n      )\n      resp.raise_for_status()\n\
+  \      data = resp.json()\n      # Check nested success\n      result = data.get(\"\
+  result\", {})\n      if \"success\" not in result:\n          return {\"fill_status\"\
+  : \"unknown\", \"error_code\": \"EDITOR_CONTRACT_VIOLATION\"}\n      if not result[\"\
+  success\"]:\n          return {\"fill_status\": \"unknown\", \"error_code\": \"\
+  EDITOR_VALIDATE_FAILED\"}\n      status_map = {\"present\": \"present\", \"empty\"\
+  : \"empty\", \"stub\": \"stub\"}\n      return {\"fill_status\": status_map.get(result.get(\"\
+  status\"), \"unknown\")}\n  except requests.Timeout:\n      return {\"fill_status\"\
+  : \"unknown\", \"error_code\": \"EDITOR_TIMEOUT\"}\n  except requests.RequestException\
+  \ as e:\n      return {\"fill_status\": \"unknown\", \"error_code\": \"EDITOR_UNAVAILABLE\"\
+  }\n"
+atomic_operation: Implement PlanStatusCommand in plan_manager/commands/plan_status.py
+intent: 'Create plan_manager/commands/plan_status.py with PlanStatusCommand.
+
+  Walks tree, checks file existence (plan_manager) and file content (yaml_editor.validate_file).
+
+  Handles nested success semantics from yaml_editor (mcp-proxy-adapter pattern).
+
+  '
+responsibilities:
+- Implement PlanStatusCommand with name plan_status
+- Walk tree with list_children
+- Check node file existence directly on disk for fill_status=missing
+- Call editor.validate_file via HTTP GET for content check on existing files
+- Check nested result.success (not just HTTP 200)
+- Include lock_status in every record
+- Handle editor HTTP errors and timeouts gracefully (unknown fill_status, non-fatal)
+code_file_target: plan_manager/commands/plan_status.py
+estimated_lines: 90
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-003/A-001 list_children from plan_manager/commands/nav_shared.py
+- G-001/T-002/A-001 get_lock_status from plan_manager/lock_checker.py
+- G-001/T-001/A-004 resolve_node_id from plan_manager/path_resolver.py
+deliverables:
+- PlanStatusCommand with complete MCP command interface
+- flat list of {node_id, fill_status, lock_status, error_code?} per node
+- fill_status=missing detected by plan_manager without editor call
+- nested result.success checked before reading result.status
+- HTTP errors handled as non-fatal unknown fill_status with error_code
+constraints:
+- Do not read file body content directly
+- editor_api_url always from config; never hardcoded or from MCP params
+- HTTP 200 is NOT sufficient; must check result.success in response body
+- Disk-read only; no writes
+- Do not confuse with plan_service_status (G-005)
+acceptance_criteria:
+- fill_status=missing when required file does not exist on disk (no editor call made)
+- editor.validate_file called for each existing node file
+- result.success=False from editor results in fill_status=unknown (not silent success)
+- Missing result.success field -> EDITOR_CONTRACT_VIOLATION error_code
+- lock_status present in all records
+- HTTP timeout results in EDITOR_TIMEOUT (non-fatal)
+- HTTP failure results in EDITOR_UNAVAILABLE (non-fatal)
+observations_template:
+- Did plan_status correctly identify fill_status=missing nodes without calling editor?
+- Was result.success checked before result.status in the editor response?
+- Was nested result.success=False correctly surfaced as fill_status=unknown?
+- Was fill_status=unknown returned on timeout/connection error?
+- Was lock_status present in all returned records?

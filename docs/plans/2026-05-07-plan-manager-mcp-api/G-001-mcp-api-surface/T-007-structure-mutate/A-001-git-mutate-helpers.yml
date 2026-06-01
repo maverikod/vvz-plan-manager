@@ -1,0 +1,69 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: git-mutate-helpers
+title: git_rm_node and git_mv_node helpers in plan_mutate.py
+parent_step_id: T-007
+parent_step_name: structure-mutate
+parent_global_id: G-001
+parent_global_name: mcp-api-surface
+technical_specification_excerpt: "plan_delete_node(plan_id, node_id) -> {success,\
+  \ deleted_node_id, commit_sha}\nplan_move_node(plan_id, node_id, target_node_id)\
+  \ -> {success, new_node_id, commit_sha}\nBoth require lock check before any filesystem/git\
+  \ operation.\nNODE_LOCKED if any node in subtree is locked by editor.\nNODE_NOT_FOUND\
+  \ if source does not exist.\nMOVE_CONFLICT if destination already exists (plan_move_node).\n\
+  plans_root and editor_lock_dir from server config; never from MCP params.\nGit:\n\
+  \  plan_delete_node: git rm -r <node_path>; git commit\n  plan_move_node: git mv\
+  \ <src> <dst>; git commit\nBoth commit to plan main branch.\n"
+global_step_context: 'G-001: MCP API surface. plan_manager owns tree structure.
+
+  lock_checker from G-001/T-002 provides check_subtree_unlocked.
+
+  Lock check must run BEFORE any filesystem or git operation.
+
+  '
+tactical_step_context: "T-007: Structure mutate.\nA-001 owns git helper functions\
+  \ in plan_manager/commands/plan_mutate.py.\nA-002 owns two command classes in the\
+  \ same file.\n\nHelpers to implement:\n\ngit_rm_node(plan_dir, node_path) -> str\n\
+  \  node_path: absolute path of node directory or file within plan_dir.\n  subprocess:\
+  \ git -C plan_dir rm -r --cached <relative_node_path>\n  subprocess: remove from\
+  \ filesystem: shutil.rmtree or os.remove\n  subprocess: git -C plan_dir commit -m\
+  \ \"Delete node <node_id>\"\n  Return commit sha.\n\ngit_mv_node(plan_dir, src_path,\
+  \ dst_path) -> str\n  src_path, dst_path: absolute paths within plan_dir.\n  subprocess:\
+  \ git -C plan_dir mv <rel_src> <rel_dst>\n  subprocess: git -C plan_dir commit -m\
+  \ \"Move node <src_id> to <dst_id>\"\n  Return commit sha.\n\nresolve_node_path(plans_root,\
+  \ plan_id, node_id) -> Path\n  Use resolve_node_id. Return parent directory for\
+  \ G/T level, file path for A level.\n"
+atomic_operation: Implement git_rm_node, git_mv_node, resolve_node_path in plan_mutate.py
+intent: 'Create git helper functions in plan_manager/commands/plan_mutate.py for
+
+  structural node deletion and movement operations.
+
+  '
+responsibilities:
+- Implement git_rm_node for deletion (git rm -r + commit)
+- Implement git_mv_node for movement (git mv + commit)
+- Implement resolve_node_path returning directory or file path for node
+- Both git helpers return commit sha
+code_file_target: plan_manager/commands/plan_mutate.py
+estimated_lines: 80
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-001/T-001/A-004 resolve_node_id from plan_manager/path_resolver.py
+deliverables:
+- git_rm_node(plan_dir, node_path) -> str
+- git_mv_node(plan_dir, src_path, dst_path) -> str
+- resolve_node_path(plans_root, plan_id, node_id) -> Path
+constraints:
+- Commit to plan main branch only
+- Do not read or write file body content
+- Do not implement command classes here (A-002)
+- Use subprocess git calls
+acceptance_criteria:
+- git_rm_node removes node directory/file and commits
+- git_mv_node renames node and commits
+- Both return correct commit sha
+observations_template:
+- Does git_rm_node correctly remove the node and all descendants?
+- Does git_mv_node correctly rename the directory in git?
+- Do both helpers return the correct commit sha?

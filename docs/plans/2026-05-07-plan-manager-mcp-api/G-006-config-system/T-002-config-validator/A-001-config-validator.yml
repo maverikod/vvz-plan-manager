@@ -1,0 +1,79 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: config-validator
+title: PlanManagerConfigValidator extending SimpleConfigValidator
+parent_step_id: T-002
+parent_step_name: config-validator
+parent_global_id: G-006
+parent_global_name: config-system
+technical_specification_excerpt: 'Plan Manager MCP API - config validator:
+
+  - PlanManagerConfigValidator extends SimpleConfigValidator
+
+  - Call super().validate() first, then add plan_manager checks
+
+  - Check plans_root is a directory or can be created
+
+  - Check tmpfs_root is writable
+
+  - Check default_ttl is a positive integer (greater than 0)
+
+  - Check embed_url is a non-empty URL string (format check only; no HTTP call)
+
+  - Return list of error strings; empty list means valid
+
+  - Do not reimplement SimpleConfigValidator internals
+
+  - Do not make live HTTP calls to embed_url
+
+  '
+global_step_context: 'G-006: Config system.
+
+  PlanManagerConfigValidator adds semantic checks on top of SimpleConfigValidator.
+
+  PlanManagerConfigSection from G-006/T-001 (plan_manager/config/config_section.py).
+
+  '
+tactical_step_context: "T-002: Config validator.\nThis is a single atomic step owning\
+  \ the entire config_validator.py file.\n\nConsumed contracts:\n  PlanManagerConfigSection\
+  \ from plan_manager/config/config_section.py (G-006/T-001)\n  SimpleConfigValidator\
+  \ from core/config/simple_config_validator.py (do not modify)\n\nPlanManagerConfigValidator(SimpleConfigValidator):\n\
+  \  validate(config: PlanManagerConfigSection) -> list[str]:\n    errors = super().validate(config)\n\
+  \    if not plans_root_ok: errors.append(\"plans_root error message\")\n    if not\
+  \ tmpfs_root_writable: errors.append(\"tmpfs_root error message\")\n    if default_ttl\
+  \ <= 0: errors.append(\"default_ttl error message\")\n    if not embed_url_valid_format:\
+  \ errors.append(\"embed_url error message\")\n    return errors\n"
+atomic_operation: Implement PlanManagerConfigValidator in plan_manager/config/config_validator.py
+intent: 'Create plan_manager/config/config_validator.py with PlanManagerConfigValidator
+
+  extending SimpleConfigValidator with plan_manager-specific semantic checks.
+
+  '
+responsibilities:
+- Implement PlanManagerConfigValidator extending SimpleConfigValidator
+- validate() calls super().validate() first
+- Add checks for plans_root, tmpfs_root, default_ttl, embed_url
+- Return list of error strings; no live HTTP calls
+code_file_target: plan_manager/config/config_validator.py
+estimated_lines: 60
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-006/T-001/A-001 PlanManagerConfigSection from plan_manager/config/config_section.py
+deliverables:
+- PlanManagerConfigValidator class extending SimpleConfigValidator
+- validate() returning list of error strings
+- All four plan_manager fields validated
+constraints:
+- Do not reimplement SimpleConfigValidator internals
+- Do not make live HTTP calls
+- Do not modify adapter config components
+acceptance_criteria:
+- Validator returns empty list for a fully valid config
+- Validator returns error for missing embed_url
+- Validator returns error for default_ttl less than or equal to zero
+- super().validate() called before plan_manager checks
+observations_template:
+- Did the validator return empty list for a valid config?
+- Were plan_manager-specific errors detected correctly?
+- Was SimpleConfigValidator called before plan_manager checks?

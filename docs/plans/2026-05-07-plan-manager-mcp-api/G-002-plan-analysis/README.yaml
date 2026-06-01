@@ -1,0 +1,42 @@
+format: global_step
+status: pending
+step_id: G-002
+name: plan-analysis
+title: Plan analysis
+parent_plan: 2026-05-07-plan-manager-mcp-api
+intent: 'Implement analytical commands that operate over the plan graph: branch retrieval
+
+  (plan_branch) for execution context assembly, and parallelism mapping
+
+  (plan_parallelism) for scheduling independent work streams. Both commands are
+
+  disk-read only. No session required.
+
+  '
+depends_on:
+- G-001
+responsibilities:
+- 'plan_branch: given plan_id and node_id, return the full ancestor chain from spec
+  down to the requested node'
+- 'plan_parallelism: analyse dependency edges and return groups of nodes that can
+  be executed in parallel'
+- Both commands operate on disk; no session or lock required
+tactical_decomposition:
+- id: T-001
+  name: branch-retrieval
+  summary: 'plan_branch: ancestor chain from spec down to node_id'
+- id: T-002
+  name: parallelism-map
+  summary: 'plan_parallelism: DAG + topological waves'
+non_goals:
+- Do not implement vector or semantic operations (G-003, G-004)
+- Do not implement diagnostics (G-005)
+observations_template:
+- Does plan_branch return the full ancestor chain including spec?
+- Does plan_parallelism correctly identify independent node groups?
+- Are both commands disk-read only with no session dependency?
+parent_step_id: null
+implementation_notes: Graph analysis algorithms require careful dependency edge interpretation.
+  Both commands must operate on disk only without session requirements.
+model_assignment_spec: 'Global step: implement the 2 tactical steps. Each provides
+  specific analytical commands for plan graph analysis.'

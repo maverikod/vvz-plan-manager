@@ -1,0 +1,100 @@
+format: tactical_step
+status: pending
+step_id: T-002
+name: config-validator
+title: PlanManagerConfigValidator
+parent_step_id: G-006
+parent_step_name: config-system
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml (technical_spec.config_system)
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-006-config-system/README.yaml
+intent: 'Implement PlanManagerConfigValidator: extends SimpleConfigValidator with
+
+  plan_manager-specific semantic checks (plans_root exists, editor_lock_dir
+
+  writable, editor_api_url and embed_url are non-empty URL strings).
+
+  Calls SimpleConfigValidator first, then adds own checks.
+
+  '
+context_from_technical_spec:
+  config_system: 'PlanManagerConfigValidator calls SimpleConfigValidator first, then
+    adds own checks. Do not reimplement SimpleConfigValidator internals. Config format
+    is JSON only.
+
+    '
+  adapter_components_do_not_touch:
+  - core/config/simple_config_validator.py
+  - core/config/config_loader.py
+  - core/config/simple_config.py
+  implementation_order: 'T-001 (PlanManagerConfigSection) must be implemented before
+    T-002, because the validator references the config model.
+
+    '
+depends_on:
+- G-006/T-001
+responsibilities:
+- Extend SimpleConfigValidator with PlanManagerConfigValidator
+- Call super().validate() first; then add plan_manager checks
+- Check plans_root path is a directory or can be created
+- Check editor_lock_dir path exists or can be created
+- Check editor_api_url is a non-empty URL string (format check only; no HTTP call)
+- Check embed_url is a non-empty URL string (format check only; no HTTP call)
+- Return list of validation errors; empty list means valid
+non_goals:
+- Do not reimplement SimpleConfigValidator internals
+- Do not make live HTTP calls to embed_url
+owned_code_paths:
+- plan_manager/config/config_validator.py
+owned_test_paths:
+- tests/test_config_validator.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- core/config/simple_config_validator.py
+- core/config/config_loader.py
+- core/config/simple_config.py
+- plan_manager/commands/
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: config-validator
+  summary: PlanManagerConfigValidator extending SimpleConfigValidator
+model_assignment_spec:
+  task: "Implement plan_manager/config/config_validator.py.\nPlanManagerConfigValidator(SimpleConfigValidator):\n\
+    \  validate(config: PlanManagerConfigSection) -> list[str]:\n    errors = super().validate(config)\n\
+    \    Add plan_manager checks: plans_root directory, editor_lock_dir writable,\n\
+    \    editor_api_url non-empty URL, embed_url non-empty URL.\n    Return errors\
+    \ list (empty = valid).\nDo not make HTTP calls. Do not reimplement SimpleConfigValidator.\n"
+  allowed_edit_paths:
+  - plan_manager/config/config_validator.py
+  - tests/test_config_validator.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - core/config/simple_config_validator.py
+  - core/config/config_loader.py
+  - core/config/simple_config.py
+  - plan_manager/commands/
+  - .venv/
+  consumed_contracts:
+  - PlanManagerConfigSection from G-006/T-001 (plan_manager/config/config_section.py)
+  - SimpleConfigValidator from adapter (core/config/simple_config_validator.py)
+  deliverables:
+  - PlanManagerConfigValidator extending SimpleConfigValidator
+  - Semantic checks for plans_root, editor_lock_dir, editor_api_url, embed_url
+  - Returns list of error strings; empty list means valid
+verification:
+- Validator returns empty list for a fully valid config
+- Validator returns error for missing editor_api_url
+- Validator returns error for missing embed_url
+- super().validate() is called before plan_manager checks
+acceptance_criteria:
+- All four plan_manager fields validated (plans_root, editor_lock_dir, editor_api_url,
+  embed_url)
+- SimpleConfigValidator called first
+- No live HTTP calls
+observations_template:
+- Did the validator return empty list for a valid config?
+- Were plan_manager-specific errors detected correctly?
+- Was SimpleConfigValidator called before plan_manager checks?

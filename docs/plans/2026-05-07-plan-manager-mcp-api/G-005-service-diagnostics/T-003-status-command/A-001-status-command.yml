@@ -1,0 +1,68 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: status-command
+title: PlanServiceStatusCommand aggregating plan_stats, git_health, worker state
+parent_step_id: T-003
+parent_step_name: status-command
+parent_global_id: G-005
+parent_global_name: service-diagnostics
+technical_specification_excerpt: "plan_service_status() -> ServiceStatusResponse\n\
+  No required params. plans_root and editor_lock_dir from config.\nServiceStatusResponse\
+  \ fields:\n  plan_stats: list of PlanStatsRecord\n  git_health: list of GitHealthRecord\n\
+  \  worker_status: {state, queue_depth, last_run_ts}\n  service_version: str\nNo\
+  \ session required. Read-only.\nThis is NOT plan_status (G-001/T-003) which is per-node\
+  \ fill status.\n"
+global_step_context: 'G-005: Service diagnostics. Single MCP command aggregating all
+  collectors.
+
+  collect_plan_stats from G-005/T-001 (plan_manager/diagnostics/plan_stats.py).
+
+  collect_git_health from G-005/T-002 (plan_manager/diagnostics/git_health.py).
+
+  VectorizationWorker from G-004/T-002 (plan_manager/worker.py).
+
+  '
+tactical_step_context: "T-003: status-command. Single atomic step owning all of plan_service_status.py.\n\
+  \nexecute() workflow:\n  1. Resolve plans_root, editor_lock_dir from config\n  2.\
+  \ plan_stats = collect_plan_stats(plans_root, editor_lock_dir)\n  3. git_health\
+  \ = collect_git_health(plans_root)\n  4. worker_status = {state: worker.state, queue_depth:\
+  \ worker.queue_depth,\n                      last_run_ts: worker.last_run_ts}\n\
+  \  5. Return ServiceStatusResponse\n\nVectorizationWorker instance: obtained from\
+  \ a module-level singleton or\npassed via dependency injection at startup. The command\
+  \ accesses it\nthrough a registered accessor, not by creating a new instance.\n"
+atomic_operation: Implement PlanServiceStatusCommand in plan_manager/commands/plan_service_status.py
+intent: 'Create plan_manager/commands/plan_service_status.py with PlanServiceStatusCommand
+
+  aggregating the two collector modules and worker state.
+
+  '
+responsibilities:
+- Implement PlanServiceStatusCommand with name plan_service_status
+- Call collect_plan_stats, collect_git_health, read worker state
+- Return ServiceStatusResponse
+- No session required; no required params
+code_file_target: plan_manager/commands/plan_service_status.py
+estimated_lines: 75
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on:
+- G-005/T-001/A-002 collect_plan_stats from plan_manager/diagnostics/plan_stats.py
+- G-005/T-002/A-001 collect_git_health from plan_manager/diagnostics/git_health.py
+- G-004/T-002/A-002 VectorizationWorker from plan_manager/worker.py
+deliverables:
+- PlanServiceStatusCommand with complete MCP command interface
+- ServiceStatusResponse with plan_stats, git_health, worker_status, service_version
+- No required params in schema
+constraints:
+- Do not modify plan_status.py (owned by G-001/T-003)
+- Do not create a new VectorizationWorker; read from singleton/accessor
+- Disk-read only; no session
+acceptance_criteria:
+- plan_service_status returns all three diagnostic sections
+- No session required
+- Command name and schema clearly distinct from plan_status
+observations_template:
+- Did plan_service_status return plan_stats, git_health, and worker_status?
+- Was vectorization coverage from plan_stats accurate?
+- Was worker state correctly reflected?
+- Is plan_service_status schema clearly distinct from plan_status?

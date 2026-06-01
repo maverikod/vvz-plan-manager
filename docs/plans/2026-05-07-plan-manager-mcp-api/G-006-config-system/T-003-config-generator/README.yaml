@@ -1,0 +1,95 @@
+format: tactical_step
+status: pending
+step_id: T-003
+name: config-generator
+title: PlanManagerConfigGenerator
+parent_step_id: G-006
+parent_step_name: config-system
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml (technical_spec.config_system)
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-006-config-system/README.yaml
+intent: 'Implement PlanManagerConfigGenerator: extends SimpleConfigGenerator to produce
+
+  a JSON config template with plan_manager section pre-populated with defaults.
+
+  Calls SimpleConfigGenerator first, then injects the plan_manager section.
+
+  '
+context_from_technical_spec:
+  config_system: 'PlanManagerConfigGenerator calls SimpleConfigGenerator, injects
+    plan_manager section. Do not reimplement SimpleConfigGenerator internals. Config
+    format is JSON only. Output is a JSON string or dict with all sections.
+
+    '
+  adapter_components_do_not_touch:
+  - core/config/simple_config_generator.py
+  - core/config/config_loader.py
+  - core/config/simple_config.py
+  implementation_order: 'T-001 (PlanManagerConfigSection) and T-002 (PlanManagerConfigValidator)
+    must be implemented before T-003, as generator references both.
+
+    '
+depends_on:
+- G-006/T-001
+- G-006/T-002
+responsibilities:
+- Extend SimpleConfigGenerator with PlanManagerConfigGenerator
+- Call super().generate() first to get adapter config dict
+- Inject plan_manager section with all five fields and their defaults
+- Return a JSON-serializable dict (or JSON string) for the full config
+- Config format is JSON only
+non_goals:
+- Do not reimplement SimpleConfigGenerator internals
+- Do not add YAML or TOML output formats
+owned_code_paths:
+- plan_manager/config/config_generator.py
+owned_test_paths:
+- tests/test_config_generator.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- core/config/simple_config_generator.py
+- core/config/config_loader.py
+- core/config/simple_config.py
+- plan_manager/commands/
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: config-generator
+  summary: PlanManagerConfigGenerator extending SimpleConfigGenerator
+model_assignment_spec:
+  task: "Implement plan_manager/config/config_generator.py.\nPlanManagerConfigGenerator(SimpleConfigGenerator):\n\
+    \  generate() -> dict:\n    config = super().generate()\n    config[\"plan_manager\"\
+    ] = PlanManagerConfigSection().dict() (defaults only)\n    return config\nOutput\
+    \ is JSON-serializable dict. Do not reimplement SimpleConfigGenerator.\n"
+  allowed_edit_paths:
+  - plan_manager/config/config_generator.py
+  - tests/test_config_generator.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - core/config/simple_config_generator.py
+  - core/config/config_loader.py
+  - core/config/simple_config.py
+  - plan_manager/commands/
+  - .venv/
+  consumed_contracts:
+  - PlanManagerConfigSection from G-006/T-001 (plan_manager/config/config_section.py)
+  - SimpleConfigGenerator from adapter (core/config/simple_config_generator.py)
+  deliverables:
+  - PlanManagerConfigGenerator extending SimpleConfigGenerator
+  - generate() returns dict with plan_manager section populated with defaults
+  - Output is JSON-serializable
+verification:
+- generate() returns dict containing plan_manager section
+- plan_manager section has all five fields with correct defaults
+- super().generate() result is preserved in output
+- Output is JSON-serializable (json.dumps does not raise)
+acceptance_criteria:
+- Generated config contains plan_manager section with all five fields
+- SimpleConfigGenerator called first
+- Config is JSON only
+observations_template:
+- Did generate() return the plan_manager section with correct defaults?
+- Was the adapter config from super().generate() preserved?
+- Was the output JSON-serializable?

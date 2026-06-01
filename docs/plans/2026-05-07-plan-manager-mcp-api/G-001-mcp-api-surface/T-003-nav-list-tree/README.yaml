@@ -1,0 +1,152 @@
+format: tactical_step
+status: pending
+step_id: T-003
+name: nav-list-tree
+title: Navigation -- list and tree
+parent_step_id: G-001
+parent_step_name: mcp-api-surface
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-001-mcp-api-surface/README.yaml
+intent: 'Implement read-only navigation commands that list plans and render the plan
+
+  node tree: plan_list (enumerate all plans), plan_tree (render full or subtree),
+
+  plan_status (per-node fill status based on file existence; content check via editor).
+
+  No session required. Every node response includes lock_status.
+
+  '
+context_from_technical_spec:
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, error
+    wrapping.
+
+    Command classes implement get_schema(), validate_params(), execute(), get_metadata().
+
+    '
+  plans_root_convention: 'plans_root resolved from server config; never from MCP command
+    params.
+
+    '
+  lock_status: 'lock_status is determined by reading editor lock files via lock_checker
+    module (T-002).
+
+    Values: locked_by_editor or unlocked.
+
+    '
+  scope_distinction: 'plan_status here reports per-node fill status (file exists/empty/stub)
+    via editor.validate_file.
+
+    plan_service_status (G-005/T-003) is the service-level diagnostic. Do not confuse.
+
+    '
+  editor_validate_file:
+    editor_api_url: Base URL of yaml_editor OpenAPI HTTP endpoint. From PlanManagerConfigSection;
+      never from MCP params.
+    editor_identity: 'yaml_editor MCP server (project yaml_editor, project_id: 84ec55c8-cefd-480d-beb6-fa1d35e60362).
+
+      Built on mcp_proxy_adapter. Internally uses AbstractFormatter.
+
+      plan_manager calls via direct HTTP OpenAPI, NOT via MCP.
+
+      '
+    editor_validate_file_response: "Nested success semantics (mcp-proxy-adapter pattern):\n\
+      \  HTTP 200 is NOT success by itself.\n  Must check: data[\"result\"][\"success\"\
+      ] == True before reading data[\"result\"][\"status\"]\n  status: present | empty\
+      \ | stub | error\n  fill_status values returned: present, empty, stub, missing,\
+      \ unknown\n  On result.success=False or any error: fill_status=unknown with\
+      \ error_code (non-fatal)\n"
+    http_call: GET <editor_api_url>/validate?file=<absolute_path>
+depends_on:
+- T-001
+- T-002
+responsibilities:
+- plan_list: list plan IDs and metadata from plans_root
+- plan_tree: render node tree for a plan from root or given node_id
+- plan_status: per-node fill status; walk tree via plan_manager, check content via
+    editor.validate_file
+- Include lock_status in every node record
+- All commands disk-read only; no writes
+non_goals:
+- Do not aggregate service-level diagnostics (G-005)
+- Do not read file body content directly; content check delegated to editor.validate_file
+owned_code_paths:
+- plan_manager/commands/plan_list.py
+- plan_manager/commands/plan_tree.py
+- plan_manager/commands/plan_status.py
+- plan_manager/commands/nav_shared.py
+owned_test_paths:
+- tests/test_nav_list_tree.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/buf_open.py
+- plan_manager/lock_checker.py (read-only; owned by T-002)
+- plan_manager/diagnostics/
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: plan-scanner
+  summary: nav_shared.py with scan_plans, build_node_record, get_lock_status, list_children
+- id: A-002
+  name: nav-list-command
+  summary: PlanListCommand in plan_list.py
+- id: A-003
+  name: nav-tree-command
+  summary: PlanTreeCommand in plan_tree.py
+- id: A-004
+  name: nav-status-command
+  summary: PlanStatusCommand in plan_status.py; calls editor.validate_file per node
+model_assignment_spec:
+  task: 'Implement plan_list, plan_tree, and plan_status MCP commands.
+
+    All three are disk-read only. No session required.
+
+    Every node record must include lock_status (from lock_checker.get_lock_status).
+
+    plan_status calls editor.validate_file(file_path) via HTTP for each node
+
+    to determine fill status (present/empty/stub). editor_api_url from config.
+
+    plans_root resolved from config, not from command params.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/commands/plan_list.py
+  - plan_manager/commands/plan_tree.py
+  - plan_manager/commands/plan_status.py
+  - plan_manager/commands/nav_shared.py
+  - tests/test_nav_list_tree.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - plan_manager/lock_checker.py
+  - plan_manager/diagnostics/
+  - .venv/
+  consumed_contracts:
+  - resolve_node_id from T-001 (plan_manager/path_resolver.py)
+  - get_lock_status from T-002 (plan_manager/lock_checker.py)
+  - editor.validate_file via HTTP GET editor_api_url/validate?file=<path>
+  deliverables:
+  - nav_shared.py with scan_plans, build_node_record, list_children, get_lock_status
+    wrapper
+  - PlanListCommand returning list of plan metadata dicts
+  - PlanTreeCommand with required plan_id and optional node_id and depth
+  - PlanStatusCommand calling editor.validate_file per node and returning aggregated
+    fill status
+  - lock_status in every node record
+verification:
+- plan_list enumerates all plans in plans_root
+- plan_tree returns correct node hierarchy
+- plan_status calls editor.validate_file for each node and aggregates results
+- lock_status present in every node record
+- No writes to disk during any navigation command
+acceptance_criteria:
+- All three commands callable without session
+- lock_status present in all returned node records
+- plan_status correctly delegates content check to editor.validate_file
+observations_template:
+- Did plan_list find all plans in plans_root?
+- Did plan_tree render the correct tree structure?
+- Did plan_status call editor.validate_file for each node?
+- Was lock_status present in all returned node records?

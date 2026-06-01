@@ -1,0 +1,73 @@
+format: atomic_step
+status: pending
+step_id: A-001
+name: config-section
+title: PlanManagerConfigSection Pydantic model with updated fields
+parent_step_id: T-001
+parent_step_name: config-section
+parent_global_id: G-006
+parent_global_name: config-system
+technical_specification_excerpt: "Plan Manager MCP API - config system:\nConfig format\
+  \ is JSON only; no YAML or TOML.\nplan_manager adds its own config section on top\
+  \ of the adapter config system.\n\nPlanManagerConfigSection fields:\n  plans_root:\
+  \ str, default ./plans\n    Path to plan git repos directory.\n  embed_url: str,\
+  \ required\n    URL of external embedding service.\n  embed_model: str, default\
+  \ default\n    Model name for embedding service.\n  editor_lock_dir: str, default\
+  \ /tmp/editor_locks\n    Directory where the editor places lock files.\n    plan_manager\
+  \ reads these files to detect locked nodes.\n  editor_api_url: str, required\n \
+  \   Base URL of the editor MCP server OpenAPI endpoint.\n    Used by plan_status\
+  \ and plan_validate to call editor.validate_file.\n\nAdapter components NOT to reimplement:\n\
+  \  core/config/config_loader.py\n  core/config/simple_config_generator.py\n  core/config/simple_config_validator.py\n\
+  \  core/config/simple_config.py\n"
+global_step_context: 'G-006: Config system.
+
+  PlanManagerConfigSection is the foundation model consumed by all plan_manager components.
+
+  T-001 has no dependency on G-001 and can be implemented in parallel with G-001.
+
+  T-002 (validator) and T-003 (generator) depend on T-001.
+
+  '
+tactical_step_context: "T-001: Config section. Single atomic step owning all of config_section.py.\n\
+  \nPlanManagerConfigSection(BaseModel):\n  plans_root: str = \"./plans\"\n  embed_url:\
+  \ str  # required; no default\n  embed_model: str = \"default\"\n  editor_lock_dir:\
+  \ str = \"/tmp/editor_locks\"\n  editor_api_url: str  # required; no default\n\n\
+  Integration:\n  Extend SimpleConfigModel to include a plan_manager field of type\
+  \ PlanManagerConfigSection.\n\nNote: tmpfs_root and default_ttl from the old architecture\
+  \ are removed.\nSessions and worktrees no longer exist in plan_manager.\n"
+atomic_operation: Implement PlanManagerConfigSection Pydantic model in plan_manager/config/config_section.py
+intent: 'Create plan_manager/config/config_section.py with PlanManagerConfigSection.
+
+  Five fields: plans_root, embed_url, embed_model, editor_lock_dir, editor_api_url.
+
+  Integrate with SimpleConfigModel as extension section.
+
+  '
+responsibilities:
+- Implement PlanManagerConfigSection with all five fields and correct defaults
+- embed_url and editor_api_url are required (no defaults)
+- Integrate with SimpleConfigModel
+- JSON-only config
+code_file_target: plan_manager/config/config_section.py
+estimated_lines: 35
+max_context_for_qwen63_8k: This atomic step is self-contained
+depends_on: []
+deliverables:
+- PlanManagerConfigSection Pydantic model with five fields
+- Integration with SimpleConfigModel
+constraints:
+- Do not reimplement adapter config components
+- No YAML or TOML support
+- tmpfs_root and default_ttl must NOT be included (old architecture)
+acceptance_criteria:
+- PlanManagerConfigSection parses a valid JSON config correctly
+- Default values applied when optional fields absent
+- embed_url raises ValidationError when missing
+- editor_api_url raises ValidationError when missing
+- SimpleConfigModel extended with plan_manager section
+observations_template:
+- Did PlanManagerConfigSection parse a complete JSON config correctly?
+- Were defaults applied for optional fields?
+- Was embed_url correctly required?
+- Was editor_api_url correctly required?
+- Is tmpfs_root absent from the model?

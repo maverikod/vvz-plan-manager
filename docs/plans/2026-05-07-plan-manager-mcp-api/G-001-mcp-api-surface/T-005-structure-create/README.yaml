@@ -1,0 +1,112 @@
+format: tactical_step
+status: pending
+step_id: T-005
+name: structure-create
+title: Structure -- plan create
+parent_step_id: G-001
+parent_step_name: mcp-api-surface
+source_documents:
+- docs/plans/2026-05-07-plan-manager-mcp-api/README.yaml
+- docs/plans/2026-05-07-plan-manager-mcp-api/G-001-mcp-api-surface/README.yaml
+intent: 'Implement plan_create: initialize a new plan as a git repository in plans_root
+
+  with a required top-level README.md stub file and initial git commit.
+
+  No session required. No lock check needed (new plan has no nodes yet).
+
+  The stub file content is minimal (heading only); the editor fills content later.
+
+  '
+context_from_technical_spec:
+  framework: 'mcp_proxy_adapter handles routing, validation, serialization, error
+    wrapping.
+
+    '
+  plans_root_convention: 'plans_root resolved from server config; never from MCP command
+    params.
+
+    '
+  node_id_format: 'The spec node (root README.md) is the initial required file.
+
+    Its node_id is the literal string spec mapping to README.md at plan root.
+
+    '
+  git_scope: 'plan_create: git init; git add README.md; git commit -m "Initialize
+    plan"
+
+    Stub content: # <plan_id>\n (heading line only; editor fills body later)
+
+    '
+  editor_boundary: 'plan_manager creates the stub file on disk. The editor is not
+    involved.
+
+    The model will later call editor.open() to fill in the content.
+
+    '
+depends_on:
+- T-001
+responsibilities:
+- Initialize new git repo under plans_root/<plan_id>/
+- Create README.md stub (heading only)
+- Commit stub to git (initial commit)
+- Reject with PLAN_ALREADY_EXISTS if plan_id directory already exists
+- Return plan_id, repo_path, commit_sha
+non_goals:
+- Adding global or tactical nodes is T-006 scope
+- Vectorization of the initial README.md is G-004 scope
+- Reading or writing file body content beyond the heading stub
+owned_code_paths:
+- plan_manager/commands/plan_create.py
+owned_test_paths:
+- tests/test_plan_create.py
+owned_docs_paths: []
+forbidden_paths:
+- mcp_proxy_adapter/
+- plan_manager/commands/plan_add.py
+- plan_manager/commands/plan_mutate.py
+- .venv/
+- tests/ (only files listed in owned_test_paths are allowed)
+atomic_steps:
+- id: A-001
+  name: plan-initializer
+  summary: init_plan_repo, create_stub_readme, make_initial_commit helpers
+- id: A-002
+  name: plan-create-command
+  summary: PlanCreateCommand class
+model_assignment_spec:
+  task: 'Implement plan_create MCP command. Initializes a git repo under plans_root/<plan_id>/
+
+    with README.md stub (heading only) and one initial git commit.
+
+    plans_root from config; never from params.
+
+    Returns plan_id, repo_path, commit_sha.
+
+    '
+  allowed_edit_paths:
+  - plan_manager/commands/plan_create.py
+  - tests/test_plan_create.py
+  forbidden_edit_paths:
+  - mcp_proxy_adapter/ (any file)
+  - plan_manager/commands/plan_add.py
+  - plan_manager/commands/plan_mutate.py
+  - .venv/
+  consumed_contracts:
+  - resolve_node_id from T-001 (plan_manager/path_resolver.py)
+  deliverables:
+  - PlanCreateCommand with required plan_id and optional title string for heading
+  - Rejects duplicate plan_id with PLAN_ALREADY_EXISTS
+  - Returns plan_id, repo_path, commit_sha
+  - Stub README.md content: '# <title or plan_id>\n'
+verification:
+- plan_create produces valid git repo with one commit
+- README.md present with heading stub
+- Duplicate plan_id returns PLAN_ALREADY_EXISTS
+acceptance_criteria:
+- New plan directory exists under plans_root
+- git log shows exactly one initial commit
+- Duplicate creation rejected with stable error code
+observations_template:
+- Did plan_create initialize a valid git repo?
+- Is README.md present with a heading stub after creation?
+- Is duplicate plan_id rejected correctly?
