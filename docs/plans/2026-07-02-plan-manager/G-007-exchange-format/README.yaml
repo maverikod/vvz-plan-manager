@@ -1,0 +1,38 @@
+step_id: G-007
+name: exchange-format
+description: >
+  This step realizes ExchangeFormat (C-021): the file import/export
+  representation of a plan in the standard directory layout of the planning
+  standard, retained strictly as an exchange format and never as the
+  operational store. File formats are fixed: the HRS is Markdown, and every
+  other artifact is YAML — the machine specification, the global and tactical
+  step descriptors, and one file per atomic step, named per the exchange
+  layout described by PlanSchema (C-006).
+
+  Plan export materializes a plan (C-001) — optionally at a named revision,
+  using checkout-read over the version store (C-018) — into that file tree;
+  plan import ingests such a tree into the database. HRS import parses a
+  human-authored source specification, assigns missing labels, and stores the
+  paragraphs; HRS export regenerates the Markdown byte-stable, reproducing
+  stored paragraph text byte-identically. Exported files are derived snapshots
+  and are never read back as truth except through explicit import — import is
+  the single path from files to the source of truth.
+
+  Safe YAML emission on the export path is normative: any scalar containing a
+  colon-space, a leading dash, quotes, a hash sign, or other YAML
+  metacharacters is emitted as a quoted or block scalar, and every emitted
+  file must round-trip through the standard YAML parser to an identical value
+  tree before the export completes — a failed round-trip aborts the export.
+  Because plan content is stored structurally in the database, YAML quoting
+  hazards exist only at export time and are fully handled by this rule.
+concepts: [C-021]
+relations:
+- { from_concept: C-021, to_concept: C-001, type: consumes }
+- { from_concept: C-021, to_concept: C-001, type: produces }
+- { from_concept: C-021, to_concept: C-006, type: uses }
+- { from_concept: C-021, to_concept: C-018, type: uses }
+- { from_concept: C-021, to_concept: C-036, type: implements }
+source_labels: ["{v1c8}", "{k4u7}", "{p8q4}", "{e2b8}", "{v8y2}"]
+depends_on: [G-001]
+tactical_steps: []
+status: draft

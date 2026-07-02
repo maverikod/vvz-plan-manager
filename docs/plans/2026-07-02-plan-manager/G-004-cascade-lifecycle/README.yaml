@@ -1,0 +1,46 @@
+step_id: G-004
+name: cascade-lifecycle
+description: >
+  This step realizes CascadeChange (C-016): the transactional mechanism through
+  which all plan mutations flow strictly top-down per the planning standard.
+  Direct edits of the MRS are forbidden outside a cascade and the server rejects
+  them — MRS entities are cascade-only at any artifact status. The broader
+  mutation regime depends on status: while an artifact is draft or
+  ready_for_review, direct mutation commands operate on the plan head; once
+  an artifact is frozen, any change to it or above it is rejected outside an open
+  cascade and must go through the cascade transaction.
+
+  The cascade mechanics are normative. Opening a cascade acquires the per-plan
+  advisory lock (C-019) and anchors a change set at the current plan head
+  revision, returning a cascade id that every mutation command inside the
+  transaction must carry. Every mutation inside the transaction writes new node
+  revisions attributed to the cascade in the version store (C-018) without
+  moving the head, so intermediate states are never visible to plan consumers.
+  One plan admits one open cascade at a time.
+
+  Preview reports the accumulated change set against the head, the needs_review
+  blast radius computed by the invalidation rule, and the mechanical gate
+  (C-012) verdict for the cascade state. Commit atomically advances the plan
+  head to include the change set only when that gate run is green — it is
+  refused while the gate is red — and releases the lock; abort discards the
+  cascade's revisions, leaves the plan untouched, and releases the lock.
+  Publication is therefore atomic: a new state becomes visible only after the
+  full cascade has passed its gate.
+
+  needs_review propagation is automatic within a cascade, driven through the
+  status model (C-007): when any node changes, all its direct children are
+  marked needs_review, recursively as reviewed children change. HRS changes
+  trigger MRS re-projection; MRS changes invalidate all global steps; a changed
+  global step invalidates its tactical steps; a changed tactical step
+  invalidates its atomic steps. needs_review is set only by this propagation,
+  never by direct request.
+concepts: [C-016]
+relations:
+- { from_concept: C-016, to_concept: C-019, type: uses }
+- { from_concept: C-016, to_concept: C-018, type: uses }
+- { from_concept: C-016, to_concept: C-012, type: depends_on }
+- { from_concept: C-016, to_concept: C-007, type: uses }
+source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{i5n7}", "{p6h1}", "{b4x2}"]
+depends_on: [G-001, G-003]
+tactical_steps: []
+status: draft

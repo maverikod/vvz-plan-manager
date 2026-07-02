@@ -1,0 +1,115 @@
+step_id: G-005
+name: api-surface
+description: >
+  This step realizes the command surface of the server as a closed, normative
+  inventory (C-024) of commands grouped by entity with stable prefixes: plan
+  catalog and dashboard commands (including export/import), paragraph commands
+  over the HRS, HRS import/export, concept and relation commands over the MRS,
+  uniform step commands, graph queries, branch and prompt commands, the
+  mechanical validation and semantic scoring entry points, cascade transaction
+  commands, and the server self-description command. The groups define the
+  working behavior of each tool at the level of inputs, effects, and outputs.
+  The editing (mutating) subset is enumerated exhaustively — plan creation and
+  import, HRS import, label assignment, non-binding marking, concept
+  add/update/remove, relation add/remove, step create/update/move/delete/set-status, and
+  cascade begin/commit/abort — and every other command is read-only. A command
+  not named in the inventory must not exist in the registry; adding or removing
+  a command is a cascade change to the source specification first, then to the
+  code. The server merges no unrelated concerns: no file editing surface for
+  non-plan files, no code analysis, no proxying of third-party commands.
+
+  Command behavior discipline: read commands never mutate disk; write commands
+  are explicit, validate before acting, and verify their own result by
+  re-reading after write; destructive or bulk operations expose a dry-run mode
+  that defaults to on. Every command resolves plan identity against the database
+  catalog, and database connection parameters and storage locations come from
+  server configuration only — never from request parameters. Behaviors per
+  group: plan creation initializes a plan aggregate (C-001) at revision zero
+  with empty HRS and MRS; the catalog listing returns each plan with its status
+  summary; the plan dashboard returns artifact counts per level, status
+  distribution, gate verdict, semantic index with trust, and the ranked weakest
+  branches. Paragraph commands (C-002) list paragraphs with label, binding flag,
+  and position, resolve one label to text, insert fresh unique labels into
+  unlabeled binding paragraphs (the only textual edit permitted in the HRS), and
+  wrap or unwrap non-binding markers — all line-precise, leaving surrounding
+  prose byte-identical. MRS commands read concepts and relations, and their
+  mutating forms require an open cascade and enforce required fields, identifier
+  discipline, the seven relation types, endpoint existence, and source-label
+  resolution at write time, so a mechanically invalid MRS entry cannot be
+  written at all; reverse coverage queries answer which steps reference a
+  concept and which HRS paragraphs justify it. Step commands (C-005) return one
+  step with resolved context, return the plan tree with statuses, patch fields
+  under the level schema re-validating touched references, move steps rewriting
+  every reference to the moved id in one operation, enforce the legal status
+  transition graph refusing transitions reserved for cascade propagation, and
+  scaffold new steps with the level-specific required-field skeleton, status
+  draft, and the next free zero-padded id, rejecting duplicates. Graph commands
+  expose the dependency neighborhood, the topological execution order (failing
+  with the cycle listed when ordering is impossible), the parallel wave map, and
+  the read-only impact query of C-009. Branch commands assemble the
+  deterministic executor prompt (C-011) with its token estimate against the
+  plan's user-set context budget — the budget is plan data supplied by the user
+  (default 4000 tokens), not server configuration — dump all prompts as an
+  explicitly non-authoritative
+  derived snapshot, and rank branches by ascending semantic index. Validation
+  runs the mechanical gate (C-012) as pure read with a scope selector, fail-fast
+  flag, and report or JSON output, every finding naming check id, offending
+  artifact path, and exact items; scoring runs the semantic layer (C-013)
+  refusing scopes that have not passed the gate in the same tree state, returns
+  index, trust, and color verdict with per-estimator internals only below
+  threshold or on request, and degrades explicitly when embeddings are down.
+
+  CommandContract (C-023) is the uniform command-class standard: identity
+  attributes (name, version, one-line non-empty summary, category, author,
+  email), a declared result type defining its own result schema, and queue
+  opt-in only for the commands declared long-running. The machine-readable input
+  schema returns the strict subset the platform validator actually enforces —
+  object type, every public parameter with type and description, an exact
+  required list, additionalProperties always explicit and false, enums for fixed
+  modes, defaults only where execution actually applies them, numeric bounds,
+  and array item types. Because platform schema validation is shallow, every
+  command with nested parameters implements the missing depth in its semantic
+  validation step — first the schema layer, then plan existence, cascade id
+  validity, revision existence, mutual exclusion, and ordering constraints,
+  raising a validation error with field and details before any queued work is
+  accepted. The metadata dictionary carries the full documentation — detailed
+  description, per-parameter descriptions with types, required flags, defaults
+  and examples, return value with success and error shapes, usage examples as
+  plain parameter dictionaries, error cases keyed by stable string code with
+  solution, and best practices — and must never contradict the schema.
+
+  ErrorModel (C-026) is the two-layer error contract: platform exceptions map to
+  JSON-RPC codes (invalid params, method not found, internal, domain error),
+  while command-level failures return an error result carrying a stable domain
+  string code — plan not found, step not found, revision not found, cascade
+  required, cascade conflict, frozen artifact, gate red, verdict stale,
+  embeddings unavailable, import invalid, and their peers. Every code listed in
+  a command's error cases must be actually returnable by that command, and every
+  returnable code must be listed. InfoCommand (C-025) returns the server
+  self-description: identity (product name, package version, platform version),
+  build metadata (build date, image tag), runtime summary (database
+  connectivity, embedding service reachability, open cascade count), and the
+  full operator documentation text rendered at build time from the single
+  documentation source — the same source that produces the installed man and
+  info pages, so API documentation and installed documentation cannot diverge.
+
+  Two startup invariants guard the surface. Registration completeness: after
+  registration the registry contents are compared against the normative
+  inventory, and a missing command, an unexpected extra command, or a duplicate
+  name aborts startup with a report naming the exact difference — the server
+  never starts with a partial API surface, and "implemented but not registered"
+  is a startup failure, not a silent gap. No-stub guarantee: at startup every
+  registered command is probed — its schema must be explicit and complete, its
+  metadata must contain every required key with non-empty content, its summary
+  must be non-empty — and any probe failure aborts startup, so a command is
+  either implemented completely or not registered at all, and placeholder
+  implementations are never reachable through a registered command.
+concepts: [C-023, C-024, C-025, C-026]
+relations:
+- { from_concept: C-024, to_concept: C-023, type: uses }
+- { from_concept: C-025, to_concept: C-023, type: implements }
+- { from_concept: C-023, to_concept: C-026, type: uses }
+source_labels: ["{r1c7}", "{z5t4}", "{p8q4}", "{a1z3}", "{k7r9}", "{m4c2}", "{q6d8}", "{r9f1}", "{z2b5}", "{v6t8}", "{v8y2}", "{b3e6}", "{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{g9b1}", "{w6t5}", "{u3x7}", "{n5c2}", "{d7e4}", "{o9f2}", "{v4n6}", "{d8o2}"]
+depends_on: [G-002, G-003, G-004, G-006, G-007]
+tactical_steps: []
+status: draft

@@ -1,0 +1,106 @@
+step_id: G-003
+name: verification
+description: >
+  This step realizes the primary product of the server: a two-layer verification
+  mechanism used during plan authoring, consisting of a deterministic mechanical
+  gate (binary: fix-here or pass) and a semantic completeness measurement (a
+  normalized numeric index). Mechanical findings are never averaged into the
+  semantic index: a branch with one broken reference is a broken branch, not a
+  lowered score. The two layers form a strictly ordered pipeline — mechanics
+  catches mechanical defects, semantics runs only on mechanically clean material.
+  This is a correctness rule, not an optimization: every semantic estimator
+  presupposes that references resolve, structures parse, and coverage sets are
+  computable, and an index computed over broken mechanics is misleading noise,
+  strictly worse than no index.
+
+  MechanicalGate (C-012) is deterministic and exhaustive over mechanics: YAML
+  parseability, directory-name/step-id agreement, identifier pattern and
+  zero-padding conformance, step-id uniqueness within scope, priority uniqueness
+  within (target file, TS), a single non-empty project-relative target file per
+  atomic step, structured inputs/outputs, resolution of every reference
+  (depends_on targets, concept ids into the MRS, relation endpoints and types,
+  source labels into binding HRS paragraphs), and the on-the-fly set-theoretic
+  coverage checks over C-010 views. Checks run in a fixed published order —
+  parse, identity, uniqueness, reference resolution, coverage — each check sees
+  the whole tree and emits findings sorted by (artifact path, check id); with
+  fail-fast the run stops only at a check-group boundary so partial output stays
+  deterministic, and two runs over the same tree state produce byte-identical
+  reports. Output is machine-checkable: a per-check PASS/FAIL report with
+  offending items plus a JSON mode with an overall green flag, green only when
+  every check passes; parser sanity gates (expected non-zero entity counts) make
+  parsing regressions fail loudly. Occurrences are always classified by artifact
+  path, never by bare step number. The gate is the precondition for semantic
+  measurement: a branch with any mechanical finding is not measured, and gating
+  is per-branch, so a mechanically clean branch is measurable while sibling
+  branches still carry findings — but the plan-level semantic index is published
+  only when the entire plan is gate-green.
+
+  SemanticIndex (C-013) measures a branch as the cosine between the concept
+  vector the branch must express (its HRS slice mapped through source labels
+  onto the MRS basis, c_required) and the concept vector it actually expresses
+  across GS, TS, and AS (c_actual) — computed in the concept basis, not between
+  raw texts, reported normalized 0..100, with per-concept weights as
+  configuration with published defaults. The instrument is an ensemble of weak
+  independent estimators: deterministic concept coverage of the slice,
+  deterministic reference resolution, the embedding cosine, and
+  ExecutorSimulation (C-015) — a cheap generative model asked the single closed
+  question "name every entity this prompt uses but does not define", whose output
+  is treated as suspicion and filtered deterministically against the prompt text;
+  the surviving fraction is the estimator value, and the detector can only raise
+  suspicion, never mark a branch green. Estimator votes combine through a
+  transparent weighted fold with published default weights; estimators sharing
+  the same physics (the two embedding-based ones) share one down-weighted vote.
+  Plan-level aggregation is conservative, defaulting to the minimum branch index
+  with fraction-above-threshold as the configurable alternative. Output
+  discipline: normally one number and a color per plan with the few weakest
+  branches ranked; the internal estimator vector and the trust value surface only
+  for a branch below threshold or on explicit request.
+
+  TrustEstimate (C-014) measures the measurement itself before branch scoring:
+  pairwise cosines of the normalized concept embeddings, the Gram matrix, its
+  determinant and eigenvalue spectrum. Trust decreases monotonically with basis
+  collinearity and drops to a declared floor when the embedding service is
+  unavailable; the monotone mapping is configuration with a published default.
+  The report thereby distinguishes "the plan is weak" from "the plan cannot be
+  measured". EmbeddingService (C-022) is the single optional external
+  integration, reached through a URL taken from configuration: when it is
+  unavailable every function except semantic scoring keeps working, scoring
+  returns the deterministic estimators plus an explicit low-trust verdict instead
+  of failing, and vectors are cached only in the database keyed by content hash —
+  the server runs no vectorization pipeline of its own and produces no vector
+  files.
+
+  Finding (C-017) is the ephemeral result unit of gate and scoring runs — check
+  id, severity, artifact path, message — aggregated into reports with an overall
+  verdict, returned to the caller and optionally logged, never stored as a plan
+  artifact. Verdict (C-020) binds every gate and score result to the exact tree
+  state it was computed on: it records the plan revision id (head or cascade
+  state) and the scope, and is fresh iff the recorded revision equals the current
+  revision of the measured state — freshness is decided by revision comparison,
+  never by timestamps. Any mutation invalidates the verdict for the affected
+  scope; scoring checks gate freshness for its scope against the current revision
+  and re-runs the gate (or refuses) rather than measure a scope whose gate
+  verdict is stale.
+concepts: [C-012, C-013, C-014, C-015, C-017, C-020, C-022]
+relations:
+- { from_concept: C-012, to_concept: C-001, type: consumes }
+- { from_concept: C-012, to_concept: C-010, type: uses }
+- { from_concept: C-012, to_concept: C-017, type: produces }
+- { from_concept: C-012, to_concept: C-020, type: produces }
+- { from_concept: C-013, to_concept: C-008, type: consumes }
+- { from_concept: C-013, to_concept: C-012, type: depends_on }
+- { from_concept: C-013, to_concept: C-022, type: uses }
+- { from_concept: C-013, to_concept: C-014, type: uses }
+- { from_concept: C-013, to_concept: C-015, type: uses }
+- { from_concept: C-013, to_concept: C-010, type: uses }
+- { from_concept: C-013, to_concept: C-020, type: produces }
+- { from_concept: C-014, to_concept: C-022, type: uses }
+- { from_concept: C-015, to_concept: C-011, type: consumes }
+- { from_concept: C-020, to_concept: C-017, type: owns }
+- { from_concept: C-020, to_concept: C-018, type: depends_on }
+- { from_concept: C-012, to_concept: C-036, type: implements }
+- { from_concept: C-013, to_concept: C-036, type: implements }
+source_labels: ["{m9x4}", "{q1w8}", "{x8m3}", "{s2z9}", "{j5k7}", "{h7u3}", "{f1w9}", "{g3o6}", "{l9b4}", "{o3v8}", "{i7h2}", "{p4g6}", "{q9n5}", "{c6f9}", "{j8b2}", "{l2q6}", "{o7d4}", "{i3g8}", "{m7w3}", "{b8j5}", "{l4u8}"]
+depends_on: [G-001, G-002]
+tactical_steps: []
+status: draft

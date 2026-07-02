@@ -1,0 +1,102 @@
+step_id: G-001
+name: domain-model
+description: >
+  This step establishes the stored domain model of the plan manager: the durable
+  entities that represent a development plan structured as the five-level hierarchy
+  HRS -> MRS -> GS -> TS -> AS, together with the storage substrate that makes them
+  the single source of truth. All plan data lives in a relational database (C-035,
+  PostgreSQL with the pgvector extension) that ships inside the server deployment:
+  entities are rows, history is an append-only revision log, and concept embeddings
+  are cached next to the concepts they describe, keyed by content hash, with no
+  vector data outside the database. The file layout of the planning standard is
+  never the operational store. Referential integrity of identifiers — parent links,
+  depends_on targets, concept references, relation endpoints — is enforced by the
+  database schema at write time. Every stored entity — plan, paragraph, concept,
+  relation, step, node version, revision, cascade — carries an immutable UUID
+  assigned at creation as its primary identity in the database; human-readable
+  identifiers (C-NNN, G-NNN, T-NNN, A-NNN, paragraph labels) are stable
+  addressable names unique within their scope and mapped to UUIDs, so renames and
+  moves change names, never UUIDs.
+
+  The domain entities are: Plan (C-001), the root aggregate with identity, name,
+  status, and head revision, of which many live in one database and are listed by
+  catalog query, and which carries a user-set context budget in tokens — supplied
+  by the user, set at plan creation, changeable later, varying from plan to plan,
+  and defaulting to 4000 tokens; Paragraph (C-002), the addressable binding unit of the HRS
+  carrying a stable four-character base36 label in curly braces that is
+  position-independent, unique within one HRS, and survives reordering and
+  external edits; Concept (C-003), the MRS entry with C-NNN identifier, canonical
+  name, one-sentence definition, properties, and source labels, selected to be as
+  orthogonal as possible; Relation (C-004), a typed edge restricted to exactly
+  seven types (uses, owns, implements, extends, depends_on, produces, consumes)
+  with free-form types rejected at write time; and Step (C-005), the single stored
+  entity for levels 3-5 with level, zero-padded step id unique within its scope,
+  kebab-case slug, level-specific required fields, depends_on references, concept
+  references, and status, whose operations are uniform across levels while the
+  differing required-field sets remain declarative schema.
+
+  HRS text is human-owned: the server never authors or rewrites paragraph prose,
+  and verification findings whose resolution requires HRS changes halt and report
+  to the human. The only textual authority the server holds over the HRS is label
+  management and non-binding markup: paragraphs inside non-binding blocks carry no
+  labels, are excluded from concept extraction, and never participate in coverage.
+  The normative parsing algorithm is fixed here: paragraphs split on blank-line
+  boundaries; a paragraph is labeled when its first non-whitespace characters
+  match an opening brace, exactly four base36 characters, a closing brace, and one
+  space; non-binding regions are non-nesting maximal ranges between the markers;
+  heading lines and fenced code blocks are never binding paragraphs. Label
+  assignment is likewise normative: collect existing labels, draw four characters
+  uniformly from the base36 alphabet for each unlabeled binding paragraph in
+  document order, retry on collision, insert at paragraph start; existing labels
+  are never rewritten, reused, or reordered.
+
+  Identifier patterns, per-level required fields, and exchange-layout naming are
+  described by the declarative PlanSchema (C-006) whose defaults match the
+  planning standard; nothing project-specific is hard-coded, and exotic layouts
+  are supported only by overriding PlanSchema values. StatusModel (C-007) enforces
+  the legal lifecycle transitions — draft, ready_for_review, frozen, needs_review
+  for all artifacts, plus in_progress and done for atomic steps only — and
+  reserves needs_review for cascade propagation. The next-free-id algorithm is
+  normative: within the parent scope, collect numeric ids matching the level
+  pattern, assign max+1 (1 for an empty scope) zero-padded to three digits, and
+  re-check under the per-plan lock so concurrent creates cannot obtain the same
+  id.
+
+  Persistence follows a git-like VersionStore (C-018) of three table families:
+  immutable node versions content-addressed by the hash of the node's canonical
+  serialization (identical content stored once), revisions carrying parent id,
+  author, message, timestamp, and the changed node-version set, and refs — the
+  plan head plus one ref per open cascade. The canonical serialization is
+  canonical JSON — lexicographically sorted keys, UTF-8, no insignificant
+  whitespace — hashed with SHA-256. Every entity mutation writes a new immutable
+  node version and produces its own revision record — one mutation, one
+  revision — so the plan state after any individual edit is addressable. In
+  direct (draft) editing the head advances with each revision; cascade revisions
+  chain under the cascade ref and reach the head only on publication — a cascade
+  ref is merged into head on commit and deleted on abort. Version
+  operations are log, diff (two revisions to added/removed/changed nodes with
+  field-level detail), checkout-read (any reading command accepts an optional
+  revision and reads that snapshot), and revert (a new revision restoring a prior
+  state — history is only ever appended, never rewritten). A per-plan advisory
+  lock (C-019) in the database serializes cascades and identifier assignment; all
+  concurrency control lives in the database with no lock files and no in-process
+  lock state that a restart could lose.
+concepts: [C-001, C-002, C-003, C-004, C-005, C-006, C-007, C-018, C-019, C-035]
+relations:
+- { from_concept: C-001, to_concept: C-002, type: owns }
+- { from_concept: C-001, to_concept: C-003, type: owns }
+- { from_concept: C-001, to_concept: C-004, type: owns }
+- { from_concept: C-001, to_concept: C-005, type: owns }
+- { from_concept: C-003, to_concept: C-002, type: uses }
+- { from_concept: C-004, to_concept: C-003, type: depends_on }
+- { from_concept: C-005, to_concept: C-003, type: uses }
+- { from_concept: C-005, to_concept: C-005, type: depends_on }
+- { from_concept: C-005, to_concept: C-007, type: uses }
+- { from_concept: C-005, to_concept: C-006, type: implements }
+- { from_concept: C-001, to_concept: C-018, type: uses }
+- { from_concept: C-035, to_concept: C-018, type: owns }
+- { from_concept: C-035, to_concept: C-019, type: owns }
+source_labels: ["{k2p7}", "{z8c3}", "{v4n6}", "{b7d1}", "{h3j9}", "{f6s2}", "{g8l4}", "{w2y7}", "{u5e9}", "{n1o3}", "{q2r9}", "{t6s8}", "{d5i9}", "{e2b8}", "{z6n1}", "{u8s4}", "{n2j7}", "{a9y5}", "{s7g3}", "{b8j5}", "{l4u8}"]
+depends_on: []
+tactical_steps: []
+status: draft

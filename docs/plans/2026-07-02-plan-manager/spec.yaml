@@ -1,0 +1,404 @@
+# Plan Manager — Machine-Readable Specification (MRS)
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+# Level 2 projection of source_spec.md per plan_standard_machine.yaml.
+# Direct edits forbidden: all changes cascade from source_spec.md.
+
+concepts:
+
+- concept_id: C-001
+  name: Plan
+  definition: Root aggregate of one development plan with identity, name, status, and head revision.
+  properties:
+  - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+  - multiple plans live in one database, listed by catalog query
+  - head revision advances per revision in draft editing, on publication for cascades
+  - carries a user-set context budget in tokens (default 4000) consumed by prompt assembly
+  source_labels: ["{k2p7}", "{v4n6}", "{p8q4}", "{q2r9}"]
+
+- concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+  - parsing and label-assignment algorithms are normative
+  source_labels: ["{b7d1}", "{h3j9}", "{a1z3}", "{u8s4}", "{n2j7}", "{s7g3}"]
+
+- concept_id: C-003
+  name: Concept
+  definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+  properties:
+  - identifier pattern C-NNN, unique within plan
+  - selected to be as orthogonal as possible; basis quality is measured
+  - embedding serialization default is the definition field only
+  source_labels: ["{f6s2}", "{k7r9}", "{j8b2}"]
+
+- concept_id: C-004
+  name: Relation
+  definition: Typed directed edge between two concepts restricted to seven allowed types.
+  properties:
+  - types are uses, owns, implements, extends, depends_on, produces, consumes
+  - free-form types rejected at write time
+  source_labels: ["{g8l4}", "{k7r9}"]
+
+- concept_id: C-005
+  name: Step
+  definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+  properties:
+  - uniform operations across levels; per-level required fields are declarative schema
+  - scaffolded creation auto-assigns the next free zero-padded id
+  - mutation regime depends on status (draft direct, frozen via cascade)
+  - move rewrites every reference to the moved id in one operation
+  source_labels: ["{w2y7}", "{i5n7}", "{m4c2}", "{v8y2}", "{a9y5}"]
+
+- concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+  source_labels: ["{u5e9}"]
+
+- concept_id: C-007
+  name: StatusModel
+  definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+  properties:
+  - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+  - needs_review is set only by cascade propagation, never by direct request
+  source_labels: ["{n1o3}", "{m2d9}", "{m4c2}"]
+
+- concept_id: C-008
+  name: Branch
+  definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+  properties:
+  - never materialized as a stored artifact
+  - a mechanically clean branch is measurable while siblings are broken
+  source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+- concept_id: C-009
+  name: DependencyGraph
+  definition: Computed projection set over steps covering execution order, parallelism, cycles, and impact.
+  properties:
+  - edges from depends_on at every level plus priority pairs within (target_file, TS)
+  - Kahn topological order with deterministic tie-break; residual subgraph reported as cycle set
+  - waves partition nodes by prerequisite depth; impact follows the invalidation rule
+  source_labels: ["{d4r8}", "{q6d8}", "{t2a7}", "{y9k4}", "{x4v1}"]
+
+- concept_id: C-010
+  name: CoverageView
+  definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+  properties:
+  - set formulas are normative; reports always list missing and extra elements
+  - object-axis inventory keyed by (module, tactical step path)
+  - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+  source_labels: ["{r5t2}", "{e7i2}", "{d1t3}", "{e8p5}", "{t6s8}"]
+
+- concept_id: C-011
+  name: Prompt
+  definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
+  properties:
+  - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta
+  - byte-identical for the same tree state; token estimate against the plan's user-set context budget
+  - dump snapshots are derived artifacts never read back
+  - the server never executes prompts
+  source_labels: ["{t3u5}", "{y6q1}", "{s5m8}", "{r9f1}", "{j1w5}"]
+
+- concept_id: C-012
+  name: MechanicalGate
+  definition: Deterministic binary verification layer catching every mechanical defect before semantics.
+  properties:
+  - fixed check order parse, identity, uniqueness, references, coverage
+  - byte-identical reports for the same tree state; fail-fast only at group boundary
+  - per-branch gating; precondition for any semantic measurement
+  - parser sanity gates make parsing regressions fail loudly instead of passing silently
+  source_labels: ["{m9x4}", "{x8m3}", "{s2z9}", "{j5k7}", "{c6f9}", "{z2b5}", "{f1w9}", "{h7u3}"]
+
+- concept_id: C-013
+  name: SemanticIndex
+  definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+  properties:
+  - runs only on scopes that passed the mechanical gate at the current revision
+  - ensemble of weak independent estimators; same-physics votes share weight
+  - one number and color for the human; internals surface only on miss
+  - plan aggregation defaults to minimum branch index
+  source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+- concept_id: C-014
+  name: TrustEstimate
+  definition: Confidence in the semantic measurement itself derived from concept basis geometry and service liveness.
+  properties:
+  - Gram determinant, pairwise cosines, spectrum; monotone mapping is configuration
+  - drops to a declared floor when embeddings are unavailable
+  - distinguishes weak plan from unmeasurable plan
+  source_labels: ["{o3v8}", "{l2q6}"]
+
+- concept_id: C-015
+  name: ExecutorSimulation
+  definition: Detector estimator asking a cheap model the closed question of undefined entities in a prompt.
+  properties:
+  - output filtered deterministically against prompt text
+  - can only raise suspicion, never mark green
+  source_labels: ["{i7h2}", "{o7d4}"]
+
+- concept_id: C-016
+  name: CascadeChange
+  definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+  properties:
+  - begin acquires the per-plan lock; commit advances head only when gate is green
+  - automatic needs_review propagation per invalidation rule
+  - one open cascade per plan; MRS mutations are cascade-only at any status
+  source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+
+- concept_id: C-017
+  name: Finding
+  definition: Ephemeral result unit of gate and scoring runs with check id, severity, artifact path, and message.
+  properties:
+  - aggregated into reports; never stored as a plan artifact
+  source_labels: ["{q9n5}"]
+
+- concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+  source_labels: ["{q2r9}", "{d5i9}", "{e2b8}"]
+
+- concept_id: C-019
+  name: PlanLock
+  definition: Per-plan database advisory lock serializing cascades and identifier assignment.
+  properties:
+  - no lock files, no in-process lock state
+  source_labels: ["{z6n1}"]
+
+- concept_id: C-020
+  name: Verdict
+  definition: Gate or score result bound to the exact revision and scope it was computed for.
+  properties:
+  - fresh iff recorded revision equals current revision; comparison never by timestamp
+  source_labels: ["{g3o6}", "{m7w3}"]
+
+- concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+  source_labels: ["{v1c8}", "{k4u7}", "{p8q4}"]
+
+- concept_id: C-022
+  name: EmbeddingService
+  definition: Sole optional external integration providing text embeddings through a configured URL.
+  properties:
+  - unavailability degrades only semantic scoring, with explicit low trust
+  - vectors cached in the database keyed by content hash; no vector files
+  source_labels: ["{q1w8}", "{b8j5}", "{l4u8}"]
+
+- concept_id: C-023
+  name: CommandContract
+  definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+  properties:
+  - class attributes name, version, descr, category, author, email, result_class, use_queue
+  - get_schema strict subset with explicit additionalProperties false
+  - shallow adapter validation compensated by validate_params semantics
+  - metadata dictionary must never contradict the schema
+  - read commands never mutate; mutating commands verify by re-read
+  - destructive or bulk operations expose a dry-run mode defaulting to on
+  source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+- concept_id: C-024
+  name: CommandInventory
+  definition: Closed normative set of API commands enforced by a startup self-check.
+  properties:
+  - registry compared against inventory at startup; any difference aborts start
+  - no-stub probe of schema, metadata, and descr for every registered command
+  - the editing subset is enumerated exhaustively
+  source_labels: ["{w6t5}", "{n5c2}", "{d7e4}", "{r1c7}", "{o9f2}"]
+
+- concept_id: C-025
+  name: InfoCommand
+  definition: Self-description API command returning identity, build metadata, runtime summary, and embedded operator documentation.
+  properties:
+  - documentation payload embedded at build time from the single documentation source
+  - same source renders man and info pages; divergence fails the build
+  source_labels: ["{u3x7}", "{e9a3}"]
+
+- concept_id: C-026
+  name: ErrorModel
+  definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+  properties:
+  - every declared error case returnable and every returnable case declared
+  source_labels: ["{g9b1}"]
+
+- concept_id: C-027
+  name: ServerRuntime
+  definition: Adapter-owned runtime hosting the command registry, transport, queue, and bootstrap sequence.
+  properties:
+  - entry point main --config; AppFactory create_app; hypercorn engine
+  - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+  - hook-based registration; auto-import modules for spawned workers
+  - long operations use the adapter queue with job semantics
+  source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}"]
+
+- concept_id: C-028
+  name: Configuration
+  definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+  properties:
+  - fields database, embedding, scoring, schema_overrides, export_root
+  - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+  - the per-plan context budget is plan data, not a configuration field
+  - password only from mounted secrets; invalid config aborts startup
+  - no configuration value is ever taken from request parameters
+  source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+
+- concept_id: C-029
+  name: ContainerDeployment
+  definition: Single container image hosting the server process and its PostgreSQL instance with host-mounted state.
+  properties:
+  - entrypoint starts PostgreSQL, waits readiness, launches the server
+  - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+  - one exposed port; healthcheck against /health
+  source_labels: ["{t9v1}", "{y4b6}", "{x2h9}"]
+
+- concept_id: C-030
+  name: HostIdentity
+  definition: Dedicated host system user and group planmgruser:planmgrgrp owning all mounted state.
+  properties:
+  - container processes run under the matching uid/gid
+  source_labels: ["{h5o2}"]
+
+- concept_id: C-031
+  name: ReleaseScript
+  definition: Single build pipeline producing the container image, Docker Hub push, and the Ubuntu package.
+  properties:
+  - version single-sourced; image tag equals package version
+  - renders operator documentation for man, info, and the info command payload
+  source_labels: ["{f9l7}", "{e9a3}"]
+
+- concept_id: C-032
+  name: InstallPackage
+  definition: Ubuntu deb package that provisions identity, directories, configuration, image, and container on install.
+  properties:
+  - conffile semantics with standard overwrite prompt
+  - verifies and pulls the required image version from Docker Hub
+  - renders server config from /etc/default/planmgr operator settings
+  source_labels: ["{g7s4}", "{w3x9}", "{e9a3}"]
+
+- concept_id: C-033
+  name: ServiceUnit
+  definition: systemd unit owning the container lifecycle, running as the dedicated host user.
+  properties:
+  - environment from /etc/default/planmgr; restart on failure; readiness via /health
+  source_labels: ["{u6z2}"]
+
+- concept_id: C-034
+  name: DbInitializer
+  definition: Idempotent database initialization commands shipped with the package.
+  properties:
+  - initdb on empty data directory, role and database creation, schema migrations
+  - refuses to damage an existing database
+  source_labels: ["{n8e5}"]
+
+- concept_id: C-035
+  name: Database
+  definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+  properties:
+  - entities as rows; referential integrity at write time
+  - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+  - hosts the version store, locks, and embedding cache
+  source_labels: ["{z8c3}", "{q2r9}", "{z6n1}", "{t6s8}", "{b8j5}"]
+
+- concept_id: C-036
+  name: NormativeAlgorithmSet
+  definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+  properties:
+  - deviations escalate to the HRS; open parameters have named defaults and are configuration
+  source_labels: ["{w5e2}"]
+
+relations:
+
+# domain structure
+- { from_concept: C-001, to_concept: C-002, type: owns }
+- { from_concept: C-001, to_concept: C-003, type: owns }
+- { from_concept: C-001, to_concept: C-004, type: owns }
+- { from_concept: C-001, to_concept: C-005, type: owns }
+- { from_concept: C-003, to_concept: C-002, type: uses }
+- { from_concept: C-004, to_concept: C-003, type: depends_on }
+- { from_concept: C-005, to_concept: C-003, type: uses }
+- { from_concept: C-005, to_concept: C-005, type: depends_on }
+- { from_concept: C-005, to_concept: C-007, type: uses }
+- { from_concept: C-005, to_concept: C-006, type: implements }
+
+# derived views
+- { from_concept: C-008, to_concept: C-005, type: uses }
+- { from_concept: C-008, to_concept: C-002, type: uses }
+- { from_concept: C-008, to_concept: C-003, type: uses }
+- { from_concept: C-009, to_concept: C-005, type: consumes }
+- { from_concept: C-010, to_concept: C-005, type: consumes }
+- { from_concept: C-010, to_concept: C-003, type: uses }
+- { from_concept: C-010, to_concept: C-002, type: uses }
+- { from_concept: C-011, to_concept: C-008, type: consumes }
+- { from_concept: C-011, to_concept: C-003, type: uses }
+
+# verification
+- { from_concept: C-012, to_concept: C-001, type: consumes }
+- { from_concept: C-012, to_concept: C-010, type: uses }
+- { from_concept: C-012, to_concept: C-017, type: produces }
+- { from_concept: C-012, to_concept: C-020, type: produces }
+- { from_concept: C-013, to_concept: C-008, type: consumes }
+- { from_concept: C-013, to_concept: C-012, type: depends_on }
+- { from_concept: C-013, to_concept: C-022, type: uses }
+- { from_concept: C-013, to_concept: C-014, type: uses }
+- { from_concept: C-013, to_concept: C-015, type: uses }
+- { from_concept: C-013, to_concept: C-010, type: uses }
+- { from_concept: C-013, to_concept: C-020, type: produces }
+- { from_concept: C-014, to_concept: C-022, type: uses }
+- { from_concept: C-015, to_concept: C-011, type: consumes }
+- { from_concept: C-020, to_concept: C-017, type: owns }
+- { from_concept: C-020, to_concept: C-018, type: depends_on }
+
+# lifecycle and storage
+- { from_concept: C-016, to_concept: C-019, type: uses }
+- { from_concept: C-016, to_concept: C-018, type: uses }
+- { from_concept: C-016, to_concept: C-012, type: depends_on }
+- { from_concept: C-016, to_concept: C-007, type: uses }
+- { from_concept: C-001, to_concept: C-018, type: uses }
+- { from_concept: C-035, to_concept: C-018, type: owns }
+- { from_concept: C-035, to_concept: C-019, type: owns }
+- { from_concept: C-021, to_concept: C-001, type: consumes }
+- { from_concept: C-021, to_concept: C-001, type: produces }
+- { from_concept: C-021, to_concept: C-006, type: uses }
+- { from_concept: C-021, to_concept: C-018, type: uses }
+
+# algorithms
+- { from_concept: C-012, to_concept: C-036, type: implements }
+- { from_concept: C-013, to_concept: C-036, type: implements }
+- { from_concept: C-011, to_concept: C-036, type: implements }
+- { from_concept: C-009, to_concept: C-036, type: implements }
+- { from_concept: C-021, to_concept: C-036, type: implements }
+
+# API and platform
+- { from_concept: C-024, to_concept: C-023, type: uses }
+- { from_concept: C-025, to_concept: C-023, type: implements }
+- { from_concept: C-023, to_concept: C-026, type: uses }
+- { from_concept: C-027, to_concept: C-024, type: owns }
+- { from_concept: C-027, to_concept: C-028, type: consumes }
+- { from_concept: C-027, to_concept: C-035, type: uses }
+
+# deployment
+- { from_concept: C-029, to_concept: C-027, type: owns }
+- { from_concept: C-029, to_concept: C-035, type: owns }
+- { from_concept: C-029, to_concept: C-030, type: uses }
+- { from_concept: C-031, to_concept: C-032, type: produces }
+- { from_concept: C-031, to_concept: C-029, type: produces }
+- { from_concept: C-032, to_concept: C-030, type: produces }
+- { from_concept: C-032, to_concept: C-033, type: produces }
+- { from_concept: C-033, to_concept: C-029, type: uses }
+- { from_concept: C-033, to_concept: C-030, type: uses }
+- { from_concept: C-034, to_concept: C-035, type: uses }
+- { from_concept: C-032, to_concept: C-034, type: owns }

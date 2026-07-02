@@ -1,0 +1,73 @@
+step_id: G-008
+name: deployment
+description: >
+  This step realizes the deployment story of the server. ContainerDeployment
+  (C-029) is a single container image hosting both the server process (C-027)
+  and its PostgreSQL instance with pgvector (C-035). The entrypoint starts
+  PostgreSQL, waits for readiness, then launches the server with the
+  configuration file mounted read-only at a fixed path. The image uses a slim
+  Python base and a non-root runtime user, exposes one service port, and
+  defines a healthcheck against the platform health endpoint; when registration
+  is enabled, the advertised host and port must be reachable by the proxy from
+  outside the container network namespace.
+
+  The host filesystem contract is fixed: /etc/planmgr holds configuration and
+  secrets (mounted read-only), /var/planmgr holds data including the PostgreSQL
+  data directory (mounted read-write), and /var/log/planmgr holds logs (mounted
+  read-write). Everything mutable lives on the host through these mounts; no
+  plan data, configuration, or secrets are baked into the image, so plan data
+  survives container replacement and upgrade. HostIdentity (C-030) is the
+  dedicated system user and group planmgruser:planmgrgrp that own the
+  deployment on the host: the three mounted directories are owned by them with
+  restrictive modes, and the container processes run under the matching
+  uid/gid, so every file created through the mounts is owned by
+  planmgruser:planmgrgrp on the host.
+
+  ReleaseScript (C-031) is the single release pipeline: it builds the container
+  image, tags it with the package version, pushes it to Docker Hub, and builds
+  the Ubuntu installation package (deb) targeting the current Ubuntu release.
+  The version is single-sourced from the package definition, so image tag and
+  package version always agree. The same pipeline renders operator
+  documentation from one documentation source into three outputs — the man
+  page(s), the GNU info document, and the documentation payload embedded into
+  the API self-description command (C-025) — and a build where the three
+  renderings would diverge must fail.
+
+  InstallPackage (C-032), on install, creates planmgruser and planmgrgrp if
+  absent, creates the three directories with correct ownership and modes, and
+  installs configuration templates as conffiles: when a file already exists and
+  was modified, the standard overwrite prompt applies and nothing is silently
+  replaced. The post-install deployment flow reads operator settings from
+  /etc/default/planmgr (image version, published port, advertised host,
+  registration toggles, database parameters), verifies that the required image
+  version exists on Docker Hub and pulls it, renders the server configuration
+  under /etc/planmgr from those settings, and creates and starts the container
+  with the three mounts attached.
+
+  ServiceUnit (C-033) is the systemd service that owns the container lifecycle
+  — create, start, stop, restart on failure — and runs as planmgruser. It reads
+  /etc/default/planmgr as its environment file, depends on the container
+  runtime, and reports readiness through the platform health endpoint.
+  DbInitializer (C-034) is the set of database initialization commands shipped
+  with the package, invocable standalone and through the service wrapper:
+  first-run initialization of the mounted PostgreSQL data directory when it is
+  empty, creation of the role and database, applying schema migrations, and
+  setting the password from the secrets file. Initialization is idempotent —
+  safe to re-run and refusing to damage an existing database.
+concepts: [C-029, C-030, C-031, C-032, C-033, C-034]
+relations:
+- { from_concept: C-029, to_concept: C-027, type: owns }
+- { from_concept: C-029, to_concept: C-035, type: owns }
+- { from_concept: C-029, to_concept: C-030, type: uses }
+- { from_concept: C-031, to_concept: C-032, type: produces }
+- { from_concept: C-031, to_concept: C-029, type: produces }
+- { from_concept: C-032, to_concept: C-030, type: produces }
+- { from_concept: C-032, to_concept: C-033, type: produces }
+- { from_concept: C-033, to_concept: C-029, type: uses }
+- { from_concept: C-033, to_concept: C-030, type: uses }
+- { from_concept: C-034, to_concept: C-035, type: uses }
+- { from_concept: C-032, to_concept: C-034, type: owns }
+source_labels: ["{t9v1}", "{y4b6}", "{h5o2}", "{f9l7}", "{g7s4}", "{e9a3}", "{w3x9}", "{u6z2}", "{n8e5}", "{x2h9}"]
+depends_on: [G-005, G-006]
+tactical_steps: []
+status: draft

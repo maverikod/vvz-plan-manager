@@ -1,0 +1,35 @@
+meta:
+  prompt_id: plan-authoring-planmgr
+  version: '1.0'
+  description: >
+    Entry prompt for creating or correcting the plan_manager development plan.
+    Selects the planning standard by phase; does not implement production code.
+  project: plan_manager
+  project_id: f06b7269-cc9c-4293-886b-24984e4033ba
+  plan_root: docs/plans/2026-07-02-plan-manager/
+  language_policy:
+    communication_language: Russian
+    artifact_language: English
+  standards_root: docs/standards/planning
+  standards:
+    structure_and_cascade: plan_standard_machine.yaml
+    hrs_mrs_gs_verification: hrs_mrs_gs_consistency_verification_standard.yaml
+    tactical_steps: tactical_step_creation_standard.yaml
+    atomic_steps: atomic_step_creation_standard.yaml
+    command_metadata: metadatastd.yaml
+  deviations_from_stock_standards:
+    matrices: computed on the fly from the tree; matrix files are not written
+    atomic_layout: atomic_steps/A-NNN-<slug>.yaml files (not inline in TS README)
+procedure:
+- step: classify_task
+  options:
+    new_plan_or_cascade: read structure_and_cascade
+    verify_upper_levels: read hrs_mrs_gs_verification
+    write_or_fix_tactical: read tactical_steps
+    write_or_fix_atomic: read atomic_steps
+- step: read_standard_in_full
+  required: true
+  note: zero-trust; re-read on every iteration, never rely on memory of prior reads
+- step: execute_per_yaml
+  planning_only: true
+  forbid_production_code: true
