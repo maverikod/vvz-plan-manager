@@ -1,0 +1,150 @@
+step_id: A-003
+parent_tactical_step: T-002
+name: require-section
+target_file: plan_manager/runtime/context.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-027]
+prompt: |
+  Modify the file plan_manager/runtime/context.py. Its full current
+  content (after all lower-priority AS on this file have been applied) is
+  exactly:
+
+  """Runtime accessors for ServerRuntime (C-027): the database connection
+  provider and the flat application-configuration projection consumed by
+  every command of the surface.
+
+  Runtime initialization happens once at startup: it loads and validates the
+  custom configuration section (C-028) via plan_manager.runtime.config, reads
+  the database password from the mounted secrets file, and holds the
+  validated section and the password in module state. Using any accessor
+  before init_runtime is an explicit runtime error. No accessor value is
+  ever taken from request parameters.
+  """
+
+  import contextlib
+  import os
+  from dataclasses import dataclass
+
+  import psycopg
+  import psycopg.conninfo
+
+  from plan_manager.runtime.config import ConfigError, PlanManagerSection, load_config
+
+  SECRETS_ENV: str = "PLANMGR_SECRETS"
+  DEFAULT_SECRETS_PATH: str = "/etc/planmgr/secrets/db_password"
+
+  _SECTION: PlanManagerSection | None = None
+  _PASSWORD: str | None = None
+
+
+  def init_runtime(config_path: str) -> None:
+      """Initialize module-level runtime state from a configuration file.
+
+      Loads and validates the custom plan_manager configuration section from
+      ``config_path`` via ``load_config``, then reads the database password
+      from the mounted secrets file. The secrets file path is taken from the
+      environment variable named by ``SECRETS_ENV``, defaulting to
+      ``DEFAULT_SECRETS_PATH`` when the environment variable is unset. Stores
+      both the validated section and the password in module state.
+
+      Args:
+          config_path: Filesystem path to the JSON configuration file passed
+              to ``load_config``.
+
+      Returns:
+          None.
+
+      Raises:
+          ConfigError: If ``load_config`` raises for invalid configuration;
+              if the secrets file cannot be opened or read (missing or
+              unreadable file), reported as "cannot read database secrets
+              file: {secrets_path}"; or if the secrets file content is empty
+              after stripping leading and trailing whitespace, reported as
+              "database secrets file is empty: {secrets_path}".
+      """
+      global _SECTION, _PASSWORD
+      section = load_config(config_path)
+      secrets_path = os.environ.get(SECRETS_ENV, DEFAULT_SECRETS_PATH)
+      try:
+          with open(secrets_path, "r", encoding="utf-8") as f:
+              text = f.read()
+      except OSError as exc:
+          raise ConfigError(
+              f"cannot read database secrets file: {secrets_path}"
+          ) from exc
+      password = text.strip()
+      if not password:
+          raise ConfigError(f"database secrets file is empty: {secrets_path}")
+      _SECTION = section
+      _PASSWORD = password
+
+  Append exactly two blank lines after the last line shown (`_PASSWORD =
+  password`, indented 4 spaces as the last statement of init_runtime),
+  then append the following function definition at module level (no
+  indentation):
+
+  def _require_section() -> PlanManagerSection:
+      """Return the validated configuration section, requiring initialization.
+
+      Returns:
+          PlanManagerSection: The module-level validated configuration
+              section stored by ``init_runtime``.
+
+      Raises:
+          RuntimeError: If ``init_runtime`` has not been called yet, reported
+              as "runtime not initialized: call init_runtime first".
+      """
+      if _SECTION is None:
+          raise RuntimeError("runtime not initialized: call init_runtime first")
+      return _SECTION
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the two blank lines and the function shown.
+  - The function signature is exactly `def _require_section() ->
+    PlanManagerSection:`.
+  - The function reads the module-level name `_SECTION` already declared
+    in the existing file; it does not declare `global` (it only reads,
+    never assigns).
+  - If `_SECTION is None`, raise exactly `RuntimeError("runtime not
+    initialized: call init_runtime first")`.
+  - Otherwise return `_SECTION` unchanged (no copy, no transformation).
+  - Do not add any other function, class, or import. Do not read or
+    modify any other file.
+
+  Imported sibling contract (quote verbatim; already imported at the top
+  of this file — do not reimplement): `class PlanManagerSection` (a
+  pydantic model with attributes: database — with host: str | None,
+  socket: str | None, port: int, dbname: str, user: str; embedding — with
+  url: str | None, model: str | None, timeout: float; scoring — with
+  threshold: float, aggregation: str, concept_weights: float,
+  embedding_serialization: str, estimator_weights: dict[str, float],
+  trust_floor: float; schema_overrides: dict; export_root: str) from
+  plan_manager/runtime/config.py.
+
+  MRS excerpt (concept definition relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry,
+      transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/
+      at the repository root, modules as dotted paths beneath it
+verification:
+  type: manual
+  target: plan_manager.runtime.context._require_section
+  expected: >
+    Before init_runtime has been called (module-level _SECTION is None),
+    calling _require_section raises RuntimeError with message "runtime
+    not initialized: call init_runtime first". After init_runtime has
+    been called successfully, calling _require_section returns the exact
+    PlanManagerSection instance stored by init_runtime.
+status: draft

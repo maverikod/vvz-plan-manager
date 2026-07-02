@@ -1,0 +1,223 @@
+step_id: A-010
+parent_tactical_step: T-005
+name: delete_step function
+target_file: plan_manager/domain/step_ops.py
+operation: modify_file
+priority: 2
+depends_on: [A-009]
+concepts: [C-005]
+prompt: |
+  Modify the file plan_manager/domain/step_ops.py. Its full current
+  content (after all lower-priority changes on this file have been
+  applied) is exactly:
+
+
+  """Structural mutation operations for the Step entity (C-005): move,
+  delete, and status-transition operations that touch more than the row
+  being mutated.
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.step import Step, next_free_step_id
+  from plan_manager.domain.step_store import get_step, list_step_ids
+
+
+  def move_step(
+      conn: psycopg.Connection,
+      step_uuid: uuid.UUID,
+      new_parent_uuid: uuid.UUID | None,
+  ) -> Step:
+      """Re-parent one step, re-assigning its id in the new scope and
+      rewriting every reference to the moved id in one operation (C-005).
+
+      Implements the normative move algorithm:
+          a. Fetch the step and its old parent (step.parent_step_uuid).
+             When new_parent_uuid equals the step's current
+             parent_step_uuid, this is a no-op: return the step unchanged.
+          b. Level guard: the new parent must sit exactly one level above
+             the moved step (new parent's level == step.level - 1), except
+             that new_parent_uuid is allowed to be None only when the
+             moved step is level 3 (its scope is the plan itself, which
+             has no Step row). Any other case raises ValueError.
+          c. Old-scope reference scrub: for every other step in the OLD
+             scope (same plan_uuid, same old parent_step_uuid, same
+             level, excluding the moved step itself), remove the moved
+             step's old step_id from that step's depends_on list, if
+             present.
+          d. Compute the next free step_id in the NEW scope (same
+             plan_uuid, new_parent_uuid, same level) via list_step_ids
+             and next_free_step_id, the same way create_step computes a
+             new id.
+          e. The moved step's own depends_on entries reference OLD-scope
+             siblings and become invalid under the new id and new scope;
+             they are cleared to an empty list.
+          f. Update the moved row in one UPDATE statement setting
+             parent_step_uuid, step_id, and depends_on together.
+          g. Re-read and return the moved step from the database.
+
+      Args:
+          conn: Open database connection.
+          step_uuid: Immutable primary identity of the step to move.
+          new_parent_uuid: Identity of the new parent step, or None when
+              the moved step is level 3 (whose scope is the plan itself).
+
+      Returns:
+          The moved Step, re-read from the database after the update.
+
+      Raises:
+          ValueError: When new_parent_uuid does not sit exactly one level
+              above the moved step (or is None for a step whose level is
+              not 3).
+      """
+      step = get_step(conn, step_uuid)
+      old_parent_uuid = step.parent_step_uuid
+
+      if new_parent_uuid == old_parent_uuid:
+          return step
+
+      if new_parent_uuid is None:
+          if step.level != 3:
+              raise ValueError("invalid parent level")
+      else:
+          new_parent = get_step(conn, new_parent_uuid)
+          if new_parent.level != step.level - 1:
+              raise ValueError("invalid parent level")
+
+      cur = conn.execute(
+          "SELECT uuid, depends_on FROM step "
+          "WHERE plan_uuid = %s "
+          "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+          "AND level = %s "
+          "AND uuid != %s",
+          (step.plan_uuid, old_parent_uuid, step.level, step.uuid),
+      )
+      for sibling_uuid, sibling_depends_on in cur.fetchall():
+          if step.step_id in sibling_depends_on:
+              new_depends_on = [d for d in sibling_depends_on if d != step.step_id]
+              conn.execute(
+                  "UPDATE step SET depends_on = %s WHERE uuid = %s",
+                  (new_depends_on, sibling_uuid),
+              )
+
+      existing_step_ids = list_step_ids(conn, step.plan_uuid, new_parent_uuid, step.level)
+      new_step_id = next_free_step_id(existing_step_ids, step.level)
+
+      conn.execute(
+          "UPDATE step SET parent_step_uuid = %s, step_id = %s, depends_on = %s "
+          "WHERE uuid = %s",
+          (new_parent_uuid, new_step_id, [], step.uuid),
+      )
+
+      return get_step(conn, step_uuid)
+
+
+  Apply exactly this one change: append, at the end of the file, separated
+  from move_step by two blank lines, exactly this function:
+
+
+  def delete_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> None:
+      """Delete one step, refusing when it has children and scrubbing the
+      deleted id from same-scope siblings' depends_on lists (C-005).
+
+      Args:
+          conn: Open database connection.
+          step_uuid: Immutable primary identity of the step to delete.
+
+      Returns:
+          None.
+
+      Raises:
+          ValueError: When the step has one or more children (rows whose
+              parent_step_uuid equals step_uuid).
+      """
+      step = get_step(conn, step_uuid)
+
+      cur = conn.execute(
+          "SELECT count(*) FROM step WHERE parent_step_uuid = %s",
+          (step_uuid,),
+      )
+      child_count = cur.fetchone()[0]
+      if child_count > 0:
+          raise ValueError("step has children")
+
+      cur = conn.execute(
+          "SELECT uuid, depends_on FROM step "
+          "WHERE plan_uuid = %s "
+          "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+          "AND level = %s "
+          "AND uuid != %s",
+          (step.plan_uuid, step.parent_step_uuid, step.level, step.uuid),
+      )
+      for sibling_uuid, sibling_depends_on in cur.fetchall():
+          if step.step_id in sibling_depends_on:
+              new_depends_on = [d for d in sibling_depends_on if d != step.step_id]
+              conn.execute(
+                  "UPDATE step SET depends_on = %s WHERE uuid = %s",
+                  (new_depends_on, sibling_uuid),
+              )
+
+      conn.execute("DELETE FROM step WHERE uuid = %s", (step_uuid,))
+
+
+  Exact requirements:
+
+  - The function signature must be exactly `def delete_step(conn:
+    psycopg.Connection, step_uuid: uuid.UUID) -> None:`.
+  - The docstring text must match exactly what is shown above.
+  - The function body must implement exactly this sequence, in order:
+    1. `step = get_step(conn, step_uuid)`.
+    2. Children guard: execute the SQL SELECT with text exactly
+       `"SELECT count(*) FROM step WHERE parent_step_uuid = %s"` and
+       params exactly `(step_uuid,)`; read `child_count =
+       cur.fetchone()[0]`; when `child_count > 0`, raise
+       `ValueError("step has children")`.
+    3. Same-scope reference scrub: execute the SQL SELECT with text
+       exactly (the whitespace-joined concatenation of the string
+       literals shown above) `"SELECT uuid, depends_on FROM step WHERE
+       plan_uuid = %s AND parent_step_uuid IS NOT DISTINCT FROM %s AND
+       level = %s AND uuid != %s"` with params exactly
+       `(step.plan_uuid, step.parent_step_uuid, step.level, step.uuid)`.
+       For each `(sibling_uuid, sibling_depends_on)` row where
+       `step.step_id in sibling_depends_on`, build `new_depends_on` as
+       `[d for d in sibling_depends_on if d != step.step_id]` and
+       execute an UPDATE with SQL text exactly `"UPDATE step SET
+       depends_on = %s WHERE uuid = %s"` and params exactly
+       `(new_depends_on, sibling_uuid)`.
+    4. Delete the row: execute the SQL with text exactly `"DELETE FROM
+       step WHERE uuid = %s"` and params exactly `(step_uuid,)`.
+  - The children guard runs strictly before the reference scrub and the
+    delete; when it raises, no reference-scrub UPDATE and no DELETE is
+    executed.
+  - `get_step` is the function already imported at the top of this file
+    (from `plan_manager.domain.step_store`), used here identically to
+    how `move_step` uses it above.
+  - Do not add any other names, functions, or imports beyond what is
+    listed here. Do not modify any line of the file other than appending
+    this function.
+
+
+  MRS excerpt (only the concept relevant to this AS):
+
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+verification:
+  type: manual
+  target: plan_manager.domain.step_ops.delete_step
+  expected: >
+    Code review confirms delete_step raises ValueError("step has
+    children") and performs no scrub or delete when one or more rows
+    reference the step as parent_step_uuid; otherwise it removes the
+    deleted step's id from every same-scope sibling's depends_on and
+    then deletes exactly the one row matching step_uuid.
+status: draft

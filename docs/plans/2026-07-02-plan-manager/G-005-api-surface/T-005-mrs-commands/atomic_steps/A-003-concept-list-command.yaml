@@ -49,11 +49,11 @@ prompt: |
   - Module `plan_manager.runtime.context`:
     `def db_connection()` — context manager yielding a psycopg.Connection.
   - Module `plan_manager.domain.concept_store`:
-    `@dataclass class Concept:` with fields `uuid: uuid.UUID`, `plan_uuid: uuid.UUID`,
-    `concept_id: str`, `name: str`, `definition: str`, `properties: list[str]`,
-    `source_labels: list[str]`; and
+    `@dataclass class Concept:` with fields, in order, `concept_id: str`, `name: str`,
+    `definition: str`, `properties: List[str]`, `source_labels: List[str]` (the
+    dataclass has no `uuid` and no `plan_uuid` field); and
     `def list_concepts(conn, plan_uuid) -> list[Concept]` — returns every concept
-    of the plan.
+    of the plan, ordered by concept_id.
 
   Write the file with exactly this content:
 
@@ -121,8 +121,6 @@ prompt: |
                   return SuccessResult(data={
                       "concepts": [
                           {
-                              "uuid": str(c.uuid),
-                              "plan_uuid": str(c.plan_uuid),
                               "concept_id": c.concept_id,
                               "name": c.name,
                               "definition": c.definition,

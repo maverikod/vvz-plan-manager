@@ -47,12 +47,14 @@ prompt: |
   fields (an object whose keys must be a non-empty subset of name, definition,
   properties, source_labels — enforced in validate_params). Its execute is
   cascade-only (rejects without a valid open cascade with code
-  CASCADE_CONFLICT), applies fields via the domain store (raising
-  CONCEPT_NOT_FOUND when concept_id is unknown — the store's ValueError message
-  starts with the literal prefix "concept not found" in that case —, and
-  PARAGRAPH_NOT_FOUND when an updated source label does not resolve to a stored
-  binding paragraph), records the mutation as a cascade revision, and verifies
-  the write by re-reading the concept, returning it plus a revision_uuid.
+  CASCADE_CONFLICT); when fields includes source_labels, it resolves every
+  entry against the plan's stored paragraph labels before writing
+  (PARAGRAPH_NOT_FOUND when a label does not resolve); it applies fields via
+  the domain store (raising CONCEPT_NOT_FOUND when concept_id is unknown —
+  the store's ValueError message starts with the literal prefix "concept not
+  found" in that case); records the mutation as a cascade revision, and
+  verifies the write by re-reading the concept, returning it plus a
+  revision_uuid.
 
   Write the file with exactly this content:
 

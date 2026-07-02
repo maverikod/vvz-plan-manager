@@ -1,0 +1,187 @@
+step_id: A-004
+parent_tactical_step: T-003
+name: build-info-function
+target_file: plan_manager/runtime/build_info.py
+operation: modify_file
+priority: 3
+depends_on: [A-003]
+concepts: [C-027, C-025]
+prompt: |
+  Modify the file `plan_manager/runtime/build_info.py` with operation
+  `modify_file`.
+
+  The file currently exists with exactly this content (reproduced in
+  full, byte-identical, below):
+
+  """Reader for the build-time embedded payloads carried by
+  ``plan_manager._build``.
+
+  This module reads the build information mapping and the operator
+  documentation text that the release pipeline embeds into the
+  dedicated ``plan_manager._build`` package-data subpackage at build
+  time. It performs no rendering and no network access: it only reads
+  what the build embedded. The absence of an embedded payload at
+  runtime is a packaging defect surfaced as an explicit
+  :class:`RuntimeError` naming the missing payload; generated or
+  default content is never substituted.
+  """
+
+  import json
+
+  BUILD_PACKAGE: str = "plan_manager._build"
+  BUILD_INFO_RESOURCE: str = "build_info.json"
+  OPERATOR_DOC_RESOURCE: str = "operator_doc.md"
+  REQUIRED_BUILD_KEYS: tuple[str, ...] = (
+      "product",
+      "package_version",
+      "adapter_version",
+      "build_date",
+      "image_tag",
+  )
+
+
+  def _read_resource(name: str, missing_message: str) -> str:
+      """Read the text content of one embedded build-time resource.
+
+      :param name: file name of the resource inside the ``BUILD_PACKAGE``
+          package-data subpackage (for example ``BUILD_INFO_RESOURCE`` or
+          ``OPERATOR_DOC_RESOURCE``).
+      :param missing_message: the exact message to raise as a
+          :class:`RuntimeError` when the resource is absent or cannot be
+          read.
+      :returns: the UTF-8 text content of the resource.
+      :raises RuntimeError: with ``missing_message`` when the resource is
+          absent (``FileNotFoundError``, ``ModuleNotFoundError``) or
+          otherwise unreadable (``OSError``). Never substitutes generated
+          or default content.
+      """
+      from importlib.resources import files
+      try:
+          return (files(BUILD_PACKAGE) / name).read_text(encoding="utf-8")
+      except (FileNotFoundError, ModuleNotFoundError, OSError):
+          raise RuntimeError(missing_message)
+
+  Append the following function definition to the end of the file,
+  separated from `_read_resource` above by exactly two blank lines:
+
+  def build_info() -> dict:
+      """Return the build information mapping embedded at build time.
+
+      Reads ``BUILD_INFO_RESOURCE`` from ``BUILD_PACKAGE`` through
+      :func:`_read_resource`, parses it as JSON, and validates that it
+      is a mapping containing every key of ``REQUIRED_BUILD_KEYS`` with
+      a non-empty string value.
+
+      :returns: the parsed build information mapping, containing at
+          least the keys "product", "package_version",
+          "adapter_version", "build_date", and "image_tag", each mapped
+          to a non-empty string.
+      :raises RuntimeError: ``"build info payload missing"`` when the
+          embedded resource is absent; ``"build info payload malformed:
+          not valid JSON"`` when the resource content is not valid
+          JSON; ``"build info payload malformed: missing or invalid key
+          '<key>'"`` when the parsed value is not a mapping, or is
+          missing one of ``REQUIRED_BUILD_KEYS``, or maps one of those
+          keys to a value that is not a non-empty string.
+      """
+      text = _read_resource(BUILD_INFO_RESOURCE, "build info payload missing")
+      try:
+          data = json.loads(text)
+      except json.JSONDecodeError:
+          raise RuntimeError("build info payload malformed: not valid JSON")
+      for key in REQUIRED_BUILD_KEYS:
+          if (
+              not isinstance(data, dict)
+              or not isinstance(data.get(key), str)
+              or not data.get(key)
+          ):
+              raise RuntimeError(
+                  f"build info payload malformed: missing or invalid key {key!r}"
+              )
+      return data
+
+  Constraints (all binding, no exceptions):
+  - Do not change anything above the two blank lines that precede this
+    new function: the existing docstring, the `import json` line, the
+    four constants, and the `_read_resource` function are reproduced
+    byte-identical to what is shown above.
+  - Function signature, exact: `def build_info() -> dict:`. No
+    parameters. Return type annotation is `dict`.
+  - The docstring text of `build_info` is reproduced verbatim, character
+    for character, exactly as shown above, using reStructuredText-style
+    `:returns:` and `:raises:` fields after a one-line summary, blank
+    line, and an explanatory paragraph.
+  - Body logic, step by step, exact:
+    1. `text = _read_resource(BUILD_INFO_RESOURCE, "build info payload
+       missing")` — calls the previously defined `_read_resource`
+       function (already present in this file) with the module-level
+       constant `BUILD_INFO_RESOURCE` and the literal string `"build
+       info payload missing"`.
+    2. A `try`/`except json.JSONDecodeError` block: the `try` body is
+       `data = json.loads(text)`; the `except json.JSONDecodeError:`
+       body is `raise RuntimeError("build info payload malformed: not
+       valid JSON")`, using the `json` module already imported at
+       module level (`import json`).
+    3. A `for key in REQUIRED_BUILD_KEYS:` loop iterating the
+       module-level constant `REQUIRED_BUILD_KEYS` in its declared
+       order. On each iteration, an `if` statement combines three
+       conditions with `or`: `not isinstance(data, dict)`, `not
+       isinstance(data.get(key), str)`, and `not data.get(key)` (this
+       last condition rejects an empty string, since an empty string is
+       falsy). If any of the three is true, raise `RuntimeError(f"build
+       info payload malformed: missing or invalid key {key!r}")` — the
+       f-string uses `{key!r}` (`repr()` formatting, producing the key
+       wrapped in quotes) and the exact literal prefix `"build info
+       payload malformed: missing or invalid key "`.
+    4. `return data` as the final statement, executed only if the loop
+       completes without raising (i.e., every key in
+       `REQUIRED_BUILD_KEYS` is present in `data` with a non-empty
+       string value).
+  - `build_info` performs no other validation and no other transformation
+    of `data`; it returns the parsed mapping exactly as `json.loads`
+    produced it (not a copy, not a filtered subset).
+  - No other functions, classes, or statements are added in this AS.
+    Exactly two blank lines separate the end of `_read_resource` (the
+    line `raise RuntimeError(missing_message)`) and the `def
+    build_info` line.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-025
+    name: InfoCommand
+    definition: Self-description API command returning identity, build
+      metadata, runtime summary, and embedded operator documentation.
+    properties:
+    - documentation payload embedded at build time from the single
+      documentation source
+    - same source renders man and info pages; divergence fails the build
+    source_labels: ["{u3x7}", "{e9a3}"]
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry,
+      transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/
+      at the repository root, modules as dotted paths beneath it
+    source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}",
+      "{y1j5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.runtime.build_info.build_info
+  expected: >
+    The function build_info takes no parameters and returns dict. It
+    reads the build_info.json resource through _read_resource using the
+    message "build info payload missing", parses the text as JSON raising
+    RuntimeError with message "build info payload malformed: not valid
+    JSON" on a JSON decode error, then for each key in REQUIRED_BUILD_KEYS
+    in order verifies the parsed value is a mapping containing that key
+    mapped to a non-empty string, raising RuntimeError with message
+    "build info payload malformed: missing or invalid key '<key>'" naming
+    the specific failing key on any violation, and otherwise returns the
+    parsed mapping unchanged.
+status: draft

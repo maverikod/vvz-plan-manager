@@ -73,7 +73,7 @@ prompt: |
     `def resolve_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str, as_step_id: str) -> Branch`
     — raises ValueError naming the missing step id when a step does not
     resolve.
-  - plan_manager/views/prompt.py:
+  - plan_manager/views/prompt_assembly.py:
     `def assemble_prompt(conn, branch: Branch) -> str` — the
     deterministic executor prompt in the fixed order (MRS excerpt, HRS
     slice, GS, TS, AS delta under fixed headers), byte-identical for the
@@ -183,7 +183,7 @@ prompt: |
      from plan_manager.commands.resolve import resolve_plan
      from plan_manager.runtime.context import db_connection
      from plan_manager.views.branch import resolve_branch
-     from plan_manager.views.prompt import assemble_prompt, token_estimate
+     from plan_manager.views.prompt_assembly import assemble_prompt, token_estimate
 
   2. Append this method to the end of the BranchPromptCommand class
      body, immediately after validate_params, separated by exactly one

@@ -55,9 +55,12 @@ prompt: |
       "email": cls.email,
       "detailed_description": (
           "Scaffolds a new step under the declarative level schema with "
-          "the level-specific required-field skeleton, status draft, and "
-          "the next free zero-padded identifier (G-NNN for level 3, T-NNN "
-          "for level 4, A-NNN for level 5). Level 3 steps have no parent; "
+          "the level-specific required-field skeleton (populated with "
+          "empty values per the declarative level schema defaults, C-006), "
+          "status draft, and the next free zero-padded identifier (G-NNN "
+          "for level 3, T-NNN for level 4, A-NNN for level 5). The "
+          "command itself supplies the skeleton; the caller does not pass "
+          "field values on creation. Level 3 steps have no parent; "
           "level 4 and 5 steps require parent_step_id. This is a mutating "
           "command that runs under the mutation admission regime: direct "
           "execution is admitted only when the parent (or, for level 3, "

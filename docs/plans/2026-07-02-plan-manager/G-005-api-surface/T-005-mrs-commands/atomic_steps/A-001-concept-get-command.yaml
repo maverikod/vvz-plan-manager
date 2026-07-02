@@ -60,9 +60,9 @@ prompt: |
     `def db_connection()` — a context manager yielding a psycopg.Connection; use as
     `with db_connection() as conn:`.
   - Module `plan_manager.domain.concept_store`:
-    `@dataclass class Concept:` with fields `uuid: uuid.UUID`, `plan_uuid: uuid.UUID`,
-    `concept_id: str`, `name: str`, `definition: str`, `properties: list[str]`,
-    `source_labels: list[str]`; and
+    `@dataclass class Concept:` with fields, in order, `concept_id: str`, `name: str`,
+    `definition: str`, `properties: List[str]`, `source_labels: List[str]` (the
+    dataclass has no `uuid` and no `plan_uuid` field); and
     `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None` — returns
     None when no concept with that concept_id exists in the plan.
 
@@ -140,8 +140,6 @@ prompt: |
                           f"concept not found: {concept_id}",
                       )
                   return SuccessResult(data={
-                      "uuid": str(concept.uuid),
-                      "plan_uuid": str(concept.plan_uuid),
                       "concept_id": concept.concept_id,
                       "name": concept.name,
                       "definition": concept.definition,

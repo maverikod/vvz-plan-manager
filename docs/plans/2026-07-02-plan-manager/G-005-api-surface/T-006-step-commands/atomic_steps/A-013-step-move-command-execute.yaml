@@ -26,9 +26,11 @@ prompt: |
   from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.commands.step_move_metadata import get_step_move_metadata
-  from plan_manager.domain.step_store import get_step, move_step
+  from plan_manager.domain.step_ops import move_step
+  from plan_manager.domain.step_store import get_step
   from plan_manager.runtime.context import db_connection
   from plan_manager.storage.version_store import record_revision
+  from plan_manager.verify.gate_data import artifact_path_of
   from plan_manager.views.dependency_graph import load_steps
 
 
@@ -112,9 +114,10 @@ prompt: |
                   under, or None for direct-mode mutation.
 
           Returns:
-              SuccessResult with the moved step's identity, new parent,
-              status, and revision_uuid on success, or ErrorResult with a
-              stable domain error code on failure.
+              SuccessResult with the moved step's uuid, old_step_id,
+              new_step_id, new parent_step_uuid, path, status, and
+              revision_uuid on success, or ErrorResult with a stable domain
+              error code on failure.
           """
           raise NotImplementedError
 
@@ -151,10 +154,12 @@ prompt: |
                       if frozen_at_or_below(nodes, target.uuid):
                           return domain_error("FROZEN_ARTIFACT", str(exc))
                       return domain_error("CASCADE_REQUIRED", str(exc))
+                  old_step_id = target.step_id
                   moved = move_step(conn, target.uuid, new_parent.uuid)
+                  nodes_after = load_steps(conn, p.uuid)
                   snapshot = step_snapshot(moved, moved.status)
                   if rec is not None:
-                      status_updates = step_invalidation(load_steps(conn, p.uuid), target.uuid)
+                      status_updates = step_invalidation(nodes_after, target.uuid)
                       revision = cascade_write(
                           conn, p.uuid, rec, target.uuid, snapshot, status_updates, "api",
                           f"step_move: {moved.step_id}",
@@ -167,8 +172,10 @@ prompt: |
                   verified = get_step(conn, target.uuid)
                   data = {
                       "uuid": str(verified.uuid),
-                      "step_id": verified.step_id,
+                      "old_step_id": old_step_id,
+                      "new_step_id": verified.step_id,
                       "parent_step_uuid": str(verified.parent_step_uuid) if verified.parent_step_uuid is not None else None,
+                      "path": artifact_path_of(nodes_after, verified),
                       "status": verified.status,
                       "revision_uuid": str(revision),
                   }
@@ -183,11 +190,26 @@ prompt: |
     byte-identical to the content shown above.
   - Admission is checked against `target.uuid` (the step being moved), not
     the new parent's uuid.
+  - `old_step_id` is captured from `target.step_id` before `move_step` is
+    called, because `move_step` re-assigns the step's human-readable
+    step_id within the new parent's scope; `target.uuid` (the immutable
+    identity) is unaffected by the move and is used for every subsequent
+    lookup.
+  - `nodes_after` is `load_steps(conn, p.uuid)` called once, immediately
+    after `move_step` returns; it is reused both for `step_invalidation`
+    (cascade branch) and for `artifact_path_of` when building the returned
+    `path`, so both reflect the post-move tree.
   - `rec` being non-`None` means the mutation is admitted under an open
     cascade (cascade mode), in which case `status_updates` is computed via
-    `step_invalidation(load_steps(conn, p.uuid), target.uuid)`; `rec` being
-    `None` means direct-mode admission, which writes a revision via
-    `record_revision` with `ref_name=None` and no invalidation.
+    `step_invalidation(nodes_after, target.uuid)`; `rec` being `None` means
+    direct-mode admission, which writes a revision via `record_revision`
+    with `ref_name=None` and no invalidation.
+  - The returned `data` dict carries `old_step_id` (the pre-move value
+    captured above) and `new_step_id` (`verified.step_id`, the re-assigned
+    id read back from storage) as two separate keys; there is no single
+    `step_id` key in the return data.
+  - `path` in the returned data is `artifact_path_of(nodes_after, verified)`,
+    the artifact path of the step at its new location.
   - Do not add, remove, or reorder any other method or statement in the
     file.
 
@@ -223,8 +245,16 @@ prompt: |
     plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
-    step_uuid) -> Step` and `def move_step(conn, step_uuid, new_parent_uuid:
-    uuid.UUID | None) -> Step`.
+    step_uuid) -> Step`.
+  - `plan_manager/domain/step_ops.py` defines `def move_step(conn,
+    step_uuid: uuid.UUID, new_parent_uuid: uuid.UUID | None) -> Step`
+    (re-parents the step, re-assigns its human-readable step_id within the
+    new parent's scope, scrubs old-scope depends_on references to it,
+    clears the moved step's own depends_on, and rewrites every reference
+    to the moved id in one operation; returns the updated step, whose
+    `step_id` may differ from the `step_id` it had before the call).
+  - `plan_manager/verify/gate_data.py` defines
+    `def artifact_path_of(nodes, step) -> str`.
 
   MRS excerpt (concept definitions relevant to this AS):
 
@@ -269,14 +299,17 @@ verification:
   expected: >
     Against a live plan and database: moving an existing, non-frozen step
     to a valid new parent in direct mode succeeds and returns SuccessResult
-    data with the moved step's uuid, unchanged step_id, the new
-    parent_step_uuid, status, and a revision_uuid; every reference to the
-    moved step_id elsewhere in the plan is rewritten by move_step in the
-    same operation; an unknown step_id or new_parent_step_id returns
-    ErrorResult with code STEP_NOT_FOUND; attempting a direct move of a
-    frozen step without cascade_uuid returns CASCADE_REQUIRED, with
-    FROZEN_ARTIFACT returned instead when frozen_at_or_below reports the
-    step frozen; a cascade_uuid that check_admission rejects returns
+    data with the moved step's uuid, old_step_id equal to the step_id used
+    to look it up, new_step_id equal to the step_id re-assigned within the
+    new parent's scope (which may differ from old_step_id), the new
+    parent_step_uuid, the path of the step at its new location, status,
+    and a revision_uuid; every reference to the moved step's old id
+    elsewhere in the plan is rewritten by move_step in the same operation;
+    an unknown step_id or new_parent_step_id returns ErrorResult with code
+    STEP_NOT_FOUND; attempting a direct move of a frozen step without
+    cascade_uuid returns CASCADE_REQUIRED, with FROZEN_ARTIFACT returned
+    instead when frozen_at_or_below reports the step frozen; a
+    cascade_uuid that check_admission rejects returns
     CASCADE_CONFLICT; a subsequent step_get on the moved step confirms the
     new parent.
 status: draft

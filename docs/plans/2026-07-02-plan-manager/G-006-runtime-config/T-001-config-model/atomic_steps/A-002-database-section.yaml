@@ -1,0 +1,149 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: database-section
+target_file: plan_manager/runtime/config.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-028, C-035]
+status: draft
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/runtime/config.py`.
+
+  This is a `modify_file` operation. The full current content of the file,
+  exactly as it exists after all lower-priority atomic steps on this file
+  have been applied, is:
+
+  ```python
+  from __future__ import annotations
+
+  import json
+
+  from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+  class ConfigError(ValueError):
+      """Raised when the plan_manager configuration section is invalid.
+
+      The exception message is the explicit startup report describing every
+      unknown key, missing required key, and type violation found in the
+      configuration.
+      """
+  ```
+
+  Append the following new class to the end of the file, separated from the
+  `ConfigError` class above by exactly two blank lines:
+
+  ```python
+  class DatabaseSection(BaseModel):
+      """Database connection parameters for the in-container PostgreSQL (C-035).
+
+      Exactly one of ``host`` or ``socket`` must be set. No password field is
+      defined here: the password is taken only from a mounted secrets file and
+      is never part of configuration.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      host: str | None = None
+      socket: str | None = None
+      port: int = 5432
+      dbname: str
+      user: str
+
+      @model_validator(mode="after")
+      def check_host_xor_socket(self) -> DatabaseSection:
+          """Require exactly one of ``host`` or ``socket`` to be set.
+
+          :return: ``self`` unchanged when validation passes.
+          :raises ValueError: If both ``host`` and ``socket`` are ``None``, or
+              if both are set.
+          """
+          if (self.host is None) == (self.socket is None):
+              raise ValueError("exactly one of 'host' or 'socket' must be set")
+          return self
+  ```
+
+  Requirements, all explicit, no open decisions:
+
+  - `DatabaseSection` is a class named exactly `DatabaseSection`, inheriting
+    from `BaseModel` (imported at the top of the file from `pydantic`; do not
+    add any new import statements — `BaseModel`, `ConfigDict`, and
+    `model_validator` are already imported at the top of the file).
+  - `model_config = ConfigDict(extra="forbid")` is the first statement in the
+    class body after the docstring; this is the allowed-keys check: any
+    field in the input data not declared below raises a pydantic
+    `ValidationError`.
+  - Fields, in this exact order, with these exact type annotations and
+    defaults:
+    - `host: str | None = None`
+    - `socket: str | None = None`
+    - `port: int = 5432`
+    - `dbname: str` (required, no default)
+    - `user: str` (required, no default)
+  - No `password` field of any name or type is defined on this class, and no
+    comment or code references a password. This is deliberate: the password
+    comes only from a mounted secrets file outside this model.
+  - A `model_validator` with `mode="after"` named exactly
+    `check_host_xor_socket`, taking only `self`, returning type
+    `DatabaseSection` (written as a bare name, relying on the
+    `from __future__ import annotations` already active at the top of the
+    file — do not quote the return type as a string).
+  - The validator body: if `(self.host is None) == (self.socket is None)`
+    (i.e. both are `None`, or both are set) it raises
+    `ValueError("exactly one of 'host' or 'socket' must be set")`, this
+    exact message string; otherwise it returns `self` unchanged.
+  - Do not add any fields, methods, or validators beyond what is shown.
+  - Do not modify the existing `ConfigError` class or the module-level
+    imports in any way.
+  - After this change, the file ends with the `DatabaseSection` class shown
+    above; no further content follows it in this step.
+
+  MRS excerpt (only the concepts and relation relevant to this step):
+
+  ```yaml
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+    source_labels: ["{z8c3}", "{q2r9}", "{z6n1}", "{t6s8}", "{b8j5}", "{x3o9}"]
+  ```
+
+  Relation relevant to this step: `{ from_concept: C-027, to_concept: C-035,
+  type: uses }` — the server runtime uses the database; `DatabaseSection`
+  supplies the connection parameters (socket or host, port, database name,
+  user) that C-028's `database` field carries, matching C-035's stated
+  access pattern of psycopg 3 with plain SQL and no ORM (the connection
+  parameters here do not themselves open a connection).
+verification:
+  type: import
+  target: plan_manager.runtime.config
+  expected: >
+    Importing the module plan_manager.runtime.config succeeds. The module
+    now defines DatabaseSection in addition to ConfigError.
+    DatabaseSection(dbname="p", user="u", host="localhost") constructs
+    successfully with port defaulting to 5432 and socket None.
+    DatabaseSection(dbname="p", user="u", socket="/tmp/x") constructs
+    successfully with host None. Constructing DatabaseSection(dbname="p",
+    user="u") with neither host nor socket set raises a pydantic
+    ValidationError whose message includes "exactly one of 'host' or
+    'socket' must be set". Constructing DatabaseSection(dbname="p",
+    user="u", host="localhost", socket="/tmp/x") with both set raises the
+    same ValidationError. Passing any additional unknown keyword (for
+    example password="x") raises a ValidationError due to extra="forbid".

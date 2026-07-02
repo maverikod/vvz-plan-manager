@@ -1,0 +1,165 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: build-app
+target_file: plan_manager/main.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-027, C-024]
+status: draft
+prompt: |
+  Modify the file `plan_manager/main.py` (operation: modify_file). The
+  file currently contains exactly the content shown below (this is the
+  full, current, byte-exact state of the file — reproduce it unchanged
+  and append the new function described after it; do not alter a single
+  character of the existing content):
+
+  """Server entry point and platform bootstrap for plan_manager.
+
+  Realises ServerRuntime (C-027): the entry point receives a configuration
+  file path, initializes the runtime (validating the custom configuration
+  section, C-028, and aborting startup with an explicit report on invalid
+  configuration or unreadable secrets), then creates the application through
+  the platform application factory and runs it with the platform's server
+  engine. The platform (mcp-proxy-adapter) owns the entire external surface:
+  the JSON-RPC endpoint with single and batch calls, the asynchronous
+  endpoint, health, command listing, heartbeat, WebSocket job push, and
+  OpenAPI and help output. Supported protocols (http, https, mtls) follow
+  the platform configuration unchanged. The server registers command classes
+  only through the platform hook mechanism; it adds no custom route and
+  patches no platform internal. The queue-manager section and the platform
+  registration section (proxy registration URL, heartbeat, server id,
+  instance UUID) are platform-owned and pass through untouched — the server
+  functions identically with registration disabled.
+
+  AUTO_IMPORT_MODULES declares, for the platform auto-import facility, the
+  modules that spawned worker processes must import so that command classes
+  and the registration hook are available in worker process memory.
+  """
+
+  import argparse
+  import asyncio
+  import sys
+
+  import hypercorn.asyncio
+  import hypercorn.config
+
+  from plan_manager.runtime.context import init_runtime
+  from plan_manager.runtime.config import ConfigError
+
+  AUTO_IMPORT_MODULES: tuple[str, ...] = (
+      "plan_manager.hooks",
+      "plan_manager.commands.registration",
+  )
+
+  Append exactly two blank lines after the content above, then the new
+  function `build_app` described below. This is the only function in the
+  whole module allowed to touch the platform API; its import of the
+  platform factory is placed inside the function body precisely so that a
+  mismatch against the assumed platform contract stays a one-function fix.
+
+  MRS excerpt (concept definitions relevant to this step, quoted from the
+  machine specification):
+
+  - C-027 ServerRuntime: "Adapter-owned runtime hosting the command
+    registry, transport, queue, and bootstrap sequence." Properties:
+    entry point `main --config`; AppFactory create_app; hypercorn engine.
+    Adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface.
+    Hook-based registration; auto-import modules for spawned workers.
+  - C-024 CommandInventory: "Closed normative set of API commands
+    enforced by a startup self-check." Properties: registry compared
+    against inventory at startup, any difference aborts start; no-stub
+    probe of schema, metadata, and descr for every registered command;
+    the editing subset is enumerated exhaustively.
+
+  Imported sibling contract used inside this function (quote verbatim;
+  this module already exists in the repository, is not created or
+  modified by this step, and is not read — only its public signature,
+  given here, is needed):
+
+  - `plan_manager/hooks.py` exposes
+    `def register_custom_commands_hook(registry) -> None` (registers
+    every command class of the inventory under the custom category,
+    checks inventory completeness, runs the no-stub probe; any failure
+    raises RuntimeError aborting startup).
+
+  ASSUMED PLATFORM CONTRACT (packet-binding; single point of uncertainty,
+  to be verified against mcp-proxy-adapter >= 8.10.15 at code phase; ALL
+  platform API usage is localized inside this one function so a mismatch
+  is a one-function fix): module `mcp_proxy_adapter.core.app_factory`
+  exposes `class AppFactory` with
+  `def create_app(self, config_path: str, custom_commands_hook=None)`
+  returning the ASGI application; the factory reads the platform-owned
+  sections (server, registration, auth, queue manager, ssl/transport/
+  security) from the same configuration file and invokes the hook against
+  the command registry.
+
+  Add exactly this function (four-space indentation as shown):
+
+  def build_app(config_path: str):
+      """Create the platform ASGI application for the given configuration file.
+
+      This is the only function that touches the platform API surface
+      (mcp_proxy_adapter.core.app_factory.AppFactory); the import is placed
+      inside the function body so that a mismatch against the assumed
+      platform contract stays localized to this one function. The platform
+      owns the entire external surface: JSON-RPC with single and batch
+      calls, the asynchronous endpoint, health, command listing, heartbeat,
+      WebSocket job push, and OpenAPI and help output. Supported protocols
+      (http, https, mtls) follow the platform configuration unchanged. The
+      server registers command classes only; it adds no route and patches
+      no platform internal. The queue-manager section and the platform
+      registration section (registration URL, heartbeat URL and interval,
+      server id, instance UUID) are read by the platform from the same
+      configuration file and passed through untouched — the server
+      functions identically with registration disabled.
+
+      Args:
+          config_path: Path to the JSON configuration file containing the
+              platform-owned sections (server, registration, auth, queue
+              manager, and optional ssl/transport/security) plus the
+              plan_manager custom section.
+
+      Returns:
+          The ASGI application created by the platform application factory.
+      """
+      from mcp_proxy_adapter.core.app_factory import AppFactory
+      from plan_manager.hooks import register_custom_commands_hook
+
+      factory = AppFactory()
+      return factory.create_app(
+          config_path=config_path,
+          custom_commands_hook=register_custom_commands_hook,
+      )
+
+  Constraints (all binding, no deviation):
+  - Do not modify any character of the pre-existing content shown above;
+    append only.
+  - Exactly two blank lines separate the AUTO_IMPORT_MODULES assignment
+    from the `def build_app(config_path: str):` line.
+  - The docstring of build_app is exact and complete as shown above; do
+    not paraphrase, shorten, or reorder any sentence of it.
+  - The two imports (`from mcp_proxy_adapter.core.app_factory import
+    AppFactory` and `from plan_manager.hooks import
+    register_custom_commands_hook`) are local to the function body, placed
+    as the first two statements inside the function, in that order, and
+    are not moved to module level.
+  - `factory.create_app` is called with exactly the two keyword arguments
+    `config_path=config_path` and
+    `custom_commands_hook=register_custom_commands_hook`, in that order,
+    and its return value is returned directly.
+  - Do not define main, the `__main__` guard, or any other statement in
+    this step; the file after this step ends immediately after the
+    `build_app` function's closing return statement, with a single
+    trailing newline.
+verification:
+  type: static_analysis
+  target: plan_manager.main.build_app
+  expected: >
+    The function build_app takes a single parameter config_path typed as
+    str, imports AppFactory from mcp_proxy_adapter.core.app_factory and
+    register_custom_commands_hook from plan_manager.hooks only inside its
+    own body, instantiates AppFactory with no arguments, and returns the
+    result of calling create_app with config_path and
+    custom_commands_hook set to register_custom_commands_hook; no other
+    module-level name imports from mcp_proxy_adapter anywhere in the file.

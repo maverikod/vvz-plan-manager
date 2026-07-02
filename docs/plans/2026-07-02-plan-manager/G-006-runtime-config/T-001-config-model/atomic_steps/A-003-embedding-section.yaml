@@ -1,0 +1,128 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: embedding-section
+target_file: plan_manager/runtime/config.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-028]
+status: draft
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/runtime/config.py`.
+
+  This is a `modify_file` operation. The full current content of the file,
+  exactly as it exists after all lower-priority atomic steps on this file
+  have been applied, is:
+
+  ```python
+  from __future__ import annotations
+
+  import json
+
+  from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+  class ConfigError(ValueError):
+      """Raised when the plan_manager configuration section is invalid.
+
+      The exception message is the explicit startup report describing every
+      unknown key, missing required key, and type violation found in the
+      configuration.
+      """
+
+
+  class DatabaseSection(BaseModel):
+      """Database connection parameters for the in-container PostgreSQL (C-035).
+
+      Exactly one of ``host`` or ``socket`` must be set. No password field is
+      defined here: the password is taken only from a mounted secrets file and
+      is never part of configuration.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      host: str | None = None
+      socket: str | None = None
+      port: int = 5432
+      dbname: str
+      user: str
+
+      @model_validator(mode="after")
+      def check_host_xor_socket(self) -> DatabaseSection:
+          """Require exactly one of ``host`` or ``socket`` to be set.
+
+          :return: ``self`` unchanged when validation passes.
+          :raises ValueError: If both ``host`` and ``socket`` are ``None``, or
+              if both are set.
+          """
+          if (self.host is None) == (self.socket is None):
+              raise ValueError("exactly one of 'host' or 'socket' must be set")
+          return self
+  ```
+
+  Append the following new class to the end of the file, separated from the
+  `DatabaseSection` class above by exactly two blank lines:
+
+  ```python
+  class EmbeddingSection(BaseModel):
+      """Optional embedding service settings.
+
+      All fields are optional; the embedding service is the sole optional
+      external integration and its absence degrades only semantic scoring.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      url: str | None = None
+      model: str | None = None
+      timeout: float = 30.0
+  ```
+
+  Requirements, all explicit, no open decisions:
+
+  - `EmbeddingSection` is a class named exactly `EmbeddingSection`,
+    inheriting from `BaseModel` (already imported at the top of the file; do
+    not add any new import statements).
+  - `model_config = ConfigDict(extra="forbid")` is the first statement in
+    the class body after the docstring.
+  - Fields, in this exact order, with these exact type annotations and
+    defaults:
+    - `url: str | None = None`
+    - `model: str | None = None`
+    - `timeout: float = 30.0`
+  - No validators, no additional fields, no methods.
+  - Do not modify any earlier class (`ConfigError`, `DatabaseSection`) or the
+    module-level imports in any way.
+  - After this change, the file ends with the `EmbeddingSection` class shown
+    above; no further content follows it in this step.
+
+  MRS excerpt (only the concept relevant to this step):
+
+  ```yaml
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+  ```
+
+  `EmbeddingSection` realizes the "embedding" field named in C-028's fields
+  property (database, embedding, scoring, schema_overrides, export_root):
+  the optional embedding service settings sub-model.
+verification:
+  type: import
+  target: plan_manager.runtime.config
+  expected: >
+    Importing the module plan_manager.runtime.config succeeds. The module
+    now defines EmbeddingSection in addition to ConfigError and
+    DatabaseSection. EmbeddingSection() constructs successfully with url
+    None, model None, and timeout 30.0. EmbeddingSection(url="http://x",
+    model="m", timeout=5.0) constructs successfully with those exact
+    values. Passing any additional unknown keyword raises a pydantic
+    ValidationError due to extra="forbid".

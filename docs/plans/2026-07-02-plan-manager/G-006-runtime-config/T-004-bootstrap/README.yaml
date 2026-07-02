@@ -1,0 +1,53 @@
+step_id: T-004
+parent_global_step: G-006
+name: bootstrap
+description: >
+  Create the fixed bootstrap sequence of ServerRuntime (C-027). The entry
+  point receives the configuration file path as its single required
+  command-line argument, first initializes the runtime — validating the
+  custom configuration section (C-028) so that an invalid configuration
+  aborts startup with the explicit report before any platform component
+  starts — then creates the application through the platform application
+  factory and runs it with the platform's server engine. The platform owns
+  the entire external surface — JSON-RPC with single and batch calls, the
+  asynchronous endpoint, health, command listing, heartbeat, WebSocket job
+  push, OpenAPI and help — and the supported protocols follow the platform
+  configuration unchanged; the bootstrap registers command classes only
+  through the platform hook mechanism, handing the registration callback of
+  the command inventory (C-024) to the factory, adds no custom route, and
+  patches no platform internal. The modules needed by spawned worker
+  processes are declared through the platform auto-import facility.
+  Long-running commands opt into the platform queue manager through their
+  declared queue flag; the queue manager's configuration is platform-owned
+  and passes through untouched, as does the platform registration section
+  (proxy registration URL, heartbeat, server id, instance UUID) — the server
+  functions identically with registration disabled. This step defines the
+  entry point, the initialization-before-platform ordering, the factory and
+  engine invocation, the hook handoff, and the auto-import declaration; it
+  defines no command class, no configuration model, and no accessor.
+concepts: [C-027, C-028, C-024]
+inputs:
+- name: configuration_path_argument
+  type: command-line datum
+  description: >
+    The single required argument naming the configuration file consumed by
+    runtime initialization and the platform factory.
+- name: registration_callback
+  type: hook reference
+  description: >
+    The command-registration callback of the inventory (C-024), handed to
+    the platform factory for hook-based registration.
+outputs:
+- name: running_server
+  type: runtime state
+  description: >
+    The platform application created by the factory and served by the
+    platform engine, with commands registered and workers' modules declared
+    for auto-import.
+- name: startup_abort
+  type: typed outcome
+  description: >
+    The explicit non-zero-exit abort with the configuration report when
+    validation fails before any platform component starts.
+atomic_steps: [A-001, A-002, A-003, A-004]
+status: draft

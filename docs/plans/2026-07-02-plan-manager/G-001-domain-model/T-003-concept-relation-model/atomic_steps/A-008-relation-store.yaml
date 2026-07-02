@@ -6,7 +6,7 @@ operation: create_file
 priority: 1
 depends_on: [A-006, A-007]
 concepts: [C-004, C-003, C-035]
-prompt: >
+prompt: |
   Create a new Python source file at exact project-relative path
   plan_manager/domain/relation_store.py.
 

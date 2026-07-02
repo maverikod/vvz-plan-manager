@@ -1,0 +1,145 @@
+step_id: A-003
+parent_tactical_step: T-003
+name: read-resource-helper
+target_file: plan_manager/runtime/build_info.py
+operation: modify_file
+priority: 2
+depends_on: [A-002]
+concepts: [C-027, C-025]
+prompt: |
+  Modify the file `plan_manager/runtime/build_info.py` with operation
+  `modify_file`.
+
+  The file currently exists with exactly this content (reproduced in
+  full, byte-identical, below):
+
+  """Reader for the build-time embedded payloads carried by
+  ``plan_manager._build``.
+
+  This module reads the build information mapping and the operator
+  documentation text that the release pipeline embeds into the
+  dedicated ``plan_manager._build`` package-data subpackage at build
+  time. It performs no rendering and no network access: it only reads
+  what the build embedded. The absence of an embedded payload at
+  runtime is a packaging defect surfaced as an explicit
+  :class:`RuntimeError` naming the missing payload; generated or
+  default content is never substituted.
+  """
+
+  import json
+
+  BUILD_PACKAGE: str = "plan_manager._build"
+  BUILD_INFO_RESOURCE: str = "build_info.json"
+  OPERATOR_DOC_RESOURCE: str = "operator_doc.md"
+  REQUIRED_BUILD_KEYS: tuple[str, ...] = (
+      "product",
+      "package_version",
+      "adapter_version",
+      "build_date",
+      "image_tag",
+  )
+
+  Append the following function definition to the end of the file,
+  separated from the constants block above by exactly two blank lines:
+
+  def _read_resource(name: str, missing_message: str) -> str:
+      """Read the text content of one embedded build-time resource.
+
+      :param name: file name of the resource inside the ``BUILD_PACKAGE``
+          package-data subpackage (for example ``BUILD_INFO_RESOURCE`` or
+          ``OPERATOR_DOC_RESOURCE``).
+      :param missing_message: the exact message to raise as a
+          :class:`RuntimeError` when the resource is absent or cannot be
+          read.
+      :returns: the UTF-8 text content of the resource.
+      :raises RuntimeError: with ``missing_message`` when the resource is
+          absent (``FileNotFoundError``, ``ModuleNotFoundError``) or
+          otherwise unreadable (``OSError``). Never substitutes generated
+          or default content.
+      """
+      from importlib.resources import files
+      try:
+          return (files(BUILD_PACKAGE) / name).read_text(encoding="utf-8")
+      except (FileNotFoundError, ModuleNotFoundError, OSError):
+          raise RuntimeError(missing_message)
+
+  Constraints (all binding, no exceptions):
+  - Do not change anything above the two blank lines that precede this
+    new function: the existing docstring, the `import json` line, and
+    the four constants (`BUILD_PACKAGE`, `BUILD_INFO_RESOURCE`,
+    `OPERATOR_DOC_RESOURCE`, `REQUIRED_BUILD_KEYS`) are reproduced
+    byte-identical to what is shown above.
+  - Function signature, exact: `def _read_resource(name: str,
+    missing_message: str) -> str:`. Both parameters and the return value
+    are typed exactly as shown; no other parameters, no default values,
+    no `*args`/`**kwargs`.
+  - The docstring text of `_read_resource` is reproduced verbatim,
+    character for character, exactly as shown above, using
+    reStructuredText-style `:param:`, `:returns:`, and `:raises:` fields:
+    one-line summary on the first line, blank line, then the field list.
+  - The import statement `from importlib.resources import files` is
+    placed INSIDE the function body, as the first line of the function
+    body (after the docstring), NOT at module level. This is a local
+    import local to `_read_resource`; do not move it to module scope and
+    do not add any other import anywhere else in the file.
+  - Body logic, exact: a `try` block whose only statement is `return
+    (files(BUILD_PACKAGE) / name).read_text(encoding="utf-8")`, followed
+    by `except (FileNotFoundError, ModuleNotFoundError, OSError):` whose
+    only statement is `raise RuntimeError(missing_message)`. The
+    `files(...)` call uses the module-level constant `BUILD_PACKAGE`
+    (not a literal string) as its argument. The `/` operator on the
+    result of `files(BUILD_PACKAGE)` is `importlib.resources.abc.Traversable.__truediv__`,
+    joining the package resource root with `name` to address a specific
+    resource file. `.read_text(encoding="utf-8")` reads that resource's
+    full text content as a UTF-8 decoded string.
+  - `_read_resource` never substitutes generated or default content: on
+    any of the three caught exception types it raises `RuntimeError`
+    carrying exactly the caller-supplied `missing_message` string and
+    nothing else (no wrapping, no additional formatting, no chaining
+    syntax such as `from`); it does not return a placeholder string, an
+    empty string, or any fabricated content on failure.
+  - No other functions, classes, or statements are added in this AS.
+    Exactly two blank lines separate the end of the constants block
+    (the closing `)` of `REQUIRED_BUILD_KEYS`) and the `def
+    _read_resource` line. There are no blank lines between the `def`
+    line and the docstring, and no blank line between the docstring's
+    closing `"""` and the `from importlib.resources import files` line.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-025
+    name: InfoCommand
+    definition: Self-description API command returning identity, build
+      metadata, runtime summary, and embedded operator documentation.
+    properties:
+    - documentation payload embedded at build time from the single
+      documentation source
+    - same source renders man and info pages; divergence fails the build
+    source_labels: ["{u3x7}", "{e9a3}"]
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry,
+      transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/
+      at the repository root, modules as dotted paths beneath it
+    source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}",
+      "{y1j5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.runtime.build_info._read_resource
+  expected: >
+    The function _read_resource has signature (name: str,
+    missing_message: str) -> str. Its body imports files from
+    importlib.resources locally inside the function. It attempts to
+    return the UTF-8 text of the resource named by the name parameter
+    inside the BUILD_PACKAGE package-data subpackage, and on
+    FileNotFoundError, ModuleNotFoundError, or OSError it raises
+    RuntimeError with the exact missing_message string passed in by the
+    caller, without substituting any generated or default content.
+status: draft

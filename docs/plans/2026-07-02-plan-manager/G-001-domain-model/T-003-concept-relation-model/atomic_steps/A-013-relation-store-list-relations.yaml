@@ -1,0 +1,115 @@
+step_id: A-013
+parent_tactical_step: T-003
+name: relation-store-list-relations
+target_file: plan_manager/domain/relation_store.py
+operation: modify_file
+priority: 2
+depends_on: [A-008]
+concepts: [C-004, C-003, C-035]
+prompt: |
+  Modify the existing Python source file at exact project-relative path plan_manager/domain/relation_store.py.
+
+  Operation: modify_file. The current full content of the file (state after all lower-priority AS on this file have been applied) is exactly the following:
+
+  ```python
+  """Persistence functions for the Relation domain entity (MRS concept
+  C-004).
+
+
+  This function writes Relation rows in table `relation`, scoped to one
+  plan via the plan_uuid column. Field validation and endpoint-existence
+  checks are delegated to plan_manager.domain.relation before any row is
+  written.
+
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.relation import Relation, validate_relation, check_relation_endpoints_exist
+  from plan_manager.domain.concept_store import list_concept_ids
+
+
+  def insert_relation(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, relation: Relation
+  ) -> uuid.UUID:
+      """Validate and insert a new Relation row scoped to one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          relation: The Relation instance to persist.
+
+      Returns:
+          The generated uuid primary identity of the inserted row.
+
+      Raises:
+          RelationValidationError: propagated unmodified from
+              validate_relation or check_relation_endpoints_exist if
+              relation fails field validation or either endpoint is not
+              among the plan's existing concept_id values.
+      """
+      validate_relation(relation)
+      check_relation_endpoints_exist(relation, list_concept_ids(conn, plan_uuid))
+      row_uuid = uuid.uuid4()
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO relation (uuid, plan_uuid, from_concept, to_concept, type) "
+              "VALUES (%s, %s, %s, %s, %s)",
+              (row_uuid, plan_uuid, relation.from_concept, relation.to_concept, relation.type),
+          )
+      return row_uuid
+  ```
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-004 Relation: typed directed edge between two concepts restricted to seven allowed types (uses, owns, implements, extends, depends_on, produces, consumes).
+  - C-003 Concept: identifier pattern is C-NNN, unique within the plan.
+  - C-035 Database: entities are stored as rows; accessed via psycopg 3 with plain SQL, no ORM; runtime code never emits DDL.
+
+  Required change: append the following function definition to the end of the file, after `insert_relation`, separated from it by exactly two blank lines. Do not change any existing line in the file shown above.
+
+  ```python
+
+
+
+  def list_relations(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID
+  ) -> list[tuple[str, str, str]]:
+      """List every (from_concept, to_concept, type) triple for one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of (from_concept, to_concept, type) tuples for the given
+          plan_uuid, ordered ascending by (from_concept, to_concept, type).
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT from_concept, to_concept, type FROM relation "
+              "WHERE plan_uuid = %s ORDER BY from_concept, to_concept, type",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [(row[0], row[1], row[2]) for row in rows]
+  ```
+
+  Constraints:
+  - The function signature must be exactly `def list_relations(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[tuple[str, str, str]]:`.
+  - Use only names already defined or imported in this file (`psycopg`, `uuid`). Add no new imports.
+  - Open exactly one cursor via `conn.cursor()` used as a context manager. Execute exactly the SQL string "SELECT from_concept, to_concept, type FROM relation WHERE plan_uuid = %s ORDER BY from_concept, to_concept, type" with parameter tuple `(plan_uuid,)`, then call `cur.fetchall()` and bind the result to `rows`.
+  - Return a list comprehension over `rows` constructing one `(row[0], row[1], row[2])` tuple per row, in the exact form shown in the code above.
+  - Do not catch or translate any exception raised by psycopg during `cur.execute` or `cur.fetchall`; let it propagate unmodified.
+  - Do not emit any DDL statement (no CREATE, ALTER, or DROP).
+  - Do not modify, reorder, or remove any part of the file content shown above as the current state. Only append the new function.
+  - Do not add any code beyond what is shown above. Do not add logging. Do not add a module-level connection or any module-level mutable state.
+
+verification:
+  type: import
+  target: plan_manager.domain.relation_store.list_relations
+  expected: >
+    The function list_relations accepts a psycopg connection and a plan_uuid, and returns list[tuple[str, str, str]]. It executes a SELECT against table relation filtered by plan_uuid and ordered by from_concept, to_concept, type, returning one (from_concept, to_concept, type) tuple per row in that column order.
+status: draft

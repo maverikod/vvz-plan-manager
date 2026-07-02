@@ -81,17 +81,16 @@ prompt: |
           "author": cls.author,
           "email": cls.email,
           "detailed_description": (
-              "Enumerates every (global step, tactical step, atomic "
-              "step) triple of the plan, assembles the deterministic "
-              "executor prompt for each resulting branch, and writes "
-              "each prompt to a file under the configured export root "
-              "at <export_root>/prompt_dump/<plan uuid>/<gs step id>/"
-              "<ts step id>/<as step id>.md. The written files are an "
-              "explicitly non-authoritative derived snapshot: the "
-              "server never reads them back, and they carry no plan "
-              "truth. When dry_run is True, branches are counted but no "
-              "file is written, so a dry_run=True call never touches "
-              "disk and is always safe to run against a real plan."
+              "Writes the deterministic executor prompt of every branch "
+              "of the plan under the configured export root at "
+              "<export_root>/prompt_dump/<plan uuid>, one file per "
+              "branch, by delegating to dump_prompts(conn, plan_uuid, "
+              "dump_dir). The written files are an explicitly "
+              "non-authoritative derived snapshot: the server never "
+              "reads them back, and they carry no plan truth. When "
+              "dry_run is True, branches are counted but no file is "
+              "written, so a dry_run=True call never touches disk and "
+              "is always safe to run against a real plan."
           ),
           "parameters": {
               "plan": {

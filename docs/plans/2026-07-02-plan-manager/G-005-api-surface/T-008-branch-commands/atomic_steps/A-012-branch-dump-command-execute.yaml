@@ -63,22 +63,16 @@ prompt: |
     `with db_connection() as conn:` to obtain a psycopg 3 connection.
     `def app_config() -> AppConfig` — AppConfig has field
     export_root: str among others.
-  - plan_manager/views/branch.py:
-    `@dataclass Branch` with fields plan_uuid, gs: Step, ts: Step,
-    atomic: Step, hrs_slice: list[Paragraph].
-    `def resolve_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str, as_step_id: str) -> Branch`.
   - plan_manager/views/dependency_graph.py:
     `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]` — Step
     has fields uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
     fields, depends_on, concepts, status. level 3 is a global step (GS),
     level 4 is a tactical step (TS), level 5 is an atomic step (AS).
-    parent_step_uuid is the uuid of the step's parent (None for level 3
-    steps).
-  - plan_manager/views/prompt.py:
-    `def assemble_prompt(conn, branch: Branch) -> str` — the
-    deterministic executor prompt in the fixed order (MRS excerpt, HRS
-    slice, GS, TS, AS delta under fixed headers), byte-identical for the
-    same tree state.
+  - plan_manager/views/prompt_assembly.py:
+    `def dump_prompts(conn, plan_uuid, dump_dir) -> list[str]` —
+    assembles the deterministic executor prompt of every branch of the
+    plan and writes one file per branch under dump_dir, returning the
+    list of written file paths.
 
   Standard library import needed: `import pathlib`.
 
@@ -183,9 +177,8 @@ prompt: |
      from plan_manager.commands.errors import map_exception
      from plan_manager.commands.resolve import resolve_plan
      from plan_manager.runtime.context import app_config, db_connection
-     from plan_manager.views.branch import resolve_branch
      from plan_manager.views.dependency_graph import load_steps
-     from plan_manager.views.prompt import assemble_prompt
+     from plan_manager.views.prompt_assembly import dump_prompts
 
   2. Append this method to the end of the BranchDumpCommand class body,
      immediately after validate_params, separated by exactly one blank
@@ -212,51 +205,28 @@ prompt: |
           try:
               with db_connection() as conn:
                   p = resolve_plan(conn, plan)
-                  nodes = load_steps(conn, p.uuid)
-                  by_parent = {}
-                  for node in nodes.values():
-                      by_parent.setdefault(node.parent_step_uuid, []).append(node)
-                  gs_list = sorted(
-                      (n for n in nodes.values() if n.level == 3),
-                      key=lambda n: n.step_id,
-                  )
-                  dump_root = (
+                  dump_dir = str(
                       pathlib.Path(app_config().export_root)
                       / "prompt_dump"
                       / str(p.uuid)
                   )
-                  count = 0
-                  for gs in gs_list:
-                      ts_list = sorted(
-                          (n for n in by_parent.get(gs.uuid, []) if n.level == 4),
-                          key=lambda n: n.step_id,
+                  if dry_run:
+                      nodes = load_steps(conn, p.uuid)
+                      count = sum(1 for n in nodes.values() if n.level == 5)
+                      return SuccessResult(
+                          data={
+                              "branches": count,
+                              "root": dump_dir,
+                              "dry_run": True,
+                              "non_authoritative": True,
+                          }
                       )
-                      for ts in ts_list:
-                          atomic_list = sorted(
-                              (n for n in by_parent.get(ts.uuid, []) if n.level == 5),
-                              key=lambda n: n.step_id,
-                          )
-                          for atomic in atomic_list:
-                              branch = resolve_branch(
-                                  conn, p.uuid, gs.step_id, ts.step_id, atomic.step_id
-                              )
-                              count += 1
-                              if dry_run:
-                                  continue
-                              text = assemble_prompt(conn, branch)
-                              target = (
-                                  dump_root
-                                  / gs.step_id
-                                  / ts.step_id
-                                  / f"{atomic.step_id}.md"
-                              )
-                              target.parent.mkdir(parents=True, exist_ok=True)
-                              target.write_text(text, encoding="utf-8")
+                  paths = dump_prompts(conn, p.uuid, dump_dir)
                   return SuccessResult(
                       data={
-                          "branches": count,
-                          "root": str(dump_root),
-                          "dry_run": dry_run,
+                          "branches": len(paths),
+                          "root": dump_dir,
+                          "dry_run": False,
                           "non_authoritative": True,
                       }
                   )
@@ -269,34 +239,36 @@ prompt: |
     method append described.
   - The method signature is exactly
     `def execute(self, plan: str, dry_run: bool = False) -> SuccessResult | ErrorResult:`.
-  - Triples are enumerated by parent linkage exactly as shown: level 3
-    steps (gs), sorted by step_id; for each, its level 4 children (ts)
-    grouped by parent_step_uuid, sorted by step_id; for each, its level
-    5 children (atomic) grouped by parent_step_uuid, sorted by step_id.
-  - The dump root is exactly
-    `pathlib.Path(app_config().export_root) / "prompt_dump" / str(p.uuid)`.
-  - The per-branch target file path is exactly
-    `dump_root / gs.step_id / ts.step_id / f"{atomic.step_id}.md"`.
-  - When dry_run is True, no directory is created and no file is
-    written; only count is incremented.
-  - When dry_run is False, target.parent.mkdir(parents=True, exist_ok=True)
-    is called before target.write_text(text, encoding="utf-8").
+  - The dump directory is exactly
+    `str(pathlib.Path(app_config().export_root) / "prompt_dump" / str(p.uuid))`.
+  - When dry_run is True: call `load_steps(conn, p.uuid)`, count the
+    entries whose level equals 5, and return
+    `SuccessResult(data={"branches": count, "root": dump_dir, "dry_run": True, "non_authoritative": True})`
+    without calling dump_prompts and without writing any file.
+  - When dry_run is False: call `dump_prompts(conn, p.uuid, dump_dir)`,
+    bind its return value to `paths`, and return
+    `SuccessResult(data={"branches": len(paths), "root": dump_dir, "dry_run": False, "non_authoritative": True})`.
   - The success data dict has exactly the four keys branches, root,
-    dry_run, non_authoritative, computed exactly as shown
-    (non_authoritative is always the literal True).
+    dry_run, non_authoritative in both branches, computed exactly as
+    shown (non_authoritative is always the literal True).
   - The single try/except wraps the entire `with db_connection() as conn:`
     block, catches `Exception as exc`, and returns `map_exception(exc)`
     as the final handler. No other exception handling is added.
+  - Do not call resolve_branch or assemble_prompt directly in this
+    method; all per-branch prompt assembly and file writing for the
+    dry_run=False case is performed inside dump_prompts.
 verification:
   type: import
   target: plan_manager.commands.branch_dump_command
   expected: >
     The module imports without error; BranchDumpCommand.execute(self, plan,
-    dry_run=False) enumerates every (gs, ts, atomic) branch of the plan sorted
-    by step_id, writes one Markdown file per branch under
-    <export_root>/prompt_dump/<plan uuid>/<gs step id>/<ts step id>/<as step
-    id>.md when dry_run is False, writes nothing when dry_run is True, returns
-    SuccessResult(data={"branches", "root", "dry_run", "non_authoritative":
-    True}), and returns map_exception(exc) for any exception including plan
-    resolution failure (PLAN_NOT_FOUND).
+    dry_run=False) resolves the plan, computes the dump directory as
+    <export_root>/prompt_dump/<plan uuid>, and when dry_run is False calls
+    dump_prompts(conn, p.uuid, dump_dir) to write one file per branch and
+    returns SuccessResult(data={"branches": len(paths), "root", "dry_run":
+    False, "non_authoritative": True}); when dry_run is True it counts
+    level-5 steps via load_steps without writing any file and returns
+    SuccessResult(data={"branches": count, "root", "dry_run": True,
+    "non_authoritative": True}); it returns map_exception(exc) for any
+    exception including plan resolution failure (PLAN_NOT_FOUND).
 status: draft

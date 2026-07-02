@@ -26,7 +26,8 @@ prompt: |
   from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.commands.step_delete_metadata import get_step_delete_metadata
-  from plan_manager.domain.step_store import delete_step, get_step
+  from plan_manager.domain.step_ops import delete_step
+  from plan_manager.domain.step_store import get_step
   from plan_manager.runtime.context import db_connection
   from plan_manager.storage.version_store import record_revision
   from plan_manager.verify.gate_data import artifact_path_of
@@ -155,6 +156,11 @@ prompt: |
                           "impact": impact,
                       }
                       return SuccessResult(data=data)
+                  if any(s.parent_step_uuid == target.uuid for s in nodes.values()):
+                      return domain_error(
+                          "INVALID_TRANSITION",
+                          f"step {step_id} has children; delete or move them first",
+                      )
                   parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
                   try:
                       rec = check_admission(conn, p.uuid, "step", target.uuid, parsed_cascade_uuid)
@@ -205,6 +211,17 @@ prompt: |
     byte-identical to the content shown above.
   - The dry-run branch computes `step_invalidation` and impact paths and
     returns immediately without any admission check, snapshot, or write.
+  - Immediately after the dry-run branch, before any admission check, the
+    real-run path pre-checks for children: `any(s.parent_step_uuid ==
+    target.uuid for s in nodes.values())` using the `nodes` loaded at the
+    top of `execute`. If any step in the plan has `target.uuid` as its
+    `parent_step_uuid`, `execute` returns immediately with
+    `domain_error("INVALID_TRANSITION", f"step {step_id} has children;
+    delete or move them first")`, without checking admission, taking a
+    snapshot, or calling `delete_step`. This pre-check is why
+    `delete_step`'s own `ValueError("step has children")` never escapes
+    from this command in practice: `delete_step` is only ever called after
+    this pre-check has already confirmed the step has no children.
   - `status_updates` for the real-run branch is computed from `step_invalidation(nodes,
     target.uuid)` before the delete, using the `nodes` loaded at the top of
     `execute` (which still contains `target`), because the node must exist
@@ -260,8 +277,11 @@ prompt: |
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
     step_uuid) -> Step` (raises `DomainCommandError("STEP_NOT_FOUND", ...)`
-    when the step is absent) and `def delete_step(conn, step_uuid) ->
-    None`.
+    when the step is absent).
+  - `plan_manager/domain/step_ops.py` defines `def delete_step(conn,
+    step_uuid: uuid.UUID) -> None` (raises `ValueError("step has
+    children")` when the step still has children; otherwise deletes it and
+    scrubs sibling depends_on references to it).
 
   MRS excerpt (concept definitions relevant to this AS):
 
@@ -312,8 +332,13 @@ verification:
     false, "deleted_step_id": <step_id>, "revision_uuid": <uuid>}, and a
     subsequent step_get on the deleted step_id returns ErrorResult with
     code STEP_NOT_FOUND; an unknown step_id returns ErrorResult with code
-    STEP_NOT_FOUND before any dry-run or admission logic runs; attempting a
-    real deletion of a frozen step without cascade_uuid returns
+    STEP_NOT_FOUND before any dry-run or admission logic runs; calling with
+    dry_run true on a step that has children still returns the dry-run
+    impact report (the children pre-check does not block the preview);
+    calling with dry_run false on a step that has children returns
+    ErrorResult with code INVALID_TRANSITION before any admission check
+    and writes nothing, verified by an unchanged revision head; attempting a
+    real deletion of a frozen, childless step without cascade_uuid returns
     CASCADE_REQUIRED, with FROZEN_ARTIFACT returned instead when
     frozen_at_or_below reports the step frozen; a cascade_uuid that
     check_admission rejects returns CASCADE_CONFLICT.

@@ -57,16 +57,19 @@ prompt: |
           "Removes an existing step. This is a destructive, mutating "
           "command that defaults to a dry run: dry_run is True unless "
           "explicitly set to False, and a dry run returns the impact set "
-          "without writing anything. A real run runs under the mutation "
-          "admission regime: direct execution is admitted only when the "
-          "target step is not frozen; otherwise the command returns "
-          "CASCADE_REQUIRED, or CASCADE_CONFLICT when a cascade_uuid was "
-          "supplied but does not admit the mutation, or FROZEN_ARTIFACT "
-          "when the target is frozen at or below the change point. A real "
-          "run records a tombstone snapshot (the pre-delete step snapshot "
-          "with an added \"deleted\": true key) as the revision change, "
-          "then deletes the step, then verifies the deletion by "
-          "confirming the step is absent on re-read."
+          "without writing anything. A real run is refused with "
+          "INVALID_TRANSITION — deletion refused for a step that still "
+          "has children — when the target step still has children; "
+          "delete or move them first. Otherwise a real run runs under the "
+          "mutation admission regime: direct execution is admitted only "
+          "when the target step is not frozen; otherwise the command "
+          "returns CASCADE_REQUIRED, or CASCADE_CONFLICT when a "
+          "cascade_uuid was supplied but does not admit the mutation, or "
+          "FROZEN_ARTIFACT when the target is frozen at or below the "
+          "change point. A real run records a tombstone snapshot (the "
+          "pre-delete step snapshot with an added \"deleted\": true key) "
+          "as the revision change, then deletes the step, then verifies "
+          "the deletion by confirming the step is absent on re-read."
       ),
       "parameters": {
           "plan": {
@@ -136,6 +139,11 @@ prompt: |
               "description": "No step with the given step_id exists in the resolved plan.",
               "message": "step not found: {step_id}",
               "solution": "Call step_tree to list valid step_id values for the plan.",
+          },
+          "INVALID_TRANSITION": {
+              "description": "deletion refused for a step that still has children",
+              "message": "step {step_id} has children; delete or move them first",
+              "solution": "Delete or move the step's children first, or move this step to a leaf position, then retry.",
           },
           "CASCADE_REQUIRED": {
               "description": "The target step is not directly mutable and no cascade_uuid was supplied.",
@@ -218,5 +226,6 @@ verification:
     return_value, usage_examples, error_cases, best_practices, with
     parameters containing a dry_run entry whose default is True, and
     error_cases containing exactly the keys PLAN_NOT_FOUND, STEP_NOT_FOUND,
-    CASCADE_REQUIRED, CASCADE_CONFLICT, FROZEN_ARTIFACT.
+    INVALID_TRANSITION, CASCADE_REQUIRED, CASCADE_CONFLICT,
+    FROZEN_ARTIFACT.
 status: draft

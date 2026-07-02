@@ -1,0 +1,287 @@
+step_id: A-007
+parent_tactical_step: T-001
+name: load-config
+target_file: plan_manager/runtime/config.py
+operation: modify_file
+priority: 7
+depends_on: [A-006]
+concepts: [C-028, C-027]
+status: draft
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/runtime/config.py`.
+
+  This is a `modify_file` operation. The full current content of the file,
+  exactly as it exists after all lower-priority atomic steps on this file
+  have been applied, is:
+
+  ```python
+  from __future__ import annotations
+
+  import json
+
+  from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+  class ConfigError(ValueError):
+      """Raised when the plan_manager configuration section is invalid.
+
+      The exception message is the explicit startup report describing every
+      unknown key, missing required key, and type violation found in the
+      configuration.
+      """
+
+
+  class DatabaseSection(BaseModel):
+      """Database connection parameters for the in-container PostgreSQL (C-035).
+
+      Exactly one of ``host`` or ``socket`` must be set. No password field is
+      defined here: the password is taken only from a mounted secrets file and
+      is never part of configuration.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      host: str | None = None
+      socket: str | None = None
+      port: int = 5432
+      dbname: str
+      user: str
+
+      @model_validator(mode="after")
+      def check_host_xor_socket(self) -> DatabaseSection:
+          """Require exactly one of ``host`` or ``socket`` to be set.
+
+          :return: ``self`` unchanged when validation passes.
+          :raises ValueError: If both ``host`` and ``socket`` are ``None``, or
+              if both are set.
+          """
+          if (self.host is None) == (self.socket is None):
+              raise ValueError("exactly one of 'host' or 'socket' must be set")
+          return self
+
+
+  class EmbeddingSection(BaseModel):
+      """Optional embedding service settings.
+
+      All fields are optional; the embedding service is the sole optional
+      external integration and its absence degrades only semantic scoring.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      url: str | None = None
+      model: str | None = None
+      timeout: float = 30.0
+
+
+  class ScoringSection(BaseModel):
+      """Optional scoring settings carrying the published defaults (C-028).
+
+      ``aggregation`` admits only ``"minimum"`` or
+      ``"fraction_above_threshold"``. ``embedding_serialization`` admits only
+      ``"definition"``, the single implemented serialization.
+      ``estimator_weights`` is the implemented fold: deterministic coverage
+      1.0, deterministic references 1.0, and the model-based pair (embedding,
+      simulation) sharing one vote of 1.0.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weights: float = 1.0
+      embedding_serialization: str = "definition"
+      estimator_weights: dict[str, float] = Field(
+          default_factory=lambda: {"coverage": 1.0, "references": 1.0, "model_pair": 1.0}
+      )
+      trust_floor: float = 0.2
+
+      @field_validator("aggregation")
+      @classmethod
+      def check_aggregation(cls, value: str) -> str:
+          """Validate that ``aggregation`` is an admitted value.
+
+          :param value: The candidate aggregation name.
+          :return: ``value`` unchanged when valid.
+          :raises ValueError: If ``value`` is not ``"minimum"`` or
+              ``"fraction_above_threshold"``, naming the invalid value.
+          """
+          if value not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(f"invalid aggregation: {value!r}")
+          return value
+
+      @field_validator("embedding_serialization")
+      @classmethod
+      def check_embedding_serialization(cls, value: str) -> str:
+          """Validate that ``embedding_serialization`` is the admitted value.
+
+          :param value: The candidate serialization name.
+          :return: ``value`` unchanged when valid.
+          :raises ValueError: If ``value`` is not ``"definition"``, naming the
+              invalid value.
+          """
+          if value != "definition":
+              raise ValueError(f"invalid embedding_serialization: {value!r}")
+          return value
+
+
+  class PlanManagerSection(BaseModel):
+      """Root model of the single custom plan_manager configuration section.
+
+      Realizes Configuration (C-028): one top-level custom section of the
+      platform's single JSON configuration file, validated by this Pydantic
+      model performing an allowed-keys check via ``extra="forbid"`` at every
+      level.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      database: DatabaseSection
+      embedding: EmbeddingSection = Field(default_factory=EmbeddingSection)
+      scoring: ScoringSection = Field(default_factory=ScoringSection)
+      schema_overrides: dict = Field(default_factory=dict)
+      export_root: str
+
+
+  def load_raw(path: str) -> dict:
+      """Read and parse the configuration file at ``path`` as a JSON object.
+
+      :param path: Filesystem path to the JSON configuration file.
+      :return: The parsed JSON document as a ``dict``.
+      :raises ConfigError: If the file cannot be opened or read, if its
+          contents are not valid JSON, or if the parsed document is not a JSON
+          object (a ``dict``).
+      """
+      try:
+          with open(path, "r", encoding="utf-8") as handle:
+              document = json.load(handle)
+      except (OSError, json.JSONDecodeError) as exc:
+          raise ConfigError(f"cannot read configuration file {path}: {exc}") from exc
+      if not isinstance(document, dict):
+          raise ConfigError("configuration root must be a JSON object")
+      return document
+  ```
+
+  Append the following new function to the end of the file, separated from
+  the `load_raw` function above by exactly two blank lines:
+
+  ```python
+  def load_config(path: str) -> PlanManagerSection:
+      """Load and validate the plan_manager configuration section from ``path``.
+
+      Platform-owned sections of the raw configuration document are never
+      validated here; only the ``"plan_manager"`` top-level key is extracted
+      and validated.
+
+      :param path: Filesystem path to the JSON configuration file.
+      :return: The validated :class:`PlanManagerSection`.
+      :raises ConfigError: If the file cannot be read (propagated from
+          :func:`load_raw`), if the ``"plan_manager"`` key is missing from the
+          parsed document or is not a JSON object, or if the section fails
+          Pydantic validation.
+      """
+      raw = load_raw(path)
+      section = raw.get("plan_manager")
+      if not isinstance(section, dict):
+          raise ConfigError("configuration missing 'plan_manager' section")
+      try:
+          return PlanManagerSection.model_validate(section)
+      except ValidationError as exc:
+          raise ConfigError("invalid plan_manager configuration:\n" + str(exc)) from exc
+  ```
+
+  Requirements, all explicit, no open decisions:
+
+  - `load_config` is a module-level function named exactly `load_config`,
+    taking one parameter `path: str`, returning `PlanManagerSection` (the
+    class already defined earlier in this same file).
+  - First statement: `raw = load_raw(path)`, calling the `load_raw`
+    function already defined earlier in this same file. Any `ConfigError`
+    raised by `load_raw` propagates unchanged (no `try`/`except` around
+    this call).
+  - Second statement: `section = raw.get("plan_manager")` — platform-native
+    dictionary access (`dict.get`), extracting exactly the top-level key
+    `"plan_manager"`.
+  - Third: if `section` is not an instance of `dict` (checked with
+    `isinstance(section, dict)` — this covers both the key being absent,
+    which makes `raw.get` return `None`, and the key being present but not
+    a JSON object), raise
+    `ConfigError("configuration missing 'plan_manager' section")`, this
+    exact message string.
+  - Otherwise, wrap `PlanManagerSection.model_validate(section)` in a `try`
+    block, `return` its result directly from within the `try`. The `except`
+    clause catches exactly `ValidationError` (already imported at the top
+    of the file) as `exc`, and raises
+    `ConfigError("invalid plan_manager configuration:\n" + str(exc))` with
+    `from exc` (exception chaining) — the string concatenation of the fixed
+    prefix `"invalid plan_manager configuration:\n"` with `str(exc)`, where
+    `\n` is a literal newline character in the string.
+  - Do not add any other statements, helper functions, or logic. Do not
+    validate or touch any other top-level key of `raw` besides
+    `"plan_manager"`; platform-owned sections of the raw dict are never
+    validated by this function.
+  - Do not modify any earlier class or function (`ConfigError`,
+    `DatabaseSection`, `EmbeddingSection`, `ScoringSection`,
+    `PlanManagerSection`, `load_raw`) or the module-level imports in any
+    way.
+  - After this change, the file ends with the `load_config` function shown
+    above; this is the final content of the file for this tactical step —
+    no further content follows it.
+
+  MRS excerpt (concepts and relation relevant to this step):
+
+  ```yaml
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry, transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/ at the repository root, modules as dotted paths beneath it
+    source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{y1j5}"]
+  ```
+
+  Relation relevant to this step: `{ from_concept: C-027, to_concept: C-028,
+  type: consumes }` — the server runtime's bootstrap sequence consumes the
+  validated configuration; `load_config` is the function the bootstrap
+  calls with the configuration file path (given as context by C-027's "entry
+  point main --config" property) to obtain the validated
+  `PlanManagerSection` before the application factory runs, aborting startup
+  via `ConfigError` on any failure per C-028's "invalid config aborts
+  startup" property.
+verification:
+  type: import
+  target: plan_manager.runtime.config
+  expected: >
+    Importing the module plan_manager.runtime.config succeeds. The module
+    now defines load_config in addition to ConfigError, DatabaseSection,
+    EmbeddingSection, ScoringSection, PlanManagerSection, and load_raw.
+    Calling load_config with a path to a file containing the JSON text
+    '{"plan_manager": {"database": {"dbname": "p", "user": "u", "host":
+    "h"}, "export_root": "/tmp"}}' returns a PlanManagerSection instance
+    whose database.dbname equals "p" and whose scoring and embedding fields
+    hold their published defaults. Calling load_config with a path to a
+    file containing the JSON text '{"server": {}}' (no "plan_manager" key)
+    raises ConfigError with the exact message "configuration missing
+    'plan_manager' section". Calling load_config with a path to a file
+    containing the JSON text '{"plan_manager": {"database": {"dbname": "p",
+    "user": "u"}, "export_root": "/tmp"}}' (database with neither host nor
+    socket) raises ConfigError whose message starts with "invalid
+    plan_manager configuration:" and contains a report naming the
+    violation. Calling load_config with a path to a nonexistent file
+    propagates a ConfigError from load_raw with a message starting "cannot
+    read configuration file".

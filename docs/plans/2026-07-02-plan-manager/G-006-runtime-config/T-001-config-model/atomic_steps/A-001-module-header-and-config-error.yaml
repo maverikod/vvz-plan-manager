@@ -1,0 +1,88 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: module-header-and-config-error
+target_file: plan_manager/runtime/config.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-028]
+status: draft
+prompt: |
+  Create the new Python file at the exact project-relative path
+  `plan_manager/runtime/config.py`.
+
+  This is a `create_file` operation: the file does not exist yet. Do not
+  assume any pre-existing content. Write exactly the following content,
+  byte-identical, as the complete content of the new file:
+
+  ```python
+  from __future__ import annotations
+
+  import json
+
+  from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+  class ConfigError(ValueError):
+      """Raised when the plan_manager configuration section is invalid.
+
+      The exception message is the explicit startup report describing every
+      unknown key, missing required key, and type violation found in the
+      configuration.
+      """
+  ```
+
+  Requirements, all explicit, no open decisions:
+
+  - Module-level imports, in this exact order, each on its own line:
+    1. `from __future__ import annotations`
+    2. `import json`
+    3. `from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator`
+  - Exactly one blank line after `from __future__ import annotations`,
+    separating it from `import json`.
+  - Exactly two blank lines after the pydantic import line, before the
+    `class ConfigError(ValueError):` definition (PEP 8 two-blank-lines
+    convention before a top-level class).
+  - `ConfigError` is a class named exactly `ConfigError`, inheriting from the
+    builtin `ValueError` (no other base classes, no `__init__` override, no
+    additional methods or attributes).
+  - `ConfigError` has no body other than the docstring shown above, quoted
+    verbatim, using triple double-quotes.
+  - Do not add any other classes, functions, constants, or `__all__` in this
+    file. Later modification steps will append to this file; only the exact
+    content shown above must be present after this step.
+  - Do not add a trailing module docstring; the file starts directly with
+    `from __future__ import annotations`.
+
+  MRS excerpt (only the concept relevant to this step):
+
+  ```yaml
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+  ```
+
+  `ConfigError` realizes the "invalid config aborts startup" property of
+  C-028: it is the typed condition whose message carries the explicit
+  startup report (the report text itself is assembled by later functions in
+  this same file, appended by subsequent modification steps to this file).
+verification:
+  type: import
+  target: plan_manager.runtime.config
+  expected: >
+    Importing the module plan_manager.runtime.config succeeds without
+    raising any exception. The module defines a class named ConfigError
+    that is a subclass of the builtin ValueError, has no additional base
+    classes, and has no methods or attributes beyond its docstring. The
+    module's source file starts with the line
+    "from __future__ import annotations" followed by "import json" and the
+    single pydantic import line listing BaseModel, ConfigDict, Field,
+    ValidationError, field_validator, and model_validator, in that order,
+    with no other top-level names defined.

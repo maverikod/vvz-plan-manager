@@ -6,7 +6,7 @@ operation: create_file
 priority: 1
 depends_on: []
 concepts: [C-003, C-002]
-prompt: >
+prompt: |
   Create a new Python source file at exact project-relative path
   plan_manager/domain/concept.py.
 

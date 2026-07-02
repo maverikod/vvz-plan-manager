@@ -1,0 +1,52 @@
+step_id: T-002
+parent_global_step: G-006
+name: runtime-accessors
+description: >
+  Create the runtime accessors of ServerRuntime (C-027) consumed by every
+  command of the surface: the database connection provider and the flat
+  application-configuration projection. Runtime initialization happens once
+  at startup: it loads and validates the custom configuration section
+  (C-028), reads the database password from the mounted secrets file — the
+  file path comes from the environment variable PLANMGR_SECRETS with the
+  default /etc/planmgr/secrets/db_password; a missing or unreadable secrets
+  file is a configuration error aborting startup — and holds the validated
+  section and the password in module state. The connection provider is a
+  context manager yielding one open psycopg connection built from the
+  database section (C-035) — host or unix socket, port, database name, user,
+  and the secrets-file password — committing the transaction on clean exit,
+  rolling it back when the body raises, and always closing the connection.
+  The configuration projection returns the flat application-configuration
+  object with exactly the fields the command layer consumes: the embedding
+  URL, the export root, the scoring threshold, the aggregation mode, the
+  trust floor, and the uniform concept weight — projected from the validated
+  section with its published defaults. Using either accessor before runtime
+  initialization is an explicit runtime error. No accessor value is ever
+  taken from request parameters. This step defines initialization, the
+  connection provider, and the projection; it defines no configuration model
+  and no bootstrap sequence.
+concepts: [C-027, C-028, C-035]
+inputs:
+- name: validated_section
+  type: configuration object
+  description: >
+    The validated custom-section object with defaults applied, loaded during
+    runtime initialization.
+- name: secrets_file
+  type: mounted file datum
+  description: >
+    The mounted secrets file holding the database password, located through
+    the PLANMGR_SECRETS environment variable with its documented default
+    path.
+outputs:
+- name: database_connection
+  type: managed resource
+  description: >
+    One open psycopg connection per context entry, with commit on clean
+    exit, rollback on exception, and unconditional close.
+- name: application_configuration
+  type: projected configuration object
+  description: >
+    The flat object with embedding URL, export root, scoring threshold,
+    aggregation mode, trust floor, and uniform concept weight.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
+status: draft

@@ -1,0 +1,272 @@
+step_id: A-012
+parent_tactical_step: T-003
+name: concept-store-remove-concept
+target_file: plan_manager/domain/concept_store.py
+operation: modify_file
+priority: 5
+depends_on: [A-011]
+concepts: [C-003, C-035]
+prompt: |
+  Modify the existing Python source file at exact project-relative path plan_manager/domain/concept_store.py.
+
+  Operation: modify_file. The current full content of the file (state after all lower-priority AS on this file have been applied) is exactly the following:
+
+  ```python
+  """Persistence functions for the Concept domain entity (MRS concept
+  C-003).
+
+
+  These functions write and read Concept rows in table `concept`, scoped
+  to one plan via the plan_uuid column. Field validation and concept_id
+  uniqueness checks are delegated to plan_manager.domain.concept before any
+  row is written.
+
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.concept import Concept, validate_concept, check_concept_id_unique
+
+
+  def list_concept_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:
+      """List all concept_id values stored for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of concept_id strings from table concept where the
+          plan_uuid column equals the given plan_uuid, ordered ascending
+          by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [row[0] for row in rows]
+
+
+  def insert_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept: Concept
+  ) -> uuid.UUID:
+      """Validate and insert a new Concept row scoped to one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept: The Concept instance to persist.
+
+      Returns:
+          The generated uuid primary identity of the inserted row.
+
+      Raises:
+          ConceptValidationError: propagated unmodified from
+              validate_concept or check_concept_id_unique if concept fails
+              field validation or its concept_id is already present among
+              the plan's existing concept_id values.
+      """
+      validate_concept(concept)
+      check_concept_id_unique(concept.concept_id, list_concept_ids(conn, plan_uuid))
+      row_uuid = uuid.uuid4()
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO concept (uuid, plan_uuid, concept_id, name, definition, "
+              "properties, source_labels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+              (
+                  row_uuid,
+                  plan_uuid,
+                  concept.concept_id,
+                  concept.name,
+                  concept.definition,
+                  concept.properties,
+                  concept.source_labels,
+              ),
+          )
+      return row_uuid
+
+
+  def get_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str
+  ) -> Concept | None:
+      """Fetch one full Concept row by concept_id within one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: The concept_id to look up.
+
+      Returns:
+          The matching Concept, or None if no row with this concept_id
+          exists for the given plan_uuid.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, name, definition, properties, source_labels "
+              "FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return Concept(
+          concept_id=row[0],
+          name=row[1],
+          definition=row[2],
+          properties=row[3],
+          source_labels=row[4],
+      )
+
+
+  def list_concepts(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Concept]:
+      """List all full Concept rows for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of Concept instances for the given plan_uuid, ordered
+          ascending by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, name, definition, properties, source_labels "
+              "FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [
+          Concept(
+              concept_id=row[0],
+              name=row[1],
+              definition=row[2],
+              properties=row[3],
+              source_labels=row[4],
+          )
+          for row in rows
+      ]
+
+
+  def update_concept(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      concept_id: str,
+      fields: dict,
+  ) -> Concept:
+      """Update selected fields of an existing Concept row.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: concept_id of the row to update.
+          fields: Mapping of field names to new values. Allowed keys are
+              exactly "name", "definition", "properties", "source_labels".
+
+      Returns:
+          The updated Concept, re-read from the database after the UPDATE.
+
+      Raises:
+          ValueError: If fields contains a key other than "name",
+              "definition", "properties", "source_labels" (message is
+              f"unknown field: {key}" naming the offending key), or if no
+              row with this concept_id exists for the given plan_uuid
+              (message is f"concept not found: {concept_id}").
+          ConceptValidationError: propagated unmodified from
+              validate_concept if the merged Concept (the existing row
+              with the touched fields replaced) fails field validation.
+      """
+      allowed_fields = {"name", "definition", "properties", "source_labels"}
+      for key in fields:
+          if key not in allowed_fields:
+              raise ValueError(f"unknown field: {key}")
+      existing = get_concept(conn, plan_uuid, concept_id)
+      if existing is None:
+          raise ValueError(f"concept not found: {concept_id}")
+      merged = Concept(
+          concept_id=existing.concept_id,
+          name=fields.get("name", existing.name),
+          definition=fields.get("definition", existing.definition),
+          properties=fields.get("properties", existing.properties),
+          source_labels=fields.get("source_labels", existing.source_labels),
+      )
+      validate_concept(merged)
+      with conn.cursor() as cur:
+          cur.execute(
+              "UPDATE concept SET name = %s, definition = %s, properties = %s, "
+              "source_labels = %s WHERE plan_uuid = %s AND concept_id = %s",
+              (
+                  merged.name,
+                  merged.definition,
+                  merged.properties,
+                  merged.source_labels,
+                  plan_uuid,
+                  concept_id,
+              ),
+          )
+      return get_concept(conn, plan_uuid, concept_id)
+  ```
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-003 Concept: MRS basis axis with canonical name, one-sentence definition, properties, and source labels; identifier pattern is C-NNN, unique within the plan.
+  - C-035 Database: entities are stored as rows; accessed via psycopg 3 with plain SQL, no ORM; runtime code never emits DDL.
+
+  This AS uses `get_concept`, defined earlier in this same file by a lower-priority AS, with signature `def get_concept(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str) -> Concept | None:`, which returns the matching Concept or None when absent.
+
+  Required change: append the following function definition to the end of the file, after `update_concept`, separated from it by exactly two blank lines. Do not change any existing line in the file shown above.
+
+  ```python
+
+
+
+  def remove_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str
+  ) -> Concept:
+      """Delete a Concept row and return the pre-delete row.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: concept_id of the row to delete.
+
+      Returns:
+          The Concept row exactly as it existed immediately before
+          deletion.
+
+      Raises:
+          ValueError: If no row with this concept_id exists for the given
+              plan_uuid (message is f"concept not found: {concept_id}").
+      """
+      existing = get_concept(conn, plan_uuid, concept_id)
+      if existing is None:
+          raise ValueError(f"concept not found: {concept_id}")
+      with conn.cursor() as cur:
+          cur.execute(
+              "DELETE FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+      return existing
+  ```
+
+  Constraints:
+  - The function signature must be exactly `def remove_concept(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str) -> Concept:` using the `Concept` type already defined in this file.
+  - Use only names already defined or imported in this file (`psycopg`, `uuid`, `Concept`, `get_concept`). Add no new imports.
+  - Call `get_concept(conn, plan_uuid, concept_id)` and bind the result to `existing`. If `existing is None`, raise `ValueError(f"concept not found: {concept_id}")`.
+  - Open a cursor via `conn.cursor()` as a context manager and execute exactly the SQL string "DELETE FROM concept WHERE plan_uuid = %s AND concept_id = %s" with the parameter tuple `(plan_uuid, concept_id)`.
+  - Return `existing` (the row as read before the DELETE) as the function's return value.
+  - Do not catch or translate any exception raised by psycopg during `cur.execute`; let it propagate unmodified.
+  - Do not emit any DDL statement (no CREATE, ALTER, or DROP).
+  - Do not modify, reorder, or remove any part of the file content shown above as the current state. Only append the new function.
+  - Do not add any code beyond what is shown above. Do not add logging. Do not add a module-level connection or any module-level mutable state. Do not add any function other than `remove_concept`.
+
+verification:
+  type: static_analysis
+  target: plan_manager.domain.concept_store.remove_concept
+  expected: >
+    The function remove_concept accepts a psycopg connection, a plan_uuid, and a concept_id, and returns a Concept. It raises ValueError with message 'concept not found: <concept_id>' when no row with that concept_id exists for the plan. Otherwise it deletes the matching row from table concept and returns the row exactly as it existed immediately before deletion.
+status: draft

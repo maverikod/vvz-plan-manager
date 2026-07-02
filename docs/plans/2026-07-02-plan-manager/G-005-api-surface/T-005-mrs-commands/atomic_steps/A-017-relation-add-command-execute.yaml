@@ -115,8 +115,7 @@ prompt: |
 
   - Module `plan_manager.commands.errors`:
     `def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult`
-    and `def map_exception(exc: Exception) -> ErrorResult` (maps
-    psycopg.errors.UniqueViolation to code "DUPLICATE_ID").
+    and `def map_exception(exc: Exception) -> ErrorResult`.
   - Module `plan_manager.commands.resolve`:
     `def resolve_plan(conn, plan: str) -> Plan` — Plan has fields uuid, name,
     status, context_budget, head_revision_uuid; raises an exception mapped by
@@ -138,16 +137,35 @@ prompt: |
   - Module `plan_manager.views.dependency_graph`:
     `def load_steps(conn, plan_uuid) -> dict` — maps step uuid to Step.
   - Module `plan_manager.domain.relation_store`:
-    `def add_relation(conn, plan_uuid, from_concept: str, to_concept: str, type: str) -> uuid.UUID`
-    — enforces relation type membership and both endpoint existence (raises
-    ValueError naming the missing endpoint); returns the relation row uuid; and
+    `@dataclass class Relation:` fields, in order, from_concept: str,
+    to_concept: str, type: str; `RELATION_TYPES` (the same 7-member tuple of
+    allowed types as `_RELATION_TYPES` in this file);
+    `class RelationValidationError(ValueError)` — raised for relation type
+    not in RELATION_TYPES, malformed endpoint concept_id format, or a
+    missing endpoint (an endpoint concept_id that does not exist in the
+    plan); the store has no duplicate-relation rule, so no exception is
+    raised for re-adding an existing (from_concept, to_concept, type) edge;
+    `def insert_relation(conn, plan_uuid, relation: Relation) -> uuid.UUID`
+    — validates as above and, on success, returns the new relation row's
+    uuid.UUID directly; and
     `def list_relations(conn, plan_uuid) -> list[tuple[str, str, str]]` —
-    returns every relation of the plan as (from_concept, to_concept, type)
-    tuples.
+    returns every relation of the plan as ordered (from_concept, to_concept,
+    type) tuples.
+
+  Missing-endpoint detection (binding rule): call insert_relation inside
+  `try: ... except RelationValidationError as exc:`. Let `msg = str(exc)`.
+  If `from_concept in msg or to_concept in msg` (the message names one of
+  the two endpoint concept_ids passed to this call), return
+  `domain_error("CONCEPT_NOT_FOUND", msg)`. Otherwise re-raise the exception
+  with a bare `raise` (the relation type is already restricted to
+  RELATION_TYPES by the schema enum, so a RelationValidationError naming
+  neither endpoint is a residual defect, not a declared error case).
 
   Node snapshot convention (binding): relation snapshot is exactly
-  `{"kind": "relation", "uuid": str, "plan_uuid": str, "from_concept",
-  "to_concept", "type"}`.
+  `{"kind": "relation", "uuid": str(relation_uuid), "plan_uuid": str,
+  "from_concept", "to_concept", "type"}`, where relation_uuid is the
+  uuid.UUID returned directly by insert_relation (used as cascade_write's
+  node_uuid too).
 
   Required edit 1 — insert these import lines immediately after the existing line
   `from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult` and
@@ -163,7 +181,12 @@ prompt: |
   from plan_manager.cascade.write import cascade_write
   from plan_manager.cascade.propagation import mrs_invalidation
   from plan_manager.views.dependency_graph import load_steps
-  from plan_manager.domain.relation_store import add_relation, list_relations
+  from plan_manager.domain.relation_store import (
+      Relation,
+      RelationValidationError,
+      insert_relation,
+      list_relations,
+  )
   ```
 
   Required edit 2 — append this method at the end of the class body, after
@@ -190,7 +213,7 @@ prompt: |
           Returns:
               SuccessResult with from_concept, to_concept, type, and
               revision_uuid, or ErrorResult with code PLAN_NOT_FOUND,
-              CASCADE_CONFLICT, CONCEPT_NOT_FOUND, or DUPLICATE_ID.
+              CASCADE_CONFLICT, or CONCEPT_NOT_FOUND.
           """
           try:
               with db_connection() as conn:
@@ -200,10 +223,14 @@ prompt: |
                       rec = check_admission(conn, p.uuid, "relation", None, parsed_cascade)
                   except CascadeError as exc:
                       return domain_error("CASCADE_CONFLICT", str(exc))
+                  relation = Relation(from_concept=from_concept, to_concept=to_concept, type=type)
                   try:
-                      relation_uuid = add_relation(conn, p.uuid, from_concept, to_concept, type)
-                  except ValueError as exc:
-                      return domain_error("CONCEPT_NOT_FOUND", str(exc))
+                      relation_uuid = insert_relation(conn, p.uuid, relation)
+                  except RelationValidationError as exc:
+                      msg = str(exc)
+                      if from_concept in msg or to_concept in msg:
+                          return domain_error("CONCEPT_NOT_FOUND", msg)
+                      raise
                   nodes = load_steps(conn, p.uuid)
                   status_updates = mrs_invalidation(nodes)
                   snapshot = {
@@ -245,6 +272,13 @@ prompt: |
     `except Exception as exc: return map_exception(exc)`.
   - CASCADE_REQUIRED is not reachable from this command (cascade_uuid is a
     required schema parameter) and must not appear anywhere in this file.
+  - DUPLICATE_ID must not appear anywhere in this file: the relation store
+    has no duplicate-relation rule, so re-adding an existing edge is not an
+    error case for this command.
+  - The missing-endpoint condition after insert_relation is exactly
+    `from_concept in msg or to_concept in msg`, where msg = str(exc) inside
+    `except RelationValidationError as exc:`; any other RelationValidationError
+    is re-raised with a bare `raise`.
 verification:
   type: import
   target: plan_manager/commands/relation_add_command.py
@@ -253,11 +287,12 @@ verification:
     RelationAddCommand.execute is an async method accepting plan, cascade_uuid,
     from_concept, to_concept, type. When check_admission raises CascadeError,
     execute returns an ErrorResult with code CASCADE_CONFLICT. When
-    add_relation raises ValueError, execute returns an ErrorResult with code
-    CONCEPT_NOT_FOUND. When add_relation raises
-    psycopg.errors.UniqueViolation, execute returns an ErrorResult with code
-    DUPLICATE_ID (via map_exception). On success, execute calls cascade_write,
-    then re-reads via list_relations to confirm the new edge is present, and
-    returns a SuccessResult whose data is {"from_concept", "to_concept",
-    "type", "revision_uuid": str(cascade_write's return value)}.
+    insert_relation raises RelationValidationError whose message names
+    from_concept or to_concept, execute returns an ErrorResult with code
+    CONCEPT_NOT_FOUND; any other RelationValidationError propagates to the
+    outer handler via map_exception. On success, execute calls insert_relation
+    then cascade_write, then re-reads via list_relations to confirm the new
+    edge is present, and returns a SuccessResult whose data is
+    {"from_concept", "to_concept", "type", "revision_uuid": str(cascade_write's
+    return value)}.
 status: draft

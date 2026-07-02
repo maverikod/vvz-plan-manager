@@ -1,0 +1,211 @@
+step_id: A-004
+parent_tactical_step: T-001
+name: scoring-section
+target_file: plan_manager/runtime/config.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-028]
+status: draft
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/runtime/config.py`.
+
+  This is a `modify_file` operation. The full current content of the file,
+  exactly as it exists after all lower-priority atomic steps on this file
+  have been applied, is:
+
+  ```python
+  from __future__ import annotations
+
+  import json
+
+  from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+  class ConfigError(ValueError):
+      """Raised when the plan_manager configuration section is invalid.
+
+      The exception message is the explicit startup report describing every
+      unknown key, missing required key, and type violation found in the
+      configuration.
+      """
+
+
+  class DatabaseSection(BaseModel):
+      """Database connection parameters for the in-container PostgreSQL (C-035).
+
+      Exactly one of ``host`` or ``socket`` must be set. No password field is
+      defined here: the password is taken only from a mounted secrets file and
+      is never part of configuration.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      host: str | None = None
+      socket: str | None = None
+      port: int = 5432
+      dbname: str
+      user: str
+
+      @model_validator(mode="after")
+      def check_host_xor_socket(self) -> DatabaseSection:
+          """Require exactly one of ``host`` or ``socket`` to be set.
+
+          :return: ``self`` unchanged when validation passes.
+          :raises ValueError: If both ``host`` and ``socket`` are ``None``, or
+              if both are set.
+          """
+          if (self.host is None) == (self.socket is None):
+              raise ValueError("exactly one of 'host' or 'socket' must be set")
+          return self
+
+
+  class EmbeddingSection(BaseModel):
+      """Optional embedding service settings.
+
+      All fields are optional; the embedding service is the sole optional
+      external integration and its absence degrades only semantic scoring.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      url: str | None = None
+      model: str | None = None
+      timeout: float = 30.0
+  ```
+
+  Append the following new class to the end of the file, separated from the
+  `EmbeddingSection` class above by exactly two blank lines:
+
+  ```python
+  class ScoringSection(BaseModel):
+      """Optional scoring settings carrying the published defaults (C-028).
+
+      ``aggregation`` admits only ``"minimum"`` or
+      ``"fraction_above_threshold"``. ``embedding_serialization`` admits only
+      ``"definition"``, the single implemented serialization.
+      ``estimator_weights`` is the implemented fold: deterministic coverage
+      1.0, deterministic references 1.0, and the model-based pair (embedding,
+      simulation) sharing one vote of 1.0.
+      """
+
+      model_config = ConfigDict(extra="forbid")
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weights: float = 1.0
+      embedding_serialization: str = "definition"
+      estimator_weights: dict[str, float] = Field(
+          default_factory=lambda: {"coverage": 1.0, "references": 1.0, "model_pair": 1.0}
+      )
+      trust_floor: float = 0.2
+
+      @field_validator("aggregation")
+      @classmethod
+      def check_aggregation(cls, value: str) -> str:
+          """Validate that ``aggregation`` is an admitted value.
+
+          :param value: The candidate aggregation name.
+          :return: ``value`` unchanged when valid.
+          :raises ValueError: If ``value`` is not ``"minimum"`` or
+              ``"fraction_above_threshold"``, naming the invalid value.
+          """
+          if value not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(f"invalid aggregation: {value!r}")
+          return value
+
+      @field_validator("embedding_serialization")
+      @classmethod
+      def check_embedding_serialization(cls, value: str) -> str:
+          """Validate that ``embedding_serialization`` is the admitted value.
+
+          :param value: The candidate serialization name.
+          :return: ``value`` unchanged when valid.
+          :raises ValueError: If ``value`` is not ``"definition"``, naming the
+              invalid value.
+          """
+          if value != "definition":
+              raise ValueError(f"invalid embedding_serialization: {value!r}")
+          return value
+  ```
+
+  Requirements, all explicit, no open decisions:
+
+  - `ScoringSection` is a class named exactly `ScoringSection`, inheriting
+    from `BaseModel` (already imported at the top of the file; `Field` and
+    `field_validator` are also already imported at the top of the file — do
+    not add any new import statements).
+  - `model_config = ConfigDict(extra="forbid")` is the first statement in
+    the class body after the docstring.
+  - Fields, in this exact order, with these exact type annotations and
+    defaults:
+    - `threshold: float = 85.0`
+    - `aggregation: str = "minimum"`
+    - `concept_weights: float = 1.0`
+    - `embedding_serialization: str = "definition"`
+    - `estimator_weights: dict[str, float] = Field(default_factory=lambda: {"coverage": 1.0, "references": 1.0, "model_pair": 1.0})`
+      — written exactly as shown, wrapped across two lines with the closing
+      parenthesis on its own line as shown in the code block above.
+    - `trust_floor: float = 0.2`
+  - A `field_validator` decorated method named exactly `check_aggregation`,
+    validating the `aggregation` field, decorated with
+    `@field_validator("aggregation")` then `@classmethod` (in that order),
+    taking `(cls, value: str)`, returning `str`. Body: if `value` is not in
+    the tuple `("minimum", "fraction_above_threshold")`, raise
+    `ValueError(f"invalid aggregation: {value!r}")`; otherwise return
+    `value`.
+  - A `field_validator` decorated method named exactly
+    `check_embedding_serialization`, validating the
+    `embedding_serialization` field, decorated with
+    `@field_validator("embedding_serialization")` then `@classmethod` (in
+    that order), taking `(cls, value: str)`, returning `str`. Body: if
+    `value != "definition"`, raise
+    `ValueError(f"invalid embedding_serialization: {value!r}")`; otherwise
+    return `value`.
+  - Do not add any fields, methods, or validators beyond what is shown. Do
+    not add a validator for `threshold`, `concept_weights`, `trust_floor`,
+    or `estimator_weights` — none is required.
+  - Do not modify any earlier class (`ConfigError`, `DatabaseSection`,
+    `EmbeddingSection`) or the module-level imports in any way.
+  - After this change, the file ends with the `ScoringSection` class shown
+    above; no further content follows it in this step.
+
+  MRS excerpt (only the concept relevant to this step):
+
+  ```yaml
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+  ```
+
+  `ScoringSection` realizes the "scoring" field and its published defaults
+  named directly in C-028's properties: threshold 85, aggregation minimum,
+  uniform concept weights (1.0), definition-only serialization, the shared
+  embedding vote (folded here as the `model_pair` entry of
+  `estimator_weights`, worth 1.0 alongside `coverage` 1.0 and `references`
+  1.0), and trust floor 0.2.
+verification:
+  type: import
+  target: plan_manager.runtime.config
+  expected: >
+    Importing the module plan_manager.runtime.config succeeds. The module
+    now defines ScoringSection in addition to ConfigError, DatabaseSection,
+    and EmbeddingSection. ScoringSection() constructs successfully with
+    threshold 85.0, aggregation "minimum", concept_weights 1.0,
+    embedding_serialization "definition", estimator_weights equal to
+    {"coverage": 1.0, "references": 1.0, "model_pair": 1.0}, and trust_floor
+    0.2. ScoringSection(aggregation="fraction_above_threshold") constructs
+    successfully. ScoringSection(aggregation="bogus") raises a pydantic
+    ValidationError whose message includes "invalid aggregation: 'bogus'".
+    ScoringSection(embedding_serialization="raw") raises a ValidationError
+    whose message includes "invalid embedding_serialization: 'raw'".
+    Passing any additional unknown keyword raises a ValidationError due to
+    extra="forbid".

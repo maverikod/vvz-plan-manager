@@ -158,19 +158,63 @@ prompt: |
   - Module `plan_manager.views.dependency_graph`:
     `def load_steps(conn, plan_uuid) -> dict` — maps step uuid to Step.
   - Module `plan_manager.domain.concept_store`:
-    `@dataclass class Concept:` fields uuid: uuid.UUID, plan_uuid: uuid.UUID,
-    concept_id: str, name: str, definition: str, properties: list[str],
-    source_labels: list[str]; `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None`;
+    `@dataclass class Concept:` fields, in order, concept_id: str, name: str,
+    definition: str, properties: List[str], source_labels: List[str] (the
+    dataclass has no uuid and no plan_uuid field);
+    `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None`;
     `def update_concept(conn, plan_uuid, concept_id: str, fields: dict) -> Concept`
-    — re-enforces write-time constraints on every touched field, including
-    source-label resolution; raises `ValueError("concept not found: " + concept_id)`
-    (message starting with the literal prefix "concept not found") when
-    concept_id is unknown, and ValueError naming the unresolved label when a
-    touched source label does not resolve to a stored binding paragraph.
+    — allowed keys in fields are exactly {"name", "definition", "properties",
+    "source_labels"}; raises `ValueError(f"unknown field: {key}")` for any
+    other key, `ValueError(f"concept not found: {concept_id}")` (message
+    starting with the literal prefix "concept not found") when concept_id is
+    unknown, and re-validates every touched field like insert_concept
+    (raising ConceptValidationError, a ValueError subclass, on a malformed
+    value); the store does not return the row uuid (Concept carries no uuid
+    field).
+  - Module `plan_manager.domain.paragraph_store`:
+    `def list_paragraphs(conn, plan_uuid) -> list` — returns the stored
+    paragraphs of the plan; each returned row exposes a `.label` attribute
+    holding its bare label (no surrounding braces), plus text and position.
+
+  Source-label resolution (write-time, performed by this command, not the
+  store): only when `"source_labels"` is a key of `fields`, before calling
+  update_concept, build `stored = {row.label for row in list_paragraphs(conn, p.uuid)}`;
+  for every entry in `fields["source_labels"]`, strip a leading "{" and
+  trailing "}" via `label.strip("{}")` and require the stripped value to be a
+  member of `stored`; on the first entry that is not a member, return
+  `domain_error("PARAGRAPH_NOT_FOUND", f"source label does not resolve: {label}")`
+  immediately (do not call update_concept).
+
+  Row-uuid helper (binding; the store returns the updated Concept without a
+  uuid, so the command must query it directly): define a module-level
+  function
+
+  ```python
+  def _concept_row_uuid(conn, plan_uuid, concept_id: str) -> uuid.UUID:
+      """Return the stored row uuid of concept_id in plan_uuid.
+
+      Args:
+          conn: Open psycopg.Connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: Concept identifier to look up.
+
+      Returns:
+          The uuid.UUID primary key of the concept row, or None if no such
+          row exists.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT uuid FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+          row = cur.fetchone()
+          return row[0] if row else None
+  ```
 
   Node snapshot convention (binding): concept snapshot is exactly
-  `{"kind": "concept", "uuid": str, "plan_uuid": str, "concept_id", "name",
-  "definition", "properties", "source_labels"}`.
+  `{"kind": "concept", "uuid": str(row_uuid), "plan_uuid": str, "concept_id",
+  "name", "definition", "properties", "source_labels"}`, where row_uuid comes
+  from `_concept_row_uuid` (used as cascade_write's node_uuid too).
 
   Required edit 1 — insert these import lines immediately after the existing line
   `from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult` and
@@ -187,9 +231,19 @@ prompt: |
   from plan_manager.cascade.propagation import mrs_invalidation
   from plan_manager.views.dependency_graph import load_steps
   from plan_manager.domain.concept_store import get_concept, update_concept
+  from plan_manager.domain.paragraph_store import list_paragraphs
   ```
 
-  Required edit 2 — append this method at the end of the class body, after
+  Required edit 2 — insert the `_concept_row_uuid` helper function (quoted in
+  full above) immediately after the module-level constant line
+  `_UPDATABLE_FIELDS = {"name", "definition", "properties", "source_labels"}`
+  and the two blank lines that follow it, and before
+  `class ConceptUpdateCommand(Command):`, so the module has: imports, then
+  `_UPDATABLE_FIELDS`, then `_concept_row_uuid`, then the class — each
+  separated by exactly two blank lines, matching the existing spacing
+  convention around `_UPDATABLE_FIELDS`.
+
+  Required edit 3 — append this method at the end of the class body, after
   validate_params, keeping the same 4-space class-body indentation:
 
   ```python
@@ -223,35 +277,45 @@ prompt: |
                       rec = check_admission(conn, p.uuid, "concept", None, parsed_cascade)
                   except CascadeError as exc:
                       return domain_error("CASCADE_CONFLICT", str(exc))
+                  if "source_labels" in fields:
+                      stored = {row.label for row in list_paragraphs(conn, p.uuid)}
+                      for label in fields["source_labels"]:
+                          bare = label.strip("{}")
+                          if bare not in stored:
+                              return domain_error(
+                                  "PARAGRAPH_NOT_FOUND",
+                                  f"source label does not resolve: {label}",
+                              )
                   try:
-                      concept = update_concept(conn, p.uuid, concept_id, fields)
+                      updated = update_concept(conn, p.uuid, concept_id, fields)
                   except ValueError as exc:
                       msg = str(exc)
                       if msg.startswith("concept not found"):
                           return domain_error("CONCEPT_NOT_FOUND", msg)
-                      return domain_error("PARAGRAPH_NOT_FOUND", msg)
+                      raise
+                  row_uuid = _concept_row_uuid(conn, p.uuid, updated.concept_id)
                   nodes = load_steps(conn, p.uuid)
                   status_updates = mrs_invalidation(nodes)
                   snapshot = {
                       "kind": "concept",
-                      "uuid": str(concept.uuid),
-                      "plan_uuid": str(concept.plan_uuid),
-                      "concept_id": concept.concept_id,
-                      "name": concept.name,
-                      "definition": concept.definition,
-                      "properties": concept.properties,
-                      "source_labels": concept.source_labels,
+                      "uuid": str(row_uuid),
+                      "plan_uuid": str(p.uuid),
+                      "concept_id": updated.concept_id,
+                      "name": updated.name,
+                      "definition": updated.definition,
+                      "properties": updated.properties,
+                      "source_labels": updated.source_labels,
                   }
                   revision_uuid = cascade_write(
-                      conn, p.uuid, rec, concept.uuid, snapshot, status_updates,
-                      "api", f"concept_update: {concept.concept_id}",
+                      conn, p.uuid, rec, row_uuid, snapshot, status_updates,
+                      "api", f"concept_update: {updated.concept_id}",
                   )
                   verified = get_concept(conn, p.uuid, concept_id)
                   if verified is None:
                       raise RuntimeError("concept_update: write verification failed")
                   return SuccessResult(data={
-                      "uuid": str(verified.uuid),
-                      "plan_uuid": str(verified.plan_uuid),
+                      "uuid": str(row_uuid),
+                      "plan_uuid": str(p.uuid),
                       "concept_id": verified.concept_id,
                       "name": verified.name,
                       "definition": verified.definition,
@@ -264,16 +328,24 @@ prompt: |
   ```
 
   Constraints:
-  - Apply exactly the two edits above; do not change any other line of the
+  - Apply exactly the three edits above; do not change any other line of the
     current content.
   - Do not read, create, or modify any other file.
-  - The resulting file must define exactly one class, ConceptUpdateCommand, with
+  - The resulting file must define exactly one module-level helper function,
+    _concept_row_uuid, and exactly one class, ConceptUpdateCommand, with
     methods get_schema, validate_params, execute (in that order) and no other
     methods, plus the unchanged module-level constant _UPDATABLE_FIELDS.
   - execute's final exception handler must be exactly
     `except Exception as exc: return map_exception(exc)`.
   - CASCADE_REQUIRED is not reachable from this command (cascade_uuid is a
     required schema parameter) and must not appear anywhere in this file.
+  - The source-label resolution loop runs only when "source_labels" is a key
+    of fields, before update_concept is called, and returns
+    PARAGRAPH_NOT_FOUND directly (no exception) for the first unresolved
+    label.
+  - update_concept's ValueError handling: a message starting with the literal
+    prefix "concept not found" maps to CONCEPT_NOT_FOUND; any other message
+    (including "unknown field: ...") is re-raised with a bare `raise`.
 verification:
   type: import
   target: plan_manager/commands/concept_update_command.py
@@ -281,12 +353,17 @@ verification:
     Importing the module succeeds and the resulting file is at most 400 lines.
     ConceptUpdateCommand.execute is an async method accepting plan,
     cascade_uuid, concept_id, fields. When check_admission raises CascadeError,
-    execute returns an ErrorResult with code CASCADE_CONFLICT. When
-    update_concept raises ValueError with a message starting "concept not
-    found", execute returns an ErrorResult with code CONCEPT_NOT_FOUND; any
-    other ValueError from update_concept yields code PARAGRAPH_NOT_FOUND. On
-    success, execute calls cascade_write, then re-reads the concept via
-    get_concept, and returns a SuccessResult whose data includes concept_id,
-    name, definition, properties, source_labels, and revision_uuid equal to
-    str(cascade_write's return value).
+    execute returns an ErrorResult with code CASCADE_CONFLICT. When fields
+    contains "source_labels" and one entry (braces stripped) is not among the
+    plan's stored paragraph labels, execute returns an ErrorResult with code
+    PARAGRAPH_NOT_FOUND without calling update_concept. When update_concept
+    raises ValueError with a message starting "concept not found", execute
+    returns an ErrorResult with code CONCEPT_NOT_FOUND; any other ValueError
+    from update_concept propagates to the outer handler via map_exception. On
+    success, execute calls update_concept, resolves the row uuid via
+    _concept_row_uuid, calls cascade_write, then re-reads the concept via
+    get_concept, and returns a SuccessResult whose data includes uuid (from
+    _concept_row_uuid), plan_uuid, concept_id, name, definition, properties,
+    source_labels, and revision_uuid equal to str(cascade_write's return
+    value).
 status: draft

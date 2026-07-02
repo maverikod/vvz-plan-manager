@@ -1,0 +1,90 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: build-payload-package-marker
+target_file: plan_manager/_build/__init__.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-027, C-025]
+prompt: |
+  Create the file `plan_manager/_build/__init__.py` with operation `create_file`.
+
+  This file does not exist yet. Create it with EXACTLY the following content
+  and nothing else: a single module docstring, no imports, no code, no
+  blank line after the closing triple-quote beyond end-of-file.
+
+  Write this exact file content:
+
+  """This package carries the build-time embedded payloads produced by the
+  release pipeline: ``build_info.json`` (a JSON object with exactly the
+  string keys "product", "package_version", "adapter_version",
+  "build_date", and "image_tag") and ``operator_doc.md`` (UTF-8 Markdown,
+  rendered from the single documentation source that also produces the
+  installed man and info pages). The two payload files are generated at
+  build time and are absent in a source checkout; their absence at
+  runtime is a packaging defect surfaced by the reader as an explicit
+  error.
+  """
+
+  Constraints (all binding, no exceptions):
+  - The file contains ONLY this triple-double-quoted module docstring. No
+    import statements. No constants. No functions. No classes. No
+    `__all__`. No trailing code of any kind after the closing `"""`.
+  - The docstring text must be reproduced verbatim, character for
+    character, exactly as shown above, including line breaks. Do not
+    paraphrase, shorten, or reword it.
+  - The docstring opens on the first line of the file (no blank line, no
+    shebang, no encoding declaration before it).
+  - This module is a plain marker for a package-data subpackage: it marks
+    `plan_manager/_build` as a Python package so that
+    `importlib.resources.files("plan_manager._build")` (used by the
+    reader in `plan_manager/runtime/build_info.py`) resolves it as a
+    package. It performs no imports and defines no runtime behavior.
+  - The two files named in the docstring (`build_info.json` and
+    `operator_doc.md`) are NOT created by this AS. They are produced by
+    the release pipeline at build time and are legitimately absent in a
+    source checkout. Do not create placeholder or stub versions of
+    either file.
+  - Do not create any other file. Do not create an `__all__` list. Do not
+    add type hints (there is nothing to type-hint in a docstring-only
+    module).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-025
+    name: InfoCommand
+    definition: Self-description API command returning identity, build
+      metadata, runtime summary, and embedded operator documentation.
+    properties:
+    - documentation payload embedded at build time from the single
+      documentation source
+    - same source renders man and info pages; divergence fails the build
+    source_labels: ["{u3x7}", "{e9a3}"]
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry,
+      transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/
+      at the repository root, modules as dotted paths beneath it
+    source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}",
+      "{y1j5}"]
+verification:
+  type: import
+  target: plan_manager._build
+  expected: >
+    Importing the module plan_manager._build succeeds without raising any
+    exception. The module's __doc__ attribute is a non-empty string that
+    mentions build_info.json, operator_doc.md, the five string keys
+    product, package_version, adapter_version, build_date, and image_tag,
+    and states that both payload files are absent in a source checkout
+    and that their absence at runtime is a packaging defect. The module
+    defines no attributes other than the standard module dunder
+    attributes: dir(plan_manager._build) contains no names besides those
+    Python assigns automatically to every module.
+status: draft

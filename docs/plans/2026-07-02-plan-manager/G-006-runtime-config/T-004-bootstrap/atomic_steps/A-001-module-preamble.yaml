@@ -1,0 +1,116 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: module-preamble
+target_file: plan_manager/main.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-027, C-028]
+status: draft
+prompt: |
+  Create the file `plan_manager/main.py` (operation: create_file; the file
+  does not exist yet — do not assume any pre-existing content).
+
+  This is the first of four steps that together build this single module
+  in priority order, each step touching only this one file. This step
+  writes the module docstring, the module-level imports, and the
+  AUTO_IMPORT_MODULES constant. Write exactly this content and nothing
+  else — no function, no class, no other statement:
+
+  MRS excerpt (concept definitions relevant to this step, quoted from the
+  machine specification):
+
+  - C-027 ServerRuntime: "Adapter-owned runtime hosting the command
+    registry, transport, queue, and bootstrap sequence." Properties:
+    entry point `main --config`; AppFactory create_app; hypercorn engine.
+    Adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface.
+    Hook-based registration; auto-import modules for spawned workers.
+    Long operations use the adapter queue with job semantics. Implemented
+    in Python 3.12+; production package root `plan_manager/` at the
+    repository root, modules as dotted paths beneath it.
+  - C-028 Configuration: "Single JSON configuration with adapter sections
+    plus one plan_manager section validated by a Pydantic model."
+    Property used here: password only from mounted secrets; invalid
+    config aborts startup.
+
+  Imported sibling contracts used by the import statements below (quote
+  verbatim; these two modules already exist in the repository, are not
+  created or modified by this step, and are not read — only their public
+  signatures, given here, are needed):
+
+  - `plan_manager/runtime/context.py` exposes
+    `def init_runtime(config_path: str) -> None` (raises `ConfigError`
+    with the explicit report on invalid configuration or unreadable
+    secrets).
+  - `plan_manager/runtime/config.py` exposes `class ConfigError(ValueError)`.
+
+  Write the file with exactly the following content, byte for byte. Blank
+  lines are significant and must be preserved exactly as shown (a blank
+  line is an empty line with zero characters, not a line of spaces):
+
+  """Server entry point and platform bootstrap for plan_manager.
+
+  Realises ServerRuntime (C-027): the entry point receives a configuration
+  file path, initializes the runtime (validating the custom configuration
+  section, C-028, and aborting startup with an explicit report on invalid
+  configuration or unreadable secrets), then creates the application through
+  the platform application factory and runs it with the platform's server
+  engine. The platform (mcp-proxy-adapter) owns the entire external surface:
+  the JSON-RPC endpoint with single and batch calls, the asynchronous
+  endpoint, health, command listing, heartbeat, WebSocket job push, and
+  OpenAPI and help output. Supported protocols (http, https, mtls) follow
+  the platform configuration unchanged. The server registers command classes
+  only through the platform hook mechanism; it adds no custom route and
+  patches no platform internal. The queue-manager section and the platform
+  registration section (proxy registration URL, heartbeat, server id,
+  instance UUID) are platform-owned and pass through untouched — the server
+  functions identically with registration disabled.
+
+  AUTO_IMPORT_MODULES declares, for the platform auto-import facility, the
+  modules that spawned worker processes must import so that command classes
+  and the registration hook are available in worker process memory.
+  """
+
+  import argparse
+  import asyncio
+  import sys
+
+  import hypercorn.asyncio
+  import hypercorn.config
+
+  from plan_manager.runtime.context import init_runtime
+  from plan_manager.runtime.config import ConfigError
+
+  AUTO_IMPORT_MODULES: tuple[str, ...] = (
+      "plan_manager.hooks",
+      "plan_manager.commands.registration",
+  )
+
+  Constraints (all binding, no deviation):
+  - The module docstring text above is exact and complete; do not
+    paraphrase, shorten, or reorder any sentence of it.
+  - Import order and grouping is exact as shown: stdlib imports first
+    (argparse, asyncio, sys) in that order, one blank line, then the two
+    third-party hypercorn imports (hypercorn.asyncio, hypercorn.config) in
+    that order, one blank line, then the two local imports
+    (from plan_manager.runtime.context import init_runtime, then
+    from plan_manager.runtime.config import ConfigError), one blank line,
+    then the AUTO_IMPORT_MODULES assignment.
+  - `AUTO_IMPORT_MODULES` is annotated exactly as `tuple[str, ...]` and is
+    assigned a tuple literal holding exactly two string elements, in this
+    order: "plan_manager.hooks" and "plan_manager.commands.registration".
+  - Do not define build_app, main, or any other function, class, or
+    statement in this step. The file after this step contains only the
+    module docstring, the seven import statements grouped as specified,
+    and the AUTO_IMPORT_MODULES assignment — nothing after the closing
+    parenthesis of that assignment.
+  - The file must end with a single trailing newline after the closing
+    parenthesis line.
+verification:
+  type: import
+  target: plan_manager.main
+  expected: >
+    Importing the module plan_manager.main succeeds without raising, and
+    the module exposes an attribute AUTO_IMPORT_MODULES equal to the tuple
+    ("plan_manager.hooks", "plan_manager.commands.registration"); the
+    module defines no function or class at this point.

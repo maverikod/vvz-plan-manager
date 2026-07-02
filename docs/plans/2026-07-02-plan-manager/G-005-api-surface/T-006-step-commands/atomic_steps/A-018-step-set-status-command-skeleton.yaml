@@ -31,7 +31,8 @@ prompt: |
   from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.commands.step_set_status_metadata import get_step_set_status_metadata
-  from plan_manager.domain.step_store import get_step, set_step_status
+  from plan_manager.domain.step_ops import set_step_status
+  from plan_manager.domain.step_store import get_step
   from plan_manager.runtime.context import db_connection
   from plan_manager.storage.version_store import record_revision
   from plan_manager.views.dependency_graph import load_steps
@@ -201,10 +202,16 @@ prompt: |
     plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
-    step_uuid) -> Step` and `def set_step_status(conn, step_uuid, new_status:
-    str) -> None` (validates through the status model with
-    via_cascade=False, raising `StatusTransitionError` on illegal or
-    cascade-reserved transitions, then writes).
+    step_uuid) -> Step`.
+  - `plan_manager/domain/step_ops.py` defines `def set_step_status(conn,
+    step_uuid: uuid.UUID, new_status: str, via_cascade: bool = False) ->
+    None` (calls validate_transition, then UPDATEs the row;
+    `StatusTransitionError` — a `ValueError` subclass — is raised on an
+    illegal transition or on a transition reserved for cascade propagation
+    when `via_cascade` is `False`). This command always calls
+    `set_step_status` with `via_cascade` left at its default `False`; it
+    never passes `via_cascade=True`, since direct API calls are never
+    cascade propagation.
   - `plan_manager/commands/step_set_status_metadata.py` defines
     `def get_step_set_status_metadata(cls: type) -> dict[str, Any]`.
 

@@ -1,0 +1,151 @@
+step_id: A-009
+parent_tactical_step: T-003
+name: concept-store-get-concept
+target_file: plan_manager/domain/concept_store.py
+operation: modify_file
+priority: 2
+depends_on: [A-007]
+concepts: [C-003, C-035]
+prompt: |
+  Modify the existing Python source file at exact project-relative path plan_manager/domain/concept_store.py.
+
+  Operation: modify_file. The current full content of the file (state after all lower-priority AS on this file have been applied) is exactly the following:
+
+  ```python
+  """Persistence functions for the Concept domain entity (MRS concept
+  C-003).
+
+
+  These functions write and read Concept rows in table `concept`, scoped
+  to one plan via the plan_uuid column. Field validation and concept_id
+  uniqueness checks are delegated to plan_manager.domain.concept before any
+  row is written.
+
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.concept import Concept, validate_concept, check_concept_id_unique
+
+
+  def list_concept_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:
+      """List all concept_id values stored for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of concept_id strings from table concept where the
+          plan_uuid column equals the given plan_uuid, ordered ascending
+          by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [row[0] for row in rows]
+
+
+  def insert_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept: Concept
+  ) -> uuid.UUID:
+      """Validate and insert a new Concept row scoped to one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept: The Concept instance to persist.
+
+      Returns:
+          The generated uuid primary identity of the inserted row.
+
+      Raises:
+          ConceptValidationError: propagated unmodified from
+              validate_concept or check_concept_id_unique if concept fails
+              field validation or its concept_id is already present among
+              the plan's existing concept_id values.
+      """
+      validate_concept(concept)
+      check_concept_id_unique(concept.concept_id, list_concept_ids(conn, plan_uuid))
+      row_uuid = uuid.uuid4()
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO concept (uuid, plan_uuid, concept_id, name, definition, "
+              "properties, source_labels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+              (
+                  row_uuid,
+                  plan_uuid,
+                  concept.concept_id,
+                  concept.name,
+                  concept.definition,
+                  concept.properties,
+                  concept.source_labels,
+              ),
+          )
+      return row_uuid
+  ```
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-003 Concept: MRS basis axis with canonical name, one-sentence definition, properties, and source labels; identifier pattern is C-NNN, unique within the plan.
+  - C-035 Database: in-container PostgreSQL with pgvector serving as the single source of truth for all plan data; entities are stored as rows; accessed via psycopg 3 with plain SQL, no ORM; runtime code never emits DDL.
+
+  Required change: append the following function definition to the end of the file, after `insert_concept`, separated from it by exactly two blank lines. Do not change any existing line in the file shown above.
+
+  ```python
+
+
+
+  def get_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str
+  ) -> Concept | None:
+      """Fetch one full Concept row by concept_id within one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: The concept_id to look up.
+
+      Returns:
+          The matching Concept, or None if no row with this concept_id
+          exists for the given plan_uuid.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, name, definition, properties, source_labels "
+              "FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return Concept(
+          concept_id=row[0],
+          name=row[1],
+          definition=row[2],
+          properties=row[3],
+          source_labels=row[4],
+      )
+  ```
+
+  Constraints:
+  - The function signature must be exactly `def get_concept(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str) -> Concept | None:` using the `Concept` type already defined in plan_manager.domain.concept and imported into this file.
+  - Use only names already defined or imported in this file (`psycopg`, `uuid`, `Concept`). Add no new imports.
+  - Open exactly one cursor via `conn.cursor()` used as a context manager. Execute exactly the SQL string "SELECT concept_id, name, definition, properties, source_labels FROM concept WHERE plan_uuid = %s AND concept_id = %s" with parameter tuple `(plan_uuid, concept_id)`, then call `cur.fetchone()` and bind the result to `row`.
+  - If `row is None`, return `None` immediately. Otherwise construct and return `Concept(concept_id=row[0], name=row[1], definition=row[2], properties=row[3], source_labels=row[4])`, matching the column order in the SELECT list exactly.
+  - Do not catch or translate any exception raised by psycopg during `cur.execute` or `cur.fetchone`; let it propagate unmodified.
+  - Do not emit any DDL statement (no CREATE, ALTER, or DROP).
+  - Do not modify, reorder, or remove any part of the file content shown above as the current state. Only append the new function.
+  - Do not add any code beyond what is shown above. Do not add logging. Do not add a module-level connection or any module-level mutable state.
+
+verification:
+  type: import
+  target: plan_manager.domain.concept_store.get_concept
+  expected: >
+    The function get_concept accepts a psycopg connection, a plan_uuid, and a concept_id, and returns Concept | None. It executes a SELECT against table concept filtered by plan_uuid and concept_id, returning None when no row matches and otherwise returning a Concept built from the five selected columns (concept_id, name, definition, properties, source_labels) in that order.
+status: draft

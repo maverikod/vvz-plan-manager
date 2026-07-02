@@ -1,0 +1,122 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: build-info-module-constants
+target_file: plan_manager/runtime/build_info.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-027, C-025]
+prompt: |
+  Create the file `plan_manager/runtime/build_info.py` with operation
+  `create_file`.
+
+  This file does not exist yet. Create it with EXACTLY the following
+  content and nothing else: a module docstring, one import statement, and
+  four module-level constant assignments. No functions, no classes.
+
+  Write this exact file content:
+
+  """Reader for the build-time embedded payloads carried by
+  ``plan_manager._build``.
+
+  This module reads the build information mapping and the operator
+  documentation text that the release pipeline embeds into the
+  dedicated ``plan_manager._build`` package-data subpackage at build
+  time. It performs no rendering and no network access: it only reads
+  what the build embedded. The absence of an embedded payload at
+  runtime is a packaging defect surfaced as an explicit
+  :class:`RuntimeError` naming the missing payload; generated or
+  default content is never substituted.
+  """
+
+  import json
+
+  BUILD_PACKAGE: str = "plan_manager._build"
+  BUILD_INFO_RESOURCE: str = "build_info.json"
+  OPERATOR_DOC_RESOURCE: str = "operator_doc.md"
+  REQUIRED_BUILD_KEYS: tuple[str, ...] = (
+      "product",
+      "package_version",
+      "adapter_version",
+      "build_date",
+      "image_tag",
+  )
+
+  Constraints (all binding, no exceptions):
+  - The module docstring is reproduced verbatim, character for character,
+    exactly as shown above (including line breaks), as the very first
+    statement in the file (no shebang, no encoding declaration, no blank
+    line before it).
+  - Exactly one import statement: `import json`. No other imports at
+    module level. (`importlib.resources` is imported later, inside a
+    function body, by a subsequent AS on this same file — do not add it
+    here.)
+  - Exactly four module-level constants, in this exact order, with these
+    exact names, exact types, exact values, and exact typing annotations:
+    - `BUILD_PACKAGE: str = "plan_manager._build"` — the dotted import
+      path of the package-data subpackage (defined by the sibling AS
+      creating `plan_manager/_build/__init__.py`) that carries the two
+      embedded payload files.
+    - `BUILD_INFO_RESOURCE: str = "build_info.json"` — the resource file
+      name of the build-information JSON document inside
+      `BUILD_PACKAGE`.
+    - `OPERATOR_DOC_RESOURCE: str = "operator_doc.md"` — the resource
+      file name of the operator documentation Markdown text inside
+      `BUILD_PACKAGE`.
+    - `REQUIRED_BUILD_KEYS: tuple[str, ...] = ("product",
+      "package_version", "adapter_version", "build_date", "image_tag")`
+      — the exact ordered set of string keys that a valid build
+      information JSON object must contain, formatted as a
+      parenthesized tuple literal spanning multiple lines, one key per
+      line, each line indented four spaces, trailing comma after the
+      last element, closing parenthesis on its own line, exactly as
+      shown in the file content above.
+  - No functions, no classes, no `__all__`, no other statements of any
+    kind in this file yet. A later AS on this same file appends
+    functions after these constants; this AS produces only the docstring,
+    the one import, and the four constants.
+  - Do not add blank lines beyond what is shown above: one blank line
+    after the closing `"""` of the docstring, one blank line after the
+    `import json` line, no blank lines between the four constant
+    assignments, and the constants block ends with `)` as the file's
+    final line.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-025
+    name: InfoCommand
+    definition: Self-description API command returning identity, build
+      metadata, runtime summary, and embedded operator documentation.
+    properties:
+    - documentation payload embedded at build time from the single
+      documentation source
+    - same source renders man and info pages; divergence fails the build
+    source_labels: ["{u3x7}", "{e9a3}"]
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry,
+      transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/
+      at the repository root, modules as dotted paths beneath it
+    source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}",
+      "{y1j5}"]
+verification:
+  type: import
+  target: plan_manager.runtime.build_info
+  expected: >
+    Importing the module plan_manager.runtime.build_info succeeds without
+    raising any exception. The module exposes exactly four module-level
+    attributes beyond the standard module dunders and the json import:
+    BUILD_PACKAGE equal to the string "plan_manager._build",
+    BUILD_INFO_RESOURCE equal to the string "build_info.json",
+    OPERATOR_DOC_RESOURCE equal to the string "operator_doc.md", and
+    REQUIRED_BUILD_KEYS equal to the tuple ("product", "package_version",
+    "adapter_version", "build_date", "image_tag") in that exact order.
+    The module defines no functions and no classes at this point.
+status: draft

@@ -46,6 +46,7 @@ prompt: >
 
 
   @dataclass
+
   class Concept:
       """A single MRS concept entry.
 

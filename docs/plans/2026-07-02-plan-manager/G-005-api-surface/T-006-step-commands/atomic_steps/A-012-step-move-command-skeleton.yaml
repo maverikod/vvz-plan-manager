@@ -31,9 +31,11 @@ prompt: |
   from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.commands.step_move_metadata import get_step_move_metadata
-  from plan_manager.domain.step_store import get_step, move_step
+  from plan_manager.domain.step_ops import move_step
+  from plan_manager.domain.step_store import get_step
   from plan_manager.runtime.context import db_connection
   from plan_manager.storage.version_store import record_revision
+  from plan_manager.verify.gate_data import artifact_path_of
   from plan_manager.views.dependency_graph import load_steps
   ```
 
@@ -139,9 +141,10 @@ prompt: |
               under, or None for direct-mode mutation.
 
       Returns:
-          SuccessResult with the moved step's identity, new parent,
-          status, and revision_uuid on success, or ErrorResult with a
-          stable domain error code on failure.
+          SuccessResult with the moved step's uuid, old_step_id,
+          new_step_id, new parent_step_uuid, path, status, and
+          revision_uuid on success, or ErrorResult with a stable domain
+          error code on failure.
       """
       raise NotImplementedError
   ```
@@ -199,9 +202,16 @@ prompt: |
     plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
-    step_uuid) -> Step` and `def move_step(conn, step_uuid, new_parent_uuid:
-    uuid.UUID | None) -> Step` (re-parents and rewrites every reference to
-    the moved id in one operation, returns the updated step).
+    step_uuid) -> Step`.
+  - `plan_manager/domain/step_ops.py` defines `def move_step(conn,
+    step_uuid: uuid.UUID, new_parent_uuid: uuid.UUID | None) -> Step`
+    (re-parents the step, re-assigns its human-readable step_id within the
+    new parent's scope, scrubs old-scope depends_on references to it,
+    clears the moved step's own depends_on, and rewrites every reference
+    to the moved id in one operation; returns the updated step, whose
+    `step_id` may differ from the `step_id` it had before the call).
+  - `plan_manager/verify/gate_data.py` defines
+    `def artifact_path_of(nodes, step) -> str`.
   - `plan_manager/commands/step_move_metadata.py` defines
     `def get_step_move_metadata(cls: type) -> dict[str, Any]`.
 

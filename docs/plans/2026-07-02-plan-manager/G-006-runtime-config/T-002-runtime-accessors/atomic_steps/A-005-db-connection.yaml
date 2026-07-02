@@ -1,0 +1,222 @@
+step_id: A-005
+parent_tactical_step: T-002
+name: db-connection
+target_file: plan_manager/runtime/context.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-035, C-028]
+prompt: |
+  Modify the file plan_manager/runtime/context.py. Its full current
+  content (after all lower-priority AS on this file have been applied) is
+  exactly:
+
+  """Runtime accessors for ServerRuntime (C-027): the database connection
+  provider and the flat application-configuration projection consumed by
+  every command of the surface.
+
+  Runtime initialization happens once at startup: it loads and validates the
+  custom configuration section (C-028) via plan_manager.runtime.config, reads
+  the database password from the mounted secrets file, and holds the
+  validated section and the password in module state. Using any accessor
+  before init_runtime is an explicit runtime error. No accessor value is
+  ever taken from request parameters.
+  """
+
+  import contextlib
+  import os
+  from dataclasses import dataclass
+
+  import psycopg
+  import psycopg.conninfo
+
+  from plan_manager.runtime.config import ConfigError, PlanManagerSection, load_config
+
+  SECRETS_ENV: str = "PLANMGR_SECRETS"
+  DEFAULT_SECRETS_PATH: str = "/etc/planmgr/secrets/db_password"
+
+  _SECTION: PlanManagerSection | None = None
+  _PASSWORD: str | None = None
+
+
+  def init_runtime(config_path: str) -> None:
+      """Initialize module-level runtime state from a configuration file.
+
+      Loads and validates the custom plan_manager configuration section from
+      ``config_path`` via ``load_config``, then reads the database password
+      from the mounted secrets file. The secrets file path is taken from the
+      environment variable named by ``SECRETS_ENV``, defaulting to
+      ``DEFAULT_SECRETS_PATH`` when the environment variable is unset. Stores
+      both the validated section and the password in module state.
+
+      Args:
+          config_path: Filesystem path to the JSON configuration file passed
+              to ``load_config``.
+
+      Returns:
+          None.
+
+      Raises:
+          ConfigError: If ``load_config`` raises for invalid configuration;
+              if the secrets file cannot be opened or read (missing or
+              unreadable file), reported as "cannot read database secrets
+              file: {secrets_path}"; or if the secrets file content is empty
+              after stripping leading and trailing whitespace, reported as
+              "database secrets file is empty: {secrets_path}".
+      """
+      global _SECTION, _PASSWORD
+      section = load_config(config_path)
+      secrets_path = os.environ.get(SECRETS_ENV, DEFAULT_SECRETS_PATH)
+      try:
+          with open(secrets_path, "r", encoding="utf-8") as f:
+              text = f.read()
+      except OSError as exc:
+          raise ConfigError(
+              f"cannot read database secrets file: {secrets_path}"
+          ) from exc
+      password = text.strip()
+      if not password:
+          raise ConfigError(f"database secrets file is empty: {secrets_path}")
+      _SECTION = section
+      _PASSWORD = password
+
+
+  def _require_section() -> PlanManagerSection:
+      """Return the validated configuration section, requiring initialization.
+
+      Returns:
+          PlanManagerSection: The module-level validated configuration
+              section stored by ``init_runtime``.
+
+      Raises:
+          RuntimeError: If ``init_runtime`` has not been called yet, reported
+              as "runtime not initialized: call init_runtime first".
+      """
+      if _SECTION is None:
+          raise RuntimeError("runtime not initialized: call init_runtime first")
+      return _SECTION
+
+
+  def _conninfo() -> str:
+      """Build a psycopg connection info string from module runtime state.
+
+      Uses the database section of the validated configuration returned by
+      ``_require_section()`` (``PlanManagerSection.database``): ``host`` if
+      it is not None, otherwise ``socket`` (a unix socket directory passed
+      as the psycopg ``host`` parameter), together with ``port``, ``dbname``,
+      and ``user``. The password is the module-level value stored by
+      ``init_runtime`` from the mounted secrets file.
+
+      Returns:
+          str: A connection string built by
+              ``psycopg.conninfo.make_conninfo``.
+
+      Raises:
+          RuntimeError: If ``init_runtime`` has not been called yet (checked
+              both through ``_require_section()`` for the configuration
+              section and directly for the password), reported as "runtime
+              not initialized: call init_runtime first".
+      """
+      db = _require_section().database
+      if _PASSWORD is None:
+          raise RuntimeError("runtime not initialized: call init_runtime first")
+      host_value = db.host if db.host is not None else db.socket
+      return psycopg.conninfo.make_conninfo(
+          host=host_value,
+          port=db.port,
+          dbname=db.dbname,
+          user=db.user,
+          password=_PASSWORD,
+      )
+
+  Append exactly two blank lines after the last line shown (`)`, the
+  closing parenthesis of the `return psycopg.conninfo.make_conninfo(...)`
+  call, indented 4 spaces as the last statement of _conninfo), then
+  append the following decorated function definition at module level (no
+  indentation):
+
+  @contextlib.contextmanager
+  def db_connection():
+      """Yield one open psycopg connection per context entry.
+
+      Connection parameters come from server configuration and the mounted
+      secrets file only, never from request parameters (C-028). Commits the
+      transaction on clean exit, rolls it back when the body raises, and
+      always closes the connection, regardless of outcome.
+
+      Yields:
+          psycopg.Connection: One open database connection built from
+              ``_conninfo()``.
+
+      Raises:
+          RuntimeError: If ``init_runtime`` has not been called yet.
+      """
+      conn = psycopg.connect(_conninfo())
+      try:
+          yield conn
+          conn.commit()
+      except BaseException:
+          conn.rollback()
+          raise
+      finally:
+          conn.close()
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the two blank lines and the decorated function shown.
+  - The decorator is exactly `@contextlib.contextmanager`, using the
+    `contextlib` module already imported at the top of the file
+    (`import contextlib`); do not add another import for it.
+  - The function signature is exactly `def db_connection():` (no
+    parameters, no explicit return annotation, decorated as a generator
+    context manager).
+  - `conn = psycopg.connect(_conninfo())` is the first statement, calling
+    the module-level `_conninfo` function already defined earlier in this
+    file and `psycopg.connect` from the `psycopg` module already imported
+    at the top of the file (`import psycopg`).
+  - The body structure is exactly: a `try` block containing `yield conn`
+    followed by `conn.commit()`; an `except BaseException:` block
+    containing `conn.rollback()` followed by a bare `raise`; a `finally`
+    block containing `conn.close()`. No other exception handling.
+  - Do not add any other function, class, or import. Do not read or
+    modify any other file.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the
+      single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity;
+      human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never
+      emits DDL
+
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one
+      plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation
+      minimum, uniform concept weights, definition-only serialization,
+      shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+verification:
+  type: manual
+  target: plan_manager.runtime.context.db_connection
+  expected: >
+    After init_runtime has been called successfully, using db_connection
+    as a context manager opens exactly one psycopg connection built from
+    _conninfo, yields it to the caller, commits the transaction when the
+    with-block body completes without raising, and closes the connection
+    unconditionally. When the with-block body raises any exception, the
+    transaction is rolled back, the connection is closed, and the
+    original exception propagates unchanged.
+status: draft

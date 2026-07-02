@@ -1,0 +1,43 @@
+step_id: T-003
+parent_global_step: G-006
+name: build-info-reader
+description: >
+  Create the reader of the build-time embedded package data serving the
+  server self-description (C-025) from within the runtime (C-027). Two
+  package-data artifacts are embedded into the installed package by the
+  release pipeline at build time: the build-information document carrying
+  exactly the product name, the package version, the platform adapter
+  version, the build date, and the image tag; and the operator documentation
+  text rendered from the single documentation source that also produces the
+  installed man and info pages. The reader exposes two operations: one
+  returns the build-information mapping parsed from the embedded JSON
+  document; the other returns the operator documentation text. Both read
+  through the standard library package-resource mechanism from a dedicated
+  data subpackage; the absence of either embedded artifact is a packaging
+  defect surfaced as an explicit runtime error naming the missing payload —
+  never silently replaced by generated or default content. The reader
+  renders nothing and fetches nothing over the network; it only reads what
+  the build embedded. This step defines the two read operations, the data
+  subpackage location, and the exact artifact names and their formats as the
+  binding contract for the release pipeline that produces them; it does not
+  produce the payloads.
+concepts: [C-027, C-025]
+inputs:
+- name: embedded_build_payloads
+  type: package data
+  description: >
+    The two artifacts embedded at build time by the release pipeline: the
+    build-information JSON document and the operator documentation text.
+outputs:
+- name: build_information
+  type: read mapping
+  description: >
+    The mapping with product name, package version, adapter version, build
+    date, and image tag.
+- name: operator_documentation
+  type: read text
+  description: >
+    The embedded operator documentation text; its absence raises the
+    explicit missing-payload error.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005]
+status: draft

@@ -1,0 +1,247 @@
+step_id: A-011
+parent_tactical_step: T-003
+name: concept-store-update-concept
+target_file: plan_manager/domain/concept_store.py
+operation: modify_file
+priority: 4
+depends_on: [A-010]
+concepts: [C-003, C-002, C-035]
+prompt: |
+  Modify the existing Python source file at exact project-relative path plan_manager/domain/concept_store.py.
+
+  Operation: modify_file. The current full content of the file (state after all lower-priority AS on this file have been applied) is exactly the following:
+
+  ```python
+  """Persistence functions for the Concept domain entity (MRS concept
+  C-003).
+
+
+  These functions write and read Concept rows in table `concept`, scoped
+  to one plan via the plan_uuid column. Field validation and concept_id
+  uniqueness checks are delegated to plan_manager.domain.concept before any
+  row is written.
+
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.concept import Concept, validate_concept, check_concept_id_unique
+
+
+  def list_concept_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:
+      """List all concept_id values stored for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of concept_id strings from table concept where the
+          plan_uuid column equals the given plan_uuid, ordered ascending
+          by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [row[0] for row in rows]
+
+
+  def insert_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept: Concept
+  ) -> uuid.UUID:
+      """Validate and insert a new Concept row scoped to one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept: The Concept instance to persist.
+
+      Returns:
+          The generated uuid primary identity of the inserted row.
+
+      Raises:
+          ConceptValidationError: propagated unmodified from
+              validate_concept or check_concept_id_unique if concept fails
+              field validation or its concept_id is already present among
+              the plan's existing concept_id values.
+      """
+      validate_concept(concept)
+      check_concept_id_unique(concept.concept_id, list_concept_ids(conn, plan_uuid))
+      row_uuid = uuid.uuid4()
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO concept (uuid, plan_uuid, concept_id, name, definition, "
+              "properties, source_labels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+              (
+                  row_uuid,
+                  plan_uuid,
+                  concept.concept_id,
+                  concept.name,
+                  concept.definition,
+                  concept.properties,
+                  concept.source_labels,
+              ),
+          )
+      return row_uuid
+
+
+  def get_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str
+  ) -> Concept | None:
+      """Fetch one full Concept row by concept_id within one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: The concept_id to look up.
+
+      Returns:
+          The matching Concept, or None if no row with this concept_id
+          exists for the given plan_uuid.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, name, definition, properties, source_labels "
+              "FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return Concept(
+          concept_id=row[0],
+          name=row[1],
+          definition=row[2],
+          properties=row[3],
+          source_labels=row[4],
+      )
+
+
+  def list_concepts(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Concept]:
+      """List all full Concept rows for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of Concept instances for the given plan_uuid, ordered
+          ascending by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, name, definition, properties, source_labels "
+              "FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [
+          Concept(
+              concept_id=row[0],
+              name=row[1],
+              definition=row[2],
+              properties=row[3],
+              source_labels=row[4],
+          )
+          for row in rows
+      ]
+  ```
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-003 Concept: MRS basis axis with canonical name, one-sentence definition, properties, and source labels; identifier pattern is C-NNN, unique within the plan.
+  - C-002 Paragraph: addressable binding unit of the HRS text carrying a stable four-character base36 label wrapped in curly braces, e.g. "{k2p7}"; position-independent, unique within one HRS.
+  - C-035 Database: entities are stored as rows; referential integrity at write time; accessed via psycopg 3 with plain SQL, no ORM; runtime code never emits DDL.
+
+  This file already imports the following two names from plan_manager.domain.concept, which this AS uses: `Concept` (the dataclass with fields concept_id, name, definition, properties, source_labels, in that order) and `validate_concept` (signature `def validate_concept(concept: Concept) -> None:`, which raises `ConceptValidationError` when concept_id does not match the required C-NNN pattern, when name or definition is empty or whitespace-only, when properties is not a list of non-empty strings, or when source_labels is not a list of strings each matching the four-character base36 curly-brace pattern, and otherwise returns None). This AS also uses `get_concept`, defined earlier in this same file by a lower-priority AS, with signature `def get_concept(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str) -> Concept | None:`, which returns the matching Concept or None when absent.
+
+  Required change: append the following function definition to the end of the file, after `list_concepts`, separated from it by exactly two blank lines. Do not change any existing line in the file shown above.
+
+  ```python
+
+
+
+  def update_concept(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      concept_id: str,
+      fields: dict,
+  ) -> Concept:
+      """Update selected fields of an existing Concept row.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: concept_id of the row to update.
+          fields: Mapping of field names to new values. Allowed keys are
+              exactly "name", "definition", "properties", "source_labels".
+
+      Returns:
+          The updated Concept, re-read from the database after the UPDATE.
+
+      Raises:
+          ValueError: If fields contains a key other than "name",
+              "definition", "properties", "source_labels" (message is
+              f"unknown field: {key}" naming the offending key), or if no
+              row with this concept_id exists for the given plan_uuid
+              (message is f"concept not found: {concept_id}").
+          ConceptValidationError: propagated unmodified from
+              validate_concept if the merged Concept (the existing row
+              with the touched fields replaced) fails field validation.
+      """
+      allowed_fields = {"name", "definition", "properties", "source_labels"}
+      for key in fields:
+          if key not in allowed_fields:
+              raise ValueError(f"unknown field: {key}")
+      existing = get_concept(conn, plan_uuid, concept_id)
+      if existing is None:
+          raise ValueError(f"concept not found: {concept_id}")
+      merged = Concept(
+          concept_id=existing.concept_id,
+          name=fields.get("name", existing.name),
+          definition=fields.get("definition", existing.definition),
+          properties=fields.get("properties", existing.properties),
+          source_labels=fields.get("source_labels", existing.source_labels),
+      )
+      validate_concept(merged)
+      with conn.cursor() as cur:
+          cur.execute(
+              "UPDATE concept SET name = %s, definition = %s, properties = %s, "
+              "source_labels = %s WHERE plan_uuid = %s AND concept_id = %s",
+              (
+                  merged.name,
+                  merged.definition,
+                  merged.properties,
+                  merged.source_labels,
+                  plan_uuid,
+                  concept_id,
+              ),
+          )
+      return get_concept(conn, plan_uuid, concept_id)
+  ```
+
+  Constraints:
+  - The function signature must be exactly `def update_concept(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_id: str, fields: dict) -> Concept:` using the `Concept` type already defined in this file.
+  - Use only names already defined or imported in this file (`psycopg`, `uuid`, `Concept`, `validate_concept`, `get_concept`). Add no new imports.
+  - The allowed keys of `fields` are exactly the literal set `{"name", "definition", "properties", "source_labels"}`, bound to a local variable `allowed_fields`. Iterate over `fields` and for each `key` not in `allowed_fields`, raise `ValueError(f"unknown field: {key}")` immediately, before any database access.
+  - Call `get_concept(conn, plan_uuid, concept_id)` and bind the result to `existing`. If `existing is None`, raise `ValueError(f"concept not found: {concept_id}")`.
+  - Build `merged` as a new `Concept` with `concept_id=existing.concept_id`, and each of `name`, `definition`, `properties`, `source_labels` taken from `fields.get(<key>, existing.<key>)` exactly as shown in the code above.
+  - Call `validate_concept(merged)` before any UPDATE is executed; do not catch or translate any exception it raises (including `ConceptValidationError`), let it propagate unmodified.
+  - Open a cursor via `conn.cursor()` as a context manager and execute exactly the SQL string "UPDATE concept SET name = %s, definition = %s, properties = %s, source_labels = %s WHERE plan_uuid = %s AND concept_id = %s" with the parameter tuple `(merged.name, merged.definition, merged.properties, merged.source_labels, plan_uuid, concept_id)` in that exact order.
+  - After the UPDATE, return `get_concept(conn, plan_uuid, concept_id)` (a fresh read of the updated row) as the function's return value.
+  - Do not catch or translate any exception raised by psycopg during `cur.execute`; let it propagate unmodified.
+  - Do not emit any DDL statement (no CREATE, ALTER, or DROP).
+  - Do not modify, reorder, or remove any part of the file content shown above as the current state. Only append the new function.
+  - Do not add any code beyond what is shown above. Do not add logging. Do not add a module-level connection or any module-level mutable state.
+
+verification:
+  type: static_analysis
+  target: plan_manager.domain.concept_store.update_concept
+  expected: >
+    The function update_concept accepts a psycopg connection, a plan_uuid, a concept_id, and a fields dict, and returns a Concept. It raises ValueError naming the offending key when fields contains a key other than name, definition, properties, or source_labels. It raises ValueError with message 'concept not found: <concept_id>' when no row with that concept_id exists for the plan. It merges the touched fields onto the existing row and calls validate_concept on the merged Concept, propagating ConceptValidationError unmodified on failure. On success it executes an UPDATE against table concept for the four mutable columns and returns the row re-read from the database via get_concept.
+status: draft

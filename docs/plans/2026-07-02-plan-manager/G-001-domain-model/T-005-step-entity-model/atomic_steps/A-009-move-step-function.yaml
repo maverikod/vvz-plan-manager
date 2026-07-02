@@ -1,0 +1,218 @@
+step_id: A-009
+parent_tactical_step: T-005
+name: move_step function
+target_file: plan_manager/domain/step_ops.py
+operation: create_file
+priority: 1
+depends_on: [A-001, A-002, A-004, A-005, A-007]
+concepts: [C-005]
+prompt: |
+  Create the file plan_manager/domain/step_ops.py with exactly the
+  following content (this is a brand-new file; it does not exist yet, so
+  assume no pre-existing content):
+
+
+  """Structural mutation operations for the Step entity (C-005): move,
+  delete, and status-transition operations that touch more than the row
+  being mutated.
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.step import Step, next_free_step_id
+  from plan_manager.domain.step_store import get_step, list_step_ids
+
+
+  def move_step(
+      conn: psycopg.Connection,
+      step_uuid: uuid.UUID,
+      new_parent_uuid: uuid.UUID | None,
+  ) -> Step:
+      """Re-parent one step, re-assigning its id in the new scope and
+      rewriting every reference to the moved id in one operation (C-005).
+
+      Implements the normative move algorithm:
+          a. Fetch the step and its old parent (step.parent_step_uuid).
+             When new_parent_uuid equals the step's current
+             parent_step_uuid, this is a no-op: return the step unchanged.
+          b. Level guard: the new parent must sit exactly one level above
+             the moved step (new parent's level == step.level - 1), except
+             that new_parent_uuid is allowed to be None only when the
+             moved step is level 3 (its scope is the plan itself, which
+             has no Step row). Any other case raises ValueError.
+          c. Old-scope reference scrub: for every other step in the OLD
+             scope (same plan_uuid, same old parent_step_uuid, same
+             level, excluding the moved step itself), remove the moved
+             step's old step_id from that step's depends_on list, if
+             present.
+          d. Compute the next free step_id in the NEW scope (same
+             plan_uuid, new_parent_uuid, same level) via list_step_ids
+             and next_free_step_id, the same way create_step computes a
+             new id.
+          e. The moved step's own depends_on entries reference OLD-scope
+             siblings and become invalid under the new id and new scope;
+             they are cleared to an empty list.
+          f. Update the moved row in one UPDATE statement setting
+             parent_step_uuid, step_id, and depends_on together.
+          g. Re-read and return the moved step from the database.
+
+      Args:
+          conn: Open database connection.
+          step_uuid: Immutable primary identity of the step to move.
+          new_parent_uuid: Identity of the new parent step, or None when
+              the moved step is level 3 (whose scope is the plan itself).
+
+      Returns:
+          The moved Step, re-read from the database after the update.
+
+      Raises:
+          ValueError: When new_parent_uuid does not sit exactly one level
+              above the moved step (or is None for a step whose level is
+              not 3).
+      """
+      step = get_step(conn, step_uuid)
+      old_parent_uuid = step.parent_step_uuid
+
+      if new_parent_uuid == old_parent_uuid:
+          return step
+
+      if new_parent_uuid is None:
+          if step.level != 3:
+              raise ValueError("invalid parent level")
+      else:
+          new_parent = get_step(conn, new_parent_uuid)
+          if new_parent.level != step.level - 1:
+              raise ValueError("invalid parent level")
+
+      cur = conn.execute(
+          "SELECT uuid, depends_on FROM step "
+          "WHERE plan_uuid = %s "
+          "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+          "AND level = %s "
+          "AND uuid != %s",
+          (step.plan_uuid, old_parent_uuid, step.level, step.uuid),
+      )
+      for sibling_uuid, sibling_depends_on in cur.fetchall():
+          if step.step_id in sibling_depends_on:
+              new_depends_on = [d for d in sibling_depends_on if d != step.step_id]
+              conn.execute(
+                  "UPDATE step SET depends_on = %s WHERE uuid = %s",
+                  (new_depends_on, sibling_uuid),
+              )
+
+      existing_step_ids = list_step_ids(conn, step.plan_uuid, new_parent_uuid, step.level)
+      new_step_id = next_free_step_id(existing_step_ids, step.level)
+
+      conn.execute(
+          "UPDATE step SET parent_step_uuid = %s, step_id = %s, depends_on = %s "
+          "WHERE uuid = %s",
+          (new_parent_uuid, new_step_id, [], step.uuid),
+      )
+
+      return get_step(conn, step_uuid)
+
+
+  Exact requirements:
+
+  - The module docstring text must be exactly as shown above (three lines
+    of body text, triple double-quoted), followed by exactly two blank
+    lines.
+  - Import exactly four things: `import uuid`, one blank line, `import
+    psycopg`, one blank line, `from plan_manager.domain.step import
+    Step, next_free_step_id` directly followed (no blank line) by `from
+    plan_manager.domain.step_store import get_step, list_step_ids`. No
+    other imports, no `from __future__` line.
+  - `Step` is a dataclass with fields uuid: UUID, plan_uuid: UUID,
+    parent_step_uuid: UUID | None, level: int, step_id: str, slug: str,
+    fields: dict[str, Any], depends_on: list[str], concepts: list[str],
+    status: str, in that order.
+  - `next_free_step_id(existing_step_ids: list[str], level: int) -> str`
+    returns the next free zero-padded step_id ("<prefix>-001" when no
+    entry matches; otherwise the zero-padded max-plus-one id) for the
+    given level, ignoring entries of existing_step_ids that do not match
+    the level's identifier pattern.
+  - `get_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> Step`
+    fetches one Step by its uuid column, raising `ValueError(f"no step
+    with uuid {step_uuid!r}")` when no row matches.
+  - `list_step_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID,
+    parent_step_uuid: uuid.UUID | None, level: int) -> list[str]` returns
+    the step_id values of every row matching plan_uuid, a NULL-safe
+    comparison on parent_step_uuid, and level.
+  - Exactly two blank lines separate the import block from `def
+    move_step(`.
+  - The function signature must be exactly the four-line signature shown
+    above, ending in `-> Step:`.
+  - The docstring text must match exactly what is shown above, including
+    the full "Implements the normative move algorithm:" section listing
+    steps a through g in the given order and wording.
+  - The function body must implement exactly the algorithm shown above,
+    in this exact order:
+    1. `step = get_step(conn, step_uuid)`; `old_parent_uuid =
+       step.parent_step_uuid`.
+    2. If `new_parent_uuid == old_parent_uuid`: `return step` immediately
+       (no further work).
+    3. Level guard: if `new_parent_uuid is None`, raise
+       `ValueError("invalid parent level")` unless `step.level == 3`.
+       Otherwise call `new_parent = get_step(conn, new_parent_uuid)` and
+       raise `ValueError("invalid parent level")` unless
+       `new_parent.level == step.level - 1`.
+    4. Old-scope reference scrub: execute the SQL SELECT shown above
+       (the whitespace-joined concatenation of the string literals must
+       be exactly `"SELECT uuid, depends_on FROM step WHERE plan_uuid =
+       %s AND parent_step_uuid IS NOT DISTINCT FROM %s AND level = %s
+       AND uuid != %s"`) with params exactly `(step.plan_uuid,
+       old_parent_uuid, step.level, step.uuid)`. For each `(sibling_uuid,
+       sibling_depends_on)` row where `step.step_id in
+       sibling_depends_on`, build `new_depends_on` as the list
+       comprehension `[d for d in sibling_depends_on if d !=
+       step.step_id]` and execute an UPDATE with SQL text exactly
+       `"UPDATE step SET depends_on = %s WHERE uuid = %s"` and params
+       exactly `(new_depends_on, sibling_uuid)`.
+    5. Compute `existing_step_ids = list_step_ids(conn, step.plan_uuid,
+       new_parent_uuid, step.level)` then `new_step_id =
+       next_free_step_id(existing_step_ids, step.level)`.
+    6. Execute the moved-row UPDATE with SQL text exactly (the
+       whitespace-joined concatenation of the string literals shown
+       above) `"UPDATE step SET parent_step_uuid = %s, step_id = %s,
+       depends_on = %s WHERE uuid = %s"` and params exactly
+       `(new_parent_uuid, new_step_id, [], step.uuid)` — the empty list
+       `[]` clears depends_on.
+    7. `return get_step(conn, step_uuid)`.
+  - The `step` table referenced by this SQL has columns: uuid,
+    plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+    depends_on, concepts, status.
+  - Do not catch `ValueError` inside this function; both raises
+    propagate to the caller.
+  - Do not add any other names, functions, classes, or imports beyond
+    what is listed here.
+
+
+  MRS excerpt (only the concept relevant to this AS):
+
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+verification:
+  type: manual
+  target: plan_manager.domain.step_ops.move_step
+  expected: >
+    Code review confirms move_step is a no-op returning the unchanged
+    step when new_parent_uuid equals the current parent, raises
+    ValueError("invalid parent level") when the new parent is not
+    exactly one level above the step (or is None for a step not at
+    level 3), removes the moved step's old id from every OLD-scope
+    sibling's depends_on, computes a fresh id in the NEW scope via
+    list_step_ids/next_free_step_id, clears the moved step's own
+    depends_on to an empty list, applies parent_step_uuid, step_id, and
+    depends_on in a single UPDATE statement, and returns the step
+    re-read from the database after the update.
+status: draft

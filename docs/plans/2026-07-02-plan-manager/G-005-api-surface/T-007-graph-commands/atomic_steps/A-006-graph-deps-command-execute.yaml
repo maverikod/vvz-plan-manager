@@ -77,7 +77,12 @@ prompt: |
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.runtime.context import db_connection
   from plan_manager.verify.gate_data import artifact_path_of
-  from plan_manager.views.dependency_graph import load_steps, neighbors
+  from plan_manager.views.dependency_graph import (
+      build_edges,
+      dependents_of,
+      load_steps,
+      prerequisites_of,
+  )
 
 
   class GraphDepsCommand(Command):
@@ -132,14 +137,16 @@ prompt: |
                       raise DomainCommandError(
                           "STEP_NOT_FOUND", f"step not found: {step_id}"
                       )
-                  n = neighbors(nodes, target.uuid)
+                  edges = build_edges(nodes)
                   data = {
                       "step": artifact_path_of(nodes, target),
                       "depends_on": [
-                          artifact_path_of(nodes, nodes[u]) for u in n["depends_on"]
+                          artifact_path_of(nodes, nodes[u])
+                          for u in prerequisites_of(nodes, edges, target.uuid)
                       ],
                       "dependents": [
-                          artifact_path_of(nodes, nodes[u]) for u in n["dependents"]
+                          artifact_path_of(nodes, nodes[u])
+                          for u in dependents_of(nodes, edges, target.uuid)
                       ],
                   }
               return SuccessResult(data=data)
@@ -162,7 +169,9 @@ prompt: |
     `from plan_manager.commands.resolve import resolve_plan`;
     `from plan_manager.runtime.context import db_connection`;
     `from plan_manager.verify.gate_data import artifact_path_of`;
-    `from plan_manager.views.dependency_graph import load_steps, neighbors`.
+    `from plan_manager.views.dependency_graph import (build_edges,
+    dependents_of, load_steps, prerequisites_of)` (parenthesized, one name
+    per line, exactly as shown in the replacement content above).
   - `plan_manager.commands.errors` defines `class DomainCommandError(
     Exception)` constructed as `DomainCommandError(code: str, message: str,
     details: dict | None = None)`, and `def map_exception(exc) ->
@@ -179,9 +188,13 @@ prompt: |
     plan_uuid) -> dict[uuid.UUID, Step]:` where `Step` has fields `uuid`,
     `plan_uuid`, `parent_step_uuid`, `level`, `step_id`, `slug`, `fields:
     dict`, `depends_on: list[str]`, `concepts: list[str]`, `status: str`;
-    and `def neighbors(nodes, origin_uuid) -> dict[str, list[uuid.UUID]]:`
-    returning `{"depends_on": [...], "dependents": [...]}` keyed by those
-    exact two string keys, each value a list of `uuid.UUID`.
+    `def build_edges(nodes: dict[uuid.UUID, Step]) -> set[tuple[uuid.UUID,
+    uuid.UUID]]:` returning every `(prerequisite_uuid, dependent_uuid)`
+    edge of the dependency graph; `def prerequisites_of(nodes, edges,
+    node_uuid) -> list[uuid.UUID]:` returning the direct prerequisites of
+    `node_uuid`, deterministically ordered; and `def dependents_of(nodes,
+    edges, node_uuid) -> list[uuid.UUID]:` returning the direct dependents
+    of `node_uuid`, deterministically ordered.
   - `plan_manager.verify.gate_data` defines `def artifact_path_of(nodes:
     dict[uuid.UUID, Step], step: Step) -> str:`.
   - Append the `execute` method shown above, with signature `async def
@@ -198,9 +211,10 @@ prompt: |
     handler.
   - The success payload is a dict with exactly the keys `step` (the
     `artifact_path_of` string for the target step), `depends_on` (list of
-    `artifact_path_of` strings for each uuid in `n["depends_on"]`), and
-    `dependents` (list of `artifact_path_of` strings for each uuid in
-    `n["dependents"]`), returned as `SuccessResult(data=data)`.
+    `artifact_path_of` strings for each uuid in `prerequisites_of(nodes,
+    edges, target.uuid)`), and `dependents` (list of `artifact_path_of`
+    strings for each uuid in `dependents_of(nodes, edges, target.uuid)`),
+    returned as `SuccessResult(data=data)`.
   - No other line changes.
 
   MRS excerpt (concept definitions relevant to this AS):
@@ -208,8 +222,9 @@ prompt: |
   C-009 DependencyGraph: "Computed projection set over steps covering
   execution order, parallelism, cycles, and impact." Relevant property:
   "edges from depends_on at every level plus priority pairs within
-  (target_file, TS)" — the neighbors() projection used here reads exactly
-  this edge set to classify the target step's depends_on and dependents.
+  (target_file, TS)" — build_edges() materializes exactly this edge set,
+  and prerequisites_of()/dependents_of() read it to classify the target
+  step's depends_on and dependents.
 
   C-023 CommandContract: "Adapter-conformant command class shape with
   schema, metadata, and semantic validation." Relevant property: "read

@@ -73,7 +73,11 @@ prompt: |
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.runtime.context import db_connection
   from plan_manager.verify.gate_data import artifact_path_of
-  from plan_manager.views.dependency_graph import CycleError, execution_order, load_steps
+  from plan_manager.views.dependency_graph import (
+      build_edges,
+      load_steps,
+      topological_order,
+  )
 
 
   class GraphOrderCommand(Command):
@@ -116,15 +120,15 @@ prompt: |
               with db_connection() as conn:
                   plan_obj = resolve_plan(conn, plan)
                   nodes = load_steps(conn, plan_obj.uuid)
-                  try:
-                      order = execution_order(nodes)
-                  except CycleError as exc:
+                  edges = build_edges(nodes)
+                  order, residual = topological_order(nodes, edges)
+                  if residual:
                       return domain_error(
                           "CYCLE_DETECTED",
                           "dependency graph has a cycle",
                           {
                               "cycle": [
-                                  artifact_path_of(nodes, nodes[u]) for u in exc.cycle
+                                  artifact_path_of(nodes, nodes[u]) for u in residual
                               ]
                           },
                       )
@@ -150,8 +154,9 @@ prompt: |
     `from plan_manager.commands.resolve import resolve_plan`;
     `from plan_manager.runtime.context import db_connection`;
     `from plan_manager.verify.gate_data import artifact_path_of`;
-    `from plan_manager.views.dependency_graph import CycleError,
-    execution_order, load_steps`.
+    `from plan_manager.views.dependency_graph import (build_edges,
+    load_steps, topological_order)` (parenthesized, one name per line,
+    exactly as shown in the replacement content above).
   - `plan_manager.commands.errors` defines `def domain_error(code: str,
     message: str, details: dict | None = None) -> ErrorResult:` and
     `def map_exception(exc) -> ErrorResult:` which converts any exception
@@ -167,30 +172,36 @@ prompt: |
     plan_uuid) -> dict[uuid.UUID, Step]:` where `Step` has fields `uuid`,
     `plan_uuid`, `parent_step_uuid`, `level`, `step_id`, `slug`, `fields:
     dict`, `depends_on: list[str]`, `concepts: list[str]`, `status: str`;
-    `def execution_order(nodes) -> list[uuid.UUID]:` which raises
-    `CycleError` (a `ValueError` subclass) whose instance attribute `cycle:
-    list[uuid.UUID]` lists the residual cycle members when the graph
-    cannot be totally ordered; and `class CycleError(ValueError): ...`.
+    `def build_edges(nodes: dict[uuid.UUID, Step]) -> set[tuple[uuid.UUID,
+    uuid.UUID]]:` returning every `(prerequisite_uuid, dependent_uuid)`
+    edge of the dependency graph; and `def topological_order(nodes, edges)
+    -> tuple[list[uuid.UUID], list[uuid.UUID]]:` returning `(order,
+    cycle_residual)` — a Kahn topological order with deterministic
+    tie-break, plus the residual subgraph's node uuids; `cycle_residual` is
+    the empty list when the graph is acyclic and is non-empty (listing the
+    residual cycle members) when a cycle prevents a total order.
   - `plan_manager.verify.gate_data` defines `def artifact_path_of(nodes:
     dict[uuid.UUID, Step], step: Step) -> str:`.
   - Append the `execute` method shown above, with signature `async def
     execute(self, **kwargs) -> SuccessResult | ErrorResult:`, after the
     existing `validate_params` method, separated by exactly one blank line.
-  - `execution_order(nodes)` is called inside a nested `try` block, nested
-    inside the outer `try` block that wraps the whole method body. The
-    nested block catches exactly `CycleError as exc` and returns
-    `domain_error("CYCLE_DETECTED", "dependency graph has a cycle",
-    {"cycle": [artifact_path_of(nodes, nodes[u]) for u in exc.cycle]})`
-    directly — this return happens before the outer `except Exception as
-    exc: return map_exception(exc)` handler is reached, so a cycle is
-    intercepted before generic exception mapping.
+  - `topological_order(nodes, edges)` is called directly inside the outer
+    `try` block (no nested `try` around it: it never raises for a cycle, it
+    reports the cycle via its `cycle_residual` return value). Immediately
+    after the call, `if residual:` — when `residual` (the second tuple
+    element) is non-empty, return `domain_error("CYCLE_DETECTED",
+    "dependency graph has a cycle", {"cycle": [artifact_path_of(nodes,
+    nodes[u]) for u in residual]})` directly — this return happens before
+    the outer `except Exception as exc: return map_exception(exc)` handler
+    is reached, so a cycle is intercepted before generic exception mapping.
   - `resolve_plan` is called directly (not wrapped in an inner try); any
     `DomainCommandError("PLAN_NOT_FOUND", ...)` it raises propagates to the
     outer `except Exception as exc: return map_exception(exc)` handler.
   - The success payload is a dict with exactly one key, `order`, a list of
-    `artifact_path_of` strings for each uuid in the value returned by
-    `execution_order(nodes)`, in that exact order, returned as
-    `SuccessResult(data=data)`.
+    `artifact_path_of` strings for each uuid in the first element (`order`)
+    of the tuple returned by `topological_order(nodes, edges)`, in that
+    exact order, returned as `SuccessResult(data=data)`. This branch is
+    reached only when `residual` is empty.
   - No other line changes.
 
   MRS excerpt (concept definitions relevant to this AS):
@@ -198,9 +209,9 @@ prompt: |
   C-009 DependencyGraph: "Computed projection set over steps covering
   execution order, parallelism, cycles, and impact." Relevant property:
   "Kahn topological order with deterministic tie-break; residual subgraph
-  reported as cycle set" — execution_order() implements exactly this
-  algorithm and CycleError.cycle carries exactly the residual subgraph
-  members.
+  reported as cycle set" — topological_order() implements exactly this
+  algorithm and its second return value (`cycle_residual`) carries exactly
+  the residual subgraph members, empty when the graph is acyclic.
 
   C-023 CommandContract: "Adapter-conformant command class shape with
   schema, metadata, and semantic validation." Relevant property: "read
@@ -213,7 +224,7 @@ prompt: |
   case returnable and every returnable case declared" — execute can return
   exactly the two domain codes PLAN_NOT_FOUND (mapped from resolve_plan's
   exception via map_exception) and CYCLE_DETECTED (returned directly via
-  domain_error when execution_order raises CycleError).
+  domain_error when topological_order reports a non-empty cycle_residual).
 verification:
   type: import
   target: plan_manager.commands.graph_order_command
@@ -225,6 +236,6 @@ verification:
     projection, computes the topological order, returns a SuccessResult
     with an order list of artifact paths on success, returns a
     CYCLE_DETECTED ErrorResult with the cycle's artifact paths when
-    execution_order raises CycleError, and returns a PLAN_NOT_FOUND
-    ErrorResult when the plan cannot be resolved.
+    topological_order reports a non-empty cycle residual, and returns a
+    PLAN_NOT_FOUND ErrorResult when the plan cannot be resolved.
 status: draft

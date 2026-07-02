@@ -123,16 +123,47 @@ prompt: |
   - Module `plan_manager.views.dependency_graph`:
     `def load_steps(conn, plan_uuid) -> dict` — maps step uuid to Step.
   - Module `plan_manager.domain.concept_store`:
-    `@dataclass class Concept:` fields uuid: uuid.UUID, plan_uuid: uuid.UUID,
-    concept_id: str, name: str, definition: str, properties: list[str],
-    source_labels: list[str]; `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None`;
+    `@dataclass class Concept:` fields, in order, concept_id: str, name: str,
+    definition: str, properties: List[str], source_labels: List[str] (the
+    dataclass has no uuid and no plan_uuid field);
+    `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None`;
     `def remove_concept(conn, plan_uuid, concept_id: str) -> Concept` — removes
-    and returns the removed row; raises ValueError for an unknown id.
+    the row and returns the pre-delete Concept (its five dataclass fields,
+    no uuid); raises `ValueError(f"concept not found: {concept_id}")` for an
+    unknown id.
+
+  Row-uuid helper (binding; remove_concept's return value carries no uuid,
+  and the row is gone once deleted, so the command must capture the uuid
+  before deleting): define a module-level function
+
+  ```python
+  def _concept_row_uuid(conn, plan_uuid, concept_id: str) -> uuid.UUID:
+      """Return the stored row uuid of concept_id in plan_uuid.
+
+      Args:
+          conn: Open psycopg.Connection.
+          plan_uuid: UUID of the owning plan.
+          concept_id: Concept identifier to look up.
+
+      Returns:
+          The uuid.UUID primary key of the concept row, or None if no such
+          row exists.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT uuid FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+              (plan_uuid, concept_id),
+          )
+          row = cur.fetchone()
+          return row[0] if row else None
+  ```
 
   Node snapshot convention (binding): the removal tombstone snapshot is the
   pre-removal concept snapshot plus the key "deleted": true, i.e. exactly
-  `{"kind": "concept", "uuid": str, "plan_uuid": str, "concept_id", "name",
-  "definition", "properties", "source_labels", "deleted": true}`.
+  `{"kind": "concept", "uuid": str(row_uuid), "plan_uuid": str, "concept_id",
+  "name", "definition", "properties", "source_labels", "deleted": true}`,
+  where row_uuid comes from `_concept_row_uuid`, fetched before
+  remove_concept is called (used as cascade_write's node_uuid too).
 
   Required edit 1 — insert these import lines immediately after the existing line
   `from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult` and
@@ -150,7 +181,13 @@ prompt: |
   from plan_manager.domain.concept_store import get_concept, remove_concept
   ```
 
-  Required edit 2 — append this method at the end of the class body, after
+  Required edit 2 — insert the `_concept_row_uuid` helper function (quoted in
+  full above) immediately after the inserted import block from edit 1 and
+  before the blank line that precedes `class ConceptRemoveCommand(Command):`,
+  so the module has: imports, then `_concept_row_uuid`, then the class —
+  separated by exactly two blank lines.
+
+  Required edit 3 — append this method at the end of the class body, after
   validate_params, keeping the same 4-space class-body indentation:
 
   ```python
@@ -180,6 +217,12 @@ prompt: |
                       rec = check_admission(conn, p.uuid, "concept", None, parsed_cascade)
                   except CascadeError as exc:
                       return domain_error("CASCADE_CONFLICT", str(exc))
+                  row_uuid = _concept_row_uuid(conn, p.uuid, concept_id)
+                  if row_uuid is None:
+                      return domain_error(
+                          "CONCEPT_NOT_FOUND",
+                          f"concept not found: {concept_id}",
+                      )
                   try:
                       removed = remove_concept(conn, p.uuid, concept_id)
                   except ValueError as exc:
@@ -188,8 +231,8 @@ prompt: |
                   status_updates = mrs_invalidation(nodes)
                   snapshot = {
                       "kind": "concept",
-                      "uuid": str(removed.uuid),
-                      "plan_uuid": str(removed.plan_uuid),
+                      "uuid": str(row_uuid),
+                      "plan_uuid": str(p.uuid),
                       "concept_id": removed.concept_id,
                       "name": removed.name,
                       "definition": removed.definition,
@@ -198,7 +241,7 @@ prompt: |
                       "deleted": True,
                   }
                   revision_uuid = cascade_write(
-                      conn, p.uuid, rec, removed.uuid, snapshot, status_updates,
+                      conn, p.uuid, rec, row_uuid, snapshot, status_updates,
                       "api", f"concept_remove: {removed.concept_id}",
                   )
                   if get_concept(conn, p.uuid, concept_id) is not None:
@@ -213,16 +256,20 @@ prompt: |
   ```
 
   Constraints:
-  - Apply exactly the two edits above; do not change any other line of the
+  - Apply exactly the three edits above; do not change any other line of the
     current content.
   - Do not read, create, or modify any other file.
-  - The resulting file must define exactly one class, ConceptRemoveCommand, with
+  - The resulting file must define exactly one module-level helper function,
+    _concept_row_uuid, and exactly one class, ConceptRemoveCommand, with
     methods get_schema, validate_params, execute (in that order) and no other
     methods.
   - execute's final exception handler must be exactly
     `except Exception as exc: return map_exception(exc)`.
   - CASCADE_REQUIRED is not reachable from this command (cascade_uuid is a
     required schema parameter) and must not appear anywhere in this file.
+  - row_uuid is resolved via _concept_row_uuid before remove_concept is
+    called; when it is None, execute returns CONCEPT_NOT_FOUND immediately
+    without calling remove_concept.
 verification:
   type: import
   target: plan_manager/commands/concept_remove_command.py
@@ -230,9 +277,10 @@ verification:
     Importing the module succeeds and the resulting file is at most 400 lines.
     ConceptRemoveCommand.execute is an async method accepting plan,
     cascade_uuid, concept_id. When check_admission raises CascadeError, execute
-    returns an ErrorResult with code CASCADE_CONFLICT. When remove_concept
-    raises ValueError, execute returns an ErrorResult with code
-    CONCEPT_NOT_FOUND. On success, execute calls cascade_write with a tombstone
+    returns an ErrorResult with code CASCADE_CONFLICT. When _concept_row_uuid
+    returns None, or remove_concept raises ValueError, execute returns an
+    ErrorResult with code CONCEPT_NOT_FOUND. On success, execute calls
+    cascade_write with a tombstone
     snapshot carrying "deleted": true, then re-reads via get_concept to confirm
     the concept no longer resolves, and returns a SuccessResult whose data is
     {"concept_id": <id>, "deleted": true, "revision_uuid": str(cascade_write's

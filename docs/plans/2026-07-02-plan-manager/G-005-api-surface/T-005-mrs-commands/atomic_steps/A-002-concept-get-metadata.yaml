@@ -44,10 +44,11 @@ prompt: |
   resolved) then calls get_concept; when it returns None the command returns an
   ErrorResult with code CONCEPT_NOT_FOUND and message
   f"concept not found: {concept_id}"; otherwise it returns SuccessResult with data
-  uuid, plan_uuid, concept_id, name, definition, properties, source_labels (all
-  taken from the stored Concept row: uuid: uuid.UUID, plan_uuid: uuid.UUID,
-  concept_id: str, name: str, definition: str, properties: list[str],
-  source_labels: list[str]).
+  concept_id, name, definition, properties, source_labels — exactly the five
+  fields of the stored Concept dataclass (concept_id: str, name: str,
+  definition: str, properties: List[str], source_labels: List[str]; the
+  dataclass has no uuid and no plan_uuid field, so the result carries none
+  either).
 
   Write the file with exactly this content:
 
@@ -95,8 +96,6 @@ prompt: |
               "success": {
                   "description": "The concept fields.",
                   "data": {
-                      "uuid": "Concept row UUID.",
-                      "plan_uuid": "Owning plan UUID.",
                       "concept_id": "Concept identifier, pattern C-NNN.",
                       "name": "Concept canonical name.",
                       "definition": "Concept one-sentence definition.",
@@ -104,8 +103,6 @@ prompt: |
                       "source_labels": "List of HRS paragraph labels justifying the concept.",
                   },
                   "example": {
-                      "uuid": "5c1f9b0a-2e3d-4b8a-9c7a-1a2b3c4d5e6f",
-                      "plan_uuid": "1a2b3c4d-5e6f-4a1b-8c2d-9e0f1a2b3c4d",
                       "concept_id": "C-003",
                       "name": "Concept",
                       "definition": "MRS basis axis with canonical name, one-sentence definition, properties, and source labels.",

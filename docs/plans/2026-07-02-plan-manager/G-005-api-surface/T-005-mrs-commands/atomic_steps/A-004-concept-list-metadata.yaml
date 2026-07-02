@@ -39,8 +39,10 @@ prompt: |
   parameter "plan" (Plan identifier (UUID or unique plan name) to resolve.). Its
   execute resolves the plan via resolve_plan (raising an exception mapped to
   PLAN_NOT_FOUND when the plan cannot be resolved) then returns SuccessResult with
-  data {"concepts": [...]}, one dict per stored concept with keys uuid, plan_uuid,
-  concept_id, name, definition, properties, source_labels.
+  data {"concepts": [...]}, one dict per stored concept with keys concept_id, name,
+  definition, properties, source_labels — exactly the five fields of the stored
+  Concept dataclass (the dataclass has no uuid and no plan_uuid field, so the
+  result carries none either).
 
   Write the file with exactly this content:
 
@@ -83,13 +85,11 @@ prompt: |
               "success": {
                   "description": "The concept list of the plan.",
                   "data": {
-                      "concepts": "List of concept objects, each with uuid, plan_uuid, concept_id, name, definition, properties, source_labels.",
+                      "concepts": "List of concept objects, each with concept_id, name, definition, properties, source_labels.",
                   },
                   "example": {
                       "concepts": [
                           {
-                              "uuid": "5c1f9b0a-2e3d-4b8a-9c7a-1a2b3c4d5e6f",
-                              "plan_uuid": "1a2b3c4d-5e6f-4a1b-8c2d-9e0f1a2b3c4d",
                               "concept_id": "C-003",
                               "name": "Concept",
                               "definition": "MRS basis axis with canonical name, one-sentence definition, properties, and source labels.",

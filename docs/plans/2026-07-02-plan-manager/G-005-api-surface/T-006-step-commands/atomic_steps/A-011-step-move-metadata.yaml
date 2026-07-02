@@ -54,10 +54,13 @@ prompt: |
       "author": cls.author,
       "email": cls.email,
       "detailed_description": (
-          "Moves an existing step to a new parent, rewriting every "
-          "reference to the moved identifier in one operation. This is a "
-          "mutating command that runs under the mutation admission "
-          "regime: direct execution is admitted only when the moved step "
+          "Moves an existing step to a new parent, re-assigning its "
+          "human-readable step_id within the new parent's scope and "
+          "rewriting every reference to the moved identifier in one "
+          "operation; the step's uuid identity never changes, but its "
+          "step_id after the move may differ from the step_id before the "
+          "move. This is a mutating command that runs under the mutation "
+          "admission regime: direct execution is admitted only when the moved step "
           "is not frozen; otherwise the command returns CASCADE_REQUIRED, "
           "or CASCADE_CONFLICT when a cascade_uuid was supplied but does "
           "not admit the mutation, or FROZEN_ARTIFACT when the moved step "
@@ -89,18 +92,22 @@ prompt: |
       },
       "return_value": {
           "success": {
-              "description": "The moved step's identity, new parent, status, and the revision that recorded it.",
+              "description": "The moved step's identity, its old and re-assigned step_id, new parent, path, status, and the revision that recorded it.",
               "data": {
                   "uuid": "Immutable UUID identity of the moved step, as a string.",
-                  "step_id": "Human-readable step identifier (unchanged by the move).",
+                  "old_step_id": "Human-readable step identifier the step had before the move.",
+                  "new_step_id": "Human-readable step identifier re-assigned to the step within the new parent's scope.",
                   "parent_step_uuid": "UUID of the new parent step, as a string, or null for a level-3 step.",
+                  "path": "Artifact path of the step at its new location.",
                   "status": "Current lifecycle status of the moved step.",
                   "revision_uuid": "UUID of the version-store revision that recorded the move, as a string.",
               },
               "example": {
                   "uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                  "step_id": "T-006",
+                  "old_step_id": "T-006",
+                  "new_step_id": "T-002",
                   "parent_step_uuid": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+                  "path": "docs/plans/example/G-006-other/T-002-step-commands/README.yaml",
                   "status": "draft",
                   "revision_uuid": "5a1e9b0a-2222-4444-8888-abcdefabcdef",
               },
@@ -116,7 +123,7 @@ prompt: |
           {
               "description": "Move a tactical step under a different global step.",
               "command": {"plan": "plan_manager", "step_id": "T-006", "new_parent_step_id": "G-006"},
-              "explanation": "Re-parents T-006 under G-006 and rewrites every reference to T-006 in one operation.",
+              "explanation": "Re-parents T-006 under G-006, re-assigning its step_id within the new parent's scope, and rewrites every reference to the old id in one operation.",
           },
       ],
       "error_cases": {
@@ -150,6 +157,7 @@ prompt: |
           "Call step_tree first to confirm both step_id and new_parent_step_id exist.",
           "Omit cascade_uuid for direct-mode moves on non-frozen steps; supply it only when working inside an open cascade.",
           "Re-read the moved step and its former and new parents with step_get to confirm the move's effect.",
+          "Use the returned new_step_id, not the pre-move step_id, for any subsequent step_get, step_update, step_move, step_delete, or step_set_status call against the moved step.",
       ],
   }
   ```

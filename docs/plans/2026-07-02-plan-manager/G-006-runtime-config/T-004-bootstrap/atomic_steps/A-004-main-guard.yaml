@@ -1,0 +1,176 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: main-guard
+target_file: plan_manager/main.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-027]
+status: draft
+prompt: |
+  Modify the file `plan_manager/main.py` (operation: modify_file). The
+  file currently contains exactly the content shown below (this is the
+  full, current, byte-exact state of the file — reproduce it unchanged
+  and append the two lines described after it; do not alter a single
+  character of the existing content):
+
+  """Server entry point and platform bootstrap for plan_manager.
+
+  Realises ServerRuntime (C-027): the entry point receives a configuration
+  file path, initializes the runtime (validating the custom configuration
+  section, C-028, and aborting startup with an explicit report on invalid
+  configuration or unreadable secrets), then creates the application through
+  the platform application factory and runs it with the platform's server
+  engine. The platform (mcp-proxy-adapter) owns the entire external surface:
+  the JSON-RPC endpoint with single and batch calls, the asynchronous
+  endpoint, health, command listing, heartbeat, WebSocket job push, and
+  OpenAPI and help output. Supported protocols (http, https, mtls) follow
+  the platform configuration unchanged. The server registers command classes
+  only through the platform hook mechanism; it adds no custom route and
+  patches no platform internal. The queue-manager section and the platform
+  registration section (proxy registration URL, heartbeat, server id,
+  instance UUID) are platform-owned and pass through untouched — the server
+  functions identically with registration disabled.
+
+  AUTO_IMPORT_MODULES declares, for the platform auto-import facility, the
+  modules that spawned worker processes must import so that command classes
+  and the registration hook are available in worker process memory.
+  """
+
+  import argparse
+  import asyncio
+  import sys
+
+  import hypercorn.asyncio
+  import hypercorn.config
+
+  from plan_manager.runtime.context import init_runtime
+  from plan_manager.runtime.config import ConfigError
+
+  AUTO_IMPORT_MODULES: tuple[str, ...] = (
+      "plan_manager.hooks",
+      "plan_manager.commands.registration",
+  )
+
+
+  def build_app(config_path: str):
+      """Create the platform ASGI application for the given configuration file.
+
+      This is the only function that touches the platform API surface
+      (mcp_proxy_adapter.core.app_factory.AppFactory); the import is placed
+      inside the function body so that a mismatch against the assumed
+      platform contract stays localized to this one function. The platform
+      owns the entire external surface: JSON-RPC with single and batch
+      calls, the asynchronous endpoint, health, command listing, heartbeat,
+      WebSocket job push, and OpenAPI and help output. Supported protocols
+      (http, https, mtls) follow the platform configuration unchanged. The
+      server registers command classes only; it adds no route and patches
+      no platform internal. The queue-manager section and the platform
+      registration section (registration URL, heartbeat URL and interval,
+      server id, instance UUID) are read by the platform from the same
+      configuration file and passed through untouched — the server
+      functions identically with registration disabled.
+
+      Args:
+          config_path: Path to the JSON configuration file containing the
+              platform-owned sections (server, registration, auth, queue
+              manager, and optional ssl/transport/security) plus the
+              plan_manager custom section.
+
+      Returns:
+          The ASGI application created by the platform application factory.
+      """
+      from mcp_proxy_adapter.core.app_factory import AppFactory
+      from plan_manager.hooks import register_custom_commands_hook
+
+      factory = AppFactory()
+      return factory.create_app(
+          config_path=config_path,
+          custom_commands_hook=register_custom_commands_hook,
+      )
+
+
+  def main(argv: list[str] | None = None) -> int:
+      """Run the plan_manager server bootstrap sequence.
+
+      Parses the single required ``--config`` command-line option, then
+      initializes the runtime by validating the custom configuration section
+      (C-028) before any platform component starts. On invalid configuration
+      or unreadable secrets, ``init_runtime`` raises ``ConfigError``; the
+      explicit report from that error is printed to stderr and the function
+      returns 1 without creating the platform application. On successful
+      initialization, the platform application is created through
+      ``build_app`` and served with the platform's hypercorn engine under
+      ``asyncio.run``.
+
+      Args:
+          argv: Command-line arguments excluding the program name; when
+              ``None``, arguments are read from ``sys.argv[1:]``.
+
+      Returns:
+          0 on clean shutdown after successful startup; 1 when configuration
+          validation aborts startup before any platform component starts.
+      """
+      parser = argparse.ArgumentParser(prog="plan_manager")
+      parser.add_argument(
+          "--config",
+          required=True,
+          help="Path to the JSON configuration file.",
+      )
+      args = parser.parse_args(argv)
+
+      try:
+          init_runtime(args.config)
+      except ConfigError as exc:
+          print(f"configuration error: {exc}", file=sys.stderr)
+          return 1
+
+      app = build_app(args.config)
+      config = hypercorn.config.Config()
+      asyncio.run(hypercorn.asyncio.serve(app, config))
+      return 0
+
+  Append exactly two blank lines after the content above, then the
+  module-execution guard described below. This guard is the sole means
+  by which running the file as a script (`python -m plan_manager.main`
+  or `python plan_manager/main.py`) invokes `main` and translates its
+  integer return value into the process exit code.
+
+  MRS excerpt (concept definition relevant to this step, quoted from the
+  machine specification):
+
+  - C-027 ServerRuntime: "Adapter-owned runtime hosting the command
+    registry, transport, queue, and bootstrap sequence." Property used
+    here: entry point `main --config`.
+
+  Names already defined earlier in this same file (shown in the current
+  file content above) and used by this guard without re-import or
+  redefinition: `main(argv: list[str] | None = None) -> int`.
+
+  Add exactly this guard, with no blank line inside it:
+
+  if __name__ == "__main__":
+      raise SystemExit(main())
+
+  Constraints (all binding, no deviation):
+  - Do not modify any character of the pre-existing content shown above;
+    append only.
+  - Exactly two blank lines separate `main`'s final `return 0` statement
+    from the `if __name__ == "__main__":` line.
+  - The guard body is exactly one statement, `raise SystemExit(main())`,
+    indented four spaces; `main` is called with no arguments so `argv`
+    defaults to `None` and argparse reads `sys.argv[1:]`.
+  - Nothing follows the guard; the file ends immediately after the
+    `raise SystemExit(main())` line, with a single trailing newline.
+  - This step defines no command class, no configuration model, and no
+    accessor; it only wires the existing `main` function to script
+    execution.
+verification:
+  type: manual
+  target: plan_manager/main.py
+  expected: >
+    Running the file as a script (python -m plan_manager.main --config
+    <path> or python plan_manager/main.py --config <path>) invokes main()
+    exactly once through the guard and exits the process with the integer
+    return value of main() as the exit code; importing the module without
+    executing it as __main__ does not invoke main() or start the server.

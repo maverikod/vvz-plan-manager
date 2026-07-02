@@ -45,11 +45,12 @@ prompt: |
   requires plan, cascade_uuid, concept_id, name, definition (all strings) and
   accepts optional properties and source_labels (arrays of string, default []).
   Its execute is cascade-only (rejects without a valid open cascade with code
-  CASCADE_CONFLICT), writes the concept via the domain store (raising
-  DUPLICATE_ID on a duplicate concept_id via UniqueViolation, PARAGRAPH_NOT_FOUND
-  when a source label does not resolve to a stored binding paragraph), records
-  the mutation as a cascade revision, and verifies the write by re-reading the
-  concept, returning it plus a revision_uuid.
+  CASCADE_CONFLICT), resolves every source_labels entry against the plan's
+  stored paragraph labels before writing (PARAGRAPH_NOT_FOUND when a label does
+  not resolve), writes the concept via the domain store (raising DUPLICATE_ID
+  when the store's write-time uniqueness check rejects the concept_id as
+  already existing), records the mutation as a cascade revision, and verifies
+  the write by re-reading the concept, returning it plus a revision_uuid.
 
   Write the file with exactly this content:
 

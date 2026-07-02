@@ -31,7 +31,8 @@ prompt: |
   from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
   from plan_manager.commands.resolve import resolve_plan
   from plan_manager.commands.step_delete_metadata import get_step_delete_metadata
-  from plan_manager.domain.step_store import delete_step, get_step
+  from plan_manager.domain.step_ops import delete_step
+  from plan_manager.domain.step_store import get_step
   from plan_manager.runtime.context import db_connection
   from plan_manager.storage.version_store import record_revision
   from plan_manager.verify.gate_data import artifact_path_of
@@ -205,8 +206,11 @@ prompt: |
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
     step_uuid) -> Step` (raises `DomainCommandError("STEP_NOT_FOUND", ...)`
-    when the step is absent) and `def delete_step(conn, step_uuid) ->
-    None`.
+    when the step is absent).
+  - `plan_manager/domain/step_ops.py` defines `def delete_step(conn,
+    step_uuid: uuid.UUID) -> None` (raises `ValueError("step has
+    children")` when the step still has children; otherwise deletes it and
+    scrubs sibling depends_on references to it).
   - `plan_manager/commands/step_delete_metadata.py` defines
     `def get_step_delete_metadata(cls: type) -> dict[str, Any]`.
 

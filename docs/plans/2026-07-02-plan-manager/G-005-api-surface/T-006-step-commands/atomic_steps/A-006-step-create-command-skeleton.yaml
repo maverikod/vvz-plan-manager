@@ -47,6 +47,28 @@ prompt: |
   _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
   ```
 
+  A second module-level constant, placed immediately after `_SLUG_PATTERN`
+  and before the class definition. `create_step` (see the verbatim contract
+  below) takes the level-specific field skeleton as a caller-supplied
+  argument; this command supplies it from this constant, which holds the
+  level-specific required-field skeleton populated with empty values per
+  the declarative level schema defaults (C-006):
+
+  ```python
+  SKELETON_FIELDS: dict[int, dict] = {
+      3: {"description": "", "source_labels": []},
+      4: {"description": "", "inputs": [], "outputs": []},
+      5: {
+          "name": "",
+          "target_file": "",
+          "operation": "create_file",
+          "priority": 1,
+          "prompt": "",
+          "verification": {"type": "manual", "target": "", "expected": ""},
+      },
+  }
+  ```
+
   Define exactly one class:
 
   ```python
@@ -188,7 +210,8 @@ prompt: |
   Constraints:
   - The `execute` method body is exactly `raise NotImplementedError` as
     shown; do not implement its logic in this AS.
-  - Do not add any other methods, attributes, module-level constants, or
+  - Do not add any other methods, attributes, module-level constants
+    (beyond `_SLUG_PATTERN` and `SKELETON_FIELDS` as shown above), or
     imports beyond what is listed above.
   - Do not read or reference any file other than the imports listed above.
 
@@ -226,11 +249,13 @@ prompt: |
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
     step_uuid) -> Step` and `def create_step(conn, plan_uuid,
-    parent_step_uuid: uuid.UUID | None, level: int, slug: str) -> Step`
-    (scaffolds under the declarative level schema with the level-specific
-    required-field skeleton, status draft, next free zero-padded id;
-    duplicate slug under the same parent raises
-    `psycopg.errors.UniqueViolation`).
+    parent_step_uuid: uuid.UUID | None, level: int, slug: str, fields: dict,
+    depends_on: list[str], concepts: list[str]) -> Step` (creates the step
+    row with status draft and the next free zero-padded id, storing the
+    caller-supplied `fields`, `depends_on`, and `concepts` verbatim; the
+    caller — not `create_step` — is responsible for supplying the
+    level-specific required-field skeleton; duplicate slug under the same
+    parent raises `psycopg.errors.UniqueViolation`).
   - `plan_manager/commands/step_create_metadata.py` defines
     `def get_step_create_metadata(cls: type) -> dict[str, Any]`.
 
@@ -275,7 +300,9 @@ verification:
     not match ^[a-z0-9][a-z0-9-]*$, rejects level 3 with a non-null
     parent_step_id, rejects level 4 or 5 with a null or missing
     parent_step_id, and rejects a malformed cascade_uuid, each by raising
-    ValueError; `StepCreateCommand.metadata()` returns the dict produced by
+    ValueError; the module-level `SKELETON_FIELDS` dict has exactly the
+    keys 3, 4, and 5 mapping to the level-specific skeleton dicts shown
+    above; `StepCreateCommand.metadata()` returns the dict produced by
     get_step_create_metadata; calling `execute` raises NotImplementedError
     until the follow-up AS replaces its body.
 status: draft

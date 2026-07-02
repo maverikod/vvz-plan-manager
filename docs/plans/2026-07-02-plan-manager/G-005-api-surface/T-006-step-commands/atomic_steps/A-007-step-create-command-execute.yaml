@@ -35,6 +35,20 @@ prompt: |
   _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
+  SKELETON_FIELDS: dict[int, dict] = {
+      3: {"description": "", "source_labels": []},
+      4: {"description": "", "inputs": [], "outputs": []},
+      5: {
+          "name": "",
+          "target_file": "",
+          "operation": "create_file",
+          "priority": 1,
+          "prompt": "",
+          "verification": {"type": "manual", "target": "", "expected": ""},
+      },
+  }
+
+
   class StepCreateCommand(Command):
       """Scaffold a new step with the next free zero-padded identifier."""
 
@@ -175,7 +189,10 @@ prompt: |
                       if parent is not None and frozen_at_or_below(nodes, parent.uuid):
                           return domain_error("FROZEN_ARTIFACT", str(exc))
                       return domain_error("CASCADE_REQUIRED", str(exc))
-                  new_step = create_step(conn, p.uuid, parent_uuid, level, slug)
+                  new_step = create_step(
+                      conn, p.uuid, parent_uuid, level, slug,
+                      dict(SKELETON_FIELDS[level]), [], [],
+                  )
                   snapshot = step_snapshot(new_step, new_step.status)
                   if rec is not None:
                       revision = cascade_write(
@@ -203,12 +220,19 @@ prompt: |
 
   Constraints:
   - Do not change the module docstring, imports, module-level
-    `_SLUG_PATTERN` constant, class attributes, `get_schema`,
-    `validate_params`, or `metadata` — they remain byte-identical to the
-    content shown above.
+    `_SLUG_PATTERN` and `SKELETON_FIELDS` constants, class attributes,
+    `get_schema`, `validate_params`, or `metadata` — they remain
+    byte-identical to the content shown above.
   - `parent_uuid` is `None` exactly when `parent_step_id` was `None`
     (level-3 creation); `check_admission` is called with `target_uuid`
     equal to `parent_uuid` in that case.
+  - `create_step` is called with the full eight-argument signature shown:
+    `conn, p.uuid, parent_uuid, level, slug`, followed by
+    `dict(SKELETON_FIELDS[level])` (a fresh copy of the level's skeleton
+    dict, so no two created steps share a mutable dict), then the empty
+    list `[]` for `depends_on`, then the empty list `[]` for `concepts` —
+    a freshly scaffolded step starts with no dependencies and no realized
+    concepts.
   - The `status_updates` argument to `cascade_write` is always the empty
     list `[]` — a freshly created draft leaf invalidates nothing.
   - `rec` being non-`None` means the mutation is admitted under an open
@@ -250,11 +274,13 @@ prompt: |
     depends_on: list[str], concepts: list[str], status: str`.
   - `plan_manager/domain/step_store.py` defines `def get_step(conn,
     step_uuid) -> Step` and `def create_step(conn, plan_uuid,
-    parent_step_uuid: uuid.UUID | None, level: int, slug: str) -> Step`
-    (scaffolds under the declarative level schema with the level-specific
-    required-field skeleton, status draft, next free zero-padded id;
-    duplicate slug under the same parent raises
-    `psycopg.errors.UniqueViolation`).
+    parent_step_uuid: uuid.UUID | None, level: int, slug: str, fields: dict,
+    depends_on: list[str], concepts: list[str]) -> Step` (creates the step
+    row with status draft and the next free zero-padded id, storing the
+    caller-supplied `fields`, `depends_on`, and `concepts` verbatim; the
+    caller — not `create_step` — is responsible for supplying the
+    level-specific required-field skeleton; duplicate slug under the same
+    parent raises `psycopg.errors.UniqueViolation`).
 
   MRS excerpt (concept definitions relevant to this AS):
 
@@ -307,7 +333,10 @@ verification:
     Against a live plan and database: creating a level-3 step with no
     parent_step_id succeeds directly when the plan has no admitting
     cascade requirement and returns SuccessResult data containing uuid,
-    step_id, slug, level, status "draft", and revision_uuid; creating a
+    step_id, slug, level, status "draft", and revision_uuid, with the
+    created step's fields equal to a fresh copy of SKELETON_FIELDS[3] (and
+    analogously SKELETON_FIELDS[4] / SKELETON_FIELDS[5] for level 4 and 5
+    creation) and its depends_on and concepts both empty; creating a
     level-4 or level-5 step under a valid, non-frozen parent_step_id
     succeeds the same way; an unknown parent_step_id returns ErrorResult
     with code STEP_NOT_FOUND; a duplicate slug under the same parent
