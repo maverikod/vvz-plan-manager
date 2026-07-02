@@ -206,6 +206,10 @@ Platform facts referenced below were verified against mcp_proxy_adapter
 
 {u1p9} The entry point is `python -m plan_manager.main --config <config.json>`: validate configuration, create the FastAPI application through the adapter AppFactory (`create_app`), and run it with the adapter hypercorn engine. Supported protocols are http, https, and mtls exactly as provided by the adapter configuration.
 
+{y1j5} Implementation context: the server is implemented in Python 3.12 or newer. The production package root is `plan_manager/` at the repository root (no `src/` wrapper); modules are dotted paths beneath it (for example `plan_manager/core/...`, `plan_manager/commands/...`). Atomic steps name their target files relative to the repository root under this package.
+
+{x3o9} Database access uses psycopg 3 with plain SQL — no ORM and no migration framework. The database schema (DDL) is owned exclusively by the DbInitializer's SQL migrations; runtime code never emits DDL. pgvector values are read and written through SQL types directly.
+
 ## 12. Configuration
 
 {n6a4} Configuration is a single JSON file. Adapter-owned sections (server, registration, auth, queue_manager, and optional ssl/transport/security) follow adapter semantics unchanged. plan_manager adds one custom top-level section `plan_manager`, which the adapter tolerates by design (unknown sections produce warnings only).

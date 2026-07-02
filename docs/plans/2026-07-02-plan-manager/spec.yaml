@@ -243,7 +243,8 @@ concepts:
   - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
   - hook-based registration; auto-import modules for spawned workers
   - long operations use the adapter queue with job semantics
-  source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}"]
+  - implemented in Python 3.12+; production package root plan_manager/ at the repository root, modules as dotted paths beneath it
+  source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{y1j5}"]
 
 - concept_id: C-028
   name: Configuration
@@ -301,8 +302,9 @@ concepts:
   definition: Idempotent database initialization commands shipped with the package.
   properties:
   - initdb on empty data directory, role and database creation, schema migrations
+  - sole owner of schema DDL as SQL migrations; runtime code never emits DDL
   - refuses to damage an existing database
-  source_labels: ["{n8e5}"]
+  source_labels: ["{n8e5}", "{x3o9}"]
 
 - concept_id: C-035
   name: Database
@@ -311,7 +313,8 @@ concepts:
   - entities as rows; referential integrity at write time
   - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
   - hosts the version store, locks, and embedding cache
-  source_labels: ["{z8c3}", "{q2r9}", "{z6n1}", "{t6s8}", "{b8j5}"]
+  - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+  source_labels: ["{z8c3}", "{q2r9}", "{z6n1}", "{t6s8}", "{b8j5}", "{x3o9}"]
 
 - concept_id: C-036
   name: NormativeAlgorithmSet

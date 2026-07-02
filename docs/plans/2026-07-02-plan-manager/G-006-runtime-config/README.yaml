@@ -8,7 +8,9 @@ description: >
   and OpenAPI and help output. The server registers command classes only; it
   must not patch platform internals and must not add custom HTTP routes.
   Supported protocols are http, https, and mtls exactly as provided by the
-  platform configuration.
+  platform configuration. The implementation context is fixed: Python 3.12 or
+  newer, with the production package root `plan_manager/` at the repository
+  root and modules as dotted paths beneath it.
 
   The bootstrap sequence is fixed: the entry point receives a configuration file
   path, validates configuration, creates the application through the platform
@@ -51,7 +53,7 @@ relations:
 - { from_concept: C-027, to_concept: C-024, type: owns }
 - { from_concept: C-027, to_concept: C-028, type: consumes }
 - { from_concept: C-027, to_concept: C-035, type: uses }
-source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}"]
+source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{y1j5}"]
 depends_on: [G-001]
 tactical_steps: []
 status: draft
