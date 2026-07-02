@@ -1,0 +1,248 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Write PlanCreateCommand class
+target_file: plan_manager/commands/plan_create_command.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-023, C-026, C-001]
+prompt: |
+  Create the file `plan_manager/commands/plan_create_command.py` with exactly
+  the content specified below. This is a brand-new file; it does not exist
+  yet and no other file's content should be assumed.
+
+  PURPOSE: this module defines the `plan_create` MCP command class. It is a
+  mutating command that creates a new plan aggregate (C-001) at revision
+  zero with empty HRS and MRS, then verifies its own result by re-reading
+  the created row, per the CommandContract (C-023) discipline that mutating
+  commands verify by re-read.
+
+  EXACT IMPORTS (all used, nothing else):
+
+  ```python
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.plan_create_metadata import get_plan_create_metadata
+  from plan_manager.domain.plan import create_plan, get_plan
+  from plan_manager.runtime.context import db_connection
+  ```
+
+  IMPORTED CONTRACTS (signatures; import and use exactly as given, do not
+  reimplement):
+
+  - `def map_exception(exc: Exception) -> ErrorResult` — maps a caught
+    exception (including `psycopg.errors.UniqueViolation`, mapped to domain
+    code `"DUPLICATE_ID"`) to an `ErrorResult`; re-raises exceptions it does
+    not recognize.
+  - `def get_plan_create_metadata(cls) -> dict` — from the sibling metadata
+    module; returns the full metadata dict for this command.
+  - `def create_plan(conn, name: str, context_budget: int = 4000) -> Plan` —
+    initializes the plan aggregate at revision zero with empty HRS and MRS;
+    a duplicate name raises `psycopg.errors.UniqueViolation`. The returned
+    `Plan` dataclass has fields `uuid`, `name`, `status`, `context_budget`,
+    `head_revision_uuid`.
+  - `def get_plan(conn, plan_uuid) -> Plan` — re-reads a plan by uuid; same
+    `Plan` dataclass fields as above.
+  - `def db_connection()` — a context manager yielding an open
+    `psycopg.Connection`; use as `with db_connection() as conn:`.
+  - `SuccessResult` is constructed as `SuccessResult(data=<dict>)`.
+
+  Parameter-shape violations (empty name, or a context_budget that is not
+  an integer >= 1) are rejected in `validate_params` by raising a plain
+  built-in `ValueError` — these are not domain conditions and have no
+  domain string code, so they must not be raised via `DomainCommandError`
+  and must not appear in the command's declared error cases. Only the
+  duplicate-name condition (`psycopg.errors.UniqueViolation`, mapped to
+  `"DUPLICATE_ID"`) is a domain error case for this command.
+
+  MRS EXCERPT (concept definitions relevant to this file):
+
+  - C-001 Plan: "Root aggregate of one development plan with identity, name,
+    status, and head revision." Properties: hosts the five-level hierarchy
+    HRS -> MRS -> GS -> TS -> AS; multiple plans live in one database, listed
+    by catalog query; head revision advances per revision in draft editing,
+    on publication for cascades; carries a user-set context budget in tokens
+    (default 4000) consumed by prompt assembly.
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: class attributes
+    name, version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false;
+    shallow adapter validation compensated by validate_params semantics;
+    metadata dictionary must never contradict the schema; read commands never
+    mutate, mutating commands verify by re-read; destructive or bulk
+    operations expose a dry-run mode defaulting to on.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+    stable domain string codes." Property: every declared error case
+    returnable and every returnable case declared.
+
+  REQUIRED FILE CONTENT (exact):
+
+  ```python
+  """Command: plan_create — creates a new plan aggregate."""
+
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.plan_create_metadata import get_plan_create_metadata
+  from plan_manager.domain.plan import create_plan, get_plan
+  from plan_manager.runtime.context import db_connection
+
+
+  class PlanCreateCommand(Command):
+      """Create a new plan aggregate at revision zero with empty HRS and MRS."""
+
+      name: ClassVar[str] = "plan_create"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Create a new plan aggregate with a unique name."
+      category: ClassVar[str] = "plan"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[type] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the machine-readable input schema for plan_create.
+
+          Returns:
+              dict: JSON-schema-like dict with "name" (required string) and
+                  "context_budget" (optional integer, default 4000).
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "name": {
+                      "type": "string",
+                      "description": "Unique plan name.",
+                  },
+                  "context_budget": {
+                      "type": "integer",
+                      "description": (
+                          "Context budget in tokens for prompt assembly; "
+                          "must be at least 1. Defaults to 4000."
+                      ),
+                      "default": 4000,
+                  },
+              },
+              "required": ["name"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          """Return the extended documentation metadata for plan_create.
+
+          Returns:
+              dict: Metadata dictionary from get_plan_create_metadata(cls).
+          """
+          return get_plan_create_metadata(cls)
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate and normalize plan_create parameters.
+
+          Args:
+              params: Raw parameters as received by the adapter.
+
+          Returns:
+              dict: Normalized parameters with "name" stripped and
+                  "context_budget" defaulted to 4000 when absent.
+
+          Raises:
+              ValueError: When name is empty after stripping, or when
+                  context_budget is not an integer >= 1. These are
+                  parameter-shape violations, not domain conditions.
+          """
+          params = super().validate_params(params)
+          name = params.get("name")
+          if not isinstance(name, str) or not name.strip():
+              raise ValueError("name must be a non-empty string")
+          params["name"] = name.strip()
+          context_budget = params.get("context_budget", 4000)
+          if (
+              not isinstance(context_budget, int)
+              or isinstance(context_budget, bool)
+              or context_budget < 1
+          ):
+              raise ValueError("context_budget must be an integer >= 1")
+          params["context_budget"] = context_budget
+          return params
+
+      async def execute(self, **kwargs) -> SuccessResult | ErrorResult:
+          """Create the plan, then verify by re-reading the stored row.
+
+          Args:
+              **kwargs: Validated parameters: "name" (str) and
+                  "context_budget" (int).
+
+          Returns:
+              SuccessResult | ErrorResult: On success, data has "uuid",
+                  "name", "status", "context_budget". On failure, an
+                  ErrorResult produced by map_exception (e.g. DUPLICATE_ID
+                  for a name collision).
+          """
+          name = kwargs["name"]
+          context_budget = kwargs.get("context_budget", 4000)
+          try:
+              with db_connection() as conn:
+                  created = create_plan(conn, name, context_budget)
+                  verified = get_plan(conn, created.uuid)
+                  return SuccessResult(
+                      data={
+                          "uuid": str(verified.uuid),
+                          "name": verified.name,
+                          "status": verified.status,
+                          "context_budget": verified.context_budget,
+                      }
+                  )
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  CONSTRAINTS:
+  - The class must be named exactly `PlanCreateCommand` and subclass
+    `Command`.
+  - All class attributes must be typed `ClassVar` exactly as shown, with the
+    exact values shown (name="plan_create", version="1.0.0",
+    category="plan", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class=SuccessResult,
+    use_queue=False). `descr` must be the exact non-empty one-line string
+    shown.
+  - `get_schema`, `metadata` are `@classmethod`; `validate_params` and
+    `execute` are instance methods; `execute` is `async def`.
+  - `validate_params` must call `super().validate_params(params)` as its
+    first statement and reassign the result to `params`. It must raise a
+    plain `ValueError` (not `DomainCommandError`) for an empty/non-string
+    name or an invalid context_budget.
+  - `execute` must open the connection via `with db_connection() as conn:`,
+    call `create_plan` then `get_plan` for the re-read, and must catch
+    exceptions only with a single `except Exception as exc:` clause that
+    returns `map_exception(exc)`, as the last statement of the method.
+  - Do not import or reference `DomainCommandError` anywhere in this file.
+  - Do not add any other methods, attributes, or imports beyond those
+    listed.
+verification:
+  type: import
+  target: plan_manager.commands.plan_create_command
+  expected: >
+    The module imports without error. PlanCreateCommand is defined as a
+    subclass of Command with ClassVar attributes name="plan_create",
+    version="1.0.0", descr set to a non-empty one-line string,
+    category="plan", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class=SuccessResult,
+    use_queue=False. get_schema() returns a dict with type "object",
+    properties "name" and "context_budget", required=["name"], and
+    additionalProperties=False. metadata() returns
+    get_plan_create_metadata(cls) unchanged. validate_params raises
+    ValueError for an empty or non-string name and for a context_budget
+    that is not an integer >= 1, and otherwise strips name and defaults
+    context_budget to 4000. execute is an async method returning a
+    SuccessResult or ErrorResult, with DomainCommandError not imported or
+    used anywhere in the module.
+status: draft

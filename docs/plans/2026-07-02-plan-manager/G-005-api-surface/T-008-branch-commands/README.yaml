@@ -1,0 +1,66 @@
+step_id: T-008
+parent_global_step: G-005
+name: branch-commands
+description: >
+  Create the branch command classes of the inventory over the derived branch
+  view (C-008): branch_prompt, branch_dump, and branch_weak, each conforming
+  to the CommandContract (C-023). branch_prompt is read-only: it resolves one
+  branch by its global, tactical, and atomic step identifiers, assembles the
+  deterministic executor prompt (C-011) in the fixed concatenation order, and
+  returns the prompt text together with its token estimate compared against
+  the plan's user-set context budget — the budget is plan data supplied by
+  the user with default 4000 tokens, never server configuration; an unknown
+  step yields the step-not-found code (C-026). branch_dump writes the prompt
+  of every branch of the plan as an explicitly non-authoritative derived
+  snapshot under the configured export root and returns the snapshot summary;
+  the snapshot is never read back by the server. branch_weak is read-only: it
+  returns the plan's branches ranked by ascending semantic index (C-013),
+  refusing with the gate-red code when the plan has not passed the mechanical
+  gate in the current tree state and degrading explicitly with the
+  embeddings-unavailable signal. This step defines the three command classes
+  with schemas, metadata, validation, and execution wiring onto the branch
+  resolution, prompt assembly, and scoring operations; it implements no
+  assembly or scoring logic itself and registers nothing.
+concepts: [C-023, C-026, C-008, C-011, C-013]
+inputs:
+- name: branch_prompt_request
+  type: command parameters
+  description: >
+    The plan identifier and the three step identifiers naming one branch
+    for prompt assembly.
+- name: branch_bulk_request
+  type: command parameters
+  description: >
+    The plan identifier for the full prompt dump and for the weak-branch
+    ranking with its optional result count bound.
+outputs:
+- name: assembled_prompt
+  type: command result
+  description: >
+    The deterministic prompt text with token estimate and the plan's
+    context budget verdict for one branch.
+- name: branch_bulk_result
+  type: command result
+  description: >
+    The non-authoritative dump snapshot summary, or the ascending ranking
+    of branches by semantic index with refusal and degradation signals.
+atomic_steps:
+- A-001-branch-prompt-metadata
+- A-002-branch-prompt-command-class-shape
+- A-003-branch-prompt-command-get-schema
+- A-004-branch-prompt-command-metadata-method
+- A-005-branch-prompt-command-validate-params
+- A-006-branch-prompt-command-execute
+- A-007-branch-dump-metadata
+- A-008-branch-dump-command-class-shape
+- A-009-branch-dump-command-get-schema
+- A-010-branch-dump-command-metadata-method
+- A-011-branch-dump-command-validate-params
+- A-012-branch-dump-command-execute
+- A-013-branch-weak-metadata
+- A-014-branch-weak-command-class-shape
+- A-015-branch-weak-command-get-schema
+- A-016-branch-weak-command-metadata-method
+- A-017-branch-weak-command-validate-params
+- A-018-branch-weak-command-execute
+status: draft

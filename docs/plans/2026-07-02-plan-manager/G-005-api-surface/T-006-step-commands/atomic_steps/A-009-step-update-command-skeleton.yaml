@@ -1,0 +1,254 @@
+step_id: A-009
+parent_tactical_step: T-006
+name: step_update command class skeleton (schema and validation)
+target_file: plan_manager/commands/step_update_command.py
+operation: create_file
+priority: 1
+depends_on: [A-008]
+concepts: [C-023, C-026, C-006]
+prompt: |
+  Create the file `plan_manager/commands/step_update_command.py` from
+  scratch (the file does not exist yet; do not assume any pre-existing
+  content). This AS writes the class skeleton — imports, class attributes,
+  `get_schema`, `validate_params`, and `metadata` — with `execute` left as
+  a `raise NotImplementedError` stub. A follow-up AS on this same file
+  replaces only the body of `execute` with the full mutation logic; nothing
+  else in this file changes afterward.
+
+  Required imports at the top of the file, exactly these and in this order:
+
+  ```python
+  import uuid
+  from typing import Any, ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission, frozen_at_or_below
+  from plan_manager.cascade.write import cascade_write, step_snapshot
+  from plan_manager.cascade.propagation import step_invalidation
+  from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.step_update_metadata import get_step_update_metadata
+  from plan_manager.domain.step_store import get_step, update_step_fields
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.storage.version_store import record_revision
+  from plan_manager.views.dependency_graph import load_steps
+  ```
+
+  Module docstring (first line of the file, before imports):
+  `"""Command: patch level-specific fields of an existing step."""`
+
+  Define exactly one class:
+
+  ```python
+  class StepUpdateCommand(Command):
+  ```
+
+  Class docstring: `"""Patch level-specific fields of an existing step under its schema."""`
+
+  Class body — exactly these class attributes:
+
+  ```python
+  name: ClassVar[str] = "step_update"
+  version: ClassVar[str] = "1.0.0"
+  descr: ClassVar[str] = "Patch level-specific fields of an existing step, re-validating touched references."
+  category: ClassVar[str] = "step"
+  author: ClassVar[str] = "Vasiliy Zdanovskiy"
+  email: ClassVar[str] = "vasilyvz@gmail.com"
+  result_class: ClassVar[type] = SuccessResult
+  use_queue: ClassVar[bool] = False
+  ```
+
+  Then exactly these four methods, in this order:
+
+  1.
+  ```python
+  @classmethod
+  def get_schema(cls) -> dict[str, Any]:
+      """Return the machine-readable input schema for step_update.
+
+      Returns:
+          A JSON-Schema-shaped dict with `type`, `properties`, `required`,
+          and `additionalProperties` keys.
+      """
+      return {
+          "type": "object",
+          "properties": {
+              "plan": {
+                  "type": "string",
+                  "description": "Plan identifier (UUID or name) to resolve the plan against the catalog.",
+              },
+              "step_id": {
+                  "type": "string",
+                  "description": "Human-readable identifier of the step to patch.",
+              },
+              "fields": {
+                  "type": "object",
+                  "description": "Non-empty level-specific field patch applied to the step's fields dict.",
+                  "additionalProperties": True,
+              },
+              "cascade_uuid": {
+                  "type": "string",
+                  "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen target.",
+              },
+          },
+          "required": ["plan", "step_id", "fields"],
+          "additionalProperties": False,
+      }
+  ```
+
+  2.
+  ```python
+  def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+      """Validate step_update parameters beyond the base schema check.
+
+      Args:
+          params: Raw parameter dict as received by the adapter.
+
+      Returns:
+          The validated parameter dict, unchanged beyond the base
+          validator's own normalization.
+
+      Raises:
+          ValueError: If fields is empty or if cascade_uuid is not a valid
+              UUID string.
+      """
+      params = super().validate_params(params)
+      fields = params.get("fields")
+      if not fields:
+          raise ValueError("fields must be a non-empty object")
+      cascade_uuid = params.get("cascade_uuid")
+      if cascade_uuid is not None:
+          uuid.UUID(cascade_uuid)
+      return params
+  ```
+
+  3.
+  ```python
+  async def execute(
+      self,
+      plan: str,
+      step_id: str,
+      fields: dict[str, Any],
+      cascade_uuid: str | None = None,
+  ) -> SuccessResult | ErrorResult:
+      """Patch level-specific fields of an existing step and record it.
+
+      Args:
+          plan: Plan identifier (UUID or name).
+          step_id: Human-readable identifier of the step to patch.
+          fields: Non-empty level-specific field patch.
+          cascade_uuid: Open cascade identifier to admit this mutation
+              under, or None for direct-mode mutation.
+
+      Returns:
+          SuccessResult with the patched step's identity, fields, status,
+          and revision_uuid on success, or ErrorResult with a stable
+          domain error code on failure.
+      """
+      raise NotImplementedError
+  ```
+
+  4.
+  ```python
+  @classmethod
+  def metadata(cls) -> dict[str, Any]:
+      """Return the extended documentation metadata for step_update.
+
+      Returns:
+          The dict produced by `get_step_update_metadata(cls)`.
+      """
+      return get_step_update_metadata(cls)
+  ```
+
+  Constraints:
+  - The `execute` method body is exactly `raise NotImplementedError` as
+    shown; do not implement its logic in this AS.
+  - Do not add any other methods, attributes, or imports beyond what is
+    listed above.
+  - Do not read or reference any file other than the imports listed above.
+
+  Verbatim contracts used by the imports above (for reference; do not
+  redefine these — they already exist in their respective modules):
+  - `plan_manager/commands/errors.py` defines
+    `class DomainCommandError(Exception)` with constructor `(code, message,
+    details=None)`; `def domain_error(code, message, details=None) ->
+    ErrorResult`; `def map_exception(exc) -> ErrorResult`.
+  - `plan_manager/commands/resolve.py` defines
+    `def resolve_plan(conn, plan: str) -> Plan` where `Plan` has fields
+    `uuid, name, status, context_budget, head_revision_uuid`.
+  - `plan_manager/runtime/context.py` defines `def db_connection()`, a
+    context manager yielding a `psycopg.Connection`.
+  - `plan_manager/cascade/record.py` defines `class CascadeError(ValueError)`
+    and `@dataclass(frozen=True) class CascadeRecord:` with fields `uuid,
+    plan_uuid, name, base_revision_uuid, status, created_at`.
+  - `plan_manager/cascade/regime.py` defines `def check_admission(conn,
+    plan_uuid, target_kind, target_uuid, cascade_uuid) -> CascadeRecord |
+    None` and `def frozen_at_or_below(nodes: dict[uuid.UUID, Step],
+    origin_uuid: uuid.UUID) -> bool`.
+  - `plan_manager/cascade/write.py` defines `def cascade_write(conn,
+    plan_uuid, cascade: CascadeRecord, node_uuid, node_snapshot: dict,
+    status_updates: list[tuple[uuid.UUID, str]], author: str, message: str)
+    -> uuid.UUID` and `def step_snapshot(step: Step, status: str) -> dict`.
+  - `plan_manager/cascade/propagation.py` defines `def step_invalidation(
+    nodes: dict[uuid.UUID, Step], origin_uuid) -> list[tuple[uuid.UUID,
+    str]]`.
+  - `plan_manager/storage/version_store.py` defines `def record_revision(
+    conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID,
+    dict]], parent_revision_uuid, ref_name) -> uuid.UUID` (ref_name=None
+    advances the plan head).
+  - `plan_manager/views/dependency_graph.py` defines `def load_steps(conn,
+    plan_uuid) -> dict[uuid.UUID, Step]` where `Step` has fields `uuid,
+    plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
+    depends_on: list[str], concepts: list[str], status: str`.
+  - `plan_manager/domain/step_store.py` defines `def get_step(conn,
+    step_uuid) -> Step` and `def update_step_fields(conn, step_uuid,
+    fields) -> None`.
+  - `plan_manager/commands/step_update_metadata.py` defines
+    `def get_step_update_metadata(cls: type) -> dict[str, Any]`.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  ```yaml
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  - concept_id: C-006
+    name: PlanSchema
+    definition: Declarative configuration object describing identifier patterns, per-level required fields, and exchange-layout naming.
+    properties:
+    - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+    - nothing project-specific is hard-coded in the engine
+  ```
+verification:
+  type: import
+  target: plan_manager/commands/step_update_command.py
+  expected: >
+    The module imports without error; `StepUpdateCommand` is a subclass of
+    `Command` with class attributes name="step_update", version="1.0.0",
+    category="step", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class is SuccessResult, and
+    use_queue is False; `StepUpdateCommand.get_schema()` returns a dict
+    with type "object", required exactly ["plan", "step_id", "fields"],
+    and additionalProperties False; `validate_params` rejects an empty or
+    missing fields object and a malformed cascade_uuid, each by raising
+    ValueError; `StepUpdateCommand.metadata()` returns the dict produced by
+    get_step_update_metadata; calling `execute` raises NotImplementedError
+    until the follow-up AS replaces its body.
+status: draft

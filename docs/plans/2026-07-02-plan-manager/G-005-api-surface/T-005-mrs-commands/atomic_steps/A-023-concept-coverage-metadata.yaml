@@ -1,0 +1,167 @@
+step_id: A-023
+parent_tactical_step: T-005
+name: Create concept_coverage metadata module
+target_file: plan_manager/commands/concept_coverage_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-010, C-003]
+prompt: |
+  Target file: `plan_manager/commands/concept_coverage_metadata.py`. Operation:
+  create_file (the file does not exist yet; create it with exactly the content
+  specified below).
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Context: this module documents the ConceptCoverageCommand class defined in
+  `plan_manager/commands/concept_coverage_command.py` (a sibling file, already
+  created; do not read or modify it — the facts you need about it are restated
+  here). That class has: name = "concept_coverage", version = "1.0.0", descr =
+  "Return the steps and HRS paragraphs that justify one concept.", category =
+  "mrs". Its get_schema() requires plan and concept_id (both strings). Its
+  execute resolves the plan (PLAN_NOT_FOUND when unresolvable), looks up
+  concept_id among the plan's concept rows (CONCEPT_NOT_FOUND when absent),
+  then returns the steps that reference the concept (classified by artifact
+  path) and the HRS paragraph labels that justify it (the concept's
+  source_labels).
+
+  Write the file with exactly this content:
+
+  ```python
+  """Extended AI/documentation metadata for the concept_coverage command."""
+
+  from typing import Any, Dict
+
+
+  def get_concept_coverage_metadata(cls) -> Dict[str, Any]:
+      """Return extended metadata for ConceptCoverageCommand.
+
+      Args:
+          cls: The ConceptCoverageCommand class (passed by its classmethod
+              metadata()).
+
+      Returns:
+          A metadata dictionary with keys name, version, description, category,
+          author, email, detailed_description, parameters, return_value,
+          usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Answers the reverse coverage query (C-010) for one concept "
+              "(C-003): which plan steps reference it, classified by artifact "
+              "path, and which HRS paragraph labels justify it. Read-only: "
+              "never mutates plan state. The coverage is computed on demand "
+              "from the current tree state; nothing is stored as a matrix."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  "type": "string",
+                  "required": True,
+              },
+              "concept_id": {
+                  "description": "Concept identifier to compute reverse coverage for.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The reverse coverage answer for concept_id.",
+                  "data": {
+                      "concept_id": "The queried concept identifier.",
+                      "steps": "Sorted list of artifact paths of every step that references concept_id.",
+                      "paragraphs": "List of HRS paragraph labels justifying the concept.",
+                  },
+                  "example": {
+                      "concept_id": "C-003",
+                      "steps": ["G-001-domain-model.T-001-concept-model"],
+                      "paragraphs": ["{f6s2}", "{k7r9}"],
+                  },
+              },
+              "error": {
+                  "description": "Error result with a stable domain code.",
+                  "code": "stable error code string",
+                  "message": "human-readable message",
+                  "details": "additional diagnostic fields when available",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Find which steps and paragraphs justify a concept.",
+                  "command": {"plan": "plan-manager", "concept_id": "C-003"},
+                  "explanation": "Returns the artifact paths of every step referencing C-003 and the paragraph labels justifying it.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a stored plan.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans and retry with a valid plan identifier or UUID.",
+              },
+              "CONCEPT_NOT_FOUND": {
+                  "description": "No concept with concept_id exists in the plan MRS.",
+                  "message": "concept not found: {concept_id}",
+                  "solution": "Call concept_list and retry with a valid concept_id.",
+              },
+          },
+          "best_practices": [
+              "Use concept_list to discover valid concept_id values before calling concept_coverage.",
+              "concept_coverage never mutates plan state; safe to call at any plan or cascade status.",
+              "An empty steps list with a non-empty paragraphs list means the concept is justified by the HRS but not yet referenced by any step.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - Exactly this file content; no additional functions or imports.
+  - Do not read, create, or modify any other file.
+  - The function must be named get_concept_coverage_metadata and accept
+    exactly one positional parameter named cls.
+  - error_cases must contain exactly the keys PLAN_NOT_FOUND and
+    CONCEPT_NOT_FOUND, each with description, message, solution.
+  - The returned dict must contain all of: name, version, description, category,
+    author, email, detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+verification:
+  type: import
+  target: plan_manager/commands/concept_coverage_metadata.py
+  expected: >
+    Importing the module succeeds. get_concept_coverage_metadata(cls) called
+    with a stub object exposing name/version/descr/category/author/email
+    attributes returns a dict containing all required top-level keys;
+    error_cases has exactly the keys PLAN_NOT_FOUND and CONCEPT_NOT_FOUND,
+    each with description, message, and solution; parameters has entries for
+    plan and concept_id, both required True.
+status: draft

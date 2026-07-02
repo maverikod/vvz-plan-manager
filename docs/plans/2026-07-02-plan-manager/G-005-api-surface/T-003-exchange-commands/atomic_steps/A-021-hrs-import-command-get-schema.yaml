@@ -1,0 +1,141 @@
+step_id: A-021
+parent_tactical_step: T-003
+name: hrs-import-command-get-schema
+target_file: plan_manager/commands/hrs_import_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-020]
+concepts: [C-023]
+prompt: |
+  Modify the file plan_manager/commands/hrs_import_command.py. Its full
+  current content (after all lower-priority AS on this file have been
+  applied) is exactly:
+
+  """HrsImportCommand: replace a plan's HRS text from a Markdown source."""
+
+  import uuid
+  from pathlib import Path
+  from typing import Any, ClassVar, Dict, Optional, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.hrs_import_metadata import get_hrs_import_metadata
+  from plan_manager.exchange.exporter import export_hrs
+  from plan_manager.exchange.importer import import_hrs, validate_hrs
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  class HrsImportCommand(Command):
+      """Replace the HRS text of a resolved plan from a Markdown source."""
+
+      name: ClassVar[str] = "hrs_import"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Replace a plan's HRS text from a Markdown source under the configured export root."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = True
+
+  Append exactly one blank line after the last line shown (`use_queue:
+  ClassVar[bool] = True`), then append the following method, indented
+  4 spaces as a member of class HrsImportCommand:
+
+  @classmethod
+  def get_schema(cls) -> Dict[str, Any]:
+      """Return the machine-readable input schema for hrs_import.
+
+      Returns:
+          A JSON-schema-shaped dictionary with an explicit
+          additionalProperties=False and an exact required list.
+      """
+      return {
+          "type": "object",
+          "properties": {
+              "plan": {
+                  "type": "string",
+                  "description": "Plan identifier resolved against the catalog.",
+              },
+              "source": {
+                  "type": "string",
+                  "description": (
+                      "Name of the Markdown source file under the "
+                      "configured export root."
+                  ),
+              },
+              "dry_run": {
+                  "type": "boolean",
+                  "description": (
+                      "When true (the default), only validate the HRS "
+                      "text without writing to the database."
+                  ),
+                  "default": True,
+              },
+              "cascade_uuid": {
+                  "type": "string",
+                  "description": (
+                      "Identifier of an already-open cascade to scope "
+                      "this import to."
+                  ),
+              },
+          },
+          "required": ["plan", "source"],
+          "additionalProperties": False,
+      }
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the blank line and the method shown.
+  - The method is decorated @classmethod with exact signature
+    `def get_schema(cls) -> Dict[str, Any]:` per
+    docs/standards/planning/metadatastd.yaml,
+    command_class_shape.required_methods.get_schema.
+  - The returned dict has top-level keys exactly "type", "properties",
+    "required", "additionalProperties" — no other top-level key.
+  - "type" is the literal string "object".
+  - "properties" contains exactly four keys in this order: "plan",
+    "source", "dry_run", "cascade_uuid". "plan" and "source" have "type":
+    "string" and a non-empty "description", no "default". "dry_run" has
+    "type": "boolean", a non-empty "description", and "default": True
+    (execute() actually applies this default: dry_run: bool = True).
+    "cascade_uuid" has "type": "string" and a non-empty "description", no
+    "default" (it is optional with no applied default value — None when
+    absent).
+  - "required" is the literal list ["plan", "source"] — dry_run and
+    cascade_uuid are optional.
+  - "additionalProperties" is the literal boolean False.
+  - Do not add any other method, import, or class to this file. Do not
+    read or modify any other file.
+
+  MRS excerpt (concept definition relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+verification:
+  type: import
+  target: plan_manager.commands.hrs_import_command.HrsImportCommand.get_schema
+  expected: >
+    HrsImportCommand.get_schema() returns a dict with type="object",
+    properties containing "plan" (string), "source" (string), "dry_run"
+    (boolean, default True), and "cascade_uuid" (string, no default),
+    required equal to ["plan", "source"], and additionalProperties
+    equal to False.
+status: draft

@@ -1,0 +1,251 @@
+step_id: A-006
+parent_tactical_step: T-004
+name: para-label-assign-command
+target_file: plan_manager/commands/para_label_assign_command.py
+operation: create_file
+priority: 1
+depends_on: [A-005]
+concepts: [C-023, C-002, C-026, C-016]
+prompt: |
+  Create the file `plan_manager/commands/para_label_assign_command.py` with
+  exactly the content specified below. Do not create, read, or modify any
+  other file. Do not implement the metadata dictionary here — it lives in
+  the sibling module `plan_manager.commands.para_label_assign_metadata`,
+  already providing a callable `get_para_label_assign_metadata(cls:
+  Type[Any]) -> Dict[str, Any]` importable as `from
+  plan_manager.commands.para_label_assign_metadata import
+  get_para_label_assign_metadata`.
+
+  Required imports (exact, in this order):
+  ```python
+  from __future__ import annotations
+
+  import uuid
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission
+  from plan_manager.views.dependency_graph import load_steps
+  from plan_manager.hrs.paragraphs import list_paragraphs, assign_labels
+  from plan_manager.commands.para_label_assign_metadata import get_para_label_assign_metadata
+  ```
+
+  Module docstring (exact, first statement of the file):
+  `"""Mutating command assigning fresh labels to unlabeled binding paragraphs."""`
+
+  Define exactly one class:
+  ```python
+  class ParaLabelAssignCommand(Command):
+  ```
+  with class docstring (exact): `"""Insert fresh unique four-character
+  base36 labels into unlabeled binding paragraphs."""`
+
+  Class attributes (ClassVar, exact values):
+  - `name = "para_label_assign"`
+  - `version = "1.0.0"`
+  - `descr = "Assign fresh labels to unlabeled binding paragraphs of a plan's HRS."`
+  - `category = "paragraph"`
+  - `author = "Vasiliy Zdanovskiy"`
+  - `email = "vasilyvz@gmail.com"`
+  - `result_class = SuccessResult`
+  - `use_queue = False`
+
+  Method 1 — exact signature:
+  ```python
+  @classmethod
+  def get_schema(cls) -> Dict[str, Any]:
+  ```
+  Body: return this exact dict literal:
+  ```python
+  return {
+      "type": "object",
+      "properties": {
+          "plan": {
+              "type": "string",
+              "description": "Plan identifier (UUID or catalog name) to resolve.",
+          },
+          "cascade_uuid": {
+              "type": "string",
+              "description": "Open cascade identity (UUID) admitting this mutation when the plan requires one.",
+          },
+      },
+      "required": ["plan"],
+      "additionalProperties": False,
+  }
+  ```
+
+  Method 2 — exact signature:
+  ```python
+  def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+  ```
+  Body, exactly this logic (the base `Command` class defines
+  `validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]`
+  performing schema-level validation against `get_schema()`; call it first):
+  ```python
+  params = super().validate_params(params)
+  cascade_uuid = params.get("cascade_uuid")
+  if cascade_uuid is not None:
+      try:
+          uuid.UUID(cascade_uuid)
+      except ValueError as exc:
+          raise ValueError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
+  return params
+  ```
+
+  Method 3 — exact signature:
+  ```python
+  async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+  ```
+  Body, exactly this logic (kwargs holds the already-validated parameters
+  keyed by schema property name):
+  ```python
+  try:
+      plan = kwargs["plan"]
+      cascade_uuid = kwargs.get("cascade_uuid")
+      parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
+      with db_connection() as conn:
+          p = resolve_plan(conn, plan)
+          try:
+              rec = check_admission(conn, p.uuid, "paragraph", None, parsed_cascade_uuid)
+          except CascadeError as exc:
+              if cascade_uuid is not None:
+                  return domain_error("CASCADE_CONFLICT", str(exc))
+              steps = load_steps(conn, p.uuid)
+              if any(step.status == "frozen" for step in steps.values()):
+                  return domain_error("FROZEN_ARTIFACT", str(exc))
+              return domain_error("CASCADE_REQUIRED", str(exc))
+          labels = assign_labels(conn, p.uuid, "api", rec)
+          after = list_paragraphs(conn, p.uuid)
+          for para in after:
+              if para["binding"]:
+                  assert para["label"] is not None
+      return SuccessResult(data={"assigned": labels, "count": len(labels)})
+  except Exception as exc:
+      return map_exception(exc)
+  ```
+  Where the imported contracts used here are exactly:
+  - `def db_connection()` (module `plan_manager.runtime.context`) — a
+    context manager yielding a `psycopg.Connection`.
+  - `def resolve_plan(conn, plan: str) -> Plan` (module
+    `plan_manager.commands.resolve`) — `Plan` has fields `uuid`, `name`,
+    `status`, `context_budget`, `head_revision_uuid`.
+  - `class CascadeError(ValueError)` (module `plan_manager.cascade.record`).
+  - `@dataclass(frozen=True) class CascadeRecord:` with fields `uuid`,
+    `plan_uuid`, `name`, `base_revision_uuid`, `status`, `created_at`
+    (module `plan_manager.cascade.record`).
+  - `def check_admission(conn, plan_uuid, target_kind: str, target_uuid:
+    uuid.UUID | None, cascade_uuid: uuid.UUID | None) -> CascadeRecord |
+    None` (module `plan_manager.cascade.regime`) — an open record (a
+    `CascadeRecord`) means cascade-scoped admission, `None` means direct
+    admission, and a raised `CascadeError` means admission was rejected.
+  - `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]` (module
+    `plan_manager.views.dependency_graph`) — `Step` has field `status`.
+  - `def list_paragraphs(conn, plan_uuid) -> list[dict]` (module
+    `plan_manager.hrs.paragraphs`) — every paragraph of the plan's HRS as
+    `{"label": str | None, "binding": bool, "position": int, "text": str}`,
+    in position order.
+  - `def assign_labels(conn, plan_uuid, author: str, cascade) -> list[str]`
+    (module `plan_manager.hrs.paragraphs`) — inserts fresh unique
+    four-character base36 labels into every unlabeled binding paragraph,
+    line-precise, surrounding prose byte-identical; records its own
+    revision attribution (direct head advance when `cascade` is `None`,
+    cascade ref when it is a `CascadeRecord`); returns the newly assigned
+    labels.
+  - `def domain_error(code, message, details=None) -> ErrorResult` (module
+    `plan_manager.commands.errors`).
+  - `def map_exception(exc) -> ErrorResult` (module
+    `plan_manager.commands.errors`) — maps any exception, including a
+    `DomainCommandError` raised inside `resolve_plan` for an unresolvable
+    plan (`class DomainCommandError(Exception)` with attributes `code`,
+    `message`, `details=None`; carries `code="PLAN_NOT_FOUND"` when
+    `resolve_plan` fails), to an `ErrorResult`.
+
+  Method 4 — exact signature:
+  ```python
+  @classmethod
+  def metadata(cls) -> Dict[str, Any]:
+  ```
+  Body (exact): `return get_para_label_assign_metadata(cls)`
+
+  Constraints:
+  - The file contains exactly: module docstring, the imports listed above,
+    and the single `ParaLabelAssignCommand` class with its four methods in
+    the order given. No other top-level code.
+  - Do not add a `main`/CLI entry point, no `if __name__ == "__main__"`.
+  - Do not register the command anywhere in this file (registration is out
+    of scope for this task).
+  - The `try/except CascadeError` block must be nested inside the `with
+    db_connection() as conn:` block and inside the outer `try/except
+    Exception`, exactly as shown; do not flatten or reorder it.
+  - Use `SuccessResult | ErrorResult` exactly as written for the `execute`
+    return type annotation (PEP 604 union, enabled by the
+    `from __future__ import annotations` import already listed).
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  ```
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head
+      revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate
+      is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any
+      status
+  ```
+verification:
+  type: import
+  target: plan_manager.commands.para_label_assign_command
+  expected: >
+    Importing plan_manager.commands.para_label_assign_command succeeds with
+    no syntax or import errors. ParaLabelAssignCommand is a subclass of
+    mcp_proxy_adapter.commands.base.Command exposing class attributes name
+    equal to "para_label_assign", version "1.0.0", a non-empty descr,
+    category "paragraph", author "Vasiliy Zdanovskiy", email
+    "vasilyvz@gmail.com", result_class SuccessResult, and use_queue False.
+    get_schema() returns an object schema requiring only "plan", with
+    "cascade_uuid" optional and additionalProperties False. validate_params
+    raises ValueError when cascade_uuid is present but not a valid UUID
+    string. metadata() returns the dict produced by
+    get_para_label_assign_metadata(cls).
+status: draft

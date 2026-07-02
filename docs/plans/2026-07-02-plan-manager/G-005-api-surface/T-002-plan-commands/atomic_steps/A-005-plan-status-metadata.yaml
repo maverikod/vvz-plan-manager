@@ -1,0 +1,242 @@
+step_id: A-005
+parent_tactical_step: T-002
+name: Write plan_status metadata module
+target_file: plan_manager/commands/plan_status_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-001]
+prompt: |
+  Create the file `plan_manager/commands/plan_status_metadata.py` with
+  exactly the content specified below. This is a brand-new file; it does
+  not exist yet and no other file's content should be assumed.
+
+  PURPOSE: this module provides the extended documentation metadata for the
+  `plan_status` MCP command, per the Command Metadata and Schema Standard.
+  The command class itself (in a different file, not part of this task)
+  calls `get_plan_status_metadata(cls)` from its `metadata()` classmethod
+  and returns the result unchanged. `plan_status` is a read-only dashboard
+  command for one resolved plan (C-001): it returns artifact counts per
+  level (3, 4, 5), the status distribution across all steps, the mechanical
+  gate verdict, and — only when the gate is green — the plan semantic
+  index, color, and ranked weakest branches. Its `get_schema()` (defined
+  elsewhere) is:
+
+  ```python
+  {
+      "type": "object",
+      "properties": {
+          "plan": {
+              "type": "string",
+              "description": "Plan identifier: either the plan UUID or its unique name.",
+          },
+      },
+      "required": ["plan"],
+      "additionalProperties": False,
+  }
+  ```
+
+  Domain error codes this command can return: resolving the plan raises
+  `DomainCommandError("PLAN_NOT_FOUND", ...)` when the identifier matches no
+  plan, mapped by `map_exception` to an `ErrorResult`. When the mechanical
+  gate is not green, the command still returns a `SuccessResult`, but its
+  "scoring" data section is the refusal marker `{"refused": "GATE_RED"}`
+  instead of an index — this is not a command-level error, but it is
+  documented in `error_cases` under the key "GATE_RED" as the scoring
+  refusal marker, since it uses the same domain code vocabulary. When the
+  gate is green but the embedding service is unreachable while scoring, an
+  `EmbeddingUnavailable` exception propagates and is mapped by
+  `map_exception` to a `DomainCommandError` with code
+  `"EMBEDDINGS_UNAVAILABLE"`. Therefore `error_cases` must contain exactly
+  the keys "PLAN_NOT_FOUND", "GATE_RED", and "EMBEDDINGS_UNAVAILABLE",
+  nothing else.
+
+  MRS EXCERPT (concept definitions relevant to this file):
+
+  - C-001 Plan: "Root aggregate of one development plan with identity, name,
+    status, and head revision." Properties: hosts the five-level hierarchy
+    HRS -> MRS -> GS -> TS -> AS; multiple plans live in one database, listed
+    by catalog query; head revision advances per revision in draft editing,
+    on publication for cascades; carries a user-set context budget in tokens
+    (default 4000) consumed by prompt assembly.
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: class attributes
+    name, version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false;
+    shallow adapter validation compensated by validate_params semantics;
+    metadata dictionary must never contradict the schema; read commands never
+    mutate, mutating commands verify by re-read; destructive or bulk
+    operations expose a dry-run mode defaulting to on.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+    stable domain string codes." Property: every declared error case
+    returnable and every returnable case declared.
+
+  REQUIRED FILE CONTENT (exact):
+
+  ```python
+  """Metadata for the plan_status command."""
+
+  from typing import Any
+
+
+  def get_plan_status_metadata(cls: Any) -> dict:
+      """Return the full metadata dictionary for PlanStatusCommand.
+
+      Args:
+          cls: The PlanStatusCommand class, providing name, version, descr,
+              category, author, email class attributes.
+
+      Returns:
+          dict: Metadata dictionary conforming to metadatastd.yaml
+              required_fields: name, version, description, category,
+              author, email, detailed_description, parameters,
+              return_value, usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Returns the read-only dashboard for one resolved plan "
+              "(C-001): artifact counts per level (3, 4, 5), the status "
+              "distribution across all steps, the mechanical gate "
+              "verdict for the current tree, and — only when the gate is "
+              "green — the plan semantic index, its color, and the "
+              "ranked weakest branches. When the gate is not green, the "
+              "scoring section is refused and carries the GATE_RED "
+              "marker instead of a score, because the plan index is "
+              "only published for a gate-green plan. If the embedding "
+              "integration is unreachable while scoring a gate-green "
+              "plan, the command fails with the EMBEDDINGS_UNAVAILABLE "
+              "domain code."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier: either the plan UUID or its unique name.",
+                  "type": "string",
+                  "required": True,
+                  "examples": ["my-plan", "3fae3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e"],
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": (
+                      "The plan dashboard: identity, counts, status "
+                      "distribution, gate verdict, and scoring section."
+                  ),
+                  "data": {
+                      "plan": "Resolved plan identity: uuid, name, status.",
+                      "counts_by_level": "Artifact counts keyed by level 3, 4, 5.",
+                      "status_distribution": "Count of steps per status value across all levels.",
+                      "gate": "Gate verdict: green (bool), scope, revision_uuid.",
+                      "scoring": (
+                          "When gate is green: index, color, weakest "
+                          "(list of branch summaries). When gate is not "
+                          "green: {'refused': 'GATE_RED'}."
+                      ),
+                  },
+                  "example": {
+                      "plan": {
+                          "uuid": "3fae3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e",
+                          "name": "my-plan",
+                          "status": "draft",
+                      },
+                      "counts_by_level": {"3": 2, "4": 8, "5": 40},
+                      "status_distribution": {"draft": 10, "frozen": 40},
+                      "gate": {
+                          "green": True,
+                          "scope": "plan",
+                          "revision_uuid": "9a1e3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e",
+                      },
+                      "scoring": {
+                          "index": 92.5,
+                          "color": "green",
+                          "weakest": [],
+                      },
+                  },
+              },
+              "error": {
+                  "description": "A domain error result carrying a stable string code.",
+                  "code": "PLAN_NOT_FOUND",
+                  "message": "Plan not found: my-plan",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Get the dashboard for a plan by name.",
+                  "command": {"plan": "my-plan"},
+                  "explanation": "Resolves 'my-plan' and returns its dashboard.",
+              },
+              {
+                  "description": "Get the dashboard for a plan by UUID.",
+                  "command": {"plan": "3fae3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e"},
+                  "explanation": "Resolves the plan by UUID and returns its dashboard.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not match any uuid or name in the catalog.",
+                  "message": "Plan not found: {plan}",
+                  "solution": "Call plan_list to discover valid plan identifiers and retry.",
+              },
+              "GATE_RED": {
+                  "description": (
+                      "Not a command-level error: when the mechanical "
+                      "gate is not green, the command still returns "
+                      "SuccessResult, but the 'scoring' section of the "
+                      "data is the refusal marker "
+                      "{'refused': 'GATE_RED'} instead of an index, "
+                      "because the plan index is only published for a "
+                      "gate-green plan."
+                  ),
+                  "message": "Scoring refused: plan gate is not green.",
+                  "solution": "Resolve the mechanical gate findings for the plan, then call plan_status again.",
+              },
+              "EMBEDDINGS_UNAVAILABLE": {
+                  "description": "The plan gate is green but the embedding service is unreachable while scoring.",
+                  "message": "Embedding service is unavailable.",
+                  "solution": "Restore embedding service connectivity, or retry once it is reachable again.",
+              },
+          },
+          "best_practices": [
+              "Call plan_status after a cascade commit to confirm the gate is still green before relying on the scoring section.",
+              "Treat a 'scoring': {'refused': 'GATE_RED'} response as informational, not as a failed call.",
+              "Use plan_list to resolve a valid plan identifier before calling plan_status.",
+          ],
+      }
+  ```
+
+  CONSTRAINTS:
+  - The file must contain exactly one module-level function,
+    `get_plan_status_metadata(cls: Any) -> dict`, with the docstring shown
+    above verbatim.
+  - The only import is `from typing import Any`.
+  - The returned dict's top-level keys must be exactly: name, version,
+    description, category, author, email, detailed_description, parameters,
+    return_value, usage_examples, error_cases, best_practices — in that
+    order.
+  - `parameters` must contain exactly the key "plan".
+  - `error_cases` must contain exactly the keys "PLAN_NOT_FOUND",
+    "GATE_RED", "EMBEDDINGS_UNAVAILABLE", each with "description",
+    "message", "solution" string values.
+  - Do not add a module-level docstring other than
+    `"""Metadata for the plan_status command."""`.
+  - Do not import PlanStatusCommand or any command module from this file.
+verification:
+  type: import
+  target: plan_manager.commands.plan_status_metadata
+  expected: >
+    The module imports without error. It defines a single callable
+    get_plan_status_metadata(cls) that, when called with any object
+    exposing name="plan_status", version="1.0.0", descr="Return the
+    dashboard for one plan: counts, gate, and scoring.", category="plan",
+    author="Vasiliy Zdanovskiy", email="vasilyvz@gmail.com" as attributes,
+    returns a dict containing exactly the keys name, version, description,
+    category, author, email, detailed_description, parameters,
+    return_value, usage_examples, error_cases, best_practices, with
+    parameters containing exactly the key plan and error_cases containing
+    exactly the keys PLAN_NOT_FOUND, GATE_RED, EMBEDDINGS_UNAVAILABLE.
+status: draft

@@ -1,0 +1,238 @@
+step_id: A-006
+parent_tactical_step: T-007
+name: Add execute to GraphDepsCommand
+target_file: plan_manager/commands/graph_deps_command.py
+operation: modify_file
+priority: 5
+depends_on: [A-005]
+concepts: [C-009, C-023, C-026]
+prompt: |
+  Modify the existing file at the exact project-relative path
+  `plan_manager/commands/graph_deps_command.py`.
+
+  Current full content of the file (state after all lower-priority atomic
+  steps on this file have been applied):
+
+  ```python
+  """Graph command: dependency neighborhood of one step (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from plan_manager.commands.graph_deps_metadata import get_graph_deps_metadata
+
+
+  class GraphDepsCommand(Command):
+      """Return the dependency neighborhood (depends_on and dependents) of one step."""
+
+      name = "graph_deps"
+      version = "1.0.0"
+      descr = "Return the dependency neighborhood (depends_on and dependents) of one step."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  },
+                  "step_id": {
+                      "type": "string",
+                      "description": "step_id of the target step within the plan.",
+                  },
+              },
+              "required": ["plan", "step_id"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          return get_graph_deps_metadata(cls)
+
+      def validate_params(self, params: dict) -> dict:
+          params = super().validate_params(params)
+          return params
+  ```
+
+  Replace this content with exactly the following full file content,
+  byte-identical:
+
+  ```python
+  """Graph command: dependency neighborhood of one step (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import DomainCommandError, map_exception
+  from plan_manager.commands.graph_deps_metadata import get_graph_deps_metadata
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.verify.gate_data import artifact_path_of
+  from plan_manager.views.dependency_graph import load_steps, neighbors
+
+
+  class GraphDepsCommand(Command):
+      """Return the dependency neighborhood (depends_on and dependents) of one step."""
+
+      name = "graph_deps"
+      version = "1.0.0"
+      descr = "Return the dependency neighborhood (depends_on and dependents) of one step."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  },
+                  "step_id": {
+                      "type": "string",
+                      "description": "step_id of the target step within the plan.",
+                  },
+              },
+              "required": ["plan", "step_id"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          return get_graph_deps_metadata(cls)
+
+      def validate_params(self, params: dict) -> dict:
+          params = super().validate_params(params)
+          return params
+
+      async def execute(self, **kwargs) -> SuccessResult | ErrorResult:
+          try:
+              plan = kwargs["plan"]
+              step_id = kwargs["step_id"]
+              with db_connection() as conn:
+                  plan_obj = resolve_plan(conn, plan)
+                  nodes = load_steps(conn, plan_obj.uuid)
+                  target = next(
+                      (s for s in nodes.values() if s.step_id == step_id), None
+                  )
+                  if target is None:
+                      raise DomainCommandError(
+                          "STEP_NOT_FOUND", f"step not found: {step_id}"
+                      )
+                  n = neighbors(nodes, target.uuid)
+                  data = {
+                      "step": artifact_path_of(nodes, target),
+                      "depends_on": [
+                          artifact_path_of(nodes, nodes[u]) for u in n["depends_on"]
+                      ],
+                      "dependents": [
+                          artifact_path_of(nodes, nodes[u]) for u in n["dependents"]
+                      ],
+                  }
+              return SuccessResult(data=data)
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Change the existing result import line to
+    `from mcp_proxy_adapter.commands.result import SuccessResult,
+    ErrorResult` (add `ErrorResult`).
+  - Add four new import lines, each `from <module> import <names>`, in this
+    exact order, alphabetically by module path, each a separate `from`
+    statement:
+    `from plan_manager.commands.errors import DomainCommandError,
+    map_exception`;
+    `from plan_manager.commands.graph_deps_metadata import
+    get_graph_deps_metadata` (already present, unchanged, kept in its
+    alphabetical position);
+    `from plan_manager.commands.resolve import resolve_plan`;
+    `from plan_manager.runtime.context import db_connection`;
+    `from plan_manager.verify.gate_data import artifact_path_of`;
+    `from plan_manager.views.dependency_graph import load_steps, neighbors`.
+  - `plan_manager.commands.errors` defines `class DomainCommandError(
+    Exception)` constructed as `DomainCommandError(code: str, message: str,
+    details: dict | None = None)`, and `def map_exception(exc) ->
+    ErrorResult:` which converts any exception (including
+    DomainCommandError) into an ErrorResult.
+  - `plan_manager.commands.resolve` defines `def resolve_plan(conn, plan:
+    str) -> Plan:` which raises `DomainCommandError("PLAN_NOT_FOUND", ...)`
+    when the plan cannot be resolved from the catalog; `Plan` has fields
+    `uuid`, `name`, `status`, `context_budget`, `head_revision_uuid`.
+  - `plan_manager.runtime.context` defines `def db_connection():`, a
+    context manager yielding a `psycopg.Connection`, used as
+    `with db_connection() as conn:`.
+  - `plan_manager.views.dependency_graph` defines `def load_steps(conn,
+    plan_uuid) -> dict[uuid.UUID, Step]:` where `Step` has fields `uuid`,
+    `plan_uuid`, `parent_step_uuid`, `level`, `step_id`, `slug`, `fields:
+    dict`, `depends_on: list[str]`, `concepts: list[str]`, `status: str`;
+    and `def neighbors(nodes, origin_uuid) -> dict[str, list[uuid.UUID]]:`
+    returning `{"depends_on": [...], "dependents": [...]}` keyed by those
+    exact two string keys, each value a list of `uuid.UUID`.
+  - `plan_manager.verify.gate_data` defines `def artifact_path_of(nodes:
+    dict[uuid.UUID, Step], step: Step) -> str:`.
+  - Append the `execute` method shown above, with signature `async def
+    execute(self, **kwargs) -> SuccessResult | ErrorResult:`, after the
+    existing `validate_params` method, separated by exactly one blank line.
+  - The step lookup is exactly `next((s for s in nodes.values() if
+    s.step_id == step_id), None)`; when the result is `None`, raise
+    `DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")`
+    inside the `try` block so it is converted by the final
+    `except Exception as exc: return map_exception(exc)` handler.
+  - `resolve_plan` is called directly (not wrapped in an inner try); any
+    `DomainCommandError("PLAN_NOT_FOUND", ...)` it raises propagates to the
+    same final `except Exception as exc: return map_exception(exc)`
+    handler.
+  - The success payload is a dict with exactly the keys `step` (the
+    `artifact_path_of` string for the target step), `depends_on` (list of
+    `artifact_path_of` strings for each uuid in `n["depends_on"]`), and
+    `dependents` (list of `artifact_path_of` strings for each uuid in
+    `n["dependents"]`), returned as `SuccessResult(data=data)`.
+  - No other line changes.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  C-009 DependencyGraph: "Computed projection set over steps covering
+  execution order, parallelism, cycles, and impact." Relevant property:
+  "edges from depends_on at every level plus priority pairs within
+  (target_file, TS)" — the neighbors() projection used here reads exactly
+  this edge set to classify the target step's depends_on and dependents.
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Relevant property: "read
+  commands never mutate; mutating commands verify by re-read" — execute
+  only opens a connection to read the plan and step projection, and never
+  writes.
+
+  C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+  stable domain string codes." Relevant property: "every declared error
+  case returnable and every returnable case declared" — execute can raise
+  exactly the two domain codes PLAN_NOT_FOUND (from resolve_plan) and
+  STEP_NOT_FOUND (from the step lookup), both converted to an ErrorResult
+  by map_exception via the final except handler.
+verification:
+  type: import
+  target: plan_manager.commands.graph_deps_command
+  expected: >
+    Importing plan_manager.commands.graph_deps_command succeeds and
+    GraphDepsCommand defines name, version, descr, category, author, email,
+    result_class, use_queue, get_schema, metadata, validate_params, and an
+    async execute method that resolves the plan, loads the step
+    projection, looks up the target step by step_id, returns a
+    SuccessResult with step, depends_on, and dependents artifact paths on
+    success, and returns an ErrorResult carrying PLAN_NOT_FOUND or
+    STEP_NOT_FOUND on the corresponding failure.
+status: draft

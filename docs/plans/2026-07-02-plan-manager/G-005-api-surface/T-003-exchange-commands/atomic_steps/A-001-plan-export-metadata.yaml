@@ -1,0 +1,155 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: plan-export-metadata
+target_file: plan_manager/commands/plan_export_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-021]
+prompt: |
+  Create the file plan_manager/commands/plan_export_metadata.py with the
+  exact full content below (operation: create_file — the file does not
+  exist yet, assume no pre-existing content).
+
+  Required imports (exact module paths):
+    from typing import Any, Dict
+
+  Required function signature:
+    def get_plan_export_metadata(cls) -> Dict[str, Any]:
+
+  Docstring for the function (Google style, exact wording of purpose):
+  "Build the extended documentation metadata for PlanExportCommand." with
+  an Args section documenting `cls` as "The PlanExportCommand class
+  (passed as ``cls`` from a classmethod)." and a Returns section
+  documenting the return value as "A dictionary conforming to the
+  metadatastd.yaml required_fields: name, version, description, category,
+  author, email, detailed_description, parameters, return_value,
+  usage_examples, error_cases, best_practices."
+
+  Constraints (all explicit, no open decisions):
+  - The module must start with a one-line module docstring:
+    "Extended metadata for the plan_export command."
+  - The function returns a dict literal built directly in the return
+    statement (no intermediate variables).
+  - The returned dict has exactly these top-level keys, in this order:
+    name, version, description, category, author, email,
+    detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+  - "name": cls.name
+  - "version": cls.version
+  - "description": cls.descr
+  - "category": cls.category
+  - "author": cls.author
+  - "email": cls.email
+  - "detailed_description": the string:
+    "Renders one resolved plan into the standard file layout under the
+    server-configured export root. Read-only over plan truth: no plan
+    data is modified. The export root directory is taken exclusively from
+    server configuration (AppConfig.export_root); request parameters
+    never carry filesystem paths. When the optional revision parameter is
+    omitted, the plan head revision is exported; when supplied, it must
+    be a valid revision UUID belonging to the plan's version history,
+    otherwise the command returns REVISION_NOT_FOUND. This command is
+    queue-bound (use_queue = True) because rendering a full plan layout
+    to disk can take longer than an interactive request budget."
+  - "parameters" is a dict with exactly two keys:
+    - "plan": {"description": "Plan identifier resolved against the
+      catalog.", "type": "string", "required": True}
+    - "revision": {"description": "Optional revision UUID to export
+      instead of the plan head revision. Must parse as a UUID.", "type":
+      "string", "required": False}
+  - "return_value" is a dict with exactly two keys "success" and "error":
+    - "success": {"description": "The written layout summary.", "data":
+      {"root": "Filesystem path of the written layout root.", "files":
+      "Number of files written.", "revision": "The revision string that
+      was exported, or 'head' when no revision was requested."},
+      "example": {"root": "/var/planmgr/export/my-plan", "files": 42,
+      "revision": "head"}}
+    - "error": {"description": "Domain error result.", "code": "stable
+      domain error code", "message": "human-readable message", "details":
+      "additional diagnostic fields when available"}
+  - "usage_examples" is a list of exactly two dicts:
+    1. {"description": "Export the current head revision of a plan.",
+       "command": {"plan": "my-plan"}, "explanation": "Writes the
+       standard layout for the plan head revision under the configured
+       export root."}
+    2. {"description": "Export a specific historical revision.",
+       "command": {"plan": "my-plan", "revision":
+       "3fa85f64-5717-4562-b3fc-2c963f66afa6"}, "explanation": "Writes
+       the standard layout as it existed at the given revision."}
+  - "error_cases" is a dict with exactly two keys:
+    - "PLAN_NOT_FOUND": {"description": "The plan identifier does not
+      exist in the catalog.", "message": "Plan not found: {plan}",
+      "solution": "Call the plan catalog command and retry with a valid
+      plan identifier."}
+    - "REVISION_NOT_FOUND": {"description": "The revision parameter does
+      not identify a stored revision of the plan.", "message": "Revision
+      not found: {revision}", "solution": "Omit revision to export the
+      head, or supply a revision id from the plan's version history."}
+  - "best_practices" is a list of exactly three strings:
+    1. "This command is read-only: it never mutates plan data or the
+       version store."
+    2. "The export root is fixed by server configuration; no dry-run is
+       needed because nothing in the database changes."
+    3. "Verify the export by reading the written layout files at the
+       returned root path."
+
+  These required top-level metadata keys come from
+  docs/standards/planning/metadatastd.yaml, section `metadata`:
+  `required_fields: [name, version, description, category, author, email,
+  detailed_description, parameters, return_value, usage_examples,
+  error_cases, best_practices]`; `parameters_entry_required:
+  [description, type, required]`; `error_cases.per_entry_required:
+  [description, message, solution]`.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-021
+    name: ExchangeFormat
+    definition: File import/export representation of a plan in the
+      standard layout; HRS as Markdown, all other artifacts as YAML.
+    properties:
+    - export optionally at a named revision; import is the only
+      file-to-truth path
+    - safe YAML emission with mandatory round-trip; hrs_export
+      byte-identical
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+
+  Do not add any other function, class, or import to this file. Do not
+  read or modify any other file.
+verification:
+  type: import
+  target: plan_manager.commands.plan_export_metadata.get_plan_export_metadata
+  expected: >
+    Importing plan_manager.commands.plan_export_metadata succeeds and
+    exposes a callable get_plan_export_metadata(cls) that, given an
+    object with attributes name, version, descr, category, author,
+    email, returns a dict containing exactly the twelve required
+    metadatastd.yaml keys (name, version, description, category, author,
+    email, detailed_description, parameters, return_value,
+    usage_examples, error_cases, best_practices), with parameters
+    containing "plan" and "revision" entries and error_cases containing
+    "PLAN_NOT_FOUND" and "REVISION_NOT_FOUND" entries.
+status: draft

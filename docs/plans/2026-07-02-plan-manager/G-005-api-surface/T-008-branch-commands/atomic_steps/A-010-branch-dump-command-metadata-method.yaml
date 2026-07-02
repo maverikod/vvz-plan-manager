@@ -1,0 +1,122 @@
+step_id: A-010
+parent_tactical_step: T-008
+name: BranchDumpCommand metadata classmethod
+target_file: plan_manager/commands/branch_dump_command.py
+operation: modify_file
+priority: 3
+depends_on: [A-009, A-007]
+concepts: [C-023]
+prompt: |
+  Modify the existing file plan_manager/commands/branch_dump_command.py.
+
+  MRS excerpt (concept definition relevant to this AS):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  Verbatim foundation contract available for import:
+  `def get_branch_dump_metadata(cls: type) -> Dict[str, Any]` defined in
+  plan_manager/commands/branch_dump_metadata.py, returning the extended
+  metadata dict for BranchDumpCommand.
+
+  CURRENT FILE CONTENT (exact, after all lower-priority AS on this file
+  have been applied):
+
+  """BranchDumpCommand: write every branch's prompt as a non-authoritative snapshot."""
+  from typing import Any, ClassVar, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class BranchDumpCommand(Command):
+      """Dump every branch's executor prompt to disk as a derived snapshot."""
+
+      name: ClassVar[str] = "branch_dump"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Write the executor prompt of every branch of the plan under "
+          "the configured export root as an explicitly "
+          "non-authoritative derived snapshot."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :return: A dict with object type, properties for plan (type
+              string) and dry_run (type boolean, default False), a
+              required list naming only plan, and additionalProperties
+              False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or UUID).",
+                  },
+                  "dry_run": {
+                      "type": "boolean",
+                      "description": (
+                          "When true, count the branches that would be "
+                          "dumped without writing any file. The dump is "
+                          "always an explicitly non-authoritative "
+                          "derived snapshot regardless of this flag."
+                      ),
+                      "default": False,
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+  REQUIRED CHANGE:
+
+  1. After the existing import block (after
+     `from mcp_proxy_adapter.commands.result import SuccessResult`),
+     insert one blank line then this new import line:
+
+     from plan_manager.commands.branch_dump_metadata import get_branch_dump_metadata
+
+  2. Append this method to the end of the BranchDumpCommand class body,
+     immediately after get_schema, separated by exactly one blank line:
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return extended AI/documentation metadata for this command.
+
+          :return: The dictionary produced by get_branch_dump_metadata(cls).
+          """
+          return get_branch_dump_metadata(cls)
+
+  Constraints:
+  - Do not modify any other part of the existing file content shown
+    above beyond the single import insertion and the single method
+    append described.
+  - The method signature is exactly
+    `def metadata(cls) -> Dict[str, Any]:` decorated with `@classmethod`.
+  - The method body is exactly one return statement calling
+    get_branch_dump_metadata(cls) and returning its result unchanged.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_dump_command.py::BranchDumpCommand.metadata
+  expected: >
+    BranchDumpCommand.metadata() is a classmethod whose body is exactly
+    `return get_branch_dump_metadata(cls)`, and the module imports
+    get_branch_dump_metadata from plan_manager.commands.branch_dump_metadata.
+status: draft

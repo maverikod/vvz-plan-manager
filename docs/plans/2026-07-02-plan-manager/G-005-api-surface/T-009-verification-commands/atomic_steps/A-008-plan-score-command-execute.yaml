@@ -1,0 +1,395 @@
+step_id: A-008
+parent_tactical_step: T-009
+name: Add execute method wiring PlanScoreCommand onto the freshness guard and score_plan/score_branch
+target_file: plan_manager/commands/plan_score_command.py
+operation: modify_file
+priority: 3
+depends_on: [A-007]
+concepts: [C-013, C-014, C-020, C-026, C-012, C-023]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/commands/plan_score_command.py`.
+
+  The file currently exists with exactly this content (this is the state
+  after all lower-priority changes on this file have already been applied):
+
+  ```python
+  """Command PlanScoreCommand: run the semantic scoring layer (C-013) over a plan or branch."""
+  from __future__ import annotations
+
+  import uuid
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
+
+
+  class PlanScoreCommand(Command):
+      """Run the semantic completeness index (C-013) over a plan or one branch."""
+
+      name = "plan_score"
+      version = "1.0.0"
+      descr = "Run the semantic scoring layer over a plan or one branch and return index, trust, and color."
+      category = "verification"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = True
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :returns: A JSON-schema-shaped dict with keys type, properties,
+              required, additionalProperties.
+          :rtype: Dict[str, Any]
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to score.",
+                  },
+                  "scope": {
+                      "type": "string",
+                      "enum": ["plan", "branch"],
+                      "default": "plan",
+                      "description": "Scoring scope: the whole plan or one branch named by its three step ids.",
+                  },
+                  "gs_step_id": {
+                      "type": "string",
+                      "description": "Global step id (e.g. G-005) of the branch. Required when scope is 'branch'.",
+                  },
+                  "ts_step_id": {
+                      "type": "string",
+                      "description": "Tactical step id (e.g. T-009) of the branch. Required when scope is 'branch'.",
+                  },
+                  "as_step_id": {
+                      "type": "string",
+                      "description": "Atomic step id (e.g. A-101) of the branch. Required when scope is 'branch'.",
+                  },
+                  "verbose": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "Force per-estimator internals into the result even when the score is above threshold.",
+                  },
+                  "expected_revision": {
+                      "type": "string",
+                      "description": "The caller's view of the plan head revision (UUID string). When it does not match the current head revision, the command refuses with VERDICT_STALE.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return the extended documentation metadata for this command.
+
+          :returns: The dict produced by get_plan_score_metadata(cls).
+          :rtype: Dict[str, Any]
+          """
+          return get_plan_score_metadata(cls)
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate and normalize the parameters for this command.
+
+          Calls the platform validator first, then enforces the scope
+          selector semantics that the JSON schema cannot express (when
+          scope is 'branch', gs_step_id, ts_step_id, and as_step_id must
+          all be present and non-empty; when scope is 'plan', all three
+          must be absent), and parses expected_revision as a UUID when it
+          is supplied.
+
+          :param params: Raw parameter dict as received from the platform.
+          :type params: Dict[str, Any]
+          :returns: The validated (and platform-normalized) parameter dict.
+          :rtype: Dict[str, Any]
+          :raises ValueError: When the scope selector semantics above are
+              violated, or when expected_revision is supplied but is not a
+              valid UUID string. This is a platform invalid-params failure,
+              not a domain error code.
+          """
+          params = super().validate_params(params)
+          scope = params.get("scope", "plan")
+          gs_step_id = params.get("gs_step_id")
+          ts_step_id = params.get("ts_step_id")
+          as_step_id = params.get("as_step_id")
+          if scope == "branch":
+              if not gs_step_id or not ts_step_id or not as_step_id:
+                  raise ValueError(
+                      "gs_step_id, ts_step_id, and as_step_id are all required "
+                      "and must be non-empty when scope is 'branch'"
+                  )
+          elif scope == "plan":
+              if gs_step_id or ts_step_id or as_step_id:
+                  raise ValueError(
+                      "gs_step_id, ts_step_id, and as_step_id must be absent "
+                      "when scope is 'plan'"
+                  )
+          expected_revision = params.get("expected_revision")
+          if expected_revision is not None:
+              try:
+                  uuid.UUID(expected_revision)
+              except ValueError as exc:
+                  raise ValueError(
+                      f"expected_revision is not a valid UUID: {expected_revision}"
+                  ) from exc
+          return params
+  ```
+
+  Change 1 — replace the single import line
+  `from plan_manager.commands.plan_score_metadata import get_plan_score_metadata`
+  with these six import lines, in exactly this order, keeping the
+  surrounding blank lines exactly as in the original (one blank line before
+  and after the block, unchanged):
+
+  ```python
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.scoring.index import ScoringConfig, branch_summary, score_branch, score_plan
+  from plan_manager.verify.verdict import current_head_revision
+  ```
+
+  Change 2 — insert the following new instance method into the class body,
+  directly after the `validate_params` method shown above (same indentation
+  level, one blank line separating it from `validate_params`). Do not
+  change any other existing line.
+
+  ```python
+      def execute(self, **kwargs: Any):
+          """Run the semantic scoring layer over the requested scope.
+
+          Applies the revision freshness guard first (C-020: a verdict is
+          fresh iff its recorded revision equals the current revision,
+          compared by identifier, never by timestamp), then scores the
+          plan or the named branch.
+
+          :param kwargs: Validated parameters: plan (str, plan identifier),
+              scope (str, 'plan' or 'branch', default 'plan'), gs_step_id
+              (str | None), ts_step_id (str | None), as_step_id
+              (str | None), verbose (bool, default False),
+              expected_revision (str | None, UUID string).
+          :type kwargs: Any
+          :returns: A SuccessResult with the score data on success; an
+              ErrorResult with code VERDICT_STALE when expected_revision
+              was supplied and does not match the current head revision; an
+              ErrorResult with code STEP_NOT_FOUND when scope is 'branch'
+              and the branch cannot be resolved; otherwise an ErrorResult
+              produced by map_exception for any exception raised while
+              resolving the plan or scoring (in particular PLAN_NOT_FOUND
+              when the plan does not resolve, GATE_RED when the scope has
+              not passed the mechanical gate, and EMBEDDINGS_UNAVAILABLE
+              when the embedding service cannot be reached).
+          :rtype: SuccessResult | ErrorResult
+          """
+          plan = kwargs["plan"]
+          scope = kwargs.get("scope", "plan")
+          gs_step_id = kwargs.get("gs_step_id")
+          ts_step_id = kwargs.get("ts_step_id")
+          as_step_id = kwargs.get("as_step_id")
+          verbose = kwargs.get("verbose", False)
+          expected_revision = kwargs.get("expected_revision")
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  if expected_revision is not None:
+                      current = current_head_revision(conn, p.uuid)
+                      if expected_revision != (str(current) if current else None):
+                          return domain_error(
+                              "VERDICT_STALE",
+                              "caller's revision is not the current head",
+                              {
+                                  "expected": expected_revision,
+                                  "current": str(current) if current else None,
+                              },
+                          )
+                  cfg = app_config()
+                  config = ScoringConfig(
+                      threshold=cfg.scoring_threshold,
+                      aggregation=cfg.scoring_aggregation,
+                      concept_weight=cfg.concept_weight,
+                      trust_floor=cfg.trust_floor,
+                      embedding_url=cfg.embedding_url,
+                  )
+                  if scope == "plan":
+                      score = score_plan(conn, p.uuid, config)
+                      data = {
+                          "scope": "plan",
+                          "index": score.index,
+                          "color": score.color,
+                          "aggregation": score.aggregation,
+                          "weakest": [
+                              branch_summary(b, verbose) for b in score.weakest
+                          ],
+                          "revision_uuid": str(score.revision_uuid),
+                      }
+                      return SuccessResult(data=data)
+                  try:
+                      bs = score_branch(
+                          conn, p.uuid, gs_step_id, ts_step_id, as_step_id, config
+                      )
+                  except ValueError as exc:
+                      return domain_error("STEP_NOT_FOUND", str(exc))
+                  data = {
+                      "scope": "branch",
+                      **branch_summary(bs, verbose),
+                      "revision_uuid": str(bs.revision_uuid),
+                  }
+                  return SuccessResult(data=data)
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Do not add, remove, or reorder any import beyond the six-line block
+    replacement specified in Change 1. Do not modify the class attributes,
+    get_schema, metadata, or validate_params already present in the file.
+  - `db_connection()` (imported from `plan_manager.runtime.context`) is a
+    context manager over a live database connection; use it exactly as
+    `with db_connection() as conn:` and perform all work for this command
+    inside that `with` block, exactly as shown.
+  - `resolve_plan(conn, plan: str) -> Plan` (imported from
+    `plan_manager.commands.resolve`) resolves the plan identifier against
+    the database catalog and returns a `Plan` with fields `uuid`, `name`,
+    `status`, `context_budget`, `head_revision_uuid`; it raises on an
+    unresolvable plan (caught by the outer `except Exception as exc: return
+    map_exception(exc)`, which maps an unresolvable plan to the
+    `PLAN_NOT_FOUND` domain code).
+  - `current_head_revision(conn, plan_uuid) -> uuid.UUID | None` (imported
+    from `plan_manager.verify.verdict`) returns the plan's current head
+    revision id, or `None`. The freshness comparison is exactly
+    `expected_revision != (str(current) if current else None)`: convert the
+    `uuid.UUID | None` returned by `current_head_revision` to its string
+    form (or `None`) before comparing it against the raw string
+    `expected_revision`, since the parameter arrives as a string. When they
+    differ, return `domain_error("VERDICT_STALE", "caller's revision is
+    not the current head", {"expected": expected_revision, "current":
+    str(current) if current else None})` immediately, before touching
+    scoring at all.
+  - `app_config() -> AppConfig` (imported from `plan_manager.runtime.context`)
+    returns the application configuration, whose relevant fields are
+    `embedding_url`, `export_root`, `scoring_threshold`,
+    `scoring_aggregation`, `trust_floor`, `concept_weight`.
+  - `ScoringConfig` (imported from `plan_manager.scoring.index`) is a
+    dataclass with fields `threshold` (default 85.0), `aggregation`
+    (default "minimum"), `concept_weight` (default 1.0), `trust_floor`
+    (default 0.2), `embedding_url` (default None). Construct it exactly as
+    shown, passing `threshold=cfg.scoring_threshold`,
+    `aggregation=cfg.scoring_aggregation`,
+    `concept_weight=cfg.concept_weight`, `trust_floor=cfg.trust_floor`,
+    `embedding_url=cfg.embedding_url`.
+  - `score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore`
+    (imported from `plan_manager.scoring.index`) is called for `scope ==
+    "plan"`. `PlanScore` has fields `index`, `color`, `aggregation`,
+    `weakest: list[BranchScore]`, `revision_uuid`.
+  - `score_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str,
+    as_step_id: str, config: ScoringConfig, model_output: str | None =
+    None) -> BranchScore` (imported from `plan_manager.scoring.index`) is
+    called for `scope == "branch"`, positionally, without `model_output`
+    (its default `None` applies). `BranchScore` has fields `branch_path`,
+    `index`, `color`, `estimator_vector`, `trust`, `revision_uuid`,
+    `below_threshold`. It raises `ValueError` when the branch cannot be
+    resolved (per the branch resolution failure documented for this
+    command); that `ValueError` is caught locally and converted to
+    `domain_error("STEP_NOT_FOUND", str(exc))` exactly as shown — do not
+    let it propagate to the outer `except Exception`. A `ScoreRefusedError`
+    (also defined in `plan_manager.scoring.index`, not imported by this
+    file because it is never caught explicitly here) may be raised by
+    either `score_plan` or `score_branch` when the scope has not passed the
+    mechanical gate in the same tree state; it is not caught locally and
+    propagates to the outer `except Exception as exc: return
+    map_exception(exc)`, which maps it to the `GATE_RED` domain code.
+  - `branch_summary(score: BranchScore, verbose: bool = False) -> dict`
+    (imported from `plan_manager.scoring.index`) renders a `BranchScore`
+    into a plain dict, including internals only when the score is below
+    threshold or `verbose` is `True`. Call it as `branch_summary(b,
+    verbose)` inside the `weakest` list comprehension for plan scope, and
+    as `branch_summary(bs, verbose)` unpacked with `**` into the branch
+    scope result dict, exactly as shown.
+  - `domain_error(code, message, details=None) -> ErrorResult` and
+    `map_exception(exc) -> ErrorResult` (both imported from
+    `plan_manager.commands.errors`) are the only two error-construction
+    calls used in this method; do not construct `ErrorResult` directly and
+    do not catch `plan_manager.commands.errors.DomainCommandError`
+    explicitly — it is handled generically by `map_exception` inside the
+    outer `except Exception` clause. An `EmbeddingUnavailable` exception
+    escaping `score_plan` or `score_branch` is likewise not caught locally;
+    it propagates to `map_exception`, which maps it to the
+    `EMBEDDINGS_UNAVAILABLE` domain code.
+  - The outer `try`/`except Exception as exc: return map_exception(exc)`
+    wraps the entire body of `execute` starting from the `with
+    db_connection()` line, exactly as shown; this is the command's final
+    exception handler.
+  - `SuccessResult` and `ErrorResult` are already imported at module level
+    (from `mcp_proxy_adapter.commands.result`); do not re-import them.
+  - For `scope == "plan"`, return `SuccessResult(data=data)` with exactly
+    the keys `scope`, `index`, `color`, `aggregation`, `weakest`,
+    `revision_uuid`. For `scope == "branch"`, return
+    `SuccessResult(data=data)` with exactly the key `scope` plus every key
+    returned by `branch_summary(bs, verbose)` plus the key `revision_uuid`,
+    with no other keys added. `execute` performs no database write of any
+    kind: it is a pure read that stores nothing.
+  - Do not add any other method, import, or module-level statement.
+
+  MRS excerpt (concept definitions relevant to this change):
+
+  - C-013 SemanticIndex: "Normalized 0..100 completeness measure of a
+    branch computed as cosine between required and actual concept
+    vectors." Properties: runs only on scopes that passed the mechanical
+    gate at the current revision; ensemble of weak independent estimators,
+    same-physics votes share weight; one number and color for the human,
+    internals surface only on miss; plan aggregation defaults to minimum
+    branch index.
+  - C-014 TrustEstimate: "Confidence in the semantic measurement itself
+    derived from concept basis geometry and service liveness." Properties:
+    Gram determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are
+    unavailable; distinguishes weak plan from unmeasurable plan.
+  - C-020 Verdict: "Gate or score result bound to the exact revision and
+    scope it was computed for." Properties: fresh iff recorded revision
+    equals current revision; comparison never by timestamp.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes
+    and stable domain string codes." Properties: every declared error case
+    returnable and every returnable case declared.
+  - C-012 MechanicalGate: "Deterministic binary verification layer catching
+    every mechanical defect before semantics." Properties: per-branch
+    gating; precondition for any semantic measurement. (Scoring a scope
+    that has not passed this gate at the current revision is refused with
+    GATE_RED.)
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: read commands
+    never mutate; mutating commands verify by re-read; shallow adapter
+    validation compensated by validate_params semantics.
+verification:
+  type: static_analysis
+  target: plan_manager.commands.plan_score_command.PlanScoreCommand.execute
+  expected: >
+    The class PlanScoreCommand defines an instance method execute(self,
+    **kwargs) whose body opens a database connection via
+    `with db_connection() as conn:`, resolves the plan via resolve_plan(conn,
+    plan), and when expected_revision is not None compares it (as a string)
+    against str(current_head_revision(conn, p.uuid)) or None, returning
+    domain_error("VERDICT_STALE", ..., {"expected": ..., "current": ...})
+    on mismatch before any scoring call. It then builds a ScoringConfig from
+    app_config() fields, and for scope == "plan" calls score_plan(conn,
+    p.uuid, config) and returns SuccessResult(data={"scope": "plan",
+    "index": ..., "color": ..., "aggregation": ..., "weakest": [...],
+    "revision_uuid": ...}); for scope == "branch" calls score_branch(conn,
+    p.uuid, gs_step_id, ts_step_id, as_step_id, config) inside an inner
+    try/except ValueError that converts a resolution failure into
+    domain_error("STEP_NOT_FOUND", str(exc)), and otherwise returns
+    SuccessResult(data={"scope": "branch", **branch_summary(bs, verbose),
+    "revision_uuid": str(bs.revision_uuid)}). Any exception escaping the
+    with block, including ScoreRefusedError and EmbeddingUnavailable, is
+    caught by a final `except Exception as exc: return map_exception(exc)`
+    clause. The module plan_manager.commands.plan_score_command imports
+    domain_error, map_exception, resolve_plan, app_config, db_connection,
+    ScoringConfig, branch_summary, score_branch, score_plan, and
+    current_head_revision from their exact contract module paths.
+status: draft

@@ -1,0 +1,145 @@
+step_id: A-007
+parent_tactical_step: T-007
+name: Create graph_order_metadata.py
+target_file: plan_manager/commands/graph_order_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026]
+prompt: |
+  Create a new Python file at the exact project-relative path
+  `plan_manager/commands/graph_order_metadata.py` with exactly the
+  following content, byte-identical:
+
+  ```python
+  """Metadata for the graph_order command (C-009, C-023, C-026)."""
+  from __future__ import annotations
+
+
+  def get_graph_order_metadata(cls) -> dict:
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Resolves the plan against the catalog, loads the dependency "
+              "projection (C-009) for the plan once, and computes the "
+              "topological execution order with the deterministic Kahn "
+              "tie-break. Each step in the order is classified by its "
+              "artifact path. When the graph contains a cycle, ordering is "
+              "impossible and the command returns the cycle-detected error "
+              "listing the residual cycle members by artifact path instead "
+              "of an order. The command is read-only and mutates nothing."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The full topological execution order of the plan's steps.",
+                  "data": {
+                      "order": "Artifact paths of every step, in execution order.",
+                  },
+                  "example": {
+                      "order": [
+                          "G-001-domain-model/T-001-plan-aggregate/atomic_steps/A-001-plan.yaml",
+                          "G-001-domain-model/T-002-step-lifecycle/atomic_steps/A-001-status.yaml",
+                      ]
+                  },
+              },
+              "error": {
+                  "description": "Domain error returned when the plan cannot be resolved or the graph has a cycle.",
+                  "code": "PLAN_NOT_FOUND | CYCLE_DETECTED",
+                  "message": "Human-readable message identifying the missing plan or the cycle.",
+                  "details": "For CYCLE_DETECTED: {\"cycle\": [artifact paths of the residual cycle members]}.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Get the full execution order of a plan.",
+                  "command": {"plan": "plan_manager"},
+                  "explanation": "Returns every step's artifact path in deterministic topological order.",
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not match any plan in the catalog.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans through the catalog command and retry with a valid plan identifier.",
+              },
+              "CYCLE_DETECTED": {
+                  "description": "The dependency graph contains a cycle, so no total order exists.",
+                  "message": "dependency graph has a cycle",
+                  "solution": "Inspect the listed cycle members and remove or reorder the offending depends_on edges.",
+              },
+          },
+          "best_practices": [
+              "Treat CYCLE_DETECTED as a hard blocker: no partial order is returned when a cycle exists.",
+              "Re-run after editing depends_on edges to confirm the cycle is resolved.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - The module has exactly one top-level function, `get_graph_order_metadata`,
+    with signature `def get_graph_order_metadata(cls) -> dict:` (`cls` is
+    the command class; its `name`, `version`, `descr`, `category`, `author`,
+    `email` class attributes are read via `cls.name`, `cls.version`,
+    `cls.descr`, `cls.category`, `cls.author`, `cls.email`).
+  - The returned dict has exactly these top-level keys: `name`, `version`,
+    `description`, `category`, `author`, `email`, `detailed_description`,
+    `parameters`, `return_value`, `usage_examples`, `error_cases`,
+    `best_practices`.
+  - `parameters` has exactly one entry, `plan`, with exactly the keys
+    `description` (str), `type` (str, value `"string"`), `required` (bool,
+    value `True`).
+  - `return_value` has exactly the keys `success` and `error`, structured as
+    shown.
+  - `error_cases` has exactly the keys `PLAN_NOT_FOUND` and
+    `CYCLE_DETECTED`, each with exactly `description`, `message`,
+    `solution` — these are the only two error codes the graph_order command
+    can return: `PLAN_NOT_FOUND` when the `plan` parameter cannot be
+    resolved, `CYCLE_DETECTED` when the step dependency graph contains a
+    cycle so no topological order exists.
+  - No imports beyond `from __future__ import annotations` are needed or
+    permitted; the function only reads attributes off `cls` and returns a
+    literal dict.
+  - Do not add any other function, class, or module-level statement.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Relevant property: "metadata
+  dictionary must never contradict the schema" — the single `plan`
+  parameter documented here must mirror exactly what the command's
+  `get_schema()` declares.
+
+  C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+  stable domain string codes." Relevant property: "every declared error
+  case returnable and every returnable case declared" — `error_cases` lists
+  exactly PLAN_NOT_FOUND and CYCLE_DETECTED, the only codes the command's
+  execution path returns.
+
+  C-009 DependencyGraph: "Computed projection set over steps covering
+  execution order, parallelism, cycles, and impact." Relevant property:
+  "Kahn topological order with deterministic tie-break; residual subgraph
+  reported as cycle set" — the detailed_description and error_cases text
+  describe exactly this ordering and cycle-reporting behavior.
+verification:
+  type: import
+  target: plan_manager.commands.graph_order_metadata
+  expected: >
+    Importing plan_manager.commands.graph_order_metadata succeeds and the
+    module defines a callable get_graph_order_metadata(cls) that, given an
+    object with name, version, descr, category, author, email attributes,
+    returns a dict containing exactly the metadatastd required top-level
+    keys, with the single parameter plan marked required and with
+    error_cases containing exactly PLAN_NOT_FOUND and CYCLE_DETECTED.
+status: draft

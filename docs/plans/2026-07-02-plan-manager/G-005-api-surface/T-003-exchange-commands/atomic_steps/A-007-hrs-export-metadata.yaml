@@ -1,0 +1,126 @@
+step_id: A-007
+parent_tactical_step: T-003
+name: hrs-export-metadata
+target_file: plan_manager/commands/hrs_export_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-021]
+prompt: |
+  Create the file plan_manager/commands/hrs_export_metadata.py with the
+  exact full content below (operation: create_file — the file does not
+  exist yet, assume no pre-existing content).
+
+  Required imports (exact module paths):
+    from typing import Any, Dict
+
+  Required function signature:
+    def get_hrs_export_metadata(cls) -> Dict[str, Any]:
+
+  Docstring for the function (Google style, exact wording of purpose):
+  "Build the extended documentation metadata for HrsExportCommand." with
+  an Args section documenting `cls` as "The HrsExportCommand class
+  (passed as ``cls`` from a classmethod)." and a Returns section
+  documenting the return value as "A dictionary conforming to the
+  metadatastd.yaml required_fields."
+
+  Constraints (all explicit, no open decisions):
+  - The module must start with a one-line module docstring:
+    "Extended metadata for the hrs_export command."
+  - The function returns a dict literal built directly in the return
+    statement (no intermediate variables).
+  - The returned dict has exactly these top-level keys, in this order:
+    name, version, description, category, author, email,
+    detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+  - "name": cls.name
+  - "version": cls.version
+  - "description": cls.descr
+  - "category": cls.category
+  - "author": cls.author
+  - "email": cls.email
+  - "detailed_description": the string:
+    "Returns the byte-identical HRS Markdown text of a resolved plan.
+    Read-only and not queue-bound: the HRS text is read directly from the
+    version store and returned synchronously. No filesystem access
+    occurs; the export root configuration is not used by this command."
+  - "parameters" is a dict with exactly one key:
+    - "plan": {"description": "Plan identifier resolved against the
+      catalog.", "type": "string", "required": True}
+  - "return_value" is a dict with exactly two keys "success" and "error":
+    - "success": {"description": "The byte-identical HRS Markdown text.",
+      "data": {"markdown": "The full HRS Markdown text of the plan."},
+      "example": {"markdown": "# Plan Title\n\n..."}}
+    - "error": {"description": "Domain error result.", "code": "stable
+      domain error code", "message": "human-readable message", "details":
+      "additional diagnostic fields when available"}
+  - "usage_examples" is a list of exactly one dict:
+    1. {"description": "Export the HRS Markdown of a plan.", "command":
+       {"plan": "my-plan"}, "explanation": "Returns the plan's HRS text
+       unchanged."}
+  - "error_cases" is a dict with exactly one key:
+    - "PLAN_NOT_FOUND": {"description": "The plan identifier does not
+      exist in the catalog.", "message": "Plan not found: {plan}",
+      "solution": "Call the plan catalog command and retry with a valid
+      plan identifier."}
+  - "best_practices" is a list of exactly two strings:
+    1. "This command is read-only and safe to call at any time."
+    2. "The returned text is byte-identical to the stored HRS; do not
+       post-process it before round-tripping through hrs_import."
+
+  These required top-level metadata keys come from
+  docs/standards/planning/metadatastd.yaml, section `metadata`:
+  `required_fields: [name, version, description, category, author, email,
+  detailed_description, parameters, return_value, usage_examples,
+  error_cases, best_practices]`; `parameters_entry_required:
+  [description, type, required]`; `error_cases.per_entry_required:
+  [description, message, solution]`.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-021
+    name: ExchangeFormat
+    definition: File import/export representation of a plan in the
+      standard layout; HRS as Markdown, all other artifacts as YAML.
+    properties:
+    - export optionally at a named revision; import is the only
+      file-to-truth path
+    - safe YAML emission with mandatory round-trip; hrs_export
+      byte-identical
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+
+  Do not add any other function, class, or import to this file. Do not
+  read or modify any other file.
+verification:
+  type: import
+  target: plan_manager.commands.hrs_export_metadata.get_hrs_export_metadata
+  expected: >
+    Importing plan_manager.commands.hrs_export_metadata succeeds and
+    exposes a callable get_hrs_export_metadata(cls) that, given an object
+    with attributes name, version, descr, category, author, email,
+    returns a dict containing exactly the twelve required
+    metadatastd.yaml keys, with parameters containing a "plan" entry and
+    error_cases containing a "PLAN_NOT_FOUND" entry.
+status: draft

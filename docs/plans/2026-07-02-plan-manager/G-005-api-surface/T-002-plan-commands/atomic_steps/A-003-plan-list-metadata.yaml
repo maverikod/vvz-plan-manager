@@ -1,0 +1,169 @@
+step_id: A-003
+parent_tactical_step: T-002
+name: Write plan_list metadata module
+target_file: plan_manager/commands/plan_list_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-001]
+prompt: |
+  Create the file `plan_manager/commands/plan_list_metadata.py` with exactly
+  the content specified below. This is a brand-new file; it does not exist
+  yet and no other file's content should be assumed.
+
+  PURPOSE: this module provides the extended documentation metadata for the
+  `plan_list` MCP command, per the Command Metadata and Schema Standard.
+  The command class itself (in a different file, not part of this task)
+  calls `get_plan_list_metadata(cls)` from its `metadata()` classmethod and
+  returns the result unchanged. `plan_list` is a read-only command that
+  takes no parameters and returns the database catalog of all plans (C-001).
+  Its `get_schema()` (defined elsewhere) is:
+
+  ```python
+  {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": False,
+  }
+  ```
+
+  `plan_list` declares no domain error codes: it never calls
+  `DomainCommandError`, and the underlying `list_plans` read does not raise
+  mapped domain exceptions. Any unexpected failure would propagate as a
+  platform-level internal error rather than a domain `ErrorResult`, because
+  `map_exception` re-raises exceptions it does not recognize. Therefore
+  `error_cases` must be an empty dict `{}`.
+
+  MRS EXCERPT (concept definitions relevant to this file):
+
+  - C-001 Plan: "Root aggregate of one development plan with identity, name,
+    status, and head revision." Properties: hosts the five-level hierarchy
+    HRS -> MRS -> GS -> TS -> AS; multiple plans live in one database, listed
+    by catalog query; head revision advances per revision in draft editing,
+    on publication for cascades; carries a user-set context budget in tokens
+    (default 4000) consumed by prompt assembly.
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: class attributes
+    name, version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false;
+    shallow adapter validation compensated by validate_params semantics;
+    metadata dictionary must never contradict the schema; read commands never
+    mutate, mutating commands verify by re-read; destructive or bulk
+    operations expose a dry-run mode defaulting to on.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+    stable domain string codes." Property: every declared error case
+    returnable and every returnable case declared.
+
+  REQUIRED FILE CONTENT (exact):
+
+  ```python
+  """Metadata for the plan_list command."""
+
+  from typing import Any
+
+
+  def get_plan_list_metadata(cls: Any) -> dict:
+      """Return the full metadata dictionary for PlanListCommand.
+
+      Args:
+          cls: The PlanListCommand class, providing name, version, descr,
+              category, author, email class attributes.
+
+      Returns:
+          dict: Metadata dictionary conforming to metadatastd.yaml
+              required_fields: name, version, description, category,
+              author, email, detailed_description, parameters,
+              return_value, usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Returns the database catalog of all plans (C-001). Each "
+              "row carries plan identity, name, status, context budget, "
+              "and whether the plan has a head revision. This command is "
+              "read-only: it never mutates the database and takes no "
+              "parameters."
+          ),
+          "parameters": {},
+          "return_value": {
+              "success": {
+                  "description": "The catalog of all plans.",
+                  "data": {
+                      "plans": (
+                          "List of plan rows, each with uuid, name, "
+                          "status, context_budget, and has_head."
+                      ),
+                  },
+                  "example": {
+                      "plans": [
+                          {
+                              "uuid": "3fae3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e",
+                              "name": "my-plan",
+                              "status": "draft",
+                              "context_budget": 4000,
+                              "has_head": False,
+                          }
+                      ]
+                  },
+              },
+              "error": {
+                  "description": (
+                      "This command declares no domain error codes: "
+                      "list_plans does not raise mapped domain "
+                      "exceptions, so any unexpected failure propagates "
+                      "as a platform-level internal error rather than a "
+                      "domain ErrorResult (map_exception re-raises "
+                      "exceptions it does not recognize)."
+                  ),
+                  "code": "",
+                  "message": "",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "List all plans in the catalog.",
+                  "command": {},
+                  "explanation": "Returns every plan row currently stored.",
+              }
+          ],
+          "error_cases": {},
+          "best_practices": [
+              "Call plan_list to discover valid plan identifiers before calling plan_status or other plan-scoped commands.",
+          ],
+      }
+  ```
+
+  CONSTRAINTS:
+  - The file must contain exactly one module-level function,
+    `get_plan_list_metadata(cls: Any) -> dict`, with the docstring shown
+    above verbatim.
+  - The only import is `from typing import Any`.
+  - The returned dict's top-level keys must be exactly: name, version,
+    description, category, author, email, detailed_description, parameters,
+    return_value, usage_examples, error_cases, best_practices — in that
+    order.
+  - `parameters` must be an empty dict `{}`.
+  - `error_cases` must be an empty dict `{}`.
+  - Do not add a module-level docstring other than
+    `"""Metadata for the plan_list command."""`.
+  - Do not import PlanListCommand or any command module from this file.
+verification:
+  type: import
+  target: plan_manager.commands.plan_list_metadata
+  expected: >
+    The module imports without error. It defines a single callable
+    get_plan_list_metadata(cls) that, when called with any object exposing
+    name="plan_list", version="1.0.0", descr="List all plans in the
+    catalog.", category="plan", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com" as attributes, returns a dict containing
+    exactly the keys name, version, description, category, author, email,
+    detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices, with parameters equal to {} and
+    error_cases equal to {}.
+status: draft

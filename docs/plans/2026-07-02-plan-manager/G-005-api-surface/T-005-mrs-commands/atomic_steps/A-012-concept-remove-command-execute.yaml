@@ -1,0 +1,240 @@
+step_id: A-012
+parent_tactical_step: T-005
+name: Add cascade-wired execute method to concept_remove command
+target_file: plan_manager/commands/concept_remove_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-011]
+concepts: [C-023, C-026, C-003, C-016]
+prompt: |
+  Target file: `plan_manager/commands/concept_remove_command.py`. Operation: modify_file.
+
+  Current full content of the target file (post all lower-priority AS on this file):
+
+  ```python
+  """Command: remove an existing concept from the plan MRS (concept_remove)."""
+
+  import uuid
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+
+  class ConceptRemoveCommand(Command):
+      """Remove an existing MRS concept (C-003) under an open cascade (C-016).
+
+      MRS entities are cascade-only at any plan status: every call must carry the
+      UUID of an already-open cascade in cascade_uuid.
+      """
+
+      name = "concept_remove"
+      version = "1.0.0"
+      descr = "Remove an existing concept from the plan MRS under an open cascade."
+      category = "mrs"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the strict input schema for concept_remove."""
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  },
+                  "cascade_uuid": {
+                      "type": "string",
+                      "description": "UUID of the open cascade admitting this mutation. Required: MRS entities are cascade-only at any status.",
+                  },
+                  "concept_id": {
+                      "type": "string",
+                      "description": "Concept identifier of the concept to remove.",
+                  },
+              },
+              "required": ["plan", "cascade_uuid", "concept_id"],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate params: shallow schema checks, then parse cascade_uuid format.
+
+          Raises:
+              ValueError: if cascade_uuid is not a well-formed UUID string.
+          """
+          params = super().validate_params(params)
+          uuid.UUID(params["cascade_uuid"])
+          return params
+  ```
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - read commands never mutate; mutating commands verify by re-read
+
+  Imported foundation/sibling contracts used by the new code (quote verbatim; import
+  them, never reimplement their bodies):
+
+  - Module `plan_manager.commands.errors`:
+    `def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult`
+    and `def map_exception(exc: Exception) -> ErrorResult`.
+  - Module `plan_manager.commands.resolve`:
+    `def resolve_plan(conn, plan: str) -> Plan` — Plan has fields uuid, name,
+    status, context_budget, head_revision_uuid; raises an exception mapped by
+    map_exception to code "PLAN_NOT_FOUND" when the plan cannot be resolved.
+  - Module `plan_manager.runtime.context`:
+    `def db_connection()` — context manager yielding a psycopg.Connection.
+  - Module `plan_manager.cascade.record`:
+    `class CascadeError(ValueError)`.
+  - Module `plan_manager.cascade.regime`:
+    `def check_admission(conn, plan_uuid, target_kind: str, target_uuid, cascade_uuid) -> CascadeRecord | None`
+    — for target_kind "concept" a request without a valid open cascade_uuid
+    raises CascadeError; CascadeRecord has fields uuid, plan_uuid, name,
+    base_revision_uuid, status, created_at.
+  - Module `plan_manager.cascade.write`:
+    `def cascade_write(conn, plan_uuid, cascade: CascadeRecord, node_uuid, node_snapshot: dict, status_updates: list[tuple], author: str, message: str) -> uuid.UUID`.
+  - Module `plan_manager.cascade.propagation`:
+    `def mrs_invalidation(nodes: dict) -> list[tuple]` — returns
+    (step_uuid, "needs_review") for every global step.
+  - Module `plan_manager.views.dependency_graph`:
+    `def load_steps(conn, plan_uuid) -> dict` — maps step uuid to Step.
+  - Module `plan_manager.domain.concept_store`:
+    `@dataclass class Concept:` fields uuid: uuid.UUID, plan_uuid: uuid.UUID,
+    concept_id: str, name: str, definition: str, properties: list[str],
+    source_labels: list[str]; `def get_concept(conn, plan_uuid, concept_id: str) -> Concept | None`;
+    `def remove_concept(conn, plan_uuid, concept_id: str) -> Concept` — removes
+    and returns the removed row; raises ValueError for an unknown id.
+
+  Node snapshot convention (binding): the removal tombstone snapshot is the
+  pre-removal concept snapshot plus the key "deleted": true, i.e. exactly
+  `{"kind": "concept", "uuid": str, "plan_uuid": str, "concept_id", "name",
+  "definition", "properties", "source_labels", "deleted": true}`.
+
+  Required edit 1 — insert these import lines immediately after the existing line
+  `from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult` and
+  before the blank line that precedes `class ConceptRemoveCommand(Command):`:
+
+  ```python
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission
+  from plan_manager.cascade.write import cascade_write
+  from plan_manager.cascade.propagation import mrs_invalidation
+  from plan_manager.views.dependency_graph import load_steps
+  from plan_manager.domain.concept_store import get_concept, remove_concept
+  ```
+
+  Required edit 2 — append this method at the end of the class body, after
+  validate_params, keeping the same 4-space class-body indentation:
+
+  ```python
+      async def execute(
+          self,
+          plan: str,
+          cascade_uuid: str,
+          concept_id: str,
+      ) -> SuccessResult | ErrorResult:
+          """Remove concept_id under an open cascade and verify by re-read.
+
+          Args:
+              plan: Plan identifier (UUID or unique plan name) to resolve.
+              cascade_uuid: UUID string of the open cascade admitting this mutation.
+              concept_id: Concept identifier of the concept to remove.
+
+          Returns:
+              SuccessResult with concept_id, deleted: true, and revision_uuid, or
+              ErrorResult with code PLAN_NOT_FOUND, CASCADE_CONFLICT, or
+              CONCEPT_NOT_FOUND.
+          """
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  parsed_cascade = uuid.UUID(cascade_uuid)
+                  try:
+                      rec = check_admission(conn, p.uuid, "concept", None, parsed_cascade)
+                  except CascadeError as exc:
+                      return domain_error("CASCADE_CONFLICT", str(exc))
+                  try:
+                      removed = remove_concept(conn, p.uuid, concept_id)
+                  except ValueError as exc:
+                      return domain_error("CONCEPT_NOT_FOUND", str(exc))
+                  nodes = load_steps(conn, p.uuid)
+                  status_updates = mrs_invalidation(nodes)
+                  snapshot = {
+                      "kind": "concept",
+                      "uuid": str(removed.uuid),
+                      "plan_uuid": str(removed.plan_uuid),
+                      "concept_id": removed.concept_id,
+                      "name": removed.name,
+                      "definition": removed.definition,
+                      "properties": removed.properties,
+                      "source_labels": removed.source_labels,
+                      "deleted": True,
+                  }
+                  revision_uuid = cascade_write(
+                      conn, p.uuid, rec, removed.uuid, snapshot, status_updates,
+                      "api", f"concept_remove: {removed.concept_id}",
+                  )
+                  if get_concept(conn, p.uuid, concept_id) is not None:
+                      raise RuntimeError("concept_remove: write verification failed")
+                  return SuccessResult(data={
+                      "concept_id": removed.concept_id,
+                      "deleted": True,
+                      "revision_uuid": str(revision_uuid),
+                  })
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Apply exactly the two edits above; do not change any other line of the
+    current content.
+  - Do not read, create, or modify any other file.
+  - The resulting file must define exactly one class, ConceptRemoveCommand, with
+    methods get_schema, validate_params, execute (in that order) and no other
+    methods.
+  - execute's final exception handler must be exactly
+    `except Exception as exc: return map_exception(exc)`.
+  - CASCADE_REQUIRED is not reachable from this command (cascade_uuid is a
+    required schema parameter) and must not appear anywhere in this file.
+verification:
+  type: import
+  target: plan_manager/commands/concept_remove_command.py
+  expected: >
+    Importing the module succeeds and the resulting file is at most 400 lines.
+    ConceptRemoveCommand.execute is an async method accepting plan,
+    cascade_uuid, concept_id. When check_admission raises CascadeError, execute
+    returns an ErrorResult with code CASCADE_CONFLICT. When remove_concept
+    raises ValueError, execute returns an ErrorResult with code
+    CONCEPT_NOT_FOUND. On success, execute calls cascade_write with a tombstone
+    snapshot carrying "deleted": true, then re-reads via get_concept to confirm
+    the concept no longer resolves, and returns a SuccessResult whose data is
+    {"concept_id": <id>, "deleted": true, "revision_uuid": str(cascade_write's
+    return value)}.
+status: draft

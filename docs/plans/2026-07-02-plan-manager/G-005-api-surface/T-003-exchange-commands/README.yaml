@@ -1,0 +1,53 @@
+step_id: T-003
+parent_global_step: G-005
+name: exchange-commands
+description: >
+  Create the exchange command classes of the inventory: plan_export,
+  plan_import, hrs_export, and hrs_import, each conforming to the
+  CommandContract (C-023) and wrapping the ExchangeFormat operations (C-021).
+  plan_export is read-only and queue-bound: it renders one resolved plan into
+  the standard file layout under the configured export root, optionally at a
+  named revision, and returns the written layout summary; an unknown revision
+  yields the revision-not-found code (C-026). hrs_export is read-only and not
+  queue-bound: it returns the byte-identical HRS Markdown of the plan.
+  plan_import and hrs_import are mutating and queue-bound: plan_import reads
+  a standard layout from the configured import location and creates a new
+  plan as the only file-to-truth path, hrs_import replaces the HRS text of a
+  resolved plan from a Markdown source; both validate the source before any
+  write and reject a malformed source with the import-invalid code without
+  touching the database, both expose a dry-run mode defaulting to on that
+  reports what would be written without writing, and both verify their own
+  result by re-reading after write. File locations derive from server
+  configuration only; request parameters never carry filesystem paths. This
+  step defines the four command classes, their schemas, metadata, validation,
+  queue opt-in, and execution wiring onto the exchange operations; it does
+  not implement parsing, rendering, or round-trip mechanics of the exchange
+  layer itself and registers nothing.
+concepts: [C-023, C-026, C-021]
+inputs:
+- name: export_request
+  type: command parameters
+  description: >
+    The plan identifier and the optional revision identifier for plan
+    export; the plan identifier alone for HRS export.
+- name: import_request
+  type: command parameters
+  description: >
+    The import source selector under the configured location, the target
+    plan identifier for HRS import, and the dry-run flag defaulting to on.
+outputs:
+- name: export_result
+  type: command result
+  description: >
+    The written layout summary for plan export; the byte-identical HRS
+    Markdown text for HRS export.
+- name: import_result
+  type: command result
+  description: >
+    The dry-run report of what would be written, or the created or updated
+    state verified by re-read; a malformed source yields the import-invalid
+    error without any write.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009,
+  A-010, A-011, A-012, A-013, A-014, A-015, A-016, A-017, A-018, A-019, A-020,
+  A-021, A-022, A-023, A-024]
+status: draft

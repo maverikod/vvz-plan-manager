@@ -1,0 +1,52 @@
+step_id: T-009
+parent_global_step: G-005
+name: verification-commands
+description: >
+  Create the verification entry point command classes of the inventory:
+  plan_validate and plan_score, each conforming to the CommandContract
+  (C-023) and queue-bound as declared long-running. plan_validate runs the
+  mechanical gate (C-012) as a pure read: its parameters are the plan
+  identifier, a scope selector distinguishing the whole plan from one branch
+  named by its three step identifiers, a fail-fast flag stopping only at
+  check-group boundaries, and an enumerated output format switching between
+  the per-check PASS/FAIL text report and the machine-checkable JSON form
+  with the overall green flag; every finding (C-017) names its check
+  identifier, offending artifact path, and exact items, and the result binds
+  to the measured revision (C-020). plan_score runs the semantic layer
+  (C-013) over the same scope selector: it refuses a scope that has not
+  passed the gate in the same tree state with the gate-red code, refuses a
+  stale gate verdict with the verdict-stale code (C-026), returns index,
+  trust (C-014), and color verdict with per-estimator internals surfaced
+  only for scopes below threshold or on the explicit verbose flag, and
+  degrades explicitly with the embeddings-unavailable signal instead of
+  failing. Both commands mutate nothing and store nothing. This step defines
+  the two command classes with schemas, metadata, validation, queue opt-in,
+  and execution wiring onto the gate and scoring operations; it registers
+  nothing.
+concepts: [C-023, C-026, C-012, C-013, C-014, C-017, C-020]
+inputs:
+- name: validate_request
+  type: command parameters
+  description: >
+    The plan identifier, the scope selector (whole plan or one branch by
+    three step identifiers), the fail-fast flag, and the enumerated output
+    format.
+- name: score_request
+  type: command parameters
+  description: >
+    The plan identifier, the same scope selector, and the verbose flag
+    forcing estimator internals into the result.
+outputs:
+- name: validation_report
+  type: command result
+  description: >
+    The gate report in text or JSON form with findings naming check id,
+    artifact path, and items, bound to the measured revision.
+- name: score_report
+  type: command result
+  description: >
+    Index, trust, and color verdict with internals below threshold or on
+    request; gate-red, verdict-stale, and embeddings-unavailable signals
+    as explicit typed results.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft

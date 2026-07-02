@@ -1,0 +1,133 @@
+step_id: A-010
+parent_tactical_step: T-007
+name: Add metadata to GraphOrderCommand
+target_file: plan_manager/commands/graph_order_command.py
+operation: modify_file
+priority: 3
+depends_on: [A-009, A-007]
+concepts: [C-023, C-026]
+prompt: |
+  Modify the existing file at the exact project-relative path
+  `plan_manager/commands/graph_order_command.py`.
+
+  Current full content of the file (state after all lower-priority atomic
+  steps on this file have been applied):
+
+  ```python
+  """Graph command: topological execution order of a plan's steps (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class GraphOrderCommand(Command):
+      """Return the topological execution order of a plan's steps."""
+
+      name = "graph_order"
+      version = "1.0.0"
+      descr = "Return the topological execution order of a plan's steps."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+  ```
+
+  Replace this content with exactly the following full file content,
+  byte-identical:
+
+  ```python
+  """Graph command: topological execution order of a plan's steps (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from plan_manager.commands.graph_order_metadata import get_graph_order_metadata
+
+
+  class GraphOrderCommand(Command):
+      """Return the topological execution order of a plan's steps."""
+
+      name = "graph_order"
+      version = "1.0.0"
+      descr = "Return the topological execution order of a plan's steps."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          return get_graph_order_metadata(cls)
+  ```
+
+  Constraints:
+  - Add a new import block: one blank line after the existing
+    `from mcp_proxy_adapter.commands.result import SuccessResult` line, then
+    the line `from plan_manager.commands.graph_order_metadata import
+    get_graph_order_metadata`, then two blank lines before the class
+    definition (matching the layout shown above exactly).
+  - `plan_manager.commands.graph_order_metadata` exports a function with
+    signature `def get_graph_order_metadata(cls) -> dict:` that returns the
+    command's full documentation metadata dict (this function already
+    exists in that module).
+  - Append the `metadata` classmethod shown above, with signature
+    `@classmethod def metadata(cls) -> dict:`, after the existing
+    `get_schema` method, separated by exactly one blank line. Its body is
+    exactly `return get_graph_order_metadata(cls)`.
+  - No other line changes.
+  - Do not add `validate_params` or `execute` in this edit.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Relevant property: "metadata
+  dictionary must never contradict the schema" — metadata() must delegate
+  to the dedicated metadata module rather than duplicating or diverging
+  from the get_schema() definition.
+
+  C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+  stable domain string codes." Relevant property: "every declared error
+  case returnable and every returnable case declared" — the metadata this
+  method returns documents the domain error codes (PLAN_NOT_FOUND,
+  CYCLE_DETECTED) that this command can actually return.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/graph_order_command.py
+  expected: >
+    The file parses as valid Python 3.12 source with no syntax errors,
+    imports get_graph_order_metadata from plan_manager.commands.
+    graph_order_metadata, and GraphOrderCommand.metadata() returns exactly
+    get_graph_order_metadata(GraphOrderCommand).
+status: draft

@@ -1,0 +1,302 @@
+step_id: A-012
+parent_tactical_step: T-008
+name: BranchDumpCommand execute method
+target_file: plan_manager/commands/branch_dump_command.py
+operation: modify_file
+priority: 5
+depends_on: [A-011]
+concepts: [C-023, C-026, C-008, C-011]
+prompt: |
+  Modify the existing file plan_manager/commands/branch_dump_command.py.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-011
+    name: Prompt
+    definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
+    properties:
+    - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta
+    - byte-identical for the same tree state; token estimate against the plan's user-set context budget
+    - dump snapshots are derived artifacts never read back
+    - the server never executes prompts
+    source_labels: ["{t3u5}", "{y6q1}", "{s5m8}", "{r9f1}", "{j1w5}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+
+  Verbatim foundation/sibling contracts to import and use, never
+  reimplement:
+
+  - plan_manager/commands/errors.py:
+    `def map_exception(exc) -> ErrorResult` — maps a DomainCommandError
+    with code PLAN_NOT_FOUND (raised by resolve_plan when the plan does
+    not resolve) and any other exception to its declared domain code.
+  - plan_manager/commands/resolve.py:
+    `def resolve_plan(conn, plan: str) -> Plan` — Plan has fields uuid,
+    name, status, context_budget, head_revision_uuid.
+  - plan_manager/runtime/context.py:
+    `def db_connection()` — returns a context manager; used as
+    `with db_connection() as conn:` to obtain a psycopg 3 connection.
+    `def app_config() -> AppConfig` — AppConfig has field
+    export_root: str among others.
+  - plan_manager/views/branch.py:
+    `@dataclass Branch` with fields plan_uuid, gs: Step, ts: Step,
+    atomic: Step, hrs_slice: list[Paragraph].
+    `def resolve_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str, as_step_id: str) -> Branch`.
+  - plan_manager/views/dependency_graph.py:
+    `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]` — Step
+    has fields uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
+    fields, depends_on, concepts, status. level 3 is a global step (GS),
+    level 4 is a tactical step (TS), level 5 is an atomic step (AS).
+    parent_step_uuid is the uuid of the step's parent (None for level 3
+    steps).
+  - plan_manager/views/prompt.py:
+    `def assemble_prompt(conn, branch: Branch) -> str` — the
+    deterministic executor prompt in the fixed order (MRS excerpt, HRS
+    slice, GS, TS, AS delta under fixed headers), byte-identical for the
+    same tree state.
+
+  Standard library import needed: `import pathlib`.
+
+  CURRENT FILE CONTENT (exact, after all lower-priority AS on this file
+  have been applied):
+
+  """BranchDumpCommand: write every branch's prompt as a non-authoritative snapshot."""
+  from typing import Any, ClassVar, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from plan_manager.commands.branch_dump_metadata import get_branch_dump_metadata
+
+
+  class BranchDumpCommand(Command):
+      """Dump every branch's executor prompt to disk as a derived snapshot."""
+
+      name: ClassVar[str] = "branch_dump"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Write the executor prompt of every branch of the plan under "
+          "the configured export root as an explicitly "
+          "non-authoritative derived snapshot."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :return: A dict with object type, properties for plan (type
+              string) and dry_run (type boolean, default False), a
+              required list naming only plan, and additionalProperties
+              False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or UUID).",
+                  },
+                  "dry_run": {
+                      "type": "boolean",
+                      "description": (
+                          "When true, count the branches that would be "
+                          "dumped without writing any file. The dump is "
+                          "always an explicitly non-authoritative "
+                          "derived snapshot regardless of this flag."
+                      ),
+                      "default": False,
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return extended AI/documentation metadata for this command.
+
+          :return: The dictionary produced by get_branch_dump_metadata(cls).
+          """
+          return get_branch_dump_metadata(cls)
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate and normalize the raw parameters for this command.
+
+          :param params: Raw parameter dict as received from the
+              adapter, already checked against get_schema(): object
+              type, plan required and of type string, dry_run optional
+              and of type boolean when present, no additional
+              properties.
+          :return: The params dict, unchanged beyond the base validation
+              already performed by the superclass. No further semantic
+              validation applies to this command: plan existence is
+              resolved and reported as a domain error during execute(),
+              not during schema validation.
+          """
+          params = super().validate_params(params)
+          return params
+
+  REQUIRED CHANGE:
+
+  1. Replace the import block with exactly this new import block (adds
+     `import pathlib` as the first line, adds ErrorResult to the result
+     import, and adds four new import lines for the foundation/sibling
+     contracts; all other lines are unchanged):
+
+     import pathlib
+     from typing import Any, ClassVar, Dict
+
+     from mcp_proxy_adapter.commands.base import Command
+     from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+     from plan_manager.commands.branch_dump_metadata import get_branch_dump_metadata
+     from plan_manager.commands.errors import map_exception
+     from plan_manager.commands.resolve import resolve_plan
+     from plan_manager.runtime.context import app_config, db_connection
+     from plan_manager.views.branch import resolve_branch
+     from plan_manager.views.dependency_graph import load_steps
+     from plan_manager.views.prompt import assemble_prompt
+
+  2. Append this method to the end of the BranchDumpCommand class body,
+     immediately after validate_params, separated by exactly one blank
+     line:
+
+      def execute(self, plan: str, dry_run: bool = False) -> SuccessResult | ErrorResult:
+          """Dump the executor prompt of every branch of the plan to disk.
+
+          :param plan: Plan identifier (name or UUID) resolved via
+              resolve_plan(conn, plan) -> Plan (fields uuid, name,
+              status, context_budget, head_revision_uuid).
+          :param dry_run: When True, count the branches that would be
+              dumped without writing any file. Defaults to False.
+          :return: SuccessResult(data={"branches": int, "root": str,
+              "dry_run": bool, "non_authoritative": True}) on success;
+              ErrorResult from map_exception(exc) for any exception,
+              including a DomainCommandError with code PLAN_NOT_FOUND
+              raised by resolve_plan when the plan does not resolve. The
+              written files are an explicitly non-authoritative derived
+              snapshot: they are never read back by the server, and a
+              dry_run=True call never touches disk, so calling this
+              command is always safe.
+          """
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  nodes = load_steps(conn, p.uuid)
+                  by_parent = {}
+                  for node in nodes.values():
+                      by_parent.setdefault(node.parent_step_uuid, []).append(node)
+                  gs_list = sorted(
+                      (n for n in nodes.values() if n.level == 3),
+                      key=lambda n: n.step_id,
+                  )
+                  dump_root = (
+                      pathlib.Path(app_config().export_root)
+                      / "prompt_dump"
+                      / str(p.uuid)
+                  )
+                  count = 0
+                  for gs in gs_list:
+                      ts_list = sorted(
+                          (n for n in by_parent.get(gs.uuid, []) if n.level == 4),
+                          key=lambda n: n.step_id,
+                      )
+                      for ts in ts_list:
+                          atomic_list = sorted(
+                              (n for n in by_parent.get(ts.uuid, []) if n.level == 5),
+                              key=lambda n: n.step_id,
+                          )
+                          for atomic in atomic_list:
+                              branch = resolve_branch(
+                                  conn, p.uuid, gs.step_id, ts.step_id, atomic.step_id
+                              )
+                              count += 1
+                              if dry_run:
+                                  continue
+                              text = assemble_prompt(conn, branch)
+                              target = (
+                                  dump_root
+                                  / gs.step_id
+                                  / ts.step_id
+                                  / f"{atomic.step_id}.md"
+                              )
+                              target.parent.mkdir(parents=True, exist_ok=True)
+                              target.write_text(text, encoding="utf-8")
+                  return SuccessResult(
+                      data={
+                          "branches": count,
+                          "root": str(dump_root),
+                          "dry_run": dry_run,
+                          "non_authoritative": True,
+                      }
+                  )
+          except Exception as exc:
+              return map_exception(exc)
+
+  Constraints:
+  - Do not modify any other part of the existing file content shown
+    above beyond the single import-block replacement and the single
+    method append described.
+  - The method signature is exactly
+    `def execute(self, plan: str, dry_run: bool = False) -> SuccessResult | ErrorResult:`.
+  - Triples are enumerated by parent linkage exactly as shown: level 3
+    steps (gs), sorted by step_id; for each, its level 4 children (ts)
+    grouped by parent_step_uuid, sorted by step_id; for each, its level
+    5 children (atomic) grouped by parent_step_uuid, sorted by step_id.
+  - The dump root is exactly
+    `pathlib.Path(app_config().export_root) / "prompt_dump" / str(p.uuid)`.
+  - The per-branch target file path is exactly
+    `dump_root / gs.step_id / ts.step_id / f"{atomic.step_id}.md"`.
+  - When dry_run is True, no directory is created and no file is
+    written; only count is incremented.
+  - When dry_run is False, target.parent.mkdir(parents=True, exist_ok=True)
+    is called before target.write_text(text, encoding="utf-8").
+  - The success data dict has exactly the four keys branches, root,
+    dry_run, non_authoritative, computed exactly as shown
+    (non_authoritative is always the literal True).
+  - The single try/except wraps the entire `with db_connection() as conn:`
+    block, catches `Exception as exc`, and returns `map_exception(exc)`
+    as the final handler. No other exception handling is added.
+verification:
+  type: import
+  target: plan_manager.commands.branch_dump_command
+  expected: >
+    The module imports without error; BranchDumpCommand.execute(self, plan,
+    dry_run=False) enumerates every (gs, ts, atomic) branch of the plan sorted
+    by step_id, writes one Markdown file per branch under
+    <export_root>/prompt_dump/<plan uuid>/<gs step id>/<ts step id>/<as step
+    id>.md when dry_run is False, writes nothing when dry_run is True, returns
+    SuccessResult(data={"branches", "root", "dry_run", "non_authoritative":
+    True}), and returns map_exception(exc) for any exception including plan
+    resolution failure (PLAN_NOT_FOUND).
+status: draft

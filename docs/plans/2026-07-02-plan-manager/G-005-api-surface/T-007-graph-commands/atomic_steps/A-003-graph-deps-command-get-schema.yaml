@@ -1,0 +1,108 @@
+step_id: A-003
+parent_tactical_step: T-007
+name: Add get_schema to GraphDepsCommand
+target_file: plan_manager/commands/graph_deps_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-002]
+concepts: [C-023]
+prompt: |
+  Modify the existing file at the exact project-relative path
+  `plan_manager/commands/graph_deps_command.py`.
+
+  Current full content of the file (state after all lower-priority atomic
+  steps on this file have been applied):
+
+  ```python
+  """Graph command: dependency neighborhood of one step (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class GraphDepsCommand(Command):
+      """Return the dependency neighborhood (depends_on and dependents) of one step."""
+
+      name = "graph_deps"
+      version = "1.0.0"
+      descr = "Return the dependency neighborhood (depends_on and dependents) of one step."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+  ```
+
+  Replace this content with exactly the following full file content,
+  byte-identical:
+
+  ```python
+  """Graph command: dependency neighborhood of one step (C-009)."""
+  from __future__ import annotations
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class GraphDepsCommand(Command):
+      """Return the dependency neighborhood (depends_on and dependents) of one step."""
+
+      name = "graph_deps"
+      version = "1.0.0"
+      descr = "Return the dependency neighborhood (depends_on and dependents) of one step."
+      category = "graph"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  },
+                  "step_id": {
+                      "type": "string",
+                      "description": "step_id of the target step within the plan.",
+                  },
+              },
+              "required": ["plan", "step_id"],
+              "additionalProperties": False,
+          }
+  ```
+
+  Constraints:
+  - The only change is appending the `get_schema` classmethod shown above,
+    with signature `@classmethod def get_schema(cls) -> dict:`, after the
+    existing `use_queue = False` line, separated by exactly one blank line.
+  - No existing line changes; no import changes.
+  - The returned schema has `type` equal to `"object"`, `properties` with
+    exactly two entries `plan` and `step_id` (each `type: "string"` with a
+    non-empty `description`), `required` equal to the list `["plan",
+    "step_id"]`, and `additionalProperties` equal to `False` (explicit
+    boolean, not omitted).
+  - Do not add `metadata`, `validate_params`, or `execute` in this edit.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Relevant property: "get_schema
+  strict subset with explicit additionalProperties false" — get_schema
+  returns only type, properties (each with type and description),
+  required, and an explicit additionalProperties: False; no other JSON
+  Schema keywords are used.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/graph_deps_command.py
+  expected: >
+    The file parses as valid Python 3.12 source with no syntax errors and
+    GraphDepsCommand.get_schema() returns a dict with type "object",
+    properties plan and step_id both typed string with descriptions,
+    required equal to ["plan", "step_id"], and additionalProperties equal
+    to False.
+status: draft

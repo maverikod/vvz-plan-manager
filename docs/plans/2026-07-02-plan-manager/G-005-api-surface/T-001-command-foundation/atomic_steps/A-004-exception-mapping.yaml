@@ -1,0 +1,286 @@
+step_id: A-004
+parent_tactical_step: T-001
+name: exception-mapping
+target_file: plan_manager/commands/errors.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-026]
+prompt: |
+  Modify the file `plan_manager/commands/errors.py`. Its full current content,
+  exactly as it exists after all lower-priority atomic steps on this file have
+  been applied, is:
+
+  ```python
+  """Domain error registry for plan_manager commands (C-026).
+
+  Defines the closed set of stable domain string codes returnable by command
+  error results.
+  """
+
+  from mcp_proxy_adapter.commands.result import ErrorResult
+
+  DOMAIN_CODES: frozenset[str] = frozenset({
+      "PLAN_NOT_FOUND",
+      "STEP_NOT_FOUND",
+      "CONCEPT_NOT_FOUND",
+      "RELATION_NOT_FOUND",
+      "PARAGRAPH_NOT_FOUND",
+      "REVISION_NOT_FOUND",
+      "CASCADE_REQUIRED",
+      "CASCADE_CONFLICT",
+      "FROZEN_ARTIFACT",
+      "INVALID_TRANSITION",
+      "DUPLICATE_ID",
+      "CYCLE_DETECTED",
+      "GATE_RED",
+      "VERDICT_STALE",
+      "EMBEDDINGS_UNAVAILABLE",
+      "IMPORT_INVALID",
+  })
+
+
+  class DomainCommandError(Exception):
+      """Domain-level command error carrying a stable code from DOMAIN_CODES.
+
+      Raised by command implementations, and by wrapped domain operations
+      that already know the exact domain code that applies, to signal a
+      failure that must be reported to the caller as one of the codes in
+      DOMAIN_CODES.
+      """
+
+      def __init__(self, code: str, message: str, details: dict | None = None) -> None:
+          if code not in DOMAIN_CODES:
+              raise ValueError(f"unknown domain error code: {code}")
+          super().__init__(message)
+          self.code = code
+          self.message = message
+          self.details = details if details is not None else {}
+
+
+  def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult:
+      """Build an ErrorResult for a stable domain error code (C-026).
+
+      Args:
+          code: A domain error code; must be a member of DOMAIN_CODES.
+          message: Human-readable error message.
+          details: Optional diagnostic details; None is treated as no details.
+
+      Returns:
+          An ErrorResult constructed with keyword arguments code, message,
+          and details (empty dict when details is None or falsy).
+
+      Raises:
+          ValueError: if code is not a member of DOMAIN_CODES.
+      """
+      if code not in DOMAIN_CODES:
+          raise ValueError(f"unknown domain error code: {code}")
+      return ErrorResult(code=code, message=message, details=details or {})
+  ```
+
+  Apply two changes:
+
+  1. Insert the following import lines immediately after the existing
+     `from mcp_proxy_adapter.commands.result import ErrorResult` line, then
+     one blank line before `DOMAIN_CODES` (replacing the single blank line
+     that is currently there), in exactly this order:
+     ```python
+     import psycopg
+
+     from plan_manager.cascade.close import CommitRefusedError
+     from plan_manager.cascade.record import CascadeError
+     from plan_manager.domain.status_model import StatusTransitionError
+     from plan_manager.scoring.embedding import EmbeddingUnavailable
+     from plan_manager.scoring.index import ScoreRefusedError
+     from plan_manager.storage.version_store import VersionStoreError
+     ```
+
+  2. Append the following function at the end of the file, separated from
+     `domain_error` by exactly two blank lines.
+
+  The resulting full file content becomes:
+
+  ```python
+  """Domain error registry for plan_manager commands (C-026).
+
+  Defines the closed set of stable domain string codes returnable by command
+  error results.
+  """
+
+  import psycopg
+
+  from mcp_proxy_adapter.commands.result import ErrorResult
+  from plan_manager.cascade.close import CommitRefusedError
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.domain.status_model import StatusTransitionError
+  from plan_manager.scoring.embedding import EmbeddingUnavailable
+  from plan_manager.scoring.index import ScoreRefusedError
+  from plan_manager.storage.version_store import VersionStoreError
+
+  DOMAIN_CODES: frozenset[str] = frozenset({
+      "PLAN_NOT_FOUND",
+      "STEP_NOT_FOUND",
+      "CONCEPT_NOT_FOUND",
+      "RELATION_NOT_FOUND",
+      "PARAGRAPH_NOT_FOUND",
+      "REVISION_NOT_FOUND",
+      "CASCADE_REQUIRED",
+      "CASCADE_CONFLICT",
+      "FROZEN_ARTIFACT",
+      "INVALID_TRANSITION",
+      "DUPLICATE_ID",
+      "CYCLE_DETECTED",
+      "GATE_RED",
+      "VERDICT_STALE",
+      "EMBEDDINGS_UNAVAILABLE",
+      "IMPORT_INVALID",
+  })
+
+
+  class DomainCommandError(Exception):
+      """Domain-level command error carrying a stable code from DOMAIN_CODES.
+
+      Raised by command implementations, and by wrapped domain operations
+      that already know the exact domain code that applies, to signal a
+      failure that must be reported to the caller as one of the codes in
+      DOMAIN_CODES.
+      """
+
+      def __init__(self, code: str, message: str, details: dict | None = None) -> None:
+          if code not in DOMAIN_CODES:
+              raise ValueError(f"unknown domain error code: {code}")
+          super().__init__(message)
+          self.code = code
+          self.message = message
+          self.details = details if details is not None else {}
+
+
+  def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult:
+      """Build an ErrorResult for a stable domain error code (C-026).
+
+      Args:
+          code: A domain error code; must be a member of DOMAIN_CODES.
+          message: Human-readable error message.
+          details: Optional diagnostic details; None is treated as no details.
+
+      Returns:
+          An ErrorResult constructed with keyword arguments code, message,
+          and details (empty dict when details is None or falsy).
+
+      Raises:
+          ValueError: if code is not a member of DOMAIN_CODES.
+      """
+      if code not in DOMAIN_CODES:
+          raise ValueError(f"unknown domain error code: {code}")
+      return ErrorResult(code=code, message=message, details=details or {})
+
+
+  def map_exception(exc: Exception) -> ErrorResult:
+      """Deterministically map a wrapped-operation exception to a domain
+      ErrorResult (C-026).
+
+      Checks isinstance(exc, ...) in exactly this order and returns on the
+      first match:
+
+      1. DomainCommandError -> domain_error(exc.code, exc.message, exc.details)
+      2. CommitRefusedError -> domain_error("GATE_RED", str(exc), {})
+      3. ScoreRefusedError -> domain_error("GATE_RED", str(exc), {})
+      4. StatusTransitionError -> domain_error("INVALID_TRANSITION", str(exc), {})
+      5. VersionStoreError -> domain_error("REVISION_NOT_FOUND", str(exc), {})
+      6. CascadeError -> domain_error("CASCADE_CONFLICT", str(exc), {})
+      7. EmbeddingUnavailable -> domain_error("EMBEDDINGS_UNAVAILABLE", str(exc), {})
+      8. psycopg.errors.UniqueViolation -> domain_error("DUPLICATE_ID", str(exc), {})
+
+      Any exception matching none of the above is re-raised unchanged, so
+      unknown failures stay platform errors and are never reported as
+      domain codes.
+
+      Args:
+          exc: The exception raised by a wrapped storage, lifecycle,
+              verification, or scoring operation.
+
+      Returns:
+          An ErrorResult for the first matching exception type above.
+
+      Raises:
+          Exception: the original exc, unchanged, when it matches none of
+              the listed types.
+      """
+      if isinstance(exc, DomainCommandError):
+          return domain_error(exc.code, exc.message, exc.details)
+      if isinstance(exc, CommitRefusedError):
+          return domain_error("GATE_RED", str(exc), {})
+      if isinstance(exc, ScoreRefusedError):
+          return domain_error("GATE_RED", str(exc), {})
+      if isinstance(exc, StatusTransitionError):
+          return domain_error("INVALID_TRANSITION", str(exc), {})
+      if isinstance(exc, VersionStoreError):
+          return domain_error("REVISION_NOT_FOUND", str(exc), {})
+      if isinstance(exc, CascadeError):
+          return domain_error("CASCADE_CONFLICT", str(exc), {})
+      if isinstance(exc, EmbeddingUnavailable):
+          return domain_error("EMBEDDINGS_UNAVAILABLE", str(exc), {})
+      if isinstance(exc, psycopg.errors.UniqueViolation):
+          return domain_error("DUPLICATE_ID", str(exc), {})
+      raise exc
+  ```
+
+  Sibling contracts quoted verbatim, import only, never reimplement (each an
+  existing class in its own module; import only what is referenced above):
+  - `plan_manager.cascade.record.CascadeError(ValueError)`
+  - `plan_manager.cascade.close.CommitRefusedError(RuntimeError)`
+  - `plan_manager.domain.status_model.StatusTransitionError(ValueError)`
+  - `plan_manager.storage.version_store.VersionStoreError(ValueError)`
+  - `plan_manager.scoring.index.ScoreRefusedError(Exception)`
+  - `plan_manager.scoring.embedding.EmbeddingUnavailable(Exception)`
+  - `psycopg.errors.UniqueViolation`
+
+  Constraints (all binding, no deviation):
+  - Do not change the module docstring, `DOMAIN_CODES`, `DomainCommandError`,
+    or `domain_error` in any way other than the import lines inserted above.
+  - `def map_exception(exc: Exception) -> ErrorResult:` is the exact
+    signature.
+  - The docstring text is exactly as shown above.
+  - The isinstance checks are performed in exactly the order listed above;
+    the first match wins; there is no fallback `else` branch — the final
+    line is an unconditional `raise exc` reached only when no isinstance
+    check matched.
+  - Every `domain_error(...)` call in this function uses `str(exc)` as the
+    message argument and `{}` as the details argument, except for the
+    `DomainCommandError` branch which uses `exc.code`, `exc.message`,
+    `exc.details`.
+  - No other class, function, or import is added in this step.
+  - Do not read, create, or modify any file other than
+    `plan_manager/commands/errors.py`.
+
+  MRS excerpt (concept C-026, the only concept this step realises):
+
+  ```yaml
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+  ```
+
+  `map_exception` is the deterministic mapping from every domain exception
+  raised by wrapped storage, lifecycle, verification, and scoring operations
+  to exactly one of the codes in `DOMAIN_CODES`, completing this two-layer
+  error contract at the command boundary.
+verification:
+  type: import
+  target: plan_manager.commands.errors.map_exception
+  expected: >
+    Importing plan_manager.commands.errors succeeds. For each of
+    CommitRefusedError and ScoreRefusedError instances, map_exception
+    returns an ErrorResult with code "GATE_RED". For a StatusTransitionError
+    instance, code is "INVALID_TRANSITION". For a VersionStoreError
+    instance, code is "REVISION_NOT_FOUND". For a CascadeError instance,
+    code is "CASCADE_CONFLICT". For an EmbeddingUnavailable instance, code
+    is "EMBEDDINGS_UNAVAILABLE". For a psycopg.errors.UniqueViolation
+    instance, code is "DUPLICATE_ID". For a DomainCommandError("STEP_NOT_FOUND", "m", {"k": 1})
+    instance, the returned ErrorResult has code "STEP_NOT_FOUND", message
+    "m", details {"k": 1}. For a plain RuntimeError instance not matching
+    any listed type, map_exception re-raises the same exception instance
+    instead of returning a value.
+status: draft

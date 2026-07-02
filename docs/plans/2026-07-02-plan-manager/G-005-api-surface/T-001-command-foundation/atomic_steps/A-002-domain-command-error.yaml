@@ -1,0 +1,128 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: domain-command-error
+target_file: plan_manager/commands/errors.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-026]
+prompt: |
+  Modify the file `plan_manager/commands/errors.py`. Its full current content,
+  exactly as it exists after all lower-priority atomic steps on this file have
+  been applied, is:
+
+  ```python
+  """Domain error registry for plan_manager commands (C-026).
+
+  Defines the closed set of stable domain string codes returnable by command
+  error results.
+  """
+
+  DOMAIN_CODES: frozenset[str] = frozenset({
+      "PLAN_NOT_FOUND",
+      "STEP_NOT_FOUND",
+      "CONCEPT_NOT_FOUND",
+      "RELATION_NOT_FOUND",
+      "PARAGRAPH_NOT_FOUND",
+      "REVISION_NOT_FOUND",
+      "CASCADE_REQUIRED",
+      "CASCADE_CONFLICT",
+      "FROZEN_ARTIFACT",
+      "INVALID_TRANSITION",
+      "DUPLICATE_ID",
+      "CYCLE_DETECTED",
+      "GATE_RED",
+      "VERDICT_STALE",
+      "EMBEDDINGS_UNAVAILABLE",
+      "IMPORT_INVALID",
+  })
+  ```
+
+  Append the following class definition at the end of the file, separated
+  from `DOMAIN_CODES` by exactly two blank lines, so the resulting full file
+  content becomes:
+
+  ```python
+  """Domain error registry for plan_manager commands (C-026).
+
+  Defines the closed set of stable domain string codes returnable by command
+  error results.
+  """
+
+  DOMAIN_CODES: frozenset[str] = frozenset({
+      "PLAN_NOT_FOUND",
+      "STEP_NOT_FOUND",
+      "CONCEPT_NOT_FOUND",
+      "RELATION_NOT_FOUND",
+      "PARAGRAPH_NOT_FOUND",
+      "REVISION_NOT_FOUND",
+      "CASCADE_REQUIRED",
+      "CASCADE_CONFLICT",
+      "FROZEN_ARTIFACT",
+      "INVALID_TRANSITION",
+      "DUPLICATE_ID",
+      "CYCLE_DETECTED",
+      "GATE_RED",
+      "VERDICT_STALE",
+      "EMBEDDINGS_UNAVAILABLE",
+      "IMPORT_INVALID",
+  })
+
+
+  class DomainCommandError(Exception):
+      """Domain-level command error carrying a stable code from DOMAIN_CODES.
+
+      Raised by command implementations, and by wrapped domain operations
+      that already know the exact domain code that applies, to signal a
+      failure that must be reported to the caller as one of the codes in
+      DOMAIN_CODES.
+      """
+
+      def __init__(self, code: str, message: str, details: dict | None = None) -> None:
+          if code not in DOMAIN_CODES:
+              raise ValueError(f"unknown domain error code: {code}")
+          super().__init__(message)
+          self.code = code
+          self.message = message
+          self.details = details if details is not None else {}
+  ```
+
+  Constraints (all binding, no deviation):
+  - Do not change the module docstring or `DOMAIN_CODES` in any way.
+  - `class DomainCommandError(Exception):` is defined exactly with this
+    signature: `def __init__(self, code: str, message: str, details: dict | None = None) -> None:`.
+  - The docstring text is exactly as shown above.
+  - Constructor behavior, in this exact order: if `code` is not a member of
+    `DOMAIN_CODES`, raise `ValueError` (a plain `ValueError`, not
+    `DomainCommandError`); otherwise call `super().__init__(message)`; then
+    set `self.code = code`; then set `self.message = message`; then set
+    `self.details` to `details` when `details is not None`, else to `{}`.
+  - No other class, function, or import is added in this step.
+  - Do not read, create, or modify any file other than
+    `plan_manager/commands/errors.py`.
+
+  MRS excerpt (concept C-026, the only concept this step realises):
+
+  ```yaml
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+  ```
+
+  `DomainCommandError` is the exception form of the stable domain string code
+  half of this two-layer error contract: it lets code that already knows the
+  exact domain code raise it directly, carrying code, message, and optional
+  diagnostic details.
+verification:
+  type: import
+  target: plan_manager.commands.errors.DomainCommandError
+  expected: >
+    Importing plan_manager.commands.errors succeeds. Constructing
+    DomainCommandError("PLAN_NOT_FOUND", "x") yields an instance with
+    .code == "PLAN_NOT_FOUND", .message == "x", .details == {}.
+    Constructing DomainCommandError("NOT_A_CODE", "x") raises ValueError.
+    Constructing DomainCommandError("PLAN_NOT_FOUND", "x", {"a": 1}) yields
+    .details == {"a": 1}.
+status: draft

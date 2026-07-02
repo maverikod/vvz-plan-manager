@@ -1,0 +1,49 @@
+step_id: T-001
+parent_global_step: G-005
+name: command-foundation
+description: >
+  Create the shared foundation every command of the surface relies on. First,
+  the domain error registry of the ErrorModel (C-026): the closed set of
+  stable domain string codes — plan not found, step not found, concept not
+  found, relation not found, paragraph not found, revision not found, cascade
+  required, cascade conflict, frozen artifact, invalid transition, duplicate
+  identifier, cycle detected, gate red, verdict stale, embeddings
+  unavailable, import invalid — together with the uniform error result
+  builder that carries code, human-readable message, and diagnostic details,
+  and the deterministic mapping from every domain exception raised by the
+  wrapped storage, lifecycle, verification, and scoring operations to exactly
+  one of these codes. Every code in the registry is returnable by at least
+  one command and no command returns a code outside the registry. Second, the
+  plan identity resolution used by every command (C-023, C-001): a request
+  identifies a plan by its UUID string or by its unique name, the resolver
+  queries the database catalog and returns the plan aggregate, and an unknown
+  identifier yields the plan-not-found code; database connection parameters
+  come from server configuration only, never from request parameters. This
+  step defines the error registry, the exception mapping, the error result
+  builder, and the plan resolver; it defines no command class and registers
+  nothing.
+concepts: [C-023, C-026, C-001]
+inputs:
+- name: domain_exceptions
+  type: raised conditions
+  description: >
+    The typed exceptions raised by wrapped domain operations, consumed by
+    the deterministic mapping into stable domain codes.
+- name: plan_identifier
+  type: request datum
+  description: >
+    The UUID string or unique plan name by which every command request
+    identifies its plan against the database catalog.
+outputs:
+- name: domain_error_registry
+  type: closed code set
+  description: >
+    The closed set of stable domain string codes with the uniform error
+    result builder and the exception-to-code mapping (C-026).
+- name: resolved_plan
+  type: stored entity reference
+  description: >
+    The plan aggregate resolved from the request identifier, or the
+    plan-not-found error code.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005]
+status: draft

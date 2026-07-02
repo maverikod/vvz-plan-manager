@@ -1,0 +1,190 @@
+step_id: A-013
+parent_tactical_step: T-008
+name: branch_weak extended metadata function
+target_file: plan_manager/commands/branch_weak_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-013]
+prompt: |
+  Create the file plan_manager/commands/branch_weak_metadata.py from
+  scratch (it does not exist yet; assume no pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+
+  Domain context: BranchWeakCommand (name "branch_weak") returns the
+  plan's branches ranked by ascending semantic index (C-013): the
+  published output discipline of one number and a color, with the few
+  weakest branches ranked, up to 3 branches listed in ascending index
+  order. It refuses with the GATE_RED code when the plan has not passed
+  the mechanical gate at the current tree revision, because semantic
+  scoring only ever runs on scopes that already passed the mechanical
+  gate. It returns EMBEDDINGS_UNAVAILABLE when the embedding service is
+  unreachable and scoring degrades. An unknown plan yields
+  PLAN_NOT_FOUND.
+
+  Write exactly this file content:
+
+  """BranchWeakCommand: rank the plan's branches by ascending semantic index."""
+  from typing import Any, Dict
+
+
+  def get_branch_weak_metadata(cls: type) -> Dict[str, Any]:
+      """Return extended AI/documentation metadata for BranchWeakCommand.
+
+      :param cls: The command class requesting its metadata
+          (BranchWeakCommand). The returned dict reads cls.name,
+          cls.version, cls.descr, cls.category, cls.author, cls.email.
+      :return: A dictionary with the required metadata fields: name,
+          version, description, category, author, email,
+          detailed_description, parameters, return_value, usage_examples,
+          error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Returns the plan's branches ranked by ascending semantic "
+              "index: the published output discipline of one number and "
+              "a color, with the few weakest branches ranked, up to 3 "
+              "branches listed in ascending index order. The command "
+              "refuses with the GATE_RED code when the plan has not "
+              "passed the mechanical gate at the current tree revision, "
+              "because semantic scoring only ever runs on scopes that "
+              "already passed the mechanical gate. When the embedding "
+              "service is unreachable, scoring degrades explicitly and "
+              "the command returns the EMBEDDINGS_UNAVAILABLE code "
+              "instead of a misleadingly confident index. This command "
+              "is read-only: it never modifies the plan."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (name or UUID) resolved against the plan catalog.",
+                  "type": "string",
+                  "required": True,
+              },
+              "verbose": {
+                  "description": "When true, include per-estimator internals in each weakest-branch summary.",
+                  "type": "boolean",
+                  "required": False,
+                  "default": False,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The plan's semantic index, color verdict, and up to 3 weakest branches ascending.",
+                  "data": {
+                      "plan_index": "The plan's aggregated semantic index, 0..100.",
+                      "color": "The color verdict derived from the index and trust.",
+                      "aggregation": "The aggregation method used across branches (e.g. minimum).",
+                      "weakest": "List of up to 3 branch summaries ascending by semantic index.",
+                      "revision_uuid": "The plan revision the score was computed for.",
+                  },
+                  "example": {
+                      "plan_index": 62.5,
+                      "color": "yellow",
+                      "aggregation": "minimum",
+                      "weakest": [{"branch": "G-005/T-008/A-001", "index": 48.0}],
+                      "revision_uuid": "00000000-0000-0000-0000-000000000000",
+                  },
+              },
+              "error": {
+                  "description": "The plan could not be resolved, the gate has not passed, or embeddings are unavailable.",
+                  "code": "PLAN_NOT_FOUND | GATE_RED | EMBEDDINGS_UNAVAILABLE",
+                  "message": "Human-readable description of the refusal or failure.",
+                  "details": "Additional diagnostic fields when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Rank the weakest branches of a plan.",
+                  "command": {"plan": "plan_manager", "verbose": False},
+                  "explanation": "Returns the plan index, color, and up to 3 weakest branches ascending.",
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a plan in the catalog.",
+                  "message": "Plan not found: {plan}",
+                  "solution": "Call the plan catalog command and retry with a valid plan identifier.",
+              },
+              "GATE_RED": {
+                  "description": "The plan has not passed the mechanical gate at the current tree revision.",
+                  "message": "Scoring refused: mechanical gate is red.",
+                  "solution": "Run the mechanical gate command, resolve every finding, and retry.",
+              },
+              "EMBEDDINGS_UNAVAILABLE": {
+                  "description": "The configured embedding service is unreachable, degrading semantic scoring.",
+                  "message": "Embedding service unavailable.",
+                  "solution": "Restore connectivity to the configured embedding_url and retry.",
+              },
+          },
+          "best_practices": [
+              "Call this command after a green mechanical gate; a "
+              "GATE_RED response means the mechanical layer must be "
+              "fixed first.",
+              "Use verbose=True only when investigating a specific weak "
+              "branch; the default terse output is the published one "
+              "number and a color discipline.",
+          ],
+      }
+
+  Constraints:
+  - The module docstring is exactly the one-line string shown as the
+    first line of the file.
+  - The only import is `from typing import Any, Dict`.
+  - The function signature is exactly `def get_branch_weak_metadata(cls: type) -> Dict[str, Any]:`.
+  - The returned dict has exactly the twelve top-level keys shown: name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases,
+    best_practices.
+  - error_cases has exactly the three keys PLAN_NOT_FOUND, GATE_RED,
+    EMBEDDINGS_UNAVAILABLE, each with description, message, and solution
+    keys.
+  - Do not add any other function, class, or import.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_weak_metadata.py::get_branch_weak_metadata
+  expected: >
+    The module defines exactly one function, get_branch_weak_metadata(cls),
+    that returns a dict containing all twelve required metadata keys (name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices);
+    parameters contains exactly plan (required True) and verbose (required
+    False, default False); error_cases contains exactly PLAN_NOT_FOUND,
+    GATE_RED, EMBEDDINGS_UNAVAILABLE, each with description, message, and
+    solution.
+status: draft

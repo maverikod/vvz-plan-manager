@@ -1,0 +1,146 @@
+step_id: A-015
+parent_tactical_step: T-005
+name: Create relation_list metadata module
+target_file: plan_manager/commands/relation_list_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-004]
+prompt: |
+  Target file: `plan_manager/commands/relation_list_metadata.py`. Operation:
+  create_file (the file does not exist yet; create it with exactly the content
+  specified below).
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-004
+    name: Relation
+    definition: Typed directed edge between two concepts restricted to seven allowed types.
+    properties:
+    - types are uses, owns, implements, extends, depends_on, produces, consumes
+    - free-form types rejected at write time
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Context: this module documents the RelationListCommand class defined in
+  `plan_manager/commands/relation_list_command.py` (a sibling file, already
+  created; do not read or modify it — the facts you need about it are restated
+  here). That class has: name = "relation_list", version = "1.0.0", descr =
+  "Return the relation list of a plan.", category = "mrs". Its get_schema()
+  requires one string parameter "plan". Its execute resolves the plan via
+  resolve_plan (raising an exception mapped to PLAN_NOT_FOUND when the plan
+  cannot be resolved) then returns SuccessResult with data
+  {"relations": [...]}, one dict per stored relation with keys from_concept,
+  to_concept, type.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Extended AI/documentation metadata for the relation_list command."""
+
+  from typing import Any, Dict
+
+
+  def get_relation_list_metadata(cls) -> Dict[str, Any]:
+      """Return extended metadata for RelationListCommand.
+
+      Args:
+          cls: The RelationListCommand class (passed by its classmethod metadata()).
+
+      Returns:
+          A metadata dictionary with keys name, version, description, category,
+          author, email, detailed_description, parameters, return_value,
+          usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Returns the full MRS relation (C-004) list of a resolved plan. "
+              "Read-only: never mutates plan state."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The relation list of the plan.",
+                  "data": {
+                      "relations": "List of relation objects, each with from_concept, to_concept, type.",
+                  },
+                  "example": {
+                      "relations": [
+                          {"from_concept": "C-004", "to_concept": "C-003", "type": "depends_on"},
+                      ],
+                  },
+              },
+              "error": {
+                  "description": "Error result with a stable domain code.",
+                  "code": "stable error code string",
+                  "message": "human-readable message",
+                  "details": "additional diagnostic fields when available",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "List every relation of a plan.",
+                  "command": {"plan": "plan-manager"},
+                  "explanation": "Returns all stored relations of the resolved plan.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a stored plan.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans and retry with a valid plan identifier or UUID.",
+              },
+          },
+          "best_practices": [
+              "Use relation_list to discover existing edges before calling relation_add or relation_remove.",
+              "relation_list never mutates plan state; safe to call at any plan or cascade status.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - Exactly this file content; no additional functions or imports.
+  - Do not read, create, or modify any other file.
+  - The function must be named get_relation_list_metadata and accept exactly
+    one positional parameter named cls.
+  - error_cases must contain exactly the key PLAN_NOT_FOUND with description,
+    message, solution.
+  - The returned dict must contain all of: name, version, description, category,
+    author, email, detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+verification:
+  type: import
+  target: plan_manager/commands/relation_list_metadata.py
+  expected: >
+    Importing the module succeeds. get_relation_list_metadata(cls) called with
+    a stub object exposing name/version/descr/category/author/email attributes
+    returns a dict containing all required top-level keys (name, version,
+    description, category, author, email, detailed_description, parameters,
+    return_value, usage_examples, error_cases, best_practices); error_cases
+    has exactly the key PLAN_NOT_FOUND with description, message, and
+    solution; parameters has an entry for plan with description, type, and
+    required.
+status: draft

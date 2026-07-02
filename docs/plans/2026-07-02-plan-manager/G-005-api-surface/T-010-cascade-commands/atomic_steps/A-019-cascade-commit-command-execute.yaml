@@ -1,0 +1,248 @@
+step_id: A-019
+parent_tactical_step: T-010
+name: CascadeCommitCommand.execute
+target_file: plan_manager/commands/cascade_commit_command.py
+operation: modify_file
+priority: 5
+depends_on:
+- A-018
+concepts:
+- C-023
+- C-026
+- C-016
+- C-020
+prompt: |-
+  Target file: plan_manager/commands/cascade_commit_command.py
+  Operation: modify_file
+  Method signature: async def execute(self, **kwargs):
+
+  The file currently contains exactly the following content (this is the state after all lower-priority steps on this file have been applied; do not alter any existing line):
+
+  ```python
+  """Cascade commit command: publishes the open cascade atomically."""
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.cascade.record import get_open_cascade
+  from plan_manager.cascade.close import commit_cascade
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.commands.cascade_commit_metadata import get_cascade_commit_metadata
+
+
+  class CascadeCommitCommand(Command):
+      """Publish the plan's open cascade atomically on a green gate."""
+
+      name = "cascade_commit"
+      version = "1.0.0"
+      descr = (
+          "Publish the plan's open cascade atomically: advance the head "
+          "revision on a green gate, or refuse on a red gate."
+      )
+      category = "cascade"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the JSON Schema for cascade_commit input parameters.
+
+          Returns:
+              A JSON Schema object accepting exactly one required string
+              parameter, "plan".
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan UUID or unique plan name.",
+                  }
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          """Return the extended documentation metadata for cascade_commit.
+
+          Returns:
+              The dictionary produced by get_cascade_commit_metadata(cls).
+          """
+          return get_cascade_commit_metadata(cls)
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate cascade_commit input parameters.
+
+          Args:
+              params: Raw input parameters as received by the command.
+
+          Returns:
+              The validated parameters dictionary.
+          """
+          params = super().validate_params(params)
+          return params
+
+  ```
+
+  Append exactly the following method to the end of the class body, directly after the validate_params method shown above, separated by one blank line:
+
+  ```python
+
+      async def execute(self, **kwargs):
+          """Commit the open cascade and verify the result by re-read.
+
+          Args:
+              **kwargs: Keyword arguments containing "plan" (str): plan
+                  UUID or unique plan name.
+
+          Returns:
+              A SuccessResult with data {"green": bool, "scope": str,
+              "head_revision_uuid": str} on success, an ErrorResult with
+              code CASCADE_REQUIRED when the plan has no open cascade, or
+              an ErrorResult produced by map_exception on other failures
+              (including GATE_RED when the gate refuses the commit).
+          """
+          plan = kwargs["plan"]
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  if get_open_cascade(conn, p.uuid) is None:
+                      return domain_error(
+                          "CASCADE_REQUIRED",
+                          f"plan {p.name} has no open cascade",
+                      )
+                  verdict = commit_cascade(conn, p.uuid)
+                  still_open = get_open_cascade(conn, p.uuid)
+                  refreshed = get_plan(conn, p.uuid)
+                  assert (
+                      still_open is None
+                      and refreshed.head_revision_uuid is not None
+                  ), (
+                      f"cascade commit for plan {p.name} did not verify by "
+                      "re-read"
+                  )
+                  return SuccessResult(
+                      data={
+                          "green": verdict.green,
+                          "scope": verdict.scope,
+                          "head_revision_uuid": str(
+                              refreshed.head_revision_uuid
+                          ),
+                      }
+                  )
+          except Exception as exc:
+              return map_exception(exc)
+
+  ```
+
+  Foundation contracts referenced by the addition above (import exactly as shown; do not reimplement):
+  class SuccessResult: from mcp_proxy_adapter.commands.result. Construct with SuccessResult(data=<dict>) to wrap a successful command result.
+  class ErrorResult: from mcp_proxy_adapter.commands.result. Represents a failed command result; instances are produced by domain_error() and map_exception(), never constructed directly in command code.
+  plan_manager/commands/errors.py (import, do not reimplement):
+    class DomainCommandError(Exception):
+        def __init__(self, code, message, details=None): ...
+        # .code: str, .message: str, .details: dict | None
+    def domain_error(code, message, details=None) -> ErrorResult: ...
+    def map_exception(exc) -> ErrorResult: ...
+        # Maps CommitRefusedError -> "GATE_RED",
+        # CascadeError -> "CASCADE_CONFLICT",
+        # VersionStoreError -> "REVISION_NOT_FOUND".
+        # Also maps DomainCommandError and any other Exception subclass
+        # to an ErrorResult; this mapping is implemented in errors.py
+        # and must be imported, never reimplemented.
+  plan_manager/commands/resolve.py (import, do not reimplement):
+    def resolve_plan(conn, plan: str) -> Plan: ...
+        # Raises DomainCommandError(code="PLAN_NOT_FOUND") when the
+        # plan parameter does not resolve to any plan.
+        # Plan fields: uuid, name, status, context_budget,
+        # head_revision_uuid.
+  plan_manager/runtime/context.py (import, do not reimplement):
+    def db_connection(): ...
+        # Context manager yielding a psycopg.Connection. Use as:
+        # with db_connection() as conn: ...
+  plan_manager/cascade/record.py (import, do not reimplement):
+    class CascadeError(ValueError): ...
+    @dataclass(frozen=True)
+    class CascadeRecord:
+        uuid: uuid.UUID
+        plan_uuid: uuid.UUID
+        name: str
+        base_revision_uuid: uuid.UUID | None
+        status: str
+        created_at: datetime
+    def get_open_cascade(conn, plan_uuid) -> CascadeRecord | None: ...
+  plan_manager/cascade/close.py (import, do not reimplement):
+    class CommitRefusedError(RuntimeError): ...
+    def commit_cascade(conn, plan_uuid) -> Verdict: ...
+        # Verdict fields: kind, scope, revision_uuid: uuid.UUID | None,
+        # green: bool, payload: dict.
+        # Raises CommitRefusedError when the mechanical gate is red;
+        # the cascade stays open in that case.
+    def abort_cascade(conn, plan_uuid) -> None: ...
+  plan_manager/domain/plan.py (import, do not reimplement):
+    def get_plan(conn, plan_uuid) -> Plan: ...
+        # Plan fields: uuid, name, status, context_budget,
+        # head_revision_uuid.
+
+  Constraints:
+  - Python 3.12+ syntax; use built-in generic types (dict, list) for annotations, not typing.Dict/typing.List.
+  - Do not add any code beyond exactly what this prompt specifies.
+  - Do not add a __main__ guard, logging, or any helper not listed here.
+  - Preserve exactly one blank line between top-level imports and the class definition, and exactly one blank line between methods.
+  - Do not reformat or otherwise change any line of the current file content shown above; only append the specified new code at the specified location.
+  - kwargs["plan"] is read directly (the schema guarantees it is present and a string).
+  - The entire body after resolving the connection is wrapped in try/except Exception as exc: return map_exception(exc); this is the only exception handling in the method.
+  - Use the assert statement exactly as shown to verify the post-mutation state by re-reading it from the database before constructing the success response; do not raise DomainCommandError or any other exception type for this internal consistency check.
+
+  MRS excerpt (concepts referenced by this step):
+  concepts:
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+    source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+  relations:
+  - { from_concept: C-023, to_concept: C-026, type: uses }
+  - { from_concept: C-020, to_concept: C-018, type: depends_on }
+verification:
+  type: manual
+  target: plan_manager.commands.cascade_commit_command.CascadeCommitCommand.execute
+  expected: >
+    Running cascade_commit end to end against a live database connection produces the exact success data
+    shape and error codes documented in the command's detailed_description and error_cases: PLAN_NOT_FOUND,
+    CASCADE_REQUIRED, GATE_RED. A mutating call whose post-operation database state does not match the
+    re-read assertion never reaches the success branch.
+status: draft

@@ -1,0 +1,157 @@
+step_id: A-013
+parent_tactical_step: T-003
+name: plan-import-metadata
+target_file: plan_manager/commands/plan_import_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-021]
+prompt: |
+  Create the file plan_manager/commands/plan_import_metadata.py with the
+  exact full content below (operation: create_file — the file does not
+  exist yet, assume no pre-existing content).
+
+  Required imports (exact module paths):
+    from typing import Any, Dict
+
+  Required function signature:
+    def get_plan_import_metadata(cls) -> Dict[str, Any]:
+
+  Docstring for the function (Google style, exact wording of purpose):
+  "Build the extended documentation metadata for PlanImportCommand." with
+  an Args section documenting `cls` as "The PlanImportCommand class
+  (passed as ``cls`` from a classmethod)." and a Returns section
+  documenting the return value as "A dictionary conforming to the
+  metadatastd.yaml required_fields."
+
+  Constraints (all explicit, no open decisions):
+  - The module must start with a one-line module docstring:
+    "Extended metadata for the plan_import command."
+  - The function returns a dict literal built directly in the return
+    statement (no intermediate variables).
+  - The returned dict has exactly these top-level keys, in this order:
+    name, version, description, category, author, email,
+    detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+  - "name": cls.name
+  - "version": cls.version
+  - "description": cls.descr
+  - "category": cls.category
+  - "author": cls.author
+  - "email": cls.email
+  - "detailed_description": the string:
+    "Reads a standard file layout selected by name under the
+    server-configured export root and creates a new plan from it; import
+    is the only file-to-truth path for a full plan. The source layout is
+    validated before any database write, and a malformed layout is
+    rejected with IMPORT_INVALID without touching the database. Exposes a
+    dry_run mode that defaults to True (safety default on): a dry run
+    only validates the layout and reports whether it would succeed,
+    without creating a plan. When dry_run is False and validation passes,
+    the command creates the plan and then verifies the result by
+    re-reading the created plan through resolve_plan before returning.
+    The source parameter is a bare directory name resolved under
+    app_config().export_root; it never carries a filesystem path (no
+    '/', no '\\', no '..')."
+  - "parameters" is a dict with exactly two keys:
+    - "source": {"description": "Name of the standard layout directory
+      under the configured export root. Must not contain '/', '\\' or
+      '..'.", "type": "string", "required": True}
+    - "dry_run": {"description": "When true (the default), only validate
+      the layout and report the outcome without writing to the
+      database.", "type": "boolean", "required": False, "default": True}
+  - "return_value" is a dict with exactly two keys "success" and "error":
+    - "success": {"description": "The dry-run report or the created plan
+      state, verified by re-read.", "data": {"dry_run": "Whether this
+      call was a dry run.", "valid": "Present on dry-run success; always
+      true.", "source": "Present on dry-run success; the source name.",
+      "plan_uuid": "Present on a real import; the created plan's UUID.",
+      "name": "Present on a real import; the created plan's name,
+      re-read after write."}, "example": {"dry_run": True, "valid": True,
+      "source": "my-plan"}}
+    - "error": {"description": "Domain error result.", "code": "stable
+      domain error code", "message": "human-readable message", "details":
+      "additional diagnostic fields when available"}
+  - "usage_examples" is a list of exactly two dicts:
+    1. {"description": "Preview an import without writing to the
+       database.", "command": {"source": "my-plan"}, "explanation":
+       "Validates the layout only; dry_run defaults to true."}
+    2. {"description": "Perform the import for real.", "command":
+       {"source": "my-plan", "dry_run": False}, "explanation": "Validates
+       the layout, creates the plan, and verifies it by re-read."}
+  - "error_cases" is a dict with exactly one key:
+    - "IMPORT_INVALID": {"description": "The source layout under the
+      export root failed structural validation.", "message": "layout
+      validation failed", "solution": "Inspect the returned issues list,
+      fix the layout files, and retry."}
+  - "best_practices" is a list of exactly four strings:
+    1. "dry_run defaults to True; callers must explicitly pass
+       dry_run=False to write."
+    2. "The layout is always validated before any database write; a
+       malformed layout never touches the database."
+    3. "After a real import, verify by re-reading the plan with
+       resolve_plan or the plan catalog command."
+    4. "source is a bare name under server-configured export_root; it is
+       never a filesystem path."
+
+  These required top-level metadata keys come from
+  docs/standards/planning/metadatastd.yaml, section `metadata`:
+  `required_fields: [name, version, description, category, author, email,
+  detailed_description, parameters, return_value, usage_examples,
+  error_cases, best_practices]`; `parameters_entry_required:
+  [description, type, required]`; `parameters_entry_optional: [default,
+  examples, enum, items, notes]`; `error_cases.per_entry_required:
+  [description, message, solution]`; `safety_documentation.required_for:
+  write and destructive commands`; `safety_documentation.required_in:
+  [detailed_description, best_practices]`.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-021
+    name: ExchangeFormat
+    definition: File import/export representation of a plan in the
+      standard layout; HRS as Markdown, all other artifacts as YAML.
+    properties:
+    - export optionally at a named revision; import is the only
+      file-to-truth path
+    - safe YAML emission with mandatory round-trip; hrs_export
+      byte-identical
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+
+  Do not add any other function, class, or import to this file. Do not
+  read or modify any other file.
+verification:
+  type: import
+  target: plan_manager.commands.plan_import_metadata.get_plan_import_metadata
+  expected: >
+    Importing plan_manager.commands.plan_import_metadata succeeds and
+    exposes a callable get_plan_import_metadata(cls) that, given an
+    object with attributes name, version, descr, category, author,
+    email, returns a dict containing exactly the twelve required
+    metadatastd.yaml keys, with parameters containing "source" and
+    "dry_run" entries (dry_run default True) and error_cases containing
+    an "IMPORT_INVALID" entry, and best_practices documenting the
+    dry_run-on-by-default safety behavior.
+status: draft

@@ -1,0 +1,39 @@
+step_id: T-007
+parent_global_step: G-005
+name: graph-commands
+description: >
+  Create the read-only graph command classes of the inventory over the
+  computed dependency projection (C-009): graph_deps, graph_order,
+  graph_parallel_map, and graph_impact, each conforming to the
+  CommandContract (C-023). graph_deps returns the dependency neighborhood of
+  one resolved step: the steps it depends on and the steps depending on it.
+  graph_order returns the topological execution order with the deterministic
+  tie-break; when ordering is impossible the command fails with the
+  cycle-detected code (C-026) listing the residual cycle members by artifact
+  path. graph_parallel_map returns the wave partition of steps by
+  prerequisite depth. graph_impact returns the read-only invalidation
+  projection of one step: its transitive dependents per the invalidation
+  rule, without changing any status. All four commands resolve the plan
+  against the catalog, load the step projection once per request, mutate
+  nothing, and an unknown step identifier yields the step-not-found code.
+  This step defines the four command classes with schemas, metadata,
+  validation, and execution wiring onto the computed projection operations;
+  it implements no graph algorithm itself and registers nothing.
+concepts: [C-023, C-026, C-009]
+inputs:
+- name: graph_query_request
+  type: command parameters
+  description: >
+    The plan identifier for order and wave queries; the plan identifier
+    plus one step identifier for the neighborhood and impact queries.
+outputs:
+- name: graph_query_result
+  type: command result
+  description: >
+    The dependency neighborhood, the topological order, the parallel wave
+    map, or the impact set — each classified by artifact path; ordering
+    failure yields the cycle-detected error listing the cycle.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009,
+  A-010, A-011, A-012, A-013, A-014, A-015, A-016, A-017, A-018, A-019, A-020,
+  A-021, A-022, A-023, A-024]
+status: draft

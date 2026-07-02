@@ -1,0 +1,226 @@
+step_id: A-001
+parent_tactical_step: T-009
+name: Create plan_validate command metadata module
+target_file: plan_manager/commands/plan_validate_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-012, C-017, C-020, C-026]
+prompt: |
+  Create a new Python 3.12+ source file at the exact project-relative path
+  `plan_manager/commands/plan_validate_metadata.py`.
+
+  This file does not exist yet. Do not assume any pre-existing content in it.
+  Write exactly the following content, byte-for-byte:
+
+  ```python
+  """Extended AI/documentation metadata for PlanValidateCommand."""
+  from __future__ import annotations
+
+  from typing import Any, Dict, Type
+
+
+  def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
+      """Return the extended documentation metadata for PlanValidateCommand.
+
+      :param cls: The command class object (PlanValidateCommand), used to
+          source the identity fields name, version, descr, category, author,
+          and email from the class attributes so this dictionary never
+          contradicts the class or its get_schema().
+      :type cls: Type[Any]
+      :returns: A metadata dictionary with the required keys name, version,
+          description, category, author, email, detailed_description,
+          parameters, return_value, usage_examples, error_cases, and
+          best_practices.
+      :rtype: Dict[str, Any]
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Runs the mechanical gate (fixed check order: parse, identity, "
+              "uniqueness, references, coverage) as a pure read over one plan "
+              "or one branch of that plan. The gate is deterministic and "
+              "byte-identical for the same tree state; it never mutates plan "
+              "data and never stores its report. The result binds to the "
+              "exact revision that was measured. fail_fast stops the run only "
+              "at check-group boundaries, never mid-group, so a single "
+              "group's findings are always reported together. format selects "
+              "between a PASS/FAIL text report and a machine-checkable JSON "
+              "form; both are rendered from the same underlying report object."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (UUID or unique plan name) to validate.",
+                  "type": "string",
+                  "required": True,
+              },
+              "scope": {
+                  "description": "Validation scope: the whole plan or one branch named by its three step ids.",
+                  "type": "string",
+                  "required": False,
+                  "default": "plan",
+                  "enum": ["plan", "branch"],
+              },
+              "gs_step_id": {
+                  "description": "Global step id (e.g. G-005) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                  "type": "string",
+                  "required": False,
+              },
+              "ts_step_id": {
+                  "description": "Tactical step id (e.g. T-009) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                  "type": "string",
+                  "required": False,
+              },
+              "as_step_id": {
+                  "description": "Atomic step id (e.g. A-101) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                  "type": "string",
+                  "required": False,
+              },
+              "fail_fast": {
+                  "description": "Stop at the first failing check group boundary instead of running all check groups.",
+                  "type": "boolean",
+                  "required": False,
+                  "default": False,
+              },
+              "format": {
+                  "description": "Output format of the rendered report.",
+                  "type": "string",
+                  "required": False,
+                  "default": "json",
+                  "enum": ["text", "json"],
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The gate report bound to the measured revision.",
+                  "data": {
+                      "green": "Boolean: whether the report has zero findings across all checks.",
+                      "scope": "The verdict scope that was measured: 'plan' or 'branch'.",
+                      "revision_uuid": "String UUID of the exact revision the report was computed for, or null.",
+                      "format": "The output format actually used: 'text' or 'json'.",
+                      "report": "The rendered report body as a string, in the requested format.",
+                  },
+                  "example": {
+                      "green": True,
+                      "scope": "plan",
+                      "revision_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                      "format": "json",
+                      "report": "{\"checks\": [], \"green\": true}",
+                  },
+              },
+              "error": {
+                  "description": "A domain error result.",
+                  "code": "Stable domain error code string.",
+                  "message": "Human-readable error message.",
+                  "details": "Additional diagnostic fields when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Validate an entire plan and get a JSON report.",
+                  "command": {"plan": "plan_manager", "scope": "plan", "format": "json"},
+                  "explanation": "Runs the mechanical gate over the whole plan and returns the JSON report bound to the current revision.",
+              },
+              {
+                  "description": "Validate one branch with a text report, stopping at the first failing check group.",
+                  "command": {
+                      "plan": "plan_manager",
+                      "scope": "branch",
+                      "gs_step_id": "G-005",
+                      "ts_step_id": "T-009",
+                      "as_step_id": "A-101",
+                      "fail_fast": True,
+                      "format": "text",
+                  },
+                  "explanation": "Runs the mechanical gate over one branch only, halting at the first failing check-group boundary, and returns a PASS/FAIL text report.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to any plan in the database.",
+                  "message": "Plan not found: {plan}",
+                  "solution": "Verify the plan identifier against the plan catalog and retry.",
+              },
+              "STEP_NOT_FOUND": {
+                  "description": "scope is 'branch' but one of gs_step_id, ts_step_id, as_step_id does not resolve within the plan.",
+                  "message": "Step not found: {step_id}",
+                  "solution": "Verify the three branch step ids against the plan tree and retry.",
+              },
+          },
+          "best_practices": [
+              "Run plan_validate before plan_score: scoring refuses any scope that has not passed the gate in the same tree state.",
+              "Use format='text' for human review and format='json' when the result feeds another automated step.",
+              "Use scope='branch' with fail_fast=True for fast iteration while fixing a single branch.",
+              "This command is read-only: it never mutates or stores anything, so it is always safe to call.",
+              "Record the returned revision_uuid alongside the report; it identifies the exact tree state that was measured.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - The file contains exactly one top-level function, `get_plan_validate_metadata`,
+    with the exact signature `def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:`
+    shown above, and the module-level imports `from __future__ import annotations`
+    and `from typing import Any, Dict, Type` shown above.
+  - The returned dictionary keys are exactly: name, version, description, category,
+    author, email, detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices. These satisfy the metadatastd.yaml `metadata.required_fields`
+    list: [name, version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices].
+  - Every entry in `parameters` has the keys description, type, required (per
+    metadatastd.yaml `metadata.parameters_entry_required: [description, type, required]`),
+    with default/enum added where applicable (`metadata.parameters_entry_optional:
+    [default, examples, enum, items, notes]`).
+  - `error_cases` lists exactly the domain error codes this command can return:
+    PLAN_NOT_FOUND and STEP_NOT_FOUND. Each entry has description, message, solution
+    (per metadatastd.yaml `metadata.error_cases.per_entry_required: [description,
+    message, solution]`).
+  - Do not import or reference anything beyond `__future__.annotations` and
+    `typing.Any, Dict, Type`. Do not define any other function, class, or
+    module-level variable.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-023 CommandContract: "Adapter-conformant command class shape with schema,
+    metadata, and semantic validation." Properties: class attributes name, version,
+    descr, category, author, email, result_class, use_queue; get_schema strict
+    subset with explicit additionalProperties false; shallow adapter validation
+    compensated by validate_params semantics; metadata dictionary must never
+    contradict the schema; read commands never mutate; mutating commands verify
+    by re-read; destructive or bulk operations expose a dry-run mode defaulting
+    to on.
+  - C-012 MechanicalGate: "Deterministic binary verification layer catching every
+    mechanical defect before semantics." Properties: fixed check order parse,
+    identity, uniqueness, references, coverage; byte-identical reports for the
+    same tree state; fail-fast only at group boundary; per-branch gating;
+    precondition for any semantic measurement.
+  - C-017 Finding: "Ephemeral result unit of gate and scoring runs with check id,
+    severity, artifact path, and message." Properties: aggregated into reports;
+    never stored as a plan artifact.
+  - C-020 Verdict: "Gate or score result bound to the exact revision and scope it
+    was computed for." Properties: fresh iff recorded revision equals current
+    revision; comparison never by timestamp.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+    stable domain string codes." Properties: every declared error case returnable
+    and every returnable case declared.
+verification:
+  type: import
+  target: plan_manager.commands.plan_validate_metadata
+  expected: >
+    Importing the module plan_manager.commands.plan_validate_metadata succeeds
+    with no errors. The module exposes exactly one callable,
+    get_plan_validate_metadata, which accepts a single positional argument and
+    returns a dict. Calling it with a stub object exposing attributes name,
+    version, descr, category, author, email returns a dict whose top-level
+    keys are exactly name, version, description, category, author, email,
+    detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices, with parameters containing exactly the seven
+    keys plan, scope, gs_step_id, ts_step_id, as_step_id, fail_fast, format,
+    and error_cases containing exactly the two keys PLAN_NOT_FOUND and
+    STEP_NOT_FOUND.
+status: draft

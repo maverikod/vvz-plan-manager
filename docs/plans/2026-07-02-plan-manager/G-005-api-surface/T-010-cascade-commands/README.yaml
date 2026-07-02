@@ -1,0 +1,75 @@
+step_id: T-010
+parent_global_step: G-005
+name: cascade-commands
+description: >
+  Create the cascade transaction command classes of the inventory:
+  cascade_begin, cascade_preview, cascade_commit, and cascade_abort, each
+  conforming to the CommandContract (C-023) and wrapping the cascade
+  lifecycle operations (C-016). cascade_begin is mutating: it opens a
+  cascade on the resolved plan and returns the cascade identity with the
+  anchored base revision; a plan that already has an open cascade yields the
+  cascade-conflict code (C-026). cascade_preview is read-only: it returns
+  the accumulated change set against the base revision, the needs_review
+  blast radius classified by artifact path, and the mechanical gate verdict
+  for the cascade state; a plan without an open cascade yields the
+  cascade-required code. cascade_commit is mutating: it publishes the
+  cascade atomically, returning the gate verdict (C-020) and the advanced
+  head revision on green, and mapping the refusal on a red gate to the
+  gate-red code with the finding count while the cascade stays open.
+  cascade_abort is mutating: it discards the open cascade, restores the
+  working state to the base revision, and confirms that the published plan
+  is untouched. All mutating cascade commands verify their result by
+  re-reading the cascade record state after the operation. This step defines
+  the four command classes with schemas, metadata, validation, and execution
+  wiring onto the cascade lifecycle operations; it implements no lifecycle
+  mechanics itself and registers nothing.
+concepts: [C-023, C-026, C-016, C-020]
+inputs:
+- name: cascade_lifecycle_request
+  type: command parameters
+  description: >
+    The plan identifier for all four commands; no other parameter is
+    accepted — cascade identity is resolved from the plan's open cascade
+    record.
+outputs:
+- name: cascade_begin_result
+  type: command result
+  description: >
+    The opened cascade identity with its base revision, verified by
+    re-read; an existing open cascade yields cascade-conflict.
+- name: cascade_preview_result
+  type: command result
+  description: >
+    The change set, blast radius, and gate verdict of the open cascade.
+- name: cascade_close_result
+  type: command result
+  description: >
+    On commit: the gate verdict and advanced head on green, or the
+    gate-red error with finding count. On abort: the restored-state
+    confirmation with the published plan untouched.
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+- A-013
+- A-014
+- A-015
+- A-016
+- A-017
+- A-018
+- A-019
+- A-020
+- A-021
+- A-022
+- A-023
+- A-024
+status: draft

@@ -1,0 +1,141 @@
+step_id: A-005
+parent_tactical_step: T-001
+name: resolve-plan
+target_file: plan_manager/commands/resolve.py
+operation: create_file
+priority: 1
+depends_on: [A-004]
+concepts: [C-001, C-023]
+prompt: |
+  Create the file `plan_manager/commands/resolve.py` with EXACTLY the
+  following content (this is a new file; it does not exist yet, so assume no
+  prior content):
+
+  ```python
+  """Plan identity resolution shared by every command (C-023, C-001)."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.commands.errors import DomainCommandError
+  from plan_manager.domain.plan import Plan, get_plan
+
+
+  def resolve_plan(conn: psycopg.Connection, plan: str) -> Plan:
+      """Resolve a plan by UUID string or unique name (C-001).
+
+      Args:
+          conn: Open database connection. Always supplied by the runtime;
+              never constructed or configured from request parameters.
+          plan: The plan identifier from the request: either a UUID string
+              or a unique plan name.
+
+      Returns:
+          The resolved Plan aggregate.
+
+      Raises:
+          DomainCommandError: with code "PLAN_NOT_FOUND" when no plan
+              matches the given UUID or name.
+      """
+      try:
+          plan_uuid = uuid.UUID(plan)
+      except ValueError:
+          with conn.cursor() as cur:
+              cur.execute("SELECT uuid FROM plan WHERE name = %s", (plan,))
+              row = cur.fetchone()
+          if row is not None:
+              return get_plan(conn, row[0])
+          raise DomainCommandError("PLAN_NOT_FOUND", f"plan not found: {plan}")
+      try:
+          return get_plan(conn, plan_uuid)
+      except ValueError:
+          raise DomainCommandError("PLAN_NOT_FOUND", f"plan not found: {plan}")
+  ```
+
+  Imported contracts quoted verbatim (import only, never reimplement):
+  - module `plan_manager/domain/plan.py`: `def get_plan(conn, plan_uuid) -> Plan`;
+    `Plan` is a dataclass with fields uuid, name, status, context_budget,
+    head_revision_uuid. Raises ValueError when the plan row does not exist.
+  - module `plan_manager/commands/errors.py` (already created by a
+    lower-priority atomic step on that file): `class DomainCommandError(Exception):`
+    constructor `def __init__(self, code: str, message: str, details: dict | None = None)`.
+
+  Constraints (all binding, no deviation):
+  - The module docstring is exactly the one line shown above, verbatim.
+  - Imports, in exactly this order and grouping (one blank line between the
+    stdlib group, the third-party group, and the first-party group):
+    `import uuid`, blank line, `import psycopg`, blank line,
+    `from plan_manager.commands.errors import DomainCommandError`,
+    `from plan_manager.domain.plan import Plan, get_plan`.
+  - `def resolve_plan(conn: psycopg.Connection, plan: str) -> Plan:` is the
+    exact signature.
+  - The docstring text is exactly as shown above.
+  - Behavior, in exactly this control flow:
+    1. Attempt `uuid.UUID(plan)`.
+    2. If that raises `ValueError`: execute
+       `SELECT uuid FROM plan WHERE name = %s` with `plan` as the sole
+       parameter via `conn.cursor()`, fetch one row; if a row exists,
+       `return get_plan(conn, row[0])`; otherwise
+       `raise DomainCommandError("PLAN_NOT_FOUND", f"plan not found: {plan}")`.
+    3. If `uuid.UUID(plan)` succeeds: call `get_plan(conn, plan_uuid)` and
+       return its result; if that call raises `ValueError`, raise
+       `DomainCommandError("PLAN_NOT_FOUND", f"plan not found: {plan}")`
+       instead.
+  - `conn` is never constructed, configured, or derived from `plan` or any
+    other request parameter inside this function; it is always the
+    caller-supplied connection.
+  - The SQL string is passed exactly as
+    `"SELECT uuid FROM plan WHERE name = %s"` with parameters as a tuple
+    `(plan,)`, using plain psycopg 3 SQL (no ORM, no query builder).
+  - No other function, class, or constant is added in this step.
+  - Do not read, create, or modify any file other than
+    `plan_manager/commands/resolve.py`.
+
+  MRS excerpt (concepts C-001 and C-023, the only concepts this step
+  realises):
+
+  ```yaml
+  - concept_id: C-001
+    name: Plan
+    definition: Root aggregate of one development plan with identity, name, status, and head revision.
+    properties:
+    - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+    - multiple plans live in one database, listed by catalog query
+    - head revision advances per revision in draft editing, on publication for cascades
+    - carries a user-set context budget in tokens (default 4000) consumed by prompt assembly
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+  ```
+
+  `resolve_plan` is the shared plan identity resolution every command uses to
+  turn a request's plan identifier (UUID string or unique name) into the
+  resolved Plan aggregate (C-001), consistent with the CommandContract
+  discipline (C-023) that database connection parameters and storage
+  locations come from server configuration only, never from request
+  parameters — `conn` is always supplied by the runtime, never built from
+  `plan` or any other request datum.
+verification:
+  type: import
+  target: plan_manager.commands.resolve.resolve_plan
+  expected: >
+    Importing plan_manager.commands.resolve succeeds. Calling
+    resolve_plan(conn, plan) with plan a syntactically valid UUID string for
+    which get_plan(conn, parsed_uuid) returns a Plan returns that Plan.
+    Calling it with plan a syntactically valid UUID string for which
+    get_plan raises ValueError raises DomainCommandError with code
+    "PLAN_NOT_FOUND". Calling it with plan a non-UUID string that matches a
+    row in the plan table by name returns the Plan from get_plan(conn,
+    row[0]). Calling it with plan a non-UUID string matching no row raises
+    DomainCommandError with code "PLAN_NOT_FOUND". No call ever derives
+    database connection parameters from the plan argument.
+status: draft

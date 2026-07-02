@@ -1,0 +1,296 @@
+step_id: A-006
+parent_tactical_step: T-002
+name: Write PlanStatusCommand class
+target_file: plan_manager/commands/plan_status_command.py
+operation: create_file
+priority: 1
+depends_on: [A-005]
+concepts: [C-023, C-026, C-001]
+prompt: |
+  Create the file `plan_manager/commands/plan_status_command.py` with
+  exactly the content specified below. This is a brand-new file; it does
+  not exist yet and no other file's content should be assumed.
+
+  PURPOSE: this module defines the `plan_status` MCP command class. It is a
+  read-only dashboard command: for one resolved plan (C-001) it returns
+  artifact counts per level, the status distribution, the mechanical gate
+  verdict for the current tree, and — only when the gate is green — the
+  plan semantic index with trust and the ranked weakest branches, degrading
+  explicitly with the embeddings-unavailable signal when the embedding
+  integration is down.
+
+  EXACT IMPORTS (all used, nothing else):
+
+  ```python
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.plan_status_metadata import get_plan_status_metadata
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
+  from plan_manager.verify.gate import run_gate
+  from plan_manager.views.dependency_graph import load_steps
+  ```
+
+  IMPORTED CONTRACTS (signatures; import and use exactly as given, do not
+  reimplement):
+
+  - `def map_exception(exc: Exception) -> ErrorResult` — maps a caught
+    exception to an `ErrorResult`; re-raises exceptions it does not
+    recognize.
+  - `def get_plan_status_metadata(cls) -> dict` — from the sibling metadata
+    module; returns the full metadata dict for this command.
+  - `def resolve_plan(conn, plan: str) -> Plan` — resolves a uuid-or-name
+    string to a `Plan`; raises `DomainCommandError("PLAN_NOT_FOUND", ...)`
+    when no plan matches. `Plan` dataclass fields: `uuid`, `name`, `status`,
+    `context_budget`, `head_revision_uuid`.
+  - `def db_connection()` — a context manager yielding an open
+    `psycopg.Connection`; use as `with db_connection() as conn:`.
+  - `def app_config() -> AppConfig` — `AppConfig` dataclass fields:
+    `embedding_url: str | None`, `export_root: str`,
+    `scoring_threshold: float`, `scoring_aggregation: str`,
+    `trust_floor: float`, `concept_weight: float`.
+  - `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]` — `Step`
+    dataclass fields: `uuid`, `plan_uuid`, `parent_step_uuid`,
+    `level: int`, `step_id`, `slug`, `fields: dict`,
+    `depends_on: list[str]`, `concepts: list[str]`, `status: str`.
+  - `def run_gate(conn, plan_uuid, branch=None, fail_fast=False) -> tuple[Report, Verdict]`
+    — `Report` fields: `checks: list[CheckResult]`, `green: bool`.
+    `Verdict` fields: `kind`, `scope`, `revision_uuid`, `green`, `payload`.
+  - `@dataclasses.dataclass class ScoringConfig` with fields
+    `threshold: float = 85.0`, `aggregation: str = "minimum"`,
+    `concept_weight: float = 1.0`, `trust_floor: float = 0.2`,
+    `embedding_url: str | None = None`. Constructed with all fields as
+    keyword arguments.
+  - `def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore` —
+    `PlanScore` fields: `index: float`, `color: str`, `aggregation: str`,
+    `weakest: list[BranchScore]`, `revision_uuid`. `BranchScore` fields:
+    `branch_path`, `index`, `color`, `estimator_vector`, `trust`,
+    `revision_uuid`, `below_threshold`. Raises `EmbeddingUnavailable` if the
+    embedding service is unreachable; do not catch this locally, let it
+    propagate to the outer exception handler so `map_exception` maps it to
+    `"EMBEDDINGS_UNAVAILABLE"`.
+  - `def branch_summary(score: BranchScore, verbose: bool = False) -> dict`
+    — call with the default `verbose=False`.
+  - `SuccessResult` is constructed as `SuccessResult(data=<dict>)`.
+
+  MRS EXCERPT (concept definitions relevant to this file):
+
+  - C-001 Plan: "Root aggregate of one development plan with identity, name,
+    status, and head revision." Properties: hosts the five-level hierarchy
+    HRS -> MRS -> GS -> TS -> AS; multiple plans live in one database, listed
+    by catalog query; head revision advances per revision in draft editing,
+    on publication for cascades; carries a user-set context budget in tokens
+    (default 4000) consumed by prompt assembly.
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: class attributes
+    name, version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false;
+    shallow adapter validation compensated by validate_params semantics;
+    metadata dictionary must never contradict the schema; read commands never
+    mutate, mutating commands verify by re-read; destructive or bulk
+    operations expose a dry-run mode defaulting to on.
+  - C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes and
+    stable domain string codes." Property: every declared error case
+    returnable and every returnable case declared.
+
+  REQUIRED FILE CONTENT (exact):
+
+  ```python
+  """Command: plan_status — read-only dashboard for one plan."""
+
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.plan_status_metadata import get_plan_status_metadata
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
+  from plan_manager.verify.gate import run_gate
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  class PlanStatusCommand(Command):
+      """Return the read-only dashboard for one resolved plan."""
+
+      name: ClassVar[str] = "plan_status"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Return the dashboard for one plan: counts, gate, and scoring."
+      category: ClassVar[str] = "plan"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[type] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the machine-readable input schema for plan_status.
+
+          Returns:
+              dict: JSON-schema-like dict with required "plan" (string:
+                  uuid or name).
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier: either the plan UUID or its unique name.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> dict:
+          """Return the extended documentation metadata for plan_status.
+
+          Returns:
+              dict: Metadata dictionary from get_plan_status_metadata(cls).
+          """
+          return get_plan_status_metadata(cls)
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate plan_status parameters (schema layer only).
+
+          Args:
+              params: Raw parameters as received by the adapter.
+
+          Returns:
+              dict: The parameters unchanged (after base validation); plan
+                  resolution failures are raised by resolve_plan in
+                  execute.
+          """
+          params = super().validate_params(params)
+          return params
+
+      async def execute(self, **kwargs) -> SuccessResult | ErrorResult:
+          """Assemble the plan dashboard: counts, gate verdict, and scoring.
+
+          Args:
+              **kwargs: Validated parameters: "plan" (str, uuid or name).
+
+          Returns:
+              SuccessResult | ErrorResult: On success, data has "plan",
+                  "counts_by_level", "status_distribution", "gate", and
+                  "scoring". On failure, an ErrorResult produced by
+                  map_exception (e.g. PLAN_NOT_FOUND or
+                  EMBEDDINGS_UNAVAILABLE).
+          """
+          plan = kwargs["plan"]
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  nodes = load_steps(conn, p.uuid)
+                  counts_by_level: dict[int, int] = {3: 0, 4: 0, 5: 0}
+                  status_distribution: dict[str, int] = {}
+                  for step in nodes.values():
+                      if step.level in counts_by_level:
+                          counts_by_level[step.level] += 1
+                      status_distribution[step.status] = (
+                          status_distribution.get(step.status, 0) + 1
+                      )
+                  report, verdict = run_gate(conn, p.uuid)
+                  gate_part = {
+                      "green": report.green,
+                      "scope": verdict.scope,
+                      "revision_uuid": (
+                          str(verdict.revision_uuid)
+                          if verdict.revision_uuid is not None
+                          else None
+                      ),
+                  }
+                  if report.green:
+                      cfg = app_config()
+                      score = score_plan(
+                          conn,
+                          p.uuid,
+                          ScoringConfig(
+                              threshold=cfg.scoring_threshold,
+                              aggregation=cfg.scoring_aggregation,
+                              concept_weight=cfg.concept_weight,
+                              trust_floor=cfg.trust_floor,
+                              embedding_url=cfg.embedding_url,
+                          ),
+                      )
+                      scoring_part = {
+                          "index": score.index,
+                          "color": score.color,
+                          "weakest": [branch_summary(b) for b in score.weakest],
+                      }
+                  else:
+                      scoring_part = {"refused": "GATE_RED"}
+                  return SuccessResult(
+                      data={
+                          "plan": {
+                              "uuid": str(p.uuid),
+                              "name": p.name,
+                              "status": p.status,
+                          },
+                          "counts_by_level": counts_by_level,
+                          "status_distribution": status_distribution,
+                          "gate": gate_part,
+                          "scoring": scoring_part,
+                      }
+                  )
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  CONSTRAINTS:
+  - The class must be named exactly `PlanStatusCommand` and subclass
+    `Command`.
+  - All class attributes must be typed `ClassVar` exactly as shown, with the
+    exact values shown (name="plan_status", version="1.0.0",
+    category="plan", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class=SuccessResult,
+    use_queue=False). `descr` must be the exact non-empty one-line string
+    shown.
+  - `get_schema`, `metadata` are `@classmethod`; `validate_params` and
+    `execute` are instance methods; `execute` is `async def`.
+  - `validate_params` must call `super().validate_params(params)` as its
+    first statement, reassign the result to `params`, and return it
+    unchanged with no additional checks.
+  - `execute` must open the connection via `with db_connection() as conn:`,
+    call `resolve_plan`, then `load_steps`, compute `counts_by_level` for
+    levels 3, 4, 5 and `status_distribution` exactly as shown, call
+    `run_gate`, build `gate_part` exactly as shown, and only call
+    `score_plan` when `report.green` is true, building `scoring_part` from
+    its result; when `report.green` is false, `scoring_part` must be
+    exactly `{"refused": "GATE_RED"}`.
+  - The entire body from `resolve_plan` through the `return SuccessResult`
+    must be inside a single `try` block whose only `except` clause is
+    `except Exception as exc: return map_exception(exc)`, as the last
+    statement of the method. Do not add a separate except clause for
+    `EmbeddingUnavailable`.
+  - Do not add any other methods, attributes, or imports beyond those
+    listed.
+verification:
+  type: import
+  target: plan_manager.commands.plan_status_command
+  expected: >
+    The module imports without error. PlanStatusCommand is defined as a
+    subclass of Command with ClassVar attributes name="plan_status",
+    version="1.0.0", descr set to a non-empty one-line string,
+    category="plan", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class=SuccessResult,
+    use_queue=False. get_schema() returns a dict with type "object",
+    property "plan" of type string, required=["plan"], and
+    additionalProperties=False. metadata() returns
+    get_plan_status_metadata(cls) unchanged. validate_params returns its
+    input unchanged after calling super().validate_params. execute is an
+    async method that resolves the plan, loads steps, computes
+    counts_by_level and status_distribution, runs the gate, and either
+    scores the plan when the gate is green or returns a
+    {"refused": "GATE_RED"} scoring section when it is not, returning a
+    SuccessResult, or an ErrorResult (e.g. PLAN_NOT_FOUND,
+    EMBEDDINGS_UNAVAILABLE) via map_exception on failure.
+status: draft

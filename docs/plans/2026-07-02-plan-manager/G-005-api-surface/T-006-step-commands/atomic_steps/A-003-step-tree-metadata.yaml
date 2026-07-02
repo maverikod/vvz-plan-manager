@@ -1,0 +1,162 @@
+step_id: A-003
+parent_tactical_step: T-006
+name: step_tree metadata module
+target_file: plan_manager/commands/step_tree_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026]
+prompt: |
+  Create the file `plan_manager/commands/step_tree_metadata.py` from
+  scratch (the file does not exist yet; do not assume any pre-existing
+  content).
+
+  Write exactly one module-level function:
+
+  ```python
+  def get_step_tree_metadata(cls: type) -> dict[str, Any]:
+  ```
+
+  Required imports at the top of the file:
+
+  ```python
+  from typing import Any
+  ```
+
+  Module docstring (first line of the file, before imports):
+  `"""Extended AI/documentation metadata for the step_tree command."""`
+
+  Function docstring (Google style):
+  ```
+  """Return the extended metadata dictionary for StepTreeCommand.
+
+  Args:
+      cls: The StepTreeCommand class object, used to source identity
+          attributes (name, version, category, author, email) so the
+          metadata dictionary never drifts from the class definition.
+
+  Returns:
+      A dictionary with the required metadata fields: name, version,
+      description, category, author, email, detailed_description,
+      parameters, return_value, usage_examples, error_cases,
+      best_practices.
+  """
+  ```
+
+  The function body must `return` a dict literal built exactly as follows:
+
+  ```python
+  return {
+      "name": cls.name,
+      "version": cls.version,
+      "description": cls.descr,
+      "category": cls.category,
+      "author": cls.author,
+      "email": cls.email,
+      "detailed_description": (
+          "Returns the full step tree of a plan: every level 3, 4, and 5 "
+          "step as a flat list of {path, step_id, slug, level, status} "
+          "entries, sorted by (level, path). This is a read-only command: "
+          "it never mutates the plan and performs no admission or cascade "
+          "checks."
+      ),
+      "parameters": {
+          "plan": {
+              "description": "Plan identifier (UUID or name) resolved against the catalog.",
+              "type": "string",
+              "required": True,
+          },
+      },
+      "return_value": {
+          "success": {
+              "description": "The plan's full step tree as a flat, sorted list.",
+              "data": {
+                  "tree": "List of {path, step_id, slug, level, status} entries, sorted by (level, path).",
+              },
+              "example": {
+                  "tree": [
+                      {
+                          "path": "docs/plans/example/G-005-api-surface/README.yaml",
+                          "step_id": "G-005",
+                          "slug": "api-surface",
+                          "level": 3,
+                          "status": "draft",
+                      },
+                      {
+                          "path": "docs/plans/example/G-005-api-surface/T-006-step-commands/README.yaml",
+                          "step_id": "T-006",
+                          "slug": "step-commands",
+                          "level": 4,
+                          "status": "draft",
+                      },
+                  ],
+              },
+          },
+          "error": {
+              "description": "A domain error result carrying a stable string code.",
+              "code": "Stable domain error code (see error_cases).",
+              "message": "Human-readable error message.",
+              "details": "Additional diagnostic fields when available.",
+          },
+      },
+      "usage_examples": [
+          {
+              "description": "List the full step tree of a plan.",
+              "command": {"plan": "plan_manager"},
+              "explanation": "Returns every step of the plan as a flat, sorted list with statuses.",
+          },
+      ],
+      "error_cases": {
+          "PLAN_NOT_FOUND": {
+              "description": "The plan identifier does not resolve to a plan in the catalog.",
+              "message": "plan not found: {plan}",
+              "solution": "Call the plan catalog command and retry with a valid plan identifier.",
+          },
+      },
+      "best_practices": [
+          "Use step_tree to discover valid step_id values before calling step_get, step_update, step_move, step_delete, or step_set_status.",
+          "This command never mutates state; it is safe to call at any time and any status.",
+      ],
+  }
+  ```
+
+  Constraints:
+  - The file contains only the module docstring, the `from typing import
+    Any` import, and the single function `get_step_tree_metadata`.
+  - Every key and value in the returned dict must match exactly what is
+    shown above; do not add, remove, or rename keys.
+  - Do not import or reference `plan_manager.commands.step_tree_command` or
+    any other file.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  ```yaml
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+  ```
+verification:
+  type: import
+  target: plan_manager/commands/step_tree_metadata.py
+  expected: >
+    The module imports without error; `get_step_tree_metadata` is callable
+    with a single positional argument and, when called with an object
+    exposing name/version/descr/category/author/email attributes, returns a
+    dict containing exactly the keys name, version, description, category,
+    author, email, detailed_description, parameters, return_value,
+    usage_examples, error_cases, best_practices, with error_cases
+    containing exactly the key PLAN_NOT_FOUND.
+status: draft

@@ -1,0 +1,164 @@
+step_id: A-003
+parent_tactical_step: T-009
+name: Create PlanValidateCommand class skeleton with schema and metadata wiring
+target_file: plan_manager/commands/plan_validate_command.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-023, C-012]
+prompt: |
+  Create a new Python 3.12+ source file at the exact project-relative path
+  `plan_manager/commands/plan_validate_command.py`.
+
+  This file does not exist yet. Do not assume any pre-existing content in it.
+  Write exactly the following content, byte-for-byte:
+
+  ```python
+  """Command PlanValidateCommand: run the mechanical gate (C-012) as a pure read."""
+  from __future__ import annotations
+
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.plan_validate_metadata import get_plan_validate_metadata
+
+
+  class PlanValidateCommand(Command):
+      """Run the mechanical gate (C-012) over a plan or one branch and report findings."""
+
+      name = "plan_validate"
+      version = "1.0.0"
+      descr = "Run the mechanical gate over a plan or one branch and report PASS/FAIL findings."
+      category = "verification"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = True
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :returns: A JSON-schema-shaped dict with keys type, properties,
+              required, additionalProperties.
+          :rtype: Dict[str, Any]
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to validate.",
+                  },
+                  "scope": {
+                      "type": "string",
+                      "enum": ["plan", "branch"],
+                      "default": "plan",
+                      "description": "Validation scope: the whole plan or one branch named by its three step ids.",
+                  },
+                  "gs_step_id": {
+                      "type": "string",
+                      "description": "Global step id (e.g. G-005) of the branch. Required when scope is 'branch'.",
+                  },
+                  "ts_step_id": {
+                      "type": "string",
+                      "description": "Tactical step id (e.g. T-009) of the branch. Required when scope is 'branch'.",
+                  },
+                  "as_step_id": {
+                      "type": "string",
+                      "description": "Atomic step id (e.g. A-101) of the branch. Required when scope is 'branch'.",
+                  },
+                  "fail_fast": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "Stop at the first failing check group boundary instead of running all check groups.",
+                  },
+                  "format": {
+                      "type": "string",
+                      "enum": ["text", "json"],
+                      "default": "json",
+                      "description": "Output format of the rendered report: PASS/FAIL text or machine-checkable JSON.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return the extended documentation metadata for this command.
+
+          :returns: The dict produced by get_plan_validate_metadata(cls).
+          :rtype: Dict[str, Any]
+          """
+          return get_plan_validate_metadata(cls)
+  ```
+
+  Constraints:
+  - The module imports exactly: `from __future__ import annotations`;
+    `from typing import Any, Dict`; `from mcp_proxy_adapter.commands.base import
+    Command`; `from mcp_proxy_adapter.commands.result import SuccessResult,
+    ErrorResult`; `from plan_manager.commands.plan_validate_metadata import
+    get_plan_validate_metadata`. Do not add any other import.
+  - `PlanValidateCommand` extends `mcp_proxy_adapter.commands.base.Command`
+    exactly as shown, whose contract requires the class attributes name,
+    version, descr, category, author, email, result_class, use_queue, and the
+    methods get_schema (classmethod), metadata (classmethod), validate_params
+    (instance method), execute (instance method). This file defines the class
+    attributes, get_schema, and metadata only; validate_params and execute are
+    added to this same file by later steps and must not be written here.
+  - Class attribute values are exactly: `name = "plan_validate"`; `version =
+    "1.0.0"`; `descr = "Run the mechanical gate over a plan or one branch and
+    report PASS/FAIL findings."` (non-empty one-line summary); `category =
+    "verification"`; `author = "Vasiliy Zdanovskiy"`; `email =
+    "vasilyvz@gmail.com"`; `result_class = SuccessResult`; `use_queue = True`
+    (plan_validate is declared long-running, so it opts into the adapter
+    queue).
+  - `get_schema` returns the exact dict shown above: object type; properties
+    plan (string), scope (string, enum ["plan", "branch"], default "plan"),
+    gs_step_id (string), ts_step_id (string), as_step_id (string), fail_fast
+    (boolean, default False), format (string, enum ["text", "json"], default
+    "json"); required is exactly ["plan"]; additionalProperties is exactly
+    False.
+  - `metadata` returns exactly `get_plan_validate_metadata(cls)`. The function
+    `get_plan_validate_metadata` lives in the sibling module
+    `plan_manager.commands.plan_validate_metadata` and has the signature
+    `def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:`; it
+    takes the command class and returns a metadata dict — do not reimplement
+    its body here, only import and call it.
+  - Do not define `validate_params` or `execute` in this file yet.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-023 CommandContract: "Adapter-conformant command class shape with schema,
+    metadata, and semantic validation." Properties: class attributes name,
+    version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false; shallow
+    adapter validation compensated by validate_params semantics; metadata
+    dictionary must never contradict the schema; read commands never mutate;
+    mutating commands verify by re-read; destructive or bulk operations expose
+    a dry-run mode defaulting to on.
+  - C-012 MechanicalGate: "Deterministic binary verification layer catching
+    every mechanical defect before semantics." Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating; precondition for any semantic measurement.
+verification:
+  type: import
+  target: plan_manager.commands.plan_validate_command
+  expected: >
+    Importing the module plan_manager.commands.plan_validate_command succeeds
+    with no errors. The module defines a class PlanValidateCommand subclassing
+    mcp_proxy_adapter.commands.base.Command with class attributes name equal
+    to "plan_validate", version equal to "1.0.0", descr non-empty, category
+    equal to "verification", author equal to "Vasiliy Zdanovskiy", email equal
+    to "vasilyvz@gmail.com", result_class equal to SuccessResult, and
+    use_queue equal to True. Calling PlanValidateCommand.get_schema() returns
+    a dict with type "object", properties containing exactly the keys plan,
+    scope, gs_step_id, ts_step_id, as_step_id, fail_fast, format, required
+    equal to ["plan"], and additionalProperties equal to False. Calling
+    PlanValidateCommand.metadata() returns the dict produced by
+    get_plan_validate_metadata(PlanValidateCommand).
+status: draft

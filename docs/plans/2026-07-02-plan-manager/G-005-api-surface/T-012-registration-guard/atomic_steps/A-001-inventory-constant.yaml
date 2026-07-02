@@ -1,0 +1,85 @@
+step_id: A-001
+parent_tactical_step: T-012
+name: inventory-constant
+target_file: plan_manager/commands/inventory.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-024]
+prompt: >
+  Create the new Python file at the exact project-relative path
+  plan_manager/commands/inventory.py in a Python 3.12+ codebase. The file
+  does not exist yet: do not assume any pre-existing content.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  concept_id: C-024, name: CommandInventory, definition: "Closed normative
+  set of API commands enforced by a startup self-check.", properties:
+  "registry compared against inventory at startup; any difference aborts
+  start", "no-stub probe of schema, metadata, and descr for every
+  registered command", "the editing subset is enumerated exhaustively".
+
+
+  Write the complete file content, exactly as follows (module docstring,
+  then the two module-level constants, with no other content):
+
+
+  1. A module docstring (triple double-quoted string) with this exact
+  text, word for word:
+
+  "Normative command inventory for the plan_manager API surface (C-024).
+
+  The inventory below is normative: the set of registered commands must
+  exactly match INVENTORY, and the mutating subset must exactly match
+  MUTATING. Adding or removing a command is a cascade change to the
+  source specification first, and only then to the code."
+
+
+  2. A module-level constant named INVENTORY with the exact type
+  annotation `tuple[str, ...]`, assigned a tuple literal containing
+  exactly these 41 string elements, in exactly this order (one element
+  per line, trailing comma after each element including the last):
+
+  "plan_create", "plan_list", "plan_status", "plan_export", "plan_import",
+  "hrs_import", "hrs_export", "para_list", "para_get",
+  "para_label_assign", "para_mark_non_binding", "concept_get",
+  "concept_list", "concept_add", "concept_update", "concept_remove",
+  "relation_list", "relation_add", "relation_remove", "concept_coverage",
+  "step_get", "step_tree", "step_create", "step_update", "step_move",
+  "step_delete", "step_set_status", "graph_deps", "graph_order",
+  "graph_parallel_map", "graph_impact", "branch_prompt", "branch_dump",
+  "branch_weak", "plan_validate", "plan_score", "cascade_begin",
+  "cascade_preview", "cascade_commit", "cascade_abort", "info".
+
+
+  3. A module-level constant named MUTATING with the exact type
+  annotation `frozenset[str]`, assigned `frozenset({...})` where the
+  set literal contains exactly these 18 string elements (one element per
+  line, trailing comma after each element including the last; any order
+  within the set literal is acceptable since it is a set):
+
+  "plan_create", "plan_import", "hrs_import", "para_label_assign",
+  "para_mark_non_binding", "concept_add", "concept_update",
+  "concept_remove", "relation_add", "relation_remove", "step_create",
+  "step_update", "step_move", "step_delete", "step_set_status",
+  "cascade_begin", "cascade_commit", "cascade_abort".
+
+
+  Constraints: every one of the 18 MUTATING elements must also appear
+  among the 41 INVENTORY elements. Do not add any other module-level
+  name, function, class, or import. Do not add a `__all__` export list.
+  Do not add comments beyond the module docstring. Do not add a
+  `from __future__ import annotations` line; the built-in generic
+  syntax `tuple[str, ...]` and `frozenset[str]` is valid directly under
+  Python 3.12+.
+verification:
+  type: import
+  target: plan_manager/commands/inventory.py
+  expected: >
+    Importing the module plan_manager.commands.inventory succeeds without
+    error. The module exposes INVENTORY as a tuple of exactly 41 unique
+    strings in the exact order listed in the prompt, and MUTATING as a
+    frozenset of exactly 18 unique strings, every one of which is also an
+    element of INVENTORY.
+status: draft

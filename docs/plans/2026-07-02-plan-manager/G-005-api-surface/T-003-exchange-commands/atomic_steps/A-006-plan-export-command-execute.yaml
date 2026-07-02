@@ -1,0 +1,235 @@
+step_id: A-006
+parent_tactical_step: T-003
+name: plan-export-command-execute
+target_file: plan_manager/commands/plan_export_command.py
+operation: modify_file
+priority: 5
+depends_on: [A-005]
+concepts: [C-023, C-026, C-021]
+prompt: |
+  Modify the file plan_manager/commands/plan_export_command.py. Its full
+  current content (after all lower-priority AS on this file have been
+  applied) is exactly:
+
+  """PlanExportCommand: read-only export of a plan to the standard file layout."""
+
+  import uuid
+  from typing import Any, ClassVar, Dict, Optional, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.plan_export_metadata import get_plan_export_metadata
+  from plan_manager.exchange.exporter import export_plan
+  from plan_manager.runtime.context import app_config, db_connection
+
+
+  class PlanExportCommand(Command):
+      """Render one resolved plan into the standard file layout, read-only."""
+
+      name: ClassVar[str] = "plan_export"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Export a plan to the standard file layout under the configured export root."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = True
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for plan_export.
+
+          Returns:
+              A JSON-schema-shaped dictionary with an explicit
+              additionalProperties=False and an exact required list.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier resolved against the catalog.",
+                  },
+                  "revision": {
+                      "type": "string",
+                      "description": (
+                          "Optional revision UUID to export instead of the "
+                          "plan head revision."
+                      ),
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return the extended documentation metadata for plan_export.
+
+          Returns:
+              The dictionary produced by get_plan_export_metadata(cls).
+          """
+          return get_plan_export_metadata(cls)
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate plan_export parameters.
+
+          Args:
+              params: Raw parameter dictionary received from the platform.
+
+          Returns:
+              The validated parameter dictionary, unchanged beyond the base
+              validator's own normalization.
+
+          Raises:
+              ValueError: When the optional 'revision' parameter is present
+                  but does not parse as a UUID.
+          """
+          params = super().validate_params(params)
+          revision = params.get("revision")
+          if revision is not None:
+              uuid.UUID(revision)
+          return params
+
+  Append exactly one blank line after the line `        return params`,
+  then append the following method, indented 4 spaces as a member of
+  class PlanExportCommand:
+
+  async def execute(self, plan: str, revision: Optional[str] = None) -> SuccessResult | ErrorResult:
+      """Export the resolved plan to the standard file layout.
+
+      Args:
+          plan: Plan identifier resolved against the catalog.
+          revision: Optional revision UUID string; when omitted the plan
+              head revision is exported.
+
+      Returns:
+          SuccessResult with data {"root": str, "files": int,
+          "revision": str} on success, or ErrorResult with a domain code
+          (PLAN_NOT_FOUND, REVISION_NOT_FOUND) on failure.
+      """
+      try:
+          with db_connection() as conn:
+              p = resolve_plan(conn, plan)
+              parsed_revision = uuid.UUID(revision) if revision is not None else None
+              summary = export_plan(
+                  conn,
+                  p.uuid,
+                  app_config().export_root,
+                  revision_uuid=parsed_revision,
+              )
+              return SuccessResult(
+                  data={
+                      "root": summary["root"],
+                      "files": summary["files"],
+                      "revision": revision if revision is not None else "head",
+                  }
+              )
+      except Exception as exc:
+          return map_exception(exc)
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the blank line and the method shown.
+  - The method signature is exactly `async def execute(self, plan: str,
+    revision: Optional[str] = None) -> SuccessResult | ErrorResult:`,
+    using `Optional` already imported at the top of this file (`from
+    typing import Any, ClassVar, Dict, Optional, Type`).
+  - The body is a single try/except wrapping the whole operation. The
+    except clause is exactly `except Exception as exc: return
+    map_exception(exc)` — the final handler required by the packet's
+    command platform shape ("async execute: thin wrapper, final handler
+    `except Exception as exc: return map_exception(exc)`"). map_exception
+    is already imported at the top of this file (`from
+    plan_manager.commands.errors import map_exception`).
+  - Inside the try block: open `with db_connection() as conn:` (already
+    imported: `from plan_manager.runtime.context import app_config,
+    db_connection`); call `p = resolve_plan(conn, plan)` (already
+    imported: `from plan_manager.commands.resolve import resolve_plan`)
+    — this raises DomainCommandError(code="PLAN_NOT_FOUND") when the
+    plan does not exist, which map_exception converts to an ErrorResult.
+  - `parsed_revision = uuid.UUID(revision) if revision is not None else
+    None` reparses the already-validated revision string (validate_params
+    already confirmed it parses).
+  - `summary = export_plan(conn, p.uuid, app_config().export_root,
+    revision_uuid=parsed_revision)` calls
+    plan_manager/exchange/exporter.py's
+    `def export_plan(conn, plan_uuid, export_root: str, revision_uuid=None) -> dict`
+    (already imported: `from plan_manager.exchange.exporter import
+    export_plan`), which returns {"root": str, "files": int} and raises
+    VersionStoreError(ValueError) for an unknown revision; map_exception
+    maps VersionStoreError to code "REVISION_NOT_FOUND".
+  - On success, return `SuccessResult(data={"root": summary["root"],
+    "files": summary["files"], "revision": revision if revision is not
+    None else "head"})` — SuccessResult is already imported (`from
+    mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult`)
+    and constructed as SuccessResult(data=<dict>).
+  - Do not add any other method, import, or class to this file. Do not
+    read or modify any other file.
+
+  Imported foundation/sibling contracts referenced by this method (quoted
+  verbatim; already imported at the top of the file, do not reimplement):
+  - plan_manager/commands/errors.py: `class DomainCommandError(Exception)`
+    (code, message, details=None); `def domain_error(code, message,
+    details=None) -> ErrorResult`; `def map_exception(exc) -> ErrorResult`
+    (maps VersionStoreError -> "REVISION_NOT_FOUND").
+  - plan_manager/commands/resolve.py: `def resolve_plan(conn, plan: str) -> Plan`
+    (DomainCommandError PLAN_NOT_FOUND); Plan fields uuid, name, status,
+    context_budget, head_revision_uuid.
+  - plan_manager/runtime/context.py: `def db_connection()` — context
+    manager yielding psycopg.Connection; `def app_config() -> AppConfig`
+    — fields embedding_url, export_root: str, scoring_threshold,
+    scoring_aggregation, trust_floor, concept_weight.
+  - plan_manager/exchange/exporter.py: `def export_plan(conn, plan_uuid, export_root: str, revision_uuid=None) -> dict`
+    returning {"root": str, "files": int}; raises
+    VersionStoreError(ValueError) for an unknown revision.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+
+  - concept_id: C-021
+    name: ExchangeFormat
+    definition: File import/export representation of a plan in the
+      standard layout; HRS as Markdown, all other artifacts as YAML.
+    properties:
+    - export optionally at a named revision; import is the only
+      file-to-truth path
+    - safe YAML emission with mandatory round-trip; hrs_export
+      byte-identical
+verification:
+  type: manual
+  target: plan_manager.commands.plan_export_command.PlanExportCommand.execute
+  expected: >
+    Calling execute(plan="known-plan") on a plan that exists returns a
+    SuccessResult with data containing "root" (str), "files" (int), and
+    "revision" equal to "head". Calling execute(plan="unknown") returns
+    an ErrorResult with code PLAN_NOT_FOUND. Calling execute(plan="known-plan",
+    revision="<unknown-uuid>") returns an ErrorResult with code
+    REVISION_NOT_FOUND. The command never mutates plan data (read-only
+    over plan truth).
+status: draft

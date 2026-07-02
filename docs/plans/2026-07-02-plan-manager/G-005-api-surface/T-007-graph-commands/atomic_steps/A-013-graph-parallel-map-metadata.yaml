@@ -1,0 +1,127 @@
+step_id: A-013
+parent_tactical_step: T-007
+name: Create graph_parallel_map_metadata.py
+target_file: plan_manager/commands/graph_parallel_map_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023]
+prompt: |
+  Create a new Python file at the exact project-relative path
+  `plan_manager/commands/graph_parallel_map_metadata.py` with exactly the
+  following content, byte-identical:
+
+  ```python
+  """Metadata for the graph_parallel_map command (C-009, C-023)."""
+  from __future__ import annotations
+
+
+  def get_graph_parallel_map_metadata(cls) -> dict:
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Resolves the plan against the catalog, loads the dependency "
+              "projection (C-009) for the plan once, and partitions its "
+              "steps into parallel waves by prerequisite depth: every step "
+              "in a wave has all its prerequisites satisfied by steps in "
+              "strictly earlier waves. Each step is classified by its "
+              "artifact path. The command is read-only and mutates nothing."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (name or uuid) resolved against the catalog.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The wave partition of the plan's steps by prerequisite depth.",
+                  "data": {
+                      "waves": "List of waves; each wave is a list of artifact paths that may run in parallel.",
+                  },
+                  "example": {
+                      "waves": [
+                          ["G-001-domain-model/T-001-plan-aggregate/atomic_steps/A-001-plan.yaml"],
+                          ["G-001-domain-model/T-002-step-lifecycle/atomic_steps/A-001-status.yaml"],
+                      ]
+                  },
+              },
+              "error": {
+                  "description": "Domain error returned when the plan cannot be resolved.",
+                  "code": "PLAN_NOT_FOUND",
+                  "message": "Human-readable message identifying the missing plan.",
+                  "details": "None for this error code.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Get the parallel wave map of a plan.",
+                  "command": {"plan": "plan_manager"},
+                  "explanation": "Returns the steps grouped into waves that may be executed in parallel.",
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not match any plan in the catalog.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans through the catalog command and retry with a valid plan identifier.",
+              },
+          },
+          "best_practices": [
+              "Use graph_order instead when a single linear execution sequence is needed.",
+              "Waves reflect prerequisite depth only; steps within one wave carry no further ordering guarantee.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - The module has exactly one top-level function,
+    `get_graph_parallel_map_metadata`, with signature
+    `def get_graph_parallel_map_metadata(cls) -> dict:` (`cls` is the
+    command class; its `name`, `version`, `descr`, `category`, `author`,
+    `email` class attributes are read via `cls.name`, `cls.version`,
+    `cls.descr`, `cls.category`, `cls.author`, `cls.email`).
+  - The returned dict has exactly these top-level keys: `name`, `version`,
+    `description`, `category`, `author`, `email`, `detailed_description`,
+    `parameters`, `return_value`, `usage_examples`, `error_cases`,
+    `best_practices`.
+  - `parameters` has exactly one entry, `plan`, with exactly the keys
+    `description` (str), `type` (str, value `"string"`), `required` (bool,
+    value `True`).
+  - `return_value` has exactly the keys `success` and `error`, structured as
+    shown.
+  - `error_cases` has exactly one key, `PLAN_NOT_FOUND`, with exactly
+    `description`, `message`, `solution` — this is the only error code the
+    graph_parallel_map command can return: it is raised when the `plan`
+    parameter cannot be resolved. There is no step_id parameter and no
+    cycle handling in this command.
+  - No imports beyond `from __future__ import annotations` are needed or
+    permitted; the function only reads attributes off `cls` and returns a
+    literal dict.
+  - Do not add any other function, class, or module-level statement.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Relevant property: "metadata
+  dictionary must never contradict the schema" — the single `plan`
+  parameter documented here must mirror exactly what the command's
+  `get_schema()` declares, and `error_cases` must list exactly the one
+  code the command can return.
+verification:
+  type: import
+  target: plan_manager.commands.graph_parallel_map_metadata
+  expected: >
+    Importing plan_manager.commands.graph_parallel_map_metadata succeeds
+    and the module defines a callable get_graph_parallel_map_metadata(cls)
+    that, given an object with name, version, descr, category, author,
+    email attributes, returns a dict containing exactly the metadatastd
+    required top-level keys, with the single parameter plan marked
+    required and with error_cases containing exactly PLAN_NOT_FOUND.
+status: draft

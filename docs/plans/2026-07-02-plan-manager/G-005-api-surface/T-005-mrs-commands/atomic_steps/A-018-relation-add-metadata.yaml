@@ -1,0 +1,212 @@
+step_id: A-018
+parent_tactical_step: T-005
+name: Create relation_add metadata module
+target_file: plan_manager/commands/relation_add_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-004, C-016]
+prompt: |
+  Target file: `plan_manager/commands/relation_add_metadata.py`. Operation:
+  create_file (the file does not exist yet; create it with exactly the content
+  specified below).
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-004
+    name: Relation
+    definition: Typed directed edge between two concepts restricted to seven allowed types.
+    properties:
+    - types are uses, owns, implements, extends, depends_on, produces, consumes
+    - free-form types rejected at write time
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Context: this module documents the RelationAddCommand class defined in
+  `plan_manager/commands/relation_add_command.py` (a sibling file, already
+  created; do not read or modify it — the facts you need about it are restated
+  here). That class has: name = "relation_add", version = "1.0.0", descr =
+  "Add a new relation between two concepts under an open cascade.", category =
+  "mrs". Its get_schema() requires plan, cascade_uuid, from_concept, to_concept
+  (strings) and type (string enum of the seven allowed relation types: uses,
+  owns, implements, extends, depends_on, produces, consumes). Its execute is
+  cascade-only (rejects without a valid open cascade with code
+  CASCADE_CONFLICT), writes the relation via the domain store (raising
+  CONCEPT_NOT_FOUND when an endpoint concept does not exist, DUPLICATE_ID via
+  UniqueViolation when the exact (from_concept, to_concept, type) edge already
+  exists), records the mutation as a cascade revision, and verifies the write
+  by re-reading the relation list, returning the written edge plus a
+  revision_uuid.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Extended AI/documentation metadata for the relation_add command."""
+
+  from typing import Any, Dict
+
+
+  def get_relation_add_metadata(cls) -> Dict[str, Any]:
+      """Return extended metadata for RelationAddCommand.
+
+      Args:
+          cls: The RelationAddCommand class (passed by its classmethod metadata()).
+
+      Returns:
+          A metadata dictionary with keys name, version, description, category,
+          author, email, detailed_description, parameters, return_value,
+          usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Adds a new MRS relation (C-004) between two existing concepts. "
+              "MRS entities are cascade-only (C-016) at any plan status: the "
+              "call must carry the UUID of an already-open cascade in "
+              "cascade_uuid, or it is rejected with CASCADE_CONFLICT. The "
+              "write enforces the seven allowed relation types and the "
+              "existence of both endpoint concepts, so a mechanically invalid "
+              "MRS entry cannot be written. The mutation is recorded as a "
+              "cascade revision with the full node snapshot and verified by "
+              "re-reading the relation list after write; this command does "
+              "not support dry_run, matching the cascade-only write "
+              "discipline of C-016."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  "type": "string",
+                  "required": True,
+              },
+              "cascade_uuid": {
+                  "description": "UUID of the open cascade admitting this mutation.",
+                  "type": "string",
+                  "required": True,
+              },
+              "from_concept": {
+                  "description": "Concept identifier of the relation source endpoint.",
+                  "type": "string",
+                  "required": True,
+              },
+              "to_concept": {
+                  "description": "Concept identifier of the relation target endpoint.",
+                  "type": "string",
+                  "required": True,
+              },
+              "type": {
+                  "description": "Relation type; one of the seven allowed types.",
+                  "type": "string",
+                  "required": True,
+                  "enum": ["uses", "owns", "implements", "extends", "depends_on", "produces", "consumes"],
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The written relation verified by re-read, with its cascade revision.",
+                  "data": {
+                      "from_concept": "Relation source endpoint concept_id.",
+                      "to_concept": "Relation target endpoint concept_id.",
+                      "type": "Relation type.",
+                      "revision_uuid": "UUID of the cascade revision that recorded this write.",
+                  },
+                  "example": {
+                      "from_concept": "C-004",
+                      "to_concept": "C-003",
+                      "type": "depends_on",
+                      "revision_uuid": "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6",
+                  },
+              },
+              "error": {
+                  "description": "Error result with a stable domain code.",
+                  "code": "stable error code string",
+                  "message": "human-readable message",
+                  "details": "additional diagnostic fields when available",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Add a new relation under an open cascade.",
+                  "command": {
+                      "plan": "plan-manager",
+                      "cascade_uuid": "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6",
+                      "from_concept": "C-004",
+                      "to_concept": "C-003",
+                      "type": "depends_on",
+                  },
+                  "explanation": "Writes a new relation row under the given open cascade and returns it verified by re-read.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a stored plan.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans and retry with a valid plan identifier or UUID.",
+              },
+              "CASCADE_CONFLICT": {
+                  "description": "cascade_uuid does not identify the plan's currently open cascade.",
+                  "message": "cascade admission rejected: {details}",
+                  "solution": "Begin a cascade and pass its cascade_uuid, or use the plan's currently open cascade.",
+              },
+              "CONCEPT_NOT_FOUND": {
+                  "description": "from_concept or to_concept does not exist in the plan.",
+                  "message": "concept not found: {concept_id}",
+                  "solution": "Call concept_list and retry with valid concept_id values for both endpoints.",
+              },
+              "DUPLICATE_ID": {
+                  "description": "A relation with the same from_concept, to_concept, and type already exists.",
+                  "message": "duplicate relation: {from_concept}-{type}->{to_concept}",
+                  "solution": "Call relation_list to check for the existing edge before retrying.",
+              },
+          },
+          "best_practices": [
+              "Begin a cascade before calling relation_add; MRS entities are cascade-only at any plan status.",
+              "Verify both endpoints exist via concept_get or concept_list before writing the relation.",
+              "Re-read with relation_list after the cascade commits to confirm the final state.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - Exactly this file content; no additional functions or imports.
+  - Do not read, create, or modify any other file.
+  - The function must be named get_relation_add_metadata and accept exactly
+    one positional parameter named cls.
+  - error_cases must contain exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT,
+    CONCEPT_NOT_FOUND, DUPLICATE_ID, each with description, message, solution.
+  - The returned dict must contain all of: name, version, description, category,
+    author, email, detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+verification:
+  type: import
+  target: plan_manager/commands/relation_add_metadata.py
+  expected: >
+    Importing the module succeeds. get_relation_add_metadata(cls) called with
+    a stub object exposing name/version/descr/category/author/email attributes
+    returns a dict containing all required top-level keys; error_cases has
+    exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT, CONCEPT_NOT_FOUND,
+    DUPLICATE_ID, each with description, message, and solution; parameters
+    has entries for plan, cascade_uuid, from_concept, to_concept, type, all
+    required True, with type carrying the seven-entry enum.
+status: draft

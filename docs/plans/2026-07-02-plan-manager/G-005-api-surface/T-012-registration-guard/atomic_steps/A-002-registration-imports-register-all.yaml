@@ -1,0 +1,207 @@
+step_id: A-002
+parent_tactical_step: T-012
+name: registration-imports-register-all
+target_file: plan_manager/commands/registration.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-023, C-024]
+prompt: >
+  Create the new Python file at the exact project-relative path
+  plan_manager/commands/registration.py in a Python 3.12+ codebase. The
+  file does not exist yet: do not assume any pre-existing content.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  concept_id: C-023, name: CommandContract, definition: "Adapter-conformant
+  command class shape with schema, metadata, and semantic validation.",
+  properties: "class attributes name, version, descr, category, author,
+  email, result_class, use_queue", "get_schema strict subset with explicit
+  additionalProperties false", "shallow adapter validation compensated by
+  validate_params semantics", "metadata dictionary must never contradict
+  the schema", "read commands never mutate; mutating commands verify by
+  re-read", "destructive or bulk operations expose a dry-run mode
+  defaulting to on".
+
+  concept_id: C-024, name: CommandInventory, definition: "Closed normative
+  set of API commands enforced by a startup self-check.", properties:
+  "registry compared against inventory at startup; any difference aborts
+  start", "no-stub probe of schema, metadata, and descr for every
+  registered command", "the editing subset is enumerated exhaustively".
+
+  Relation: C-024 -> C-023, type uses (the inventory guard operates over
+  CommandContract-conformant command classes).
+
+
+  Platform contract used by this file (exact, verbatim): the platform
+  command registry object is `from
+  mcp_proxy_adapter.commands.command_registry import registry`; a command
+  class is registered by calling `registry.register(CommandClass,
+  "custom")`, where the second positional argument is the literal string
+  category name `"custom"`.
+
+
+  Write the complete file content, exactly as follows:
+
+
+  1. A module docstring (triple double-quoted string) with this exact
+  text, word for word:
+
+  "Registration entry points for the plan_manager command surface (C-024).
+
+  Imports every command class of the normative inventory and registers it
+  with the platform command registry under the custom category, in
+  INVENTORY order. Also provides the two startup invariants that guard
+  the surface: registration completeness (check_inventory) and the
+  no-stub probe (probe_commands)."
+
+
+  2. Exactly one import line pulling the inventory constant:
+
+  `from plan_manager.commands.inventory import INVENTORY`
+
+
+  3. Exactly 41 import lines, one per command class, in exactly this
+  order, each of the exact form `from plan_manager.commands.<module> import
+  <ClassName>`:
+
+  from plan_manager.commands.plan_create_command import PlanCreateCommand
+
+  from plan_manager.commands.plan_list_command import PlanListCommand
+
+  from plan_manager.commands.plan_status_command import PlanStatusCommand
+
+  from plan_manager.commands.plan_export_command import PlanExportCommand
+
+  from plan_manager.commands.plan_import_command import PlanImportCommand
+
+  from plan_manager.commands.hrs_import_command import HrsImportCommand
+
+  from plan_manager.commands.hrs_export_command import HrsExportCommand
+
+  from plan_manager.commands.para_list_command import ParaListCommand
+
+  from plan_manager.commands.para_get_command import ParaGetCommand
+
+  from plan_manager.commands.para_label_assign_command import
+  ParaLabelAssignCommand
+
+  from plan_manager.commands.para_mark_non_binding_command import
+  ParaMarkNonBindingCommand
+
+  from plan_manager.commands.concept_get_command import ConceptGetCommand
+
+  from plan_manager.commands.concept_list_command import ConceptListCommand
+
+  from plan_manager.commands.concept_add_command import ConceptAddCommand
+
+  from plan_manager.commands.concept_update_command import
+  ConceptUpdateCommand
+
+  from plan_manager.commands.concept_remove_command import
+  ConceptRemoveCommand
+
+  from plan_manager.commands.relation_list_command import
+  RelationListCommand
+
+  from plan_manager.commands.relation_add_command import RelationAddCommand
+
+  from plan_manager.commands.relation_remove_command import
+  RelationRemoveCommand
+
+  from plan_manager.commands.concept_coverage_command import
+  ConceptCoverageCommand
+
+  from plan_manager.commands.step_get_command import StepGetCommand
+
+  from plan_manager.commands.step_tree_command import StepTreeCommand
+
+  from plan_manager.commands.step_create_command import StepCreateCommand
+
+  from plan_manager.commands.step_update_command import StepUpdateCommand
+
+  from plan_manager.commands.step_move_command import StepMoveCommand
+
+  from plan_manager.commands.step_delete_command import StepDeleteCommand
+
+  from plan_manager.commands.step_set_status_command import
+  StepSetStatusCommand
+
+  from plan_manager.commands.graph_deps_command import GraphDepsCommand
+
+  from plan_manager.commands.graph_order_command import GraphOrderCommand
+
+  from plan_manager.commands.graph_parallel_map_command import
+  GraphParallelMapCommand
+
+  from plan_manager.commands.graph_impact_command import GraphImpactCommand
+
+  from plan_manager.commands.branch_prompt_command import
+  BranchPromptCommand
+
+  from plan_manager.commands.branch_dump_command import BranchDumpCommand
+
+  from plan_manager.commands.branch_weak_command import BranchWeakCommand
+
+  from plan_manager.commands.plan_validate_command import
+  PlanValidateCommand
+
+  from plan_manager.commands.plan_score_command import PlanScoreCommand
+
+  from plan_manager.commands.cascade_begin_command import
+  CascadeBeginCommand
+
+  from plan_manager.commands.cascade_preview_command import
+  CascadePreviewCommand
+
+  from plan_manager.commands.cascade_commit_command import
+  CascadeCommitCommand
+
+  from plan_manager.commands.cascade_abort_command import
+  CascadeAbortCommand
+
+  from plan_manager.commands.info_command import InfoCommand
+
+
+  4. A function with this exact signature:
+
+  `def register_all(registry) -> None:`
+
+  with this exact docstring (triple double-quoted string):
+
+  "Register every command class of the normative inventory.
+
+  Imports and registers all 41 command classes of INVENTORY, in
+  INVENTORY order, under the \"custom\" category.
+
+  :param registry: The platform command registry object, exposing a
+  ``register(command_class, category: str) -> None`` method (``from
+  mcp_proxy_adapter.commands.command_registry import registry``).
+  :return: None"
+
+
+  followed by exactly 41 statements, one per imported class, in exactly
+  the same order as the 41 import lines above, each of the exact form
+  `registry.register(<ClassName>, "custom")`, e.g. the first statement is
+  `registry.register(PlanCreateCommand, "custom")` and the last statement
+  is `registry.register(InfoCommand, "custom")`.
+
+
+  Constraints: do not add any other module-level name, function, class,
+  or import. Do not add a `__all__` export list. Do not add comments
+  beyond the docstrings. Do not call check_inventory or probe_commands
+  from this file; they are added by later edits to this same file. Do
+  not add a `from __future__ import annotations` line.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/registration.py::register_all
+  expected: >
+    The file parses as valid Python 3.12+. Exactly 41 command classes are
+    imported, in the same order as INVENTORY from
+    plan_manager.commands.inventory, each from the module
+    plan_manager.commands.<name>_command where <name> is the
+    corresponding INVENTORY entry. register_all calls
+    registry.register(cls, "custom") exactly once per imported class, in
+    INVENTORY order, and takes no action beyond these 41 calls.
+status: draft

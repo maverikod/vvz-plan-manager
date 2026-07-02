@@ -1,0 +1,171 @@
+step_id: A-002
+parent_tactical_step: T-005
+name: Create concept_get metadata module
+target_file: plan_manager/commands/concept_get_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-003]
+prompt: |
+  Target file: `plan_manager/commands/concept_get_metadata.py`. Operation: create_file
+  (the file does not exist yet; create it with exactly the content specified below).
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Context: this module documents the ConceptGetCommand class defined in
+  `plan_manager/commands/concept_get_command.py` (a sibling file, already created;
+  do not read or modify it — the facts you need about it are restated here). That
+  class has: name = "concept_get", version = "1.0.0", descr = "Return one concept
+  of a plan by concept_id.", category = "mrs". Its get_schema() requires two string
+  parameters: "plan" (Plan identifier (UUID or unique plan name) to resolve.) and
+  "concept_id" (Concept identifier in pattern C-NNN.). Its execute resolves the plan
+  via resolve_plan (raising a PLAN_NOT_FOUND domain error when the plan cannot be
+  resolved) then calls get_concept; when it returns None the command returns an
+  ErrorResult with code CONCEPT_NOT_FOUND and message
+  f"concept not found: {concept_id}"; otherwise it returns SuccessResult with data
+  uuid, plan_uuid, concept_id, name, definition, properties, source_labels (all
+  taken from the stored Concept row: uuid: uuid.UUID, plan_uuid: uuid.UUID,
+  concept_id: str, name: str, definition: str, properties: list[str],
+  source_labels: list[str]).
+
+  Write the file with exactly this content:
+
+  ```python
+  """Extended AI/documentation metadata for the concept_get command."""
+
+  from typing import Any, Dict
+
+
+  def get_concept_get_metadata(cls) -> Dict[str, Any]:
+      """Return extended metadata for ConceptGetCommand.
+
+      Args:
+          cls: The ConceptGetCommand class (passed by its classmethod metadata()).
+
+      Returns:
+          A metadata dictionary with keys name, version, description, category,
+          author, email, detailed_description, parameters, return_value,
+          usage_examples, error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Returns one MRS concept (C-003) of a resolved plan by its "
+              "concept_id. Read-only: never mutates plan state."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  "type": "string",
+                  "required": True,
+              },
+              "concept_id": {
+                  "description": "Concept identifier in pattern C-NNN.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The concept fields.",
+                  "data": {
+                      "uuid": "Concept row UUID.",
+                      "plan_uuid": "Owning plan UUID.",
+                      "concept_id": "Concept identifier, pattern C-NNN.",
+                      "name": "Concept canonical name.",
+                      "definition": "Concept one-sentence definition.",
+                      "properties": "List of free-form property statements.",
+                      "source_labels": "List of HRS paragraph labels justifying the concept.",
+                  },
+                  "example": {
+                      "uuid": "5c1f9b0a-2e3d-4b8a-9c7a-1a2b3c4d5e6f",
+                      "plan_uuid": "1a2b3c4d-5e6f-4a1b-8c2d-9e0f1a2b3c4d",
+                      "concept_id": "C-003",
+                      "name": "Concept",
+                      "definition": "MRS basis axis with canonical name, one-sentence definition, properties, and source labels.",
+                      "properties": ["identifier pattern C-NNN, unique within plan"],
+                      "source_labels": ["{f6s2}", "{k7r9}"],
+                  },
+              },
+              "error": {
+                  "description": "Error result with a stable domain code.",
+                  "code": "stable error code string",
+                  "message": "human-readable message",
+                  "details": "additional diagnostic fields when available",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Fetch one concept by id.",
+                  "command": {"plan": "plan-manager", "concept_id": "C-003"},
+                  "explanation": "Returns the stored fields of concept C-003.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a stored plan.",
+                  "message": "plan not found: {plan}",
+                  "solution": "List plans and retry with a valid plan identifier or UUID.",
+              },
+              "CONCEPT_NOT_FOUND": {
+                  "description": "No concept with concept_id exists in the plan MRS.",
+                  "message": "concept not found: {concept_id}",
+                  "solution": "Call concept_list and retry with a valid concept_id.",
+              },
+          },
+          "best_practices": [
+              "Use concept_list to discover valid concept_id values before calling concept_get.",
+              "concept_get never mutates plan state; safe to call at any plan or cascade status.",
+          ],
+      }
+  ```
+
+  Constraints:
+  - Exactly this file content; no additional functions or imports.
+  - Do not read, create, or modify any other file.
+  - The function must be named get_concept_get_metadata and accept exactly one
+    positional parameter named cls.
+  - error_cases must contain exactly the keys PLAN_NOT_FOUND and CONCEPT_NOT_FOUND,
+    each with description, message, solution.
+  - The returned dict must contain all of: name, version, description, category,
+    author, email, detailed_description, parameters, return_value, usage_examples,
+    error_cases, best_practices.
+verification:
+  type: import
+  target: plan_manager/commands/concept_get_metadata.py
+  expected: >
+    Importing the module succeeds. get_concept_get_metadata(cls) called with a
+    stub object exposing name/version/descr/category/author/email attributes
+    returns a dict containing all required top-level keys (name, version,
+    description, category, author, email, detailed_description, parameters,
+    return_value, usage_examples, error_cases, best_practices); error_cases has
+    exactly the keys PLAN_NOT_FOUND and CONCEPT_NOT_FOUND, each with
+    description, message, and solution; parameters has entries for plan and
+    concept_id each with description, type, and required.
+status: draft

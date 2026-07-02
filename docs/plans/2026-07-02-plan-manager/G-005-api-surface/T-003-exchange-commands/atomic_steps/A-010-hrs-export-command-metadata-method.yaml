@@ -1,0 +1,124 @@
+step_id: A-010
+parent_tactical_step: T-003
+name: hrs-export-command-metadata-method
+target_file: plan_manager/commands/hrs_export_command.py
+operation: modify_file
+priority: 3
+depends_on: [A-009]
+concepts: [C-023, C-026]
+prompt: |
+  Modify the file plan_manager/commands/hrs_export_command.py. Its full
+  current content (after all lower-priority AS on this file have been
+  applied) is exactly:
+
+  """HrsExportCommand: read-only export of a plan's HRS Markdown text."""
+
+  from typing import Any, ClassVar, Dict, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.hrs_export_metadata import get_hrs_export_metadata
+  from plan_manager.exchange.exporter import export_hrs
+  from plan_manager.runtime.context import db_connection
+
+
+  class HrsExportCommand(Command):
+      """Return the byte-identical HRS Markdown text of a resolved plan."""
+
+      name: ClassVar[str] = "hrs_export"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Export the byte-identical HRS Markdown text of a plan."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for hrs_export.
+
+          Returns:
+              A JSON-schema-shaped dictionary with an explicit
+              additionalProperties=False and an exact required list.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier resolved against the catalog.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+  Append exactly one blank line after the line `        }`, then append
+  the following method, indented 4 spaces as a member of class
+  HrsExportCommand:
+
+  @classmethod
+  def metadata(cls) -> Dict[str, Any]:
+      """Return the extended documentation metadata for hrs_export.
+
+      Returns:
+          The dictionary produced by get_hrs_export_metadata(cls).
+      """
+      return get_hrs_export_metadata(cls)
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the blank line and the method shown.
+  - The method is decorated @classmethod with exact signature
+    `def metadata(cls) -> Dict[str, Any]:` per
+    docs/standards/planning/metadatastd.yaml,
+    command_class_shape.required_methods.metadata.
+  - The method body is exactly one return statement calling
+    get_hrs_export_metadata(cls) — the function already imported at the
+    top of this file as `from plan_manager.commands.hrs_export_metadata
+    import get_hrs_export_metadata`. Do not inline the metadata dict
+    here.
+  - get_hrs_export_metadata has signature `def
+    get_hrs_export_metadata(cls) -> Dict[str, Any]:` and returns a dict
+    with the metadatastd.yaml required_fields, including error_cases
+    keyed "PLAN_NOT_FOUND".
+  - Do not add any other method, import, or class to this file. Do not
+    read or modify any other file.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+verification:
+  type: import
+  target: plan_manager.commands.hrs_export_command.HrsExportCommand.metadata
+  expected: >
+    HrsExportCommand.metadata() returns the same dict as
+    get_hrs_export_metadata(HrsExportCommand), containing the twelve
+    metadatastd.yaml required keys and not contradicting get_schema()
+    (parameters "plan" matches the schema properties).
+status: draft

@@ -1,0 +1,312 @@
+step_id: A-004
+parent_tactical_step: T-011
+name: info-command-execute
+target_file: plan_manager/commands/info_command.py
+operation: modify_file
+priority: 3
+depends_on: [A-003]
+concepts: [C-025, C-023, C-026]
+prompt: |
+  Modify the existing Python module at the exact project-relative path
+  `plan_manager/commands/info_command.py`.
+
+  The file currently contains exactly the following content (this is the
+  full, current, post-prior-step state of the file — not the file's
+  original content):
+
+  ```python
+  """Server self-description command (C-025)."""
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.info_metadata import get_info_metadata
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.runtime.build_info import build_info, operator_doc
+  from plan_manager.scoring.embedding import EmbeddingUnavailable, fetch_vector
+
+
+  class InfoCommand(Command):
+      """Server self-description command (C-025).
+
+      Read-only command implementing CommandContract (C-023). Returns
+      identity, build metadata, a runtime summary with database and
+      embedding service probes and the open cascade count, and the
+      embedded operator documentation text. An optional "section"
+      parameter restricts the answer to exactly one of these four parts.
+      """
+
+      name = "info"
+      version = "1.0.0"
+      descr = (
+          "Return the server self-description: identity, build metadata, "
+          "runtime summary, and operator documentation."
+      )
+      category = "system"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for the info command.
+
+          Returns:
+              Dict[str, Any]: JSON-schema-shaped dictionary with one
+              optional "section" property restricted to four enumerated
+              values, an empty required list, and additionalProperties
+              set to False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "section": {
+                      "type": "string",
+                      "description": (
+                          "Restrict the response to one section: "
+                          "'identity', 'build', 'runtime', or "
+                          "'documentation'. Omitting this parameter "
+                          "returns all four sections."
+                      ),
+                      "enum": [
+                          "identity",
+                          "build",
+                          "runtime",
+                          "documentation",
+                      ],
+                  },
+              },
+              "required": [],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate parameters for the info command.
+
+          Calls the base class validation first (structural checks against
+          get_schema's JSON-schema-shaped output), then re-checks that the
+          optional "section" parameter, if present, is one of the four
+          allowed section names. This re-check is a semantic safety net:
+          schema-level enum enforcement by the platform validator is
+          shallow, so this command re-verifies membership itself. An
+          invalid value raises ValueError, which the platform adapter maps
+          to an invalid-params response; this command never raises a
+          domain error code for a malformed parameter.
+
+          Args:
+              params: Raw parameter dictionary as received by the command,
+                  before semantic validation.
+
+          Returns:
+              Dict[str, Any]: The validated parameter dictionary, unchanged
+              from what the base class validation returns.
+
+          Raises:
+              ValueError: If "section" is present in params and is not one
+                  of "identity", "build", "runtime", "documentation".
+          """
+          params = super().validate_params(params)
+          section = params.get("section")
+          if section is not None and section not in (
+              "identity",
+              "build",
+              "runtime",
+              "documentation",
+          ):
+              raise ValueError(
+                  f"Invalid section: {section!r}. Must be one of "
+                  "'identity', 'build', 'runtime', 'documentation'."
+              )
+          return params
+  ```
+
+  Modification: insert exactly one new method into the InfoCommand class,
+  immediately after the validate_params method (same indentation level,
+  i.e. one method body indented under the class). Do not change any
+  other existing line. The new method, verbatim:
+
+  ```python
+      def execute(self, section: str | None = None) -> SuccessResult | ErrorResult:
+          """Assemble and return the server self-description.
+
+          Builds four parts from embedded package data and live runtime
+          probes: identity, build, runtime, documentation. When section is
+          given, only that part is returned, nested under a "section" key
+          alongside the requested section name. When section is None, all
+          four parts are returned together. Any unexpected exception,
+          including a missing embedded documentation payload surfaced by
+          operator_doc() as RuntimeError, is caught by the final handler
+          and mapped to a platform ErrorResult via map_exception; this
+          command never raises a domain error code of its own.
+
+          Args:
+              section: Optional section selector, one of "identity",
+                  "build", "runtime", "documentation". None returns all
+                  four sections. Already validated by validate_params.
+
+          Returns:
+              SuccessResult | ErrorResult: SuccessResult wrapping the
+              assembled data dictionary, or an ErrorResult produced by
+              map_exception when an unexpected exception occurs.
+          """
+          try:
+              info = build_info()
+              identity = {
+                  "product": info["product"],
+                  "package_version": info["package_version"],
+                  "adapter_version": info["adapter_version"],
+              }
+              build = {
+                  "build_date": info["build_date"],
+                  "image_tag": info["image_tag"],
+              }
+
+              database_connected = True
+              try:
+                  with db_connection() as conn:
+                      with conn.cursor() as cur:
+                          cur.execute("SELECT 1")
+                          cur.fetchone()
+              except Exception:
+                  database_connected = False
+
+              open_cascades = 0
+              if database_connected:
+                  with db_connection() as conn:
+                      with conn.cursor() as cur:
+                          cur.execute(
+                              "SELECT count(*) FROM cascade WHERE status = 'open'"
+                          )
+                          row = cur.fetchone()
+                          open_cascades = row[0] if row is not None else 0
+
+              cfg = app_config()
+              if cfg.embedding_url is None:
+                  embedding_service = "unconfigured"
+              else:
+                  try:
+                      fetch_vector(cfg.embedding_url, "probe")
+                      embedding_service = "reachable"
+                  except EmbeddingUnavailable:
+                      embedding_service = "unreachable"
+
+              runtime = {
+                  "database_connected": database_connected,
+                  "open_cascades": open_cascades,
+                  "embedding_service": embedding_service,
+              }
+
+              documentation = {"text": operator_doc()}
+
+              parts: Dict[str, Any] = {
+                  "identity": identity,
+                  "build": build,
+                  "runtime": runtime,
+                  "documentation": documentation,
+              }
+
+              if section is not None:
+                  data: Dict[str, Any] = {"section": section, section: parts[section]}
+              else:
+                  data = parts
+
+              return SuccessResult(data=data)
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Do not import anything new: `Any`, `Dict` come from
+    `from typing import Any, Dict` already at the top of the file (shown
+    above). `SuccessResult`, `ErrorResult` come from
+    `from mcp_proxy_adapter.commands.result import SuccessResult,
+    ErrorResult` already at the top of the file. `map_exception` comes
+    from `from plan_manager.commands.errors import map_exception`
+    already at the top of the file. `app_config`, `db_connection` come
+    from `from plan_manager.runtime.context import app_config,
+    db_connection` already at the top of the file. `build_info`,
+    `operator_doc` come from `from plan_manager.runtime.build_info
+    import build_info, operator_doc` already at the top of the file.
+    `EmbeddingUnavailable`, `fetch_vector` come from
+    `from plan_manager.scoring.embedding import EmbeddingUnavailable,
+    fetch_vector` already at the top of the file. All of these import
+    lines are already present in the current file content shown above;
+    do not add duplicate imports anywhere.
+  - The database connectivity probe executes exactly the SQL text
+    `SELECT 1` and treats any exception during connection, cursor
+    creation, or execution as database_connected = False; no exception
+    escapes the outer try/except Exception block from this probe.
+  - The open-cascade count query executes exactly the SQL text
+    `SELECT count(*) FROM cascade WHERE status = 'open'` only when
+    database_connected is True; when database_connected is False,
+    open_cascades stays 0 and this query is not executed.
+  - When cfg.embedding_url is None, embedding_service is exactly the
+    string "unconfigured" and fetch_vector is not called. Otherwise
+    fetch_vector(cfg.embedding_url, "probe") is called: on success
+    embedding_service is exactly "reachable"; if it raises
+    EmbeddingUnavailable, embedding_service is exactly "unreachable".
+    No other exception type is caught around this call.
+  - documentation is always `{"text": operator_doc()}`; a RuntimeError
+    raised by operator_doc() propagates out of the inner blocks up to the
+    outer `except Exception as exc: return map_exception(exc)`, which is
+    the intended explicit failure path for a missing embedded payload —
+    it is never caught or replaced closer to the operator_doc() call.
+  - When section is not None, the returned data dict has exactly two
+    keys: "section" (the requested section name) and the section name
+    itself as a second key mapping to that part's dict (e.g. for
+    section="runtime", data == {"section": "runtime", "runtime": runtime}).
+    When section is None, data is exactly the four-key parts dict with
+    keys "identity", "build", "runtime", "documentation".
+  - The method has exactly one try/except Exception at its outermost
+    level (the one shown, ending in `return map_exception(exc)`); the
+    inner database-connectivity try/except Exception and the inner
+    embedding try/except EmbeddingUnavailable are the only other
+    exception handlers in this method.
+  - Do not add a metadata method in this step.
+
+  MRS excerpt (concept definitions relevant to this change):
+
+  C-025 InfoCommand: "Self-description API command returning identity,
+  build metadata, runtime summary, and embedded operator documentation."
+  Properties: documentation payload embedded at build time from the
+  single documentation source; same source renders man and info pages;
+  divergence fails the build.
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Property used here: "read
+  commands never mutate" — this execute method performs only reads (a
+  SELECT 1 probe, a SELECT count(*) query, an embedding probe call, and
+  reads of embedded build/documentation data); it writes nothing.
+
+  C-026 ErrorModel: "Two-layer error contract of adapter JSON-RPC codes
+  and stable domain string codes." Property used here: "every declared
+  error case returnable and every returnable case declared" — this
+  command declares no domain error cases (error_cases is {}), so it must
+  never raise a domain-coded error itself; the single outer
+  except Exception as exc: return map_exception(exc) is the only path
+  that turns any failure into a result, and unknown exceptions surface
+  through the platform's JSON-RPC internal error layer, not a domain code.
+verification:
+  type: import
+  target: plan_manager.commands.info_command.InfoCommand.execute
+  expected: >
+    Importing plan_manager.commands.info_command succeeds without
+    raising. InfoCommand defines an execute method accepting an optional
+    section keyword argument defaulting to None. With build_info,
+    db_connection, app_config, operator_doc, and fetch_vector monkeypatched
+    so that build_info returns a fixed dict of the five required keys, the
+    database probe succeeds, cfg.embedding_url is None, and operator_doc
+    returns a fixed string, calling execute() with no arguments returns a
+    SuccessResult whose data dict has exactly the keys "identity",
+    "build", "runtime", "documentation", with runtime containing
+    database_connected: True, open_cascades as an int, and
+    embedding_service: "unconfigured". Calling execute(section="build")
+    under the same monkeypatches returns a SuccessResult whose data dict
+    equals {"section": "build", "build": {"build_date": ..., "image_tag":
+    ...}}. When operator_doc is monkeypatched to raise RuntimeError, both
+    execute() and execute(section="documentation") return an ErrorResult
+    instead of raising.
+status: draft

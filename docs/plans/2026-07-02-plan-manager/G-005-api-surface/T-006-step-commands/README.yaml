@@ -1,0 +1,74 @@
+step_id: T-006
+parent_global_step: G-005
+name: step-commands
+description: >
+  Create the uniform step command classes of the inventory over levels three
+  to five (C-005): step_get, step_tree, step_create, step_update, step_move,
+  step_delete, and step_set_status, each conforming to the CommandContract
+  (C-023). step_get returns one step with resolved context; step_tree
+  returns the plan's step tree with statuses; an unknown step yields the
+  step-not-found code (C-026). step_create scaffolds a new step under the
+  declarative level schema (C-006) with the level-specific required-field
+  skeleton, status draft, and the next free zero-padded identifier, rejecting
+  duplicates with the duplicate-identifier code. step_update patches
+  level-specific fields under the schema, re-validating every touched
+  reference. step_move rewrites every reference to the moved identifier in
+  one operation. step_delete removes a step. step_set_status drives the
+  lifecycle state machine (C-007), refusing illegal transitions and the
+  transitions reserved for cascade propagation with the invalid-transition
+  code. All five mutating commands run under the mutation admission regime
+  (C-016): direct execution is admitted only for targets in the direct
+  statuses with no frozen artifact at or beneath the change point; otherwise
+  the cascade-required code is returned, and a mismatched cascade identity
+  yields cascade-conflict; admitted in-cascade mutations record their
+  cascade revision with full node snapshots; every mutation verifies by
+  re-read. This step defines the seven command classes with schemas,
+  metadata, validation, and execution wiring onto the step store, schema
+  validation, status model, and cascade admission; it registers nothing.
+concepts: [C-023, C-026, C-005, C-006, C-007, C-016]
+inputs:
+- name: step_query_request
+  type: command parameters
+  description: >
+    The plan identifier plus a step identifier for single reads; the plan
+    identifier alone for the tree.
+- name: step_mutation_request
+  type: command parameters
+  description: >
+    The plan identifier, the optional open cascade identity, and the
+    operation payload: parent and level and slug for create, the field
+    patch for update, the new parent for move, the target for delete, the
+    enumerated new status for set-status.
+outputs:
+- name: step_read_result
+  type: command result
+  description: >
+    One step with resolved context, or the full plan tree with statuses.
+- name: step_mutation_result
+  type: command result
+  description: >
+    The scaffolded, patched, moved, deleted, or transitioned step verified
+    by re-read; violations yield duplicate-identifier, step-not-found,
+    invalid-transition, cascade-required, cascade-conflict, or
+    frozen-artifact errors.
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+- A-013
+- A-014
+- A-015
+- A-016
+- A-017
+- A-018
+- A-019
+status: draft

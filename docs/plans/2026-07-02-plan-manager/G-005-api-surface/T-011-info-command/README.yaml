@@ -1,0 +1,44 @@
+step_id: T-011
+parent_global_step: G-005
+name: info-command
+description: >
+  Create the server self-description command class of the inventory: info,
+  realizing the InfoCommand (C-025) under the CommandContract (C-023). The
+  command is read-only, takes no parameters beyond an optional enumerated
+  section selector restricting the answer to identity, build, runtime, or
+  documentation, and returns four parts. Identity: the product name, the
+  package version, and the platform adapter version. Build metadata: the
+  build date and the image tag, read from the package data embedded at build
+  time. Runtime summary: database connectivity, embedding service
+  reachability as a probe outcome, and the count of open cascades across all
+  plans. Operator documentation: the full documentation text embedded into
+  the package at build time from the single documentation source — the same
+  source that produces the installed man and info pages, so the command
+  cannot diverge from the installed documentation; the command only reads
+  the embedded payload and renders nothing. Absence of the embedded payload
+  is a packaging defect surfaced as an explicit error, never silently
+  replaced by generated text. This step defines the one command class with
+  schema, metadata, validation, and the reading of embedded package data and
+  runtime probes; it does not build or render documentation and registers
+  nothing.
+concepts: [C-023, C-026, C-025]
+inputs:
+- name: info_request
+  type: command parameters
+  description: >
+    The optional enumerated section selector limiting the self-description
+    to identity, build, runtime, or documentation; absent means all four.
+outputs:
+- name: server_self_description
+  type: command result
+  description: >
+    Identity, build metadata, runtime summary with database and embedding
+    probes and open cascade count, and the embedded operator documentation
+    payload.
+atomic_steps:
+- A-001-info-metadata-function
+- A-002-info-command-schema
+- A-003-info-command-validate-params
+- A-004-info-command-execute
+- A-005-info-command-metadata-method
+status: draft

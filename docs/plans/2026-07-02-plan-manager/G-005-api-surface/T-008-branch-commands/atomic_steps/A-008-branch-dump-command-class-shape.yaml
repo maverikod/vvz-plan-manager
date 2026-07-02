@@ -1,0 +1,88 @@
+step_id: A-008
+parent_tactical_step: T-008
+name: BranchDumpCommand class declaration and identity attributes
+target_file: plan_manager/commands/branch_dump_command.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023]
+prompt: |
+  Create the file plan_manager/commands/branch_dump_command.py from
+  scratch (it does not exist yet; assume no pre-existing content).
+
+  MRS excerpt (concept definition relevant to this AS):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  Verbatim foundation contract to import and use, never reimplement:
+
+  - Base class import: `from mcp_proxy_adapter.commands.base import Command`
+  - Result import: `from mcp_proxy_adapter.commands.result import SuccessResult`
+    (this AS uses only SuccessResult; ErrorResult is added by a later AS
+    on this same file together with the execute method that needs it)
+
+  Write exactly this file content:
+
+  """BranchDumpCommand: write every branch's prompt as a non-authoritative snapshot."""
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class BranchDumpCommand(Command):
+      """Dump every branch's executor prompt to disk as a derived snapshot."""
+
+      name: ClassVar[str] = "branch_dump"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Write the executor prompt of every branch of the plan under "
+          "the configured export root as an explicitly "
+          "non-authoritative derived snapshot."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+  Constraints:
+  - The module docstring is exactly the one-line string shown as the
+    first line of the file.
+  - Imports are exactly: `from typing import ClassVar`, then a blank
+    line, then `from mcp_proxy_adapter.commands.base import Command` and
+    `from mcp_proxy_adapter.commands.result import SuccessResult`.
+  - The class is named exactly BranchDumpCommand and subclasses Command
+    (imported above).
+  - The class docstring is exactly the one-line string shown.
+  - Every class attribute shown (name, version, descr, category, author,
+    email, result_class, use_queue) is present with exactly the values
+    shown, in the order shown. name, version, descr, category, author,
+    email, use_queue are annotated ClassVar[str] or ClassVar[bool] as
+    shown; result_class is left unannotated and assigned the SuccessResult
+    class object itself (not an instance).
+  - descr is non-empty.
+  - category is the literal string "branch".
+  - Do not add get_schema, metadata, validate_params, or execute in this
+    AS; those are added by later AS on this same file.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_dump_command.py::BranchDumpCommand
+  expected: >
+    The module defines exactly one class, BranchDumpCommand, subclassing
+    Command from mcp_proxy_adapter.commands.base, with class attributes
+    name="branch_dump", version="1.0.0", a non-empty descr, category="branch",
+    author="Vasiliy Zdanovskiy", email="vasilyvz@gmail.com", result_class bound
+    to SuccessResult from mcp_proxy_adapter.commands.result, and use_queue=False;
+    no methods are defined yet.
+status: draft

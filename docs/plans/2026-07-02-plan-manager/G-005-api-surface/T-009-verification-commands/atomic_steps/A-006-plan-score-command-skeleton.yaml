@@ -1,0 +1,168 @@
+step_id: A-006
+parent_tactical_step: T-009
+name: Create PlanScoreCommand class skeleton with schema and metadata wiring
+target_file: plan_manager/commands/plan_score_command.py
+operation: create_file
+priority: 1
+depends_on: [A-002]
+concepts: [C-023, C-013, C-014]
+prompt: |
+  Create a new Python 3.12+ source file at the exact project-relative path
+  `plan_manager/commands/plan_score_command.py`.
+
+  This file does not exist yet. Do not assume any pre-existing content in it.
+  Write exactly the following content, byte-for-byte:
+
+  ```python
+  """Command PlanScoreCommand: run the semantic scoring layer (C-013) over a plan or branch."""
+  from __future__ import annotations
+
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
+
+
+  class PlanScoreCommand(Command):
+      """Run the semantic completeness index (C-013) over a plan or one branch."""
+
+      name = "plan_score"
+      version = "1.0.0"
+      descr = "Run the semantic scoring layer over a plan or one branch and return index, trust, and color."
+      category = "verification"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = True
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :returns: A JSON-schema-shaped dict with keys type, properties,
+              required, additionalProperties.
+          :rtype: Dict[str, Any]
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to score.",
+                  },
+                  "scope": {
+                      "type": "string",
+                      "enum": ["plan", "branch"],
+                      "default": "plan",
+                      "description": "Scoring scope: the whole plan or one branch named by its three step ids.",
+                  },
+                  "gs_step_id": {
+                      "type": "string",
+                      "description": "Global step id (e.g. G-005) of the branch. Required when scope is 'branch'.",
+                  },
+                  "ts_step_id": {
+                      "type": "string",
+                      "description": "Tactical step id (e.g. T-009) of the branch. Required when scope is 'branch'.",
+                  },
+                  "as_step_id": {
+                      "type": "string",
+                      "description": "Atomic step id (e.g. A-101) of the branch. Required when scope is 'branch'.",
+                  },
+                  "verbose": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "Force per-estimator internals into the result even when the score is above threshold.",
+                  },
+                  "expected_revision": {
+                      "type": "string",
+                      "description": "The caller's view of the plan head revision (UUID string). When it does not match the current head revision, the command refuses with VERDICT_STALE.",
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return the extended documentation metadata for this command.
+
+          :returns: The dict produced by get_plan_score_metadata(cls).
+          :rtype: Dict[str, Any]
+          """
+          return get_plan_score_metadata(cls)
+  ```
+
+  Constraints:
+  - The module imports exactly: `from __future__ import annotations`;
+    `from typing import Any, Dict`; `from mcp_proxy_adapter.commands.base
+    import Command`; `from mcp_proxy_adapter.commands.result import
+    SuccessResult, ErrorResult`; `from plan_manager.commands.plan_score_metadata
+    import get_plan_score_metadata`. Do not add any other import.
+  - `PlanScoreCommand` extends `mcp_proxy_adapter.commands.base.Command`
+    exactly as shown, whose contract requires the class attributes name,
+    version, descr, category, author, email, result_class, use_queue, and
+    the methods get_schema (classmethod), metadata (classmethod),
+    validate_params (instance method), execute (instance method). This file
+    defines the class attributes, get_schema, and metadata only;
+    validate_params and execute are added to this same file by later steps
+    and must not be written here.
+  - Class attribute values are exactly: `name = "plan_score"`; `version =
+    "1.0.0"`; `descr = "Run the semantic scoring layer over a plan or one
+    branch and return index, trust, and color."` (non-empty one-line
+    summary); `category = "verification"`; `author = "Vasiliy Zdanovskiy"`;
+    `email = "vasilyvz@gmail.com"`; `result_class = SuccessResult`;
+    `use_queue = True` (plan_score is declared long-running, so it opts into
+    the adapter queue).
+  - `get_schema` returns the exact dict shown above: object type; properties
+    plan (string), scope (string, enum ["plan", "branch"], default "plan"),
+    gs_step_id (string), ts_step_id (string), as_step_id (string), verbose
+    (boolean, default False), expected_revision (string); required is
+    exactly ["plan"]; additionalProperties is exactly False.
+  - `metadata` returns exactly `get_plan_score_metadata(cls)`. The function
+    `get_plan_score_metadata` lives in the sibling module
+    `plan_manager.commands.plan_score_metadata` and has the signature
+    `def get_plan_score_metadata(cls: Type[Any]) -> Dict[str, Any]:`; it
+    takes the command class and returns a metadata dict — do not
+    reimplement its body here, only import and call it.
+  - Do not define `validate_params` or `execute` in this file yet.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-023 CommandContract: "Adapter-conformant command class shape with
+    schema, metadata, and semantic validation." Properties: class attributes
+    name, version, descr, category, author, email, result_class, use_queue;
+    get_schema strict subset with explicit additionalProperties false;
+    shallow adapter validation compensated by validate_params semantics;
+    metadata dictionary must never contradict the schema; read commands
+    never mutate; mutating commands verify by re-read; destructive or bulk
+    operations expose a dry-run mode defaulting to on.
+  - C-013 SemanticIndex: "Normalized 0..100 completeness measure of a branch
+    computed as cosine between required and actual concept vectors."
+    Properties: runs only on scopes that passed the mechanical gate at the
+    current revision; ensemble of weak independent estimators, same-physics
+    votes share weight; one number and color for the human, internals
+    surface only on miss; plan aggregation defaults to minimum branch index.
+  - C-014 TrustEstimate: "Confidence in the semantic measurement itself
+    derived from concept basis geometry and service liveness." Properties:
+    Gram determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are
+    unavailable; distinguishes weak plan from unmeasurable plan.
+verification:
+  type: import
+  target: plan_manager.commands.plan_score_command
+  expected: >
+    Importing the module plan_manager.commands.plan_score_command succeeds
+    with no errors. The module defines a class PlanScoreCommand subclassing
+    mcp_proxy_adapter.commands.base.Command with class attributes name equal
+    to "plan_score", version equal to "1.0.0", descr non-empty, category
+    equal to "verification", author equal to "Vasiliy Zdanovskiy", email
+    equal to "vasilyvz@gmail.com", result_class equal to SuccessResult, and
+    use_queue equal to True. Calling PlanScoreCommand.get_schema() returns a
+    dict with type "object", properties containing exactly the keys plan,
+    scope, gs_step_id, ts_step_id, as_step_id, verbose, expected_revision,
+    required equal to ["plan"], and additionalProperties equal to False.
+    Calling PlanScoreCommand.metadata() returns the dict produced by
+    get_plan_score_metadata(PlanScoreCommand).
+status: draft

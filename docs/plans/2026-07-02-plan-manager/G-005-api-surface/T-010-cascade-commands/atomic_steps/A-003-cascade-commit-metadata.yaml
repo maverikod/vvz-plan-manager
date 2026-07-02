@@ -1,0 +1,210 @@
+step_id: A-003
+parent_tactical_step: T-010
+name: cascade_commit metadata module
+target_file: plan_manager/commands/cascade_commit_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-023
+- C-026
+- C-016
+- C-020
+prompt: |-
+  Target file: plan_manager/commands/cascade_commit_metadata.py
+  Operation: create_file
+  Function signature: def get_cascade_commit_metadata(cls: type) -> dict:
+
+  Create the file with exactly the following content, byte-for-byte (including blank lines and trailing newline):
+
+  ```python
+  """Extended metadata for the cascade_commit command."""
+
+
+  def get_cascade_commit_metadata(cls: type) -> dict:
+      """Return the extended documentation metadata for CascadeCommitCommand.
+
+      Args:
+          cls: The CascadeCommitCommand class supplying identity attributes
+              (name, version, descr, category, author, email).
+
+      Returns:
+          A dictionary with all fields required by the command metadata
+          standard: name, version, description, category, author, email,
+          detailed_description, parameters, return_value, usage_examples,
+          error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Publishes the plan's currently open cascade atomically: runs "
+              "the mechanical gate over the accumulated change set and, on a "
+              "green verdict, advances the plan head revision and closes the "
+              "cascade. On a red verdict the commit is refused, the cascade "
+              "stays open, and the error carries the finding count. Safety: "
+              "this command mutates the plan head revision and closes the "
+              "open cascade only when the gate is green; on refusal no state "
+              "changes and the cascade remains open for further edits. "
+              "Undo: a successful commit advances the head revision "
+              "permanently -- the version store retains every revision so "
+              "any prior revision remains addressable, but there is no "
+              "single-command revert of a commit; a refused commit changes "
+              "nothing and can simply be retried after fixing findings, or "
+              "the open cascade can be discarded with cascade_abort. Verify: "
+              "this command re-reads the open cascade record and the plan's "
+              "head revision after the operation and builds its response "
+              "from that fresh state rather than from the mutation's return "
+              "value alone; call cascade_preview beforehand to check the "
+              "gate verdict without side effects."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan UUID or unique plan name.",
+                  "type": "string",
+                  "required": True,
+              }
+          },
+          "return_value": {
+              "success": {
+                  "description": (
+                      "The gate verdict and the plan's head revision after "
+                      "the commit attempt, read fresh from the database."
+                  ),
+                  "data": {
+                      "green": (
+                          "Boolean: whether the mechanical gate was green "
+                          "for the committed cascade."
+                      ),
+                      "scope": "Scope string the gate verdict was computed for.",
+                      "head_revision_uuid": (
+                          "UUID of the plan head revision after the commit "
+                          "attempt, re-read from the database."
+                      ),
+                  },
+                  "example": {
+                      "green": True,
+                      "scope": "plan:6f1c2e2a-1111-4a2b-9c3d-4e5f6a7b8c9d",
+                      "head_revision_uuid": (
+                          "2b3c4d5e-6f70-4182-99aa-bbccddeeff00"
+                      ),
+                  },
+              },
+              "error": {
+                  "description": "Domain error result on failure.",
+                  "code": "Stable domain error code string (see error_cases).",
+                  "message": "Human-readable error message.",
+                  "details": "Optional diagnostic fields, present when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Commit the open cascade of a plan by name.",
+                  "command": {"plan": "plan-manager"},
+                  "explanation": (
+                      "Runs the mechanical gate and, if green, advances the "
+                      "plan head revision and closes the cascade."
+                  ),
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan parameter does not resolve to any plan.",
+                  "message": "Plan not found: {plan}",
+                  "solution": (
+                      "List existing plans and retry with a valid plan UUID "
+                      "or name."
+                  ),
+              },
+              "CASCADE_REQUIRED": {
+                  "description": "The plan has no open cascade to commit.",
+                  "message": "Plan {plan} has no open cascade.",
+                  "solution": "Call cascade_begin to open a cascade first.",
+              },
+              "GATE_RED": {
+                  "description": (
+                      "The mechanical gate found problems in the cascade's "
+                      "change set; the commit was refused and the cascade "
+                      "stays open."
+                  ),
+                  "message": "Commit refused: gate is red ({finding_count} findings).",
+                  "solution": (
+                      "Call cascade_preview to inspect the findings, fix the "
+                      "underlying artifacts, and retry cascade_commit."
+                  ),
+              },
+          },
+          "best_practices": [
+              "Call cascade_preview before cascade_commit to confirm the "
+              "gate is already green and avoid a refused commit.",
+              "On GATE_RED, the cascade remains open -- fix findings and "
+              "retry cascade_commit rather than reopening a new cascade.",
+              "Treat the returned head_revision_uuid as authoritative; it is "
+              "read fresh from the database after the commit attempt.",
+          ],
+      }
+
+  ```
+
+  Foundation contracts referenced by the content above (import exactly as shown; do not reimplement):
+
+  Constraints:
+  - Python 3.12+ syntax; use built-in generic types (dict, list) for annotations, not typing.Dict/typing.List.
+  - Do not add any code beyond exactly what this prompt specifies.
+  - Do not add a __main__ guard, logging, or any helper not listed here.
+  - Preserve exactly one blank line between top-level imports and the class definition, and exactly one blank line between methods.
+  - The function body must return exactly the literal dict shown in the content above; do not compute any field dynamically beyond reading cls.name, cls.version, cls.descr, cls.category, cls.author, cls.email.
+  - error_cases keys must be exactly: PLAN_NOT_FOUND, CASCADE_REQUIRED, GATE_RED (no more, no fewer).
+  - Every error_cases entry must have exactly the keys description, message, solution.
+  - parameters entries must have exactly the keys description, type, required.
+
+  MRS excerpt (concepts referenced by this step):
+  concepts:
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+    source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+  relations:
+  - { from_concept: C-023, to_concept: C-026, type: uses }
+  - { from_concept: C-020, to_concept: C-018, type: depends_on }
+verification:
+  type: import
+  target: plan_manager.commands.cascade_commit_metadata.get_cascade_commit_metadata
+  expected: >
+    Importing plan_manager.commands.cascade_commit_metadata succeeds and calling get_cascade_commit_metadata(SomeClassWithIdentityAttrs)
+    returns a dict containing exactly the keys name, version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices; error_cases contains exactly
+    the keys PLAN_NOT_FOUND, CASCADE_REQUIRED, GATE_RED, each with description, message, and solution;
+    parameters contains exactly the key plan with description, type, and required.
+status: draft

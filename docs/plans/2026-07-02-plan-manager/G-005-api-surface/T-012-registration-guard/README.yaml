@@ -1,0 +1,49 @@
+step_id: T-012
+parent_global_step: G-005
+name: registration-guard
+description: >
+  Create the registration entry point and the two startup invariants of the
+  CommandInventory (C-024). The normative inventory constant enumerates
+  every command name of the surface exactly once — the plan catalog,
+  exchange, paragraph, MRS, step, graph, branch, verification, cascade, and
+  self-description commands — and marks the mutating editing subset
+  exhaustively. The registration hook registers every command class with the
+  platform registry under the custom category; the adapter owns transport,
+  routing, and the external surface, and no command module implements a
+  route. Registration completeness: after registration the registry contents
+  are compared against the inventory, and a missing command, an unexpected
+  extra command, or a duplicate name aborts startup with a report naming the
+  exact difference — the server never starts with a partial surface. No-stub
+  guarantee: at startup every registered command is probed — its input
+  schema must be explicit and complete with object type and explicit
+  additionalProperties, its metadata dictionary must contain every required
+  key with non-empty content, and its one-line summary must be non-empty
+  (C-023) — and any probe failure aborts startup with the failing command
+  and key named, so a command is either implemented completely or not
+  registered at all. This step defines the inventory constant, the
+  registration hook, and the two startup checks; it defines no command class
+  itself.
+concepts: [C-023, C-024, C-026]
+inputs:
+- name: registered_command_classes
+  type: class set
+  description: >
+    Every command class of the surface, consumed by the registration hook
+    and probed by the startup checks.
+- name: normative_inventory
+  type: closed name set
+  description: >
+    The exhaustive command name list with its marked mutating subset,
+    against which the registry is compared at startup.
+outputs:
+- name: registered_surface
+  type: runtime state
+  description: >
+    The complete registered command surface under the custom category.
+- name: startup_verdict
+  type: guard outcome
+  description: >
+    Successful start on exact inventory match and all probes passing, or
+    an abort naming the exact difference or the failing command and key.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005]
+status: draft

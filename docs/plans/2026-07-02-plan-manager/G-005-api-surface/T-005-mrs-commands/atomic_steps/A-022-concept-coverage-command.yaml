@@ -1,0 +1,187 @@
+step_id: A-022
+parent_tactical_step: T-005
+name: Create concept_coverage command class
+target_file: plan_manager/commands/concept_coverage_command.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-010, C-003]
+prompt: |
+  Target file: `plan_manager/commands/concept_coverage_command.py`. Operation:
+  create_file (the file does not exist yet; create it with exactly the content
+  specified below).
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - read commands never mutate; mutating commands verify by re-read
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Imported foundation contracts used by this file (quote verbatim; import them, never
+  reimplement their bodies):
+
+  - Module `mcp_proxy_adapter.commands.base`: `class Command`.
+  - Module `mcp_proxy_adapter.commands.result`: `class SuccessResult`
+    (constructed as `SuccessResult(data=<dict>)`) and `class ErrorResult`.
+  - Module `plan_manager.commands.errors`:
+    `def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult`
+    and `def map_exception(exc: Exception) -> ErrorResult`.
+  - Module `plan_manager.commands.resolve`:
+    `def resolve_plan(conn, plan: str) -> Plan` — Plan has fields uuid, name,
+    status, context_budget, head_revision_uuid; raises an exception mapped by
+    map_exception to code "PLAN_NOT_FOUND" when the plan cannot be resolved.
+  - Module `plan_manager.runtime.context`:
+    `def db_connection()` — context manager yielding a psycopg.Connection.
+  - Module `plan_manager.scoring.estimators`:
+    `def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]`
+    — returns (concept_id, definition, source_labels) for every concept of the
+    plan.
+  - Module `plan_manager.views.dependency_graph`:
+    `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]` — maps step uuid
+    to Step; Step has fields uuid, plan_uuid, parent_step_uuid, level, step_id,
+    slug, fields, depends_on, concepts, status (concepts is the list of
+    concept_id strings the step references).
+  - Module `plan_manager.verify.gate_data`:
+    `def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str` —
+    returns the artifact path string of one step.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Command: reverse coverage query for one concept (concept_coverage)."""
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.scoring.estimators import load_concept_rows
+  from plan_manager.views.dependency_graph import load_steps
+  from plan_manager.verify.gate_data import artifact_path_of
+
+
+  class ConceptCoverageCommand(Command):
+      """Return the reverse coverage (C-010) of one concept (C-003) in a resolved plan.
+
+      Read-only command: never mutates plan state. For one concept_id, returns
+      the steps that reference it and the HRS paragraph labels that justify it.
+      """
+
+      name = "concept_coverage"
+      version = "1.0.0"
+      descr = "Return the steps and HRS paragraphs that justify one concept."
+      category = "mrs"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the strict input schema for concept_coverage."""
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  },
+                  "concept_id": {
+                      "type": "string",
+                      "description": "Concept identifier to compute reverse coverage for.",
+                  },
+              },
+              "required": ["plan", "concept_id"],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate params: shallow schema checks only; no further semantics needed."""
+          params = super().validate_params(params)
+          return params
+
+      async def execute(self, plan: str, concept_id: str) -> SuccessResult | ErrorResult:
+          """Return the referencing steps and justifying paragraphs of concept_id.
+
+          Args:
+              plan: Plan identifier (UUID or unique plan name) to resolve.
+              concept_id: Concept identifier to compute reverse coverage for.
+
+          Returns:
+              SuccessResult with data {"concept_id", "steps", "paragraphs"}, or
+              ErrorResult with code PLAN_NOT_FOUND or CONCEPT_NOT_FOUND.
+          """
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  rows = load_concept_rows(conn, p.uuid)
+                  match = next((r for r in rows if r[0] == concept_id), None)
+                  if match is None:
+                      return domain_error(
+                          "CONCEPT_NOT_FOUND",
+                          f"concept not found: {concept_id}",
+                      )
+                  _, _, source_labels = match
+                  nodes = load_steps(conn, p.uuid)
+                  referencing = sorted(
+                      artifact_path_of(nodes, s)
+                      for s in nodes.values()
+                      if concept_id in s.concepts
+                  )
+                  return SuccessResult(data={
+                      "concept_id": concept_id,
+                      "steps": referencing,
+                      "paragraphs": source_labels,
+                  })
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Exactly this file content; no additional methods, imports, or attributes.
+  - Do not read, create, or modify any other file.
+  - The class must be named ConceptCoverageCommand and inherit from Command.
+  - get_schema must return an object schema with additionalProperties: false and
+    required exactly ["plan", "concept_id"].
+  - execute is an async method with the exact parameter list (self, plan: str,
+    concept_id: str) and return type `SuccessResult | ErrorResult`.
+  - The final exception handler must be exactly `except Exception as exc: return
+    map_exception(exc)`.
+verification:
+  type: import
+  target: plan_manager/commands/concept_coverage_command.py
+  expected: >
+    Importing the module succeeds. ConceptCoverageCommand.name ==
+    "concept_coverage", category == "mrs". get_schema() returns an object
+    schema with additionalProperties False and required ==
+    ["plan", "concept_id"]. When load_concept_rows returns no row whose first
+    element equals concept_id, execute returns an ErrorResult with code
+    CONCEPT_NOT_FOUND. Otherwise execute returns a SuccessResult whose data is
+    {"concept_id": concept_id, "steps": <sorted list of artifact_path_of(nodes,
+    s) for every step s in load_steps whose concepts list contains
+    concept_id>, "paragraphs": <the matched row's source_labels>}.
+status: draft

@@ -1,0 +1,139 @@
+step_id: A-005
+parent_tactical_step: T-012
+name: startup-hook
+target_file: plan_manager/hooks.py
+operation: create_file
+priority: 1
+depends_on: [A-004]
+concepts: [C-023, C-024]
+prompt: >
+  Create the new Python file at the exact project-relative path
+  plan_manager/hooks.py in a Python 3.12+ codebase. The file does not
+  exist yet: do not assume any pre-existing content.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  concept_id: C-023, name: CommandContract, definition: "Adapter-conformant
+  command class shape with schema, metadata, and semantic validation.",
+  properties: "class attributes name, version, descr, category, author,
+  email, result_class, use_queue", "get_schema strict subset with explicit
+  additionalProperties false", "shallow adapter validation compensated by
+  validate_params semantics", "metadata dictionary must never contradict
+  the schema", "read commands never mutate; mutating commands verify by
+  re-read", "destructive or bulk operations expose a dry-run mode
+  defaulting to on".
+
+  concept_id: C-024, name: CommandInventory, definition: "Closed normative
+  set of API commands enforced by a startup self-check.", properties:
+  "registry compared against inventory at startup; any difference aborts
+  start", "no-stub probe of schema, metadata, and descr for every
+  registered command", "the editing subset is enumerated exhaustively".
+
+
+  Platform contract used by this file (exact, verbatim): the adapter
+  (mcp_proxy_adapter) calls the hook function
+  `register_custom_commands_hook(registry)` at startup, passing it the
+  platform command registry object (`from
+  mcp_proxy_adapter.commands.command_registry import registry`). The
+  functions `register_all(registry) -> None`, `check_inventory(registry)
+  -> None`, and `probe_commands(registry) -> None` are already defined in
+  the sibling module plan_manager/commands/registration.py, with exactly
+  these signatures:
+
+  `def register_all(registry) -> None:` — registers every command class
+  of the normative inventory with the registry, under the "custom"
+  category, in INVENTORY order.
+
+  `def check_inventory(registry) -> None:` — raises RuntimeError if the
+  registered command set does not exactly match the normative inventory
+  (missing name, extra name, or duplicate name in the inventory).
+
+  `def probe_commands(registry) -> None:` — raises RuntimeError if any
+  registered command's schema, metadata, or descr fails the no-stub
+  probe.
+
+
+  Write the complete file content, exactly as follows (module docstring,
+  one import line, then the single hook function, with no other
+  content):
+
+
+  1. A module docstring (triple double-quoted string) with this exact
+  text, word for word:
+
+  "Startup hook wiring the plan_manager command surface into the adapter.
+
+  The adapter (mcp_proxy_adapter) owns transport and routing; no command
+  module in plan_manager implements a route. This module's sole
+  responsibility is registering the command surface and enforcing the
+  two startup invariants of CommandInventory (C-024): registration
+  completeness and the no-stub probe. Any guard failure aborts startup —
+  the server never starts with a partial or stubbed API surface."
+
+
+  2. Exactly one import statement:
+
+  `from plan_manager.commands.registration import (
+      check_inventory,
+      probe_commands,
+      register_all,
+  )`
+
+
+  3. A function with this exact signature:
+
+  `def register_custom_commands_hook(registry) -> None:`
+
+
+  with this exact docstring (triple double-quoted string):
+
+  "Register the full command surface and enforce startup invariants.
+
+  Called by the adapter at startup. Registers every command class of the
+  normative inventory (register_all), verifies the registry exactly
+  matches the inventory (check_inventory), then probes every registered
+  command for schema, metadata, and descr completeness
+  (probe_commands). Runs in this exact order: register_all,
+  check_inventory, probe_commands.
+
+  :param registry: The platform command registry object (``from
+  mcp_proxy_adapter.commands.command_registry import registry``),
+  exposing ``register(command_class, category: str) -> None`` and
+  ``get_all_commands() -> dict[str, type]``.
+  :raises RuntimeError: Propagated from check_inventory on inventory
+  mismatch, or from probe_commands on a no-stub probe failure.
+  :return: None"
+
+
+  followed by exactly these three statements, in exactly this order:
+
+  `register_all(registry)`
+
+  `check_inventory(registry)`
+
+  `probe_commands(registry)`
+
+
+  Constraints: do not add any other module-level name, function, class,
+  or import. Do not add a `__all__` export list. Do not add comments
+  beyond the docstrings. Do not catch or suppress the RuntimeError raised
+  by check_inventory or probe_commands; let it propagate. Do not add a
+  `from __future__ import annotations` line.
+verification:
+  type: manual
+  target: plan_manager/hooks.py::register_custom_commands_hook
+  expected: >
+    Calling register_custom_commands_hook with a fresh, empty stub
+    registry whose register() method records each (command_class,
+    category) call and whose get_all_commands() returns exactly the
+    recorded classes keyed by their name attribute, where every command
+    class is fully compliant per the no-stub probe, results in all 41
+    command classes being registered under the "custom" category and the
+    function returning None without raising. Removing one command class
+    from the stub's registration path before calling the hook causes a
+    RuntimeError to propagate out of register_custom_commands_hook naming
+    that command as missing. Making one registered command's metadata
+    omit a required key causes a RuntimeError to propagate out of
+    register_custom_commands_hook naming that command and that key.
+status: draft

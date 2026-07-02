@@ -1,0 +1,175 @@
+step_id: A-002
+parent_tactical_step: T-011
+name: info-command-schema
+target_file: plan_manager/commands/info_command.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-025, C-023]
+prompt: |
+  Create a new Python module at the exact project-relative path
+  `plan_manager/commands/info_command.py`.
+
+  This file does not exist yet. Do not assume any pre-existing content.
+  Write exactly the following module content, verbatim, as the complete
+  file:
+
+  ```python
+  """Server self-description command (C-025)."""
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.info_metadata import get_info_metadata
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.runtime.build_info import build_info, operator_doc
+  from plan_manager.scoring.embedding import EmbeddingUnavailable, fetch_vector
+
+
+  class InfoCommand(Command):
+      """Server self-description command (C-025).
+
+      Read-only command implementing CommandContract (C-023). Returns
+      identity, build metadata, a runtime summary with database and
+      embedding service probes and the open cascade count, and the
+      embedded operator documentation text. An optional "section"
+      parameter restricts the answer to exactly one of these four parts.
+      """
+
+      name = "info"
+      version = "1.0.0"
+      descr = (
+          "Return the server self-description: identity, build metadata, "
+          "runtime summary, and operator documentation."
+      )
+      category = "system"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for the info command.
+
+          Returns:
+              Dict[str, Any]: JSON-schema-shaped dictionary with one
+              optional "section" property restricted to four enumerated
+              values, an empty required list, and additionalProperties
+              set to False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "section": {
+                      "type": "string",
+                      "description": (
+                          "Restrict the response to one section: "
+                          "'identity', 'build', 'runtime', or "
+                          "'documentation'. Omitting this parameter "
+                          "returns all four sections."
+                      ),
+                      "enum": [
+                          "identity",
+                          "build",
+                          "runtime",
+                          "documentation",
+                      ],
+                  },
+              },
+              "required": [],
+              "additionalProperties": False,
+          }
+  ```
+
+  Constraints:
+  - This create_file operation writes exactly the module shown above:
+    the module docstring, the import block (exactly the nine import
+    statements shown, in the order shown), the InfoCommand class with
+    its docstring and eight class attributes (name, version, descr,
+    category, author, email, result_class, use_queue) in the order
+    shown, and exactly one method: get_schema.
+  - Do not add validate_params, execute, or metadata methods in this
+    step; they belong to later modifications of this same file. Do not
+    add any other class, function, or constant.
+  - `descr` is a single non-empty one-line summary (it is written across
+    multiple adjacent string literals joined by Python's implicit string
+    concatenation, which is semantically one string with no embedded
+    newline).
+  - get_schema's returned dict has no "default" key anywhere: the command
+    has no parameter for which a default value is actually applied in
+    execute, per the rule that "default" is only used when implementation
+    handles the omitted value as that default (section defaults to
+    returning all four parts, which is distinct behavior, not a literal
+    default value substituted for the parameter).
+
+  Why each import is present (established once for the whole file; later
+  modifications to this same file, in this same target_file, add the
+  methods that use the remaining imports):
+  - `Command`: base class every command class extends.
+  - `SuccessResult`, `ErrorResult`: platform result types. Success path
+    constructs `SuccessResult(data=<dict>)`. Error path returns whatever
+    `map_exception` produces, which is an `ErrorResult`.
+  - `map_exception`: from `plan_manager/commands/errors.py`:
+    `def map_exception(exc) -> ErrorResult`. Maps an arbitrary exception
+    to a platform ErrorResult; unknown exception types are surfaced as a
+    platform-level internal error.
+  - `get_info_metadata`: from `plan_manager/commands/info_metadata.py`
+    (module created by a prior step of this same task), signature
+    `def get_info_metadata(cls) -> Dict[str, Any]`. Builds the extended
+    metadata dictionary from the command class's own identity attributes.
+  - `app_config`, `db_connection`: from `plan_manager/runtime/context.py`:
+    `def db_connection()` — a context manager yielding a psycopg.Connection;
+    `def app_config() -> AppConfig` — an object with fields
+    `embedding_url: str | None`, `export_root: str`,
+    `scoring_threshold: float`, `scoring_aggregation: str`,
+    `trust_floor: float`, `concept_weight: float`.
+  - `build_info`, `operator_doc`: from `plan_manager/runtime/build_info.py`:
+    `def build_info() -> dict` returning
+    `{"product": str, "package_version": str, "adapter_version": str,
+    "build_date": str, "image_tag": str}`;
+    `def operator_doc() -> str` — returns the full operator documentation
+    text embedded at build time from the single documentation source;
+    raises `RuntimeError("operator documentation payload missing")` when
+    the embedded payload is absent.
+  - `EmbeddingUnavailable`, `fetch_vector`: from
+    `plan_manager/scoring/embedding.py`: `class EmbeddingUnavailable(Exception)`;
+    `def fetch_vector(base_url: str, text: str) -> list[float]` — raises
+    `EmbeddingUnavailable` on any failure.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  C-025 InfoCommand: "Self-description API command returning identity,
+  build metadata, runtime summary, and embedded operator documentation."
+  Properties: documentation payload embedded at build time from the
+  single documentation source; same source renders man and info pages;
+  divergence fails the build.
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Properties used here:
+  class attributes name, version, descr, category, author, email,
+  result_class, use_queue; get_schema returns the strict subset the
+  platform validator enforces — object type, every public parameter with
+  type and description, an exact required list, additionalProperties
+  always explicit and false, enums for fixed modes; read commands never
+  mutate.
+verification:
+  type: import
+  target: plan_manager.commands.info_command
+  expected: >
+    Importing the module plan_manager.commands.info_command succeeds
+    without raising. The module exposes a class InfoCommand that is a
+    subclass of mcp_proxy_adapter.commands.base.Command. InfoCommand.name
+    equals "info", InfoCommand.version equals "1.0.0", InfoCommand.descr
+    is a non-empty string, InfoCommand.category equals "system",
+    InfoCommand.author equals "Vasiliy Zdanovskiy", InfoCommand.email
+    equals "vasilyvz@gmail.com", InfoCommand.result_class is
+    mcp_proxy_adapter.commands.result.SuccessResult, and
+    InfoCommand.use_queue is False. Calling InfoCommand.get_schema()
+    returns a dict with "type": "object", "required": [],
+    "additionalProperties": False, and "properties" containing exactly
+    one key "section" whose "enum" list equals
+    ["identity", "build", "runtime", "documentation"].
+status: draft

@@ -1,0 +1,154 @@
+step_id: A-003
+parent_tactical_step: T-004
+name: para-get-metadata
+target_file: plan_manager/commands/para_get_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-002, C-026]
+prompt: |
+  Create the file `plan_manager/commands/para_get_metadata.py` with exactly
+  the content specified below. Do not create, read, or modify any other
+  file.
+
+  Purpose: this module provides the extended documentation metadata for the
+  `para_get` command class (defined in a sibling file `para_get_command.py`,
+  not part of this task). The metadata function is called from that class's
+  `metadata()` classmethod as `return get_para_get_metadata(cls)`.
+
+  Required imports (exact):
+  ```python
+  from __future__ import annotations
+
+  from typing import Any, Dict, Type
+  ```
+
+  Required function signature (exact):
+  ```python
+  def get_para_get_metadata(cls: Type[Any]) -> Dict[str, Any]:
+  ```
+
+  Docstring for the function (exact text):
+  ```
+  Build the extended metadata dictionary for para_get.
+
+  Args:
+      cls: The ParaGetCommand class, providing name, version, descr,
+          category, author, email class attributes.
+
+  Returns:
+      A dictionary with all metadatastd-required documentation fields.
+  ```
+
+  The function must return a dict literal built from `cls` attributes and
+  fixed documentation text, with exactly these top-level keys: `name`,
+  `version`, `description`, `category`, `author`, `email`,
+  `detailed_description`, `parameters`, `return_value`, `usage_examples`,
+  `error_cases`, `best_practices`. Populate them as follows:
+
+  - `name`: `cls.name`
+  - `version`: `cls.version`
+  - `description`: `cls.descr`
+  - `category`: `cls.category`
+  - `author`: `cls.author`
+  - `email`: `cls.email`
+  - `detailed_description` (string, exact content):
+    "Resolves one bare four-character base36 paragraph label of the
+    resolved plan's HRS to its full paragraph record. Read-only: this
+    command never mutates the HRS, the database, or any other state. An
+    unknown label yields the PARAGRAPH_NOT_FOUND error code rather than a
+    partial or empty result. Use para_list to discover valid labels."
+  - `parameters` (dict) with two entries:
+    - `"plan"`: `{"description": "Plan identifier (UUID or catalog name) to
+      resolve.", "type": "string", "required": True}`
+    - `"label"`: `{"description": "Bare four-character base36 paragraph
+      label (no braces), e.g. \"a1b2\".", "type": "string", "required":
+      True}`
+  - `return_value` (dict) with two keys:
+    - `"success"`: `{"description": "The resolved paragraph.", "data":
+      {"label": "Four-character base36 label (string).", "binding":
+      "Whether the paragraph is a binding block (boolean).", "position":
+      "Zero-based position of the paragraph in the HRS (integer).", "text":
+      "Full paragraph text (string)."}, "example": {"label": "a1b2",
+      "binding": True, "position": 0, "text": "..."}}`
+    - `"error"`: `{"description": "Returned when the plan cannot be
+      resolved or the label is unknown.", "code":
+      "PLAN_NOT_FOUND | PARAGRAPH_NOT_FOUND", "message": "Plan not found:
+      {plan} | label not found: {label}", "details": "May include the raw
+      plan identifier or label that failed to resolve."}`
+  - `usage_examples` (list with one dict): `[{"description": "Resolve one
+    paragraph label to its text.", "command": {"plan":
+    "f06b7269-cc9c-4293-886b-24984e4033ba", "label": "a1b2"},
+    "explanation": "Returns the paragraph record for label a1b2, or a
+    PARAGRAPH_NOT_FOUND error when the label is unknown."}]`
+  - `error_cases` (dict) with two entries:
+    - `"PLAN_NOT_FOUND"`: `{"description": "The plan identifier does not
+      resolve to a stored plan.", "message": "Plan not found: {plan}",
+      "solution": "Call the plan catalog listing command and retry with a
+      valid plan identifier."}`
+    - `"PARAGRAPH_NOT_FOUND"`: `{"description": "No paragraph in the
+      plan's HRS carries the given label.", "message": "label not found:
+      {label}", "solution": "Call para_list to discover the valid labels
+      currently assigned in the plan's HRS."}`
+  - `best_practices` (list of two strings): `["Validate the label shape
+    (four base36 characters) client-side before calling, to avoid an
+    avoidable round trip.", "Call para_list first when the label is not
+    already known to the caller."]`
+
+  Constraints:
+  - The file must contain nothing besides: a module docstring, the two
+    imports shown above, and the single function `get_para_get_metadata`.
+  - Module docstring (exact, first line of the file after nothing else):
+    `"""Extended AI/documentation metadata for ParaGetCommand."""`
+  - No other functions, classes, or module-level state.
+  - No network or database access; the function is pure and synchronous.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  ```
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+  ```
+verification:
+  type: import
+  target: plan_manager.commands.para_get_metadata
+  expected: >
+    Importing plan_manager.commands.para_get_metadata succeeds with no
+    syntax or import errors. The module exposes a single callable
+    get_para_get_metadata(cls) that, when called with any object exposing
+    name, version, descr, category, author, email attributes, returns a
+    dict containing exactly the keys name, version, description, category,
+    author, email, detailed_description, parameters, return_value,
+    usage_examples, error_cases, best_practices, with parameters containing
+    "plan" and "label" entries and error_cases containing both
+    "PLAN_NOT_FOUND" and "PARAGRAPH_NOT_FOUND" entries.
+status: draft

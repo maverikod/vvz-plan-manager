@@ -1,0 +1,82 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: domain-codes-registry
+target_file: plan_manager/commands/errors.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-026]
+prompt: |
+  Create the file `plan_manager/commands/errors.py` with EXACTLY the following
+  content (this is a new file; it does not exist yet, so assume no prior
+  content):
+
+  ```python
+  """Domain error registry for plan_manager commands (C-026).
+
+  Defines the closed set of stable domain string codes returnable by command
+  error results.
+  """
+
+  DOMAIN_CODES: frozenset[str] = frozenset({
+      "PLAN_NOT_FOUND",
+      "STEP_NOT_FOUND",
+      "CONCEPT_NOT_FOUND",
+      "RELATION_NOT_FOUND",
+      "PARAGRAPH_NOT_FOUND",
+      "REVISION_NOT_FOUND",
+      "CASCADE_REQUIRED",
+      "CASCADE_CONFLICT",
+      "FROZEN_ARTIFACT",
+      "INVALID_TRANSITION",
+      "DUPLICATE_ID",
+      "CYCLE_DETECTED",
+      "GATE_RED",
+      "VERDICT_STALE",
+      "EMBEDDINGS_UNAVAILABLE",
+      "IMPORT_INVALID",
+  })
+  ```
+
+  Constraints (all binding, no deviation):
+  - The module docstring is exactly the two lines shown above, verbatim.
+  - `DOMAIN_CODES` is a module-level constant with the exact type annotation
+    `frozenset[str]`.
+  - The frozenset literal contains exactly these 16 string members, no more,
+    no fewer, in exactly this order: "PLAN_NOT_FOUND", "STEP_NOT_FOUND",
+    "CONCEPT_NOT_FOUND", "RELATION_NOT_FOUND", "PARAGRAPH_NOT_FOUND",
+    "REVISION_NOT_FOUND", "CASCADE_REQUIRED", "CASCADE_CONFLICT",
+    "FROZEN_ARTIFACT", "INVALID_TRANSITION", "DUPLICATE_ID",
+    "CYCLE_DETECTED", "GATE_RED", "VERDICT_STALE",
+    "EMBEDDINGS_UNAVAILABLE", "IMPORT_INVALID".
+  - No imports are added in this file at this step.
+  - No other class, function, or constant is added in this step.
+  - Do not read, create, or modify any file other than
+    `plan_manager/commands/errors.py`.
+
+  MRS excerpt (concept C-026, the only concept this step realises):
+
+  ```yaml
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+  ```
+
+  This constant is the closed registry backing that two-layer error contract:
+  it is the exhaustive set of stable domain string codes that command error
+  results may carry. Every code a command can return must be a member of this
+  set, and this set contains no code that no command returns.
+verification:
+  type: import
+  target: plan_manager.commands.errors.DOMAIN_CODES
+  expected: >
+    Importing plan_manager.commands.errors succeeds and DOMAIN_CODES is a
+    frozenset of exactly 16 strings equal to {"PLAN_NOT_FOUND",
+    "STEP_NOT_FOUND", "CONCEPT_NOT_FOUND", "RELATION_NOT_FOUND",
+    "PARAGRAPH_NOT_FOUND", "REVISION_NOT_FOUND", "CASCADE_REQUIRED",
+    "CASCADE_CONFLICT", "FROZEN_ARTIFACT", "INVALID_TRANSITION",
+    "DUPLICATE_ID", "CYCLE_DETECTED", "GATE_RED", "VERDICT_STALE",
+    "EMBEDDINGS_UNAVAILABLE", "IMPORT_INVALID"}.
+status: draft

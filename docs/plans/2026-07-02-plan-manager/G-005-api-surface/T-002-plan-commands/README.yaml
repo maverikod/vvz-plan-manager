@@ -1,0 +1,56 @@
+step_id: T-002
+parent_global_step: G-005
+name: plan-commands
+description: >
+  Create the plan catalog and dashboard command classes of the inventory:
+  plan_create, plan_list, and plan_status, each conforming to the
+  CommandContract (C-023) — identity attributes with a non-empty one-line
+  summary, declared result type, strict input schema with explicit
+  additionalProperties false, full metadata dictionary that never contradicts
+  the schema, and semantic validation after the shallow schema layer.
+  plan_create is a mutating command: it takes a unique plan name and an
+  optional context budget in tokens defaulting to 4000, initializes a plan
+  aggregate (C-001) at revision zero with empty HRS and MRS, verifies its own
+  result by re-reading the created row, and returns the plan identity;
+  a duplicate name yields the duplicate-identifier code (C-026). plan_list is
+  read-only: it returns the database catalog of plans, each with identity,
+  name, status, context budget, and head revision presence. plan_status is
+  the read-only dashboard: for one resolved plan it returns artifact counts
+  per level, the status distribution, the mechanical gate verdict for the
+  current tree, the plan semantic index with its trust value, and the ranked
+  weakest branches, degrading explicitly with the embeddings-unavailable
+  signal when the embedding integration is down. None of the three commands
+  is queue-bound. This step defines these three command classes, their
+  schemas, metadata, validation, and execution wiring onto existing plan,
+  gate, and scoring operations; it does not register commands and owns no
+  business logic beyond parameter mapping and result shaping.
+concepts: [C-023, C-026, C-001]
+inputs:
+- name: plan_create_request
+  type: command parameters
+  description: >
+    The unique plan name and the optional context budget in tokens
+    (default 4000) for initializing a new plan aggregate.
+- name: plan_query_request
+  type: command parameters
+  description: >
+    The plan identifier for the dashboard query; the catalog listing takes
+    no parameters.
+outputs:
+- name: plan_create_result
+  type: command result
+  description: >
+    The created plan identity verified by re-read, or the
+    duplicate-identifier error.
+- name: plan_catalog
+  type: command result
+  description: >
+    The catalog rows of all plans with identity, name, status, context
+    budget, and head revision presence.
+- name: plan_dashboard
+  type: command result
+  description: >
+    Artifact counts per level, status distribution, gate verdict, semantic
+    index with trust, and ranked weakest branches for one plan.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

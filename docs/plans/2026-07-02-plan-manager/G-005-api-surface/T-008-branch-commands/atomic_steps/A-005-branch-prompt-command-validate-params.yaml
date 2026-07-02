@@ -1,0 +1,143 @@
+step_id: A-005
+parent_tactical_step: T-008
+name: BranchPromptCommand validate_params method
+target_file: plan_manager/commands/branch_prompt_command.py
+operation: modify_file
+priority: 4
+depends_on: [A-004]
+concepts: [C-023]
+prompt: |
+  Modify the existing file plan_manager/commands/branch_prompt_command.py.
+
+  MRS excerpt (concept definition relevant to this AS):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  Base class contract: Command (from mcp_proxy_adapter.commands.base,
+  already imported and subclassed) defines
+  `def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]`
+  performing shallow schema validation (object type, required keys
+  present, declared types, additionalProperties). This AS's override
+  calls that base implementation first, per the standard pattern:
+  `params = super().validate_params(params)` then semantic checks, then
+  `return params`.
+
+  CURRENT FILE CONTENT (exact, after all lower-priority AS on this file
+  have been applied):
+
+  """BranchPromptCommand: assemble the deterministic executor prompt for one branch."""
+  from typing import Any, ClassVar, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from plan_manager.commands.branch_prompt_metadata import get_branch_prompt_metadata
+
+
+  class BranchPromptCommand(Command):
+      """Assemble and return the executor prompt for one branch, read-only."""
+
+      name: ClassVar[str] = "branch_prompt"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Assemble the deterministic executor prompt for one branch and "
+          "report its token estimate against the plan's context budget."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :return: A dict with object type, properties for plan,
+              gs_step_id, ts_step_id, as_step_id (all type string with
+              descriptions), a required list naming all four, and
+              additionalProperties False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or UUID).",
+                  },
+                  "gs_step_id": {
+                      "type": "string",
+                      "description": "Global step id of the branch, e.g. 'G-005'.",
+                  },
+                  "ts_step_id": {
+                      "type": "string",
+                      "description": "Tactical step id of the branch, e.g. 'T-008'.",
+                  },
+                  "as_step_id": {
+                      "type": "string",
+                      "description": "Atomic step id of the branch, e.g. 'A-001'.",
+                  },
+              },
+              "required": ["plan", "gs_step_id", "ts_step_id", "as_step_id"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return extended AI/documentation metadata for this command.
+
+          :return: The dictionary produced by get_branch_prompt_metadata(cls).
+          """
+          return get_branch_prompt_metadata(cls)
+
+  REQUIRED CHANGE:
+
+  Append this method to the end of the BranchPromptCommand class body,
+  immediately after metadata, separated by exactly one blank line. No
+  import changes are required.
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate and normalize the raw parameters for this command.
+
+          :param params: Raw parameter dict as received from the
+              adapter, already checked against get_schema(): object
+              type, the four required keys plan, gs_step_id, ts_step_id,
+              as_step_id present, all four values of type string, no
+              additional properties.
+          :return: The params dict, unchanged beyond the base validation
+              already performed by the superclass. No further semantic
+              validation applies to this command: existence of the plan
+              and of each step id is resolved and reported as a domain
+              error during execute(), not during schema validation.
+          """
+          params = super().validate_params(params)
+          return params
+
+  Constraints:
+  - Do not modify any other part of the existing file content shown
+    above beyond the single method append described.
+  - The method signature is exactly
+    `def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:`
+    with no `@classmethod` or `@staticmethod` decorator (it is an
+    instance method, matching the Command base class contract).
+  - The method body is exactly the two statements shown: the super()
+    call assigning back to params, then `return params`. No additional
+    checks or exceptions are added.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_prompt_command.py::BranchPromptCommand.validate_params
+  expected: >
+    BranchPromptCommand.validate_params(self, params) is an instance method
+    whose body calls super().validate_params(params), reassigns the result to
+    params, and returns params unchanged, with no additional semantic checks.
+status: draft

@@ -1,0 +1,142 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: para-list-metadata
+target_file: plan_manager/commands/para_list_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-002, C-026]
+prompt: |
+  Create the file `plan_manager/commands/para_list_metadata.py` with exactly the
+  content specified below. Do not create, read, or modify any other file.
+
+  Purpose: this module provides the extended documentation metadata for the
+  `para_list` command class (defined in a sibling file `para_list_command.py`,
+  not part of this task). The metadata function is called from that class's
+  `metadata()` classmethod as `return get_para_list_metadata(cls)`.
+
+  Required imports (exact):
+  ```python
+  from __future__ import annotations
+
+  from typing import Any, Dict, Type
+  ```
+
+  Required function signature (exact):
+  ```python
+  def get_para_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
+  ```
+
+  Docstring for the function (exact text):
+  ```
+  Build the extended metadata dictionary for para_list.
+
+  Args:
+      cls: The ParaListCommand class, providing name, version, descr,
+          category, author, email class attributes.
+
+  Returns:
+      A dictionary with all metadatastd-required documentation fields.
+  ```
+
+  The function must return a dict literal built from `cls` attributes and
+  fixed documentation text, with exactly these top-level keys (all required
+  by the metadata standard): `name`, `version`, `description`, `category`,
+  `author`, `email`, `detailed_description`, `parameters`, `return_value`,
+  `usage_examples`, `error_cases`, `best_practices`. Populate them as follows:
+
+  - `name`: `cls.name`
+  - `version`: `cls.version`
+  - `description`: `cls.descr`
+  - `category`: `cls.category`
+  - `author`: `cls.author`
+  - `email`: `cls.email`
+  - `detailed_description` (string, exact content):
+    "Lists every paragraph of the resolved plan's HRS text in position order.
+    Read-only: this command never mutates the HRS, the database, or any other
+    state. Each paragraph row carries its label (None when unassigned), its
+    binding flag, its zero-based position, and its text. Use
+    para_label_assign beforehand to ensure binding paragraphs carry labels."
+  - `parameters` (dict): one entry keyed `"plan"` with value
+    `{"description": "Plan identifier (UUID or catalog name) to resolve.",
+    "type": "string", "required": True}`.
+  - `return_value` (dict) with two keys:
+    - `"success"`: `{"description": "Every paragraph of the plan's HRS in
+      position order.", "data": {"paragraphs": "List of paragraph objects,
+      each with label (string or null), binding (boolean), position
+      (integer), and text (string)."}, "example": {"paragraphs":
+      [{"label": "a1b2", "binding": True, "position": 0, "text": "..."},
+      {"label": None, "binding": False, "position": 1, "text": "..."}]}}`
+    - `"error"`: `{"description": "Returned when the plan cannot be
+      resolved.", "code": "PLAN_NOT_FOUND", "message": "Plan not found:
+      {plan}", "details": "May include the raw plan identifier that failed
+      to resolve."}`
+  - `usage_examples` (list with one dict): `[{"description": "List every
+    paragraph of a plan's HRS.", "command": {"plan":
+    "f06b7269-cc9c-4293-886b-24984e4033ba"}, "explanation": "Returns all
+    paragraphs in position order with label, binding flag, and text."}]`
+  - `error_cases` (dict): one entry keyed `"PLAN_NOT_FOUND"` with value
+    `{"description": "The plan identifier does not resolve to a stored
+    plan.", "message": "Plan not found: {plan}", "solution": "Call the plan
+    catalog listing command and retry with a valid plan identifier."}`
+  - `best_practices` (list of two strings): `["Call para_list after
+    para_label_assign to confirm every binding paragraph now carries a
+    label.", "This command is read-only and safe to call at any time without
+    cascade coordination."]`
+
+  Constraints:
+  - The file must contain nothing besides: a module docstring, the two
+    imports shown above, and the single function `get_para_list_metadata`.
+  - Module docstring (exact, first line of the file after nothing else):
+    `"""Extended AI/documentation metadata for ParaListCommand."""`
+  - No other functions, classes, or module-level state.
+  - No network or database access; the function is pure and synchronous.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  ```
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and
+      stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case
+      declared
+  ```
+verification:
+  type: import
+  target: plan_manager.commands.para_list_metadata
+  expected: >
+    Importing plan_manager.commands.para_list_metadata succeeds with no
+    syntax or import errors. The module exposes a single callable
+    get_para_list_metadata(cls) that, when called with any object exposing
+    name, version, descr, category, author, email attributes, returns a
+    dict containing exactly the keys name, version, description, category,
+    author, email, detailed_description, parameters, return_value,
+    usage_examples, error_cases, best_practices, with parameters containing
+    a "plan" entry and error_cases containing a "PLAN_NOT_FOUND" entry.
+status: draft

@@ -1,0 +1,320 @@
+step_id: A-007
+parent_tactical_step: T-006
+name: step_create command execute implementation
+target_file: plan_manager/commands/step_create_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-006]
+concepts: [C-023, C-026, C-005, C-006, C-016]
+prompt: |
+  Modify the file `plan_manager/commands/step_create_command.py`. Its full
+  current content (as produced by the prior AS on this file) is:
+
+  ```python
+  """Command: scaffold a new step under a plan's declarative level schema."""
+
+  import re
+  import uuid
+  from typing import Any, ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission, frozen_at_or_below
+  from plan_manager.cascade.write import cascade_write, step_snapshot
+  from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.step_create_metadata import get_step_create_metadata
+  from plan_manager.domain.step_store import create_step, get_step
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.storage.version_store import record_revision
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+  class StepCreateCommand(Command):
+      """Scaffold a new step with the next free zero-padded identifier."""
+
+      name: ClassVar[str] = "step_create"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Scaffold a new step under a plan's declarative level schema."
+      category: ClassVar[str] = "step"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[type] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> dict[str, Any]:
+          """Return the machine-readable input schema for step_create.
+
+          Returns:
+              A JSON-Schema-shaped dict with `type`, `properties`, `required`,
+              and `additionalProperties` keys.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or name) to resolve the plan against the catalog.",
+                  },
+                  "level": {
+                      "type": "integer",
+                      "description": "Target hierarchy level for the new step: 3 (global step), 4 (tactical step), or 5 (atomic step).",
+                      "enum": [3, 4, 5],
+                  },
+                  "slug": {
+                      "type": "string",
+                      "description": "Lowercase kebab-case slug, unique among siblings under the same parent.",
+                  },
+                  "parent_step_id": {
+                      "type": "string",
+                      "description": "Human-readable step_id of the parent step; required for levels 4 and 5, must be absent for level 3.",
+                  },
+                  "cascade_uuid": {
+                      "type": "string",
+                      "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen parent.",
+                  },
+              },
+              "required": ["plan", "level", "slug"],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+          """Validate step_create parameters beyond the base schema check.
+
+          Args:
+              params: Raw parameter dict as received by the adapter.
+
+          Returns:
+              The validated parameter dict, unchanged beyond the base
+              validator's own normalization.
+
+          Raises:
+              ValueError: If slug is not lowercase kebab-case, if
+                  parent_step_id is present for level 3, if parent_step_id is
+                  absent for level 4 or 5, or if cascade_uuid is not a valid
+                  UUID string.
+          """
+          params = super().validate_params(params)
+          slug = params.get("slug", "")
+          if not _SLUG_PATTERN.fullmatch(slug):
+              raise ValueError(f"slug must be lowercase kebab-case: {slug!r}")
+          level = params.get("level")
+          parent_step_id = params.get("parent_step_id")
+          if level == 3 and parent_step_id is not None:
+              raise ValueError("parent_step_id must be absent for level 3")
+          if level in (4, 5) and not parent_step_id:
+              raise ValueError(f"parent_step_id is required for level {level}")
+          cascade_uuid = params.get("cascade_uuid")
+          if cascade_uuid is not None:
+              uuid.UUID(cascade_uuid)
+          return params
+
+      async def execute(
+          self,
+          plan: str,
+          level: int,
+          slug: str,
+          parent_step_id: str | None = None,
+          cascade_uuid: str | None = None,
+      ) -> SuccessResult | ErrorResult:
+          """Scaffold a new step and record it as a revision.
+
+          Args:
+              plan: Plan identifier (UUID or name).
+              level: Target hierarchy level (3, 4, or 5).
+              slug: Lowercase kebab-case slug for the new step.
+              parent_step_id: Human-readable step_id of the parent; required
+                  for levels 4 and 5, must be None for level 3.
+              cascade_uuid: Open cascade identifier to admit this mutation
+                  under, or None for direct-mode mutation.
+
+          Returns:
+              SuccessResult with the new step's identity and revision_uuid on
+              success, or ErrorResult with a stable domain error code on
+              failure.
+          """
+          raise NotImplementedError
+
+      @classmethod
+      def metadata(cls) -> dict[str, Any]:
+          """Return the extended documentation metadata for step_create.
+
+          Returns:
+              The dict produced by `get_step_create_metadata(cls)`.
+          """
+          return get_step_create_metadata(cls)
+  ```
+
+  Replace only the body of the `execute` method (keep its signature and
+  docstring exactly as shown above) with the following implementation:
+
+  ```python
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  nodes = load_steps(conn, p.uuid)
+                  parent = None
+                  parent_uuid = None
+                  if parent_step_id is not None:
+                      parent = next((s for s in nodes.values() if s.step_id == parent_step_id), None)
+                      if parent is None:
+                          raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {parent_step_id}")
+                      parent_uuid = parent.uuid
+                  parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
+                  try:
+                      rec = check_admission(conn, p.uuid, "step", parent_uuid, parsed_cascade_uuid)
+                  except CascadeError as exc:
+                      if cascade_uuid is not None:
+                          return domain_error("CASCADE_CONFLICT", str(exc))
+                      if parent is not None and frozen_at_or_below(nodes, parent.uuid):
+                          return domain_error("FROZEN_ARTIFACT", str(exc))
+                      return domain_error("CASCADE_REQUIRED", str(exc))
+                  new_step = create_step(conn, p.uuid, parent_uuid, level, slug)
+                  snapshot = step_snapshot(new_step, new_step.status)
+                  if rec is not None:
+                      revision = cascade_write(
+                          conn, p.uuid, rec, new_step.uuid, snapshot, [], "api",
+                          f"step_create: {new_step.step_id}",
+                      )
+                  else:
+                      revision = record_revision(
+                          conn, p.uuid, "api", f"step_create: {new_step.step_id}",
+                          [(new_step.uuid, snapshot)], p.head_revision_uuid, ref_name=None,
+                      )
+                  verified = get_step(conn, new_step.uuid)
+                  data = {
+                      "uuid": str(verified.uuid),
+                      "step_id": verified.step_id,
+                      "slug": verified.slug,
+                      "level": verified.level,
+                      "status": verified.status,
+                      "revision_uuid": str(revision),
+                  }
+                  return SuccessResult(data=data)
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Do not change the module docstring, imports, module-level
+    `_SLUG_PATTERN` constant, class attributes, `get_schema`,
+    `validate_params`, or `metadata` — they remain byte-identical to the
+    content shown above.
+  - `parent_uuid` is `None` exactly when `parent_step_id` was `None`
+    (level-3 creation); `check_admission` is called with `target_uuid`
+    equal to `parent_uuid` in that case.
+  - The `status_updates` argument to `cascade_write` is always the empty
+    list `[]` — a freshly created draft leaf invalidates nothing.
+  - `rec` being non-`None` means the mutation is admitted under an open
+    cascade (cascade mode); `rec` being `None` means direct-mode admission,
+    which writes a revision via `record_revision` with `ref_name=None`.
+  - Do not add, remove, or reorder any other method or statement in the
+    file.
+
+  Verbatim contracts used by the imports (for reference; do not redefine
+  these — they already exist in their respective modules):
+  - `plan_manager/commands/errors.py` defines
+    `class DomainCommandError(Exception)` with constructor `(code, message,
+    details=None)`; `def domain_error(code, message, details=None) ->
+    ErrorResult`; `def map_exception(exc) -> ErrorResult` (maps
+    `StatusTransitionError` to `"INVALID_TRANSITION"` and
+    `psycopg.errors.UniqueViolation` to `"DUPLICATE_ID"`).
+  - `plan_manager/commands/resolve.py` defines
+    `def resolve_plan(conn, plan: str) -> Plan` where `Plan` has fields
+    `uuid, name, status, context_budget, head_revision_uuid`.
+  - `plan_manager/runtime/context.py` defines `def db_connection()`, a
+    context manager yielding a `psycopg.Connection`.
+  - `plan_manager/cascade/record.py` defines `class CascadeError(ValueError)`.
+  - `plan_manager/cascade/regime.py` defines `def check_admission(conn,
+    plan_uuid, target_kind, target_uuid, cascade_uuid) -> CascadeRecord |
+    None` and `def frozen_at_or_below(nodes: dict[uuid.UUID, Step],
+    origin_uuid: uuid.UUID) -> bool`.
+  - `plan_manager/cascade/write.py` defines `def cascade_write(conn,
+    plan_uuid, cascade: CascadeRecord, node_uuid, node_snapshot: dict,
+    status_updates: list[tuple[uuid.UUID, str]], author: str, message: str)
+    -> uuid.UUID` and `def step_snapshot(step: Step, status: str) -> dict`
+    (full snapshot with `"kind": "step"`, uuids as `str`).
+  - `plan_manager/storage/version_store.py` defines `def record_revision(
+    conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID,
+    dict]], parent_revision_uuid, ref_name) -> uuid.UUID` (ref_name=None
+    advances the plan head).
+  - `plan_manager/views/dependency_graph.py` defines `def load_steps(conn,
+    plan_uuid) -> dict[uuid.UUID, Step]` where `Step` has fields `uuid,
+    plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
+    depends_on: list[str], concepts: list[str], status: str`.
+  - `plan_manager/domain/step_store.py` defines `def get_step(conn,
+    step_uuid) -> Step` and `def create_step(conn, plan_uuid,
+    parent_step_uuid: uuid.UUID | None, level: int, slug: str) -> Step`
+    (scaffolds under the declarative level schema with the level-specific
+    required-field skeleton, status draft, next free zero-padded id;
+    duplicate slug under the same parent raises
+    `psycopg.errors.UniqueViolation`).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  ```yaml
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  - concept_id: C-006
+    name: PlanSchema
+    definition: Declarative configuration object describing identifier patterns, per-level required fields, and exchange-layout naming.
+    properties:
+    - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+    - nothing project-specific is hard-coded in the engine
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+  ```
+verification:
+  type: manual
+  target: plan_manager/commands/step_create_command.py::StepCreateCommand.execute
+  expected: >
+    Against a live plan and database: creating a level-3 step with no
+    parent_step_id succeeds directly when the plan has no admitting
+    cascade requirement and returns SuccessResult data containing uuid,
+    step_id, slug, level, status "draft", and revision_uuid; creating a
+    level-4 or level-5 step under a valid, non-frozen parent_step_id
+    succeeds the same way; an unknown parent_step_id returns ErrorResult
+    with code STEP_NOT_FOUND; a duplicate slug under the same parent
+    returns ErrorResult with code DUPLICATE_ID; attempting direct creation
+    under a frozen parent without cascade_uuid returns CASCADE_REQUIRED,
+    with FROZEN_ARTIFACT returned instead when frozen_at_or_below reports
+    the parent frozen; a cascade_uuid that check_admission rejects returns
+    CASCADE_CONFLICT; a subsequent step_get on the returned uuid confirms
+    the step is present with the expected fields.
+status: draft

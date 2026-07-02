@@ -1,0 +1,184 @@
+step_id: A-023
+parent_tactical_step: T-003
+name: hrs-import-command-validate-params
+target_file: plan_manager/commands/hrs_import_command.py
+operation: modify_file
+priority: 4
+depends_on: [A-022]
+concepts: [C-023]
+prompt: |
+  Modify the file plan_manager/commands/hrs_import_command.py. Its full
+  current content (after all lower-priority AS on this file have been
+  applied) is exactly:
+
+  """HrsImportCommand: replace a plan's HRS text from a Markdown source."""
+
+  import uuid
+  from pathlib import Path
+  from typing import Any, ClassVar, Dict, Optional, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.hrs_import_metadata import get_hrs_import_metadata
+  from plan_manager.exchange.exporter import export_hrs
+  from plan_manager.exchange.importer import import_hrs, validate_hrs
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  class HrsImportCommand(Command):
+      """Replace the HRS text of a resolved plan from a Markdown source."""
+
+      name: ClassVar[str] = "hrs_import"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Replace a plan's HRS text from a Markdown source under the configured export root."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = True
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for hrs_import.
+
+          Returns:
+              A JSON-schema-shaped dictionary with an explicit
+              additionalProperties=False and an exact required list.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier resolved against the catalog.",
+                  },
+                  "source": {
+                      "type": "string",
+                      "description": (
+                          "Name of the Markdown source file under the "
+                          "configured export root."
+                      ),
+                  },
+                  "dry_run": {
+                      "type": "boolean",
+                      "description": (
+                          "When true (the default), only validate the HRS "
+                          "text without writing to the database."
+                      ),
+                      "default": True,
+                  },
+                  "cascade_uuid": {
+                      "type": "string",
+                      "description": (
+                          "Identifier of an already-open cascade to scope "
+                          "this import to."
+                      ),
+                  },
+              },
+              "required": ["plan", "source"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return the extended documentation metadata for hrs_import.
+
+          Returns:
+              The dictionary produced by get_hrs_import_metadata(cls).
+          """
+          return get_hrs_import_metadata(cls)
+
+  Append exactly one blank line after the line `        return
+  get_hrs_import_metadata(cls)`, then append the following method,
+  indented 4 spaces as a member of class HrsImportCommand:
+
+  def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+      """Validate hrs_import parameters.
+
+      Args:
+          params: Raw parameter dictionary received from the platform.
+
+      Returns:
+          The validated parameter dictionary, unchanged beyond the base
+          validator's own normalization.
+
+      Raises:
+          ValueError: When 'source' is empty or contains '/', '\\' or
+              '..', or when 'cascade_uuid' is present but does not
+              parse as a UUID.
+      """
+      params = super().validate_params(params)
+      source = params["source"]
+      if not source or "/" in source or "\\" in source or ".." in source:
+          raise ValueError("source must be a bare file name without path separators")
+      cascade_uuid = params.get("cascade_uuid")
+      if cascade_uuid is not None:
+          uuid.UUID(cascade_uuid)
+      return params
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the blank line and the method shown.
+  - The method signature is exactly `def validate_params(self, params:
+    Dict[str, Any]) -> Dict[str, Any]:` (instance method), per
+    docs/standards/planning/metadatastd.yaml,
+    command_class_shape.required_methods.validate_params: "call
+    super().validate_params(params) first; add semantic validation
+    after".
+  - The first statement calls `super().validate_params(params)` and
+    reassigns the result to `params`.
+  - `source = params["source"]` reads the already-schema-validated
+    required "source" key; the guard condition is exactly `if not
+    source or "/" in source or "\\" in source or ".." in source:` and
+    raises `ValueError("source must be a bare file name without path
+    separators")` — platform-level invalid-params validation, not a
+    domain error code, per the packet: "the source selector must be
+    validated in validate_params: non-empty, no '/', no '\\\\', no
+    '..', else raise ValueError (platform invalid-params, not a domain
+    code)".
+  - `cascade_uuid = params.get("cascade_uuid")` reads the optional key;
+    when not None, `uuid.UUID(cascade_uuid)` is called using the `uuid`
+    module already imported at the top of this file (`import uuid`)
+    only for its side-effect of raising ValueError on an invalid UUID
+    string — the parsed value is not stored (execute() will re-parse
+    it), matching the packet: "cascade_uuid (string, optional — open
+    cascade identity; validate uuid parse when present)".
+  - The method returns the params dict unchanged in content beyond
+    whatever super().validate_params() itself normalizes.
+  - Do not add any other method, import, or class to this file. Do not
+    read or modify any other file.
+
+  MRS excerpt (concept definition relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+verification:
+  type: manual
+  target: plan_manager.commands.hrs_import_command.HrsImportCommand.validate_params
+  expected: >
+    Calling validate_params with {"plan": "p", "source": "hrs.md"}
+    returns without raising. Calling validate_params with {"plan": "p",
+    "source": "../hrs.md"} raises ValueError. Calling validate_params
+    with {"plan": "p", "source": "hrs.md", "cascade_uuid": "not-a-uuid"}
+    raises ValueError from the uuid.UUID parse. Calling validate_params
+    with {"plan": "p", "source": "hrs.md", "cascade_uuid":
+    "3fa85f64-5717-4562-b3fc-2c963f66afa6"} returns without raising.
+status: draft

@@ -1,0 +1,53 @@
+step_id: T-004
+parent_global_step: G-005
+name: paragraph-commands
+description: >
+  Create the paragraph command classes of the inventory over the HRS text
+  (C-002): para_list, para_get, para_label_assign, and para_mark_non_binding,
+  each conforming to the CommandContract (C-023). para_list is read-only: it
+  returns every paragraph of the resolved plan's HRS with label, binding
+  flag, and position. para_get is read-only: it resolves one label to its
+  paragraph text; an unknown label yields the paragraph-not-found code
+  (C-026). para_label_assign is mutating: it inserts fresh unique
+  four-character base36 labels into unlabeled binding paragraphs — the only
+  textual edit permitted in the HRS — line-precise, leaving surrounding prose
+  byte-identical, and returns the assigned labels; it verifies its result by
+  re-reading the labeled paragraphs. para_mark_non_binding is mutating: it
+  wraps or unwraps the non-binding markers around an addressed block,
+  line-precise and byte-preserving outside the markers, controlled by an
+  explicit direction parameter with an enumerated value set, and verifies by
+  re-read. Both mutating commands run under the mutation admission regime:
+  when the change point sits above a frozen artifact the request without an
+  open cascade identity is rejected with the cascade-required code, and a
+  stale cascade identity yields the cascade-conflict code. This step defines
+  the four command classes, their schemas, metadata, validation, and
+  execution wiring onto the HRS paragraph operations; it does not implement
+  the parsing or label-assignment algorithms themselves and registers
+  nothing.
+concepts: [C-023, C-026, C-002, C-016]
+inputs:
+- name: paragraph_query_request
+  type: command parameters
+  description: >
+    The plan identifier for listing; the plan identifier and one label for
+    single-paragraph resolution.
+- name: paragraph_mutation_request
+  type: command parameters
+  description: >
+    The plan identifier, the optional open cascade identity, and for
+    non-binding marking the addressed block with the enumerated wrap or
+    unwrap direction.
+outputs:
+- name: paragraph_listing
+  type: command result
+  description: >
+    Paragraph rows with label, binding flag, and position; or one resolved
+    paragraph text.
+- name: paragraph_mutation_result
+  type: command result
+  description: >
+    The freshly assigned labels or the toggled non-binding block, verified
+    by re-read; regime violations yield cascade-required or
+    cascade-conflict errors.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft

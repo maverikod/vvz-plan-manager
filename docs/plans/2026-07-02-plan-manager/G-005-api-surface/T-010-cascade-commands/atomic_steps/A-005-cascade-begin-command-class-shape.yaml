@@ -1,0 +1,124 @@
+step_id: A-005
+parent_tactical_step: T-010
+name: CascadeBeginCommand class shape and identity attributes
+target_file: plan_manager/commands/cascade_begin_command.py
+operation: create_file
+priority: 1
+depends_on:
+- A-001
+concepts:
+- C-023
+prompt: |-
+  Target file: plan_manager/commands/cascade_begin_command.py
+  Operation: create_file
+  Class signature: class CascadeBeginCommand(Command):
+  This step creates the file with the module docstring, all imports, and the class declaration carrying only its ClassVar identity attributes (no methods yet).
+
+  Create the file with exactly the following content, byte-for-byte (including blank lines and trailing newline):
+
+  ```python
+  """Cascade begin command: opens a new cascade transaction on a plan."""
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.cascade.record import get_open_cascade
+  from plan_manager.cascade.begin import begin_cascade
+  from plan_manager.commands.cascade_begin_metadata import get_cascade_begin_metadata
+
+
+  class CascadeBeginCommand(Command):
+      """Open a new cascade transaction anchored at the plan's head revision."""
+
+      name = "cascade_begin"
+      version = "1.0.0"
+      descr = (
+          "Open a new cascade transaction on a plan, anchored at its "
+          "current head revision."
+      )
+      category = "cascade"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+  ```
+
+  Foundation contracts referenced by the content above (import exactly as shown; do not reimplement):
+  class Command: base class from mcp_proxy_adapter.commands.base. Subclasses declare ClassVar identity attributes and implement get_schema, validate_params, execute, and metadata.
+  class SuccessResult: from mcp_proxy_adapter.commands.result. Construct with SuccessResult(data=<dict>) to wrap a successful command result.
+  class ErrorResult: from mcp_proxy_adapter.commands.result. Represents a failed command result; instances are produced by domain_error() and map_exception(), never constructed directly in command code.
+  plan_manager/commands/errors.py (import, do not reimplement):
+    class DomainCommandError(Exception):
+        def __init__(self, code, message, details=None): ...
+        # .code: str, .message: str, .details: dict | None
+    def domain_error(code, message, details=None) -> ErrorResult: ...
+    def map_exception(exc) -> ErrorResult: ...
+        # Maps CommitRefusedError -> "GATE_RED",
+        # CascadeError -> "CASCADE_CONFLICT",
+        # VersionStoreError -> "REVISION_NOT_FOUND".
+        # Also maps DomainCommandError and any other Exception subclass
+        # to an ErrorResult; this mapping is implemented in errors.py
+        # and must be imported, never reimplemented.
+  plan_manager/commands/resolve.py (import, do not reimplement):
+    def resolve_plan(conn, plan: str) -> Plan: ...
+        # Raises DomainCommandError(code="PLAN_NOT_FOUND") when the
+        # plan parameter does not resolve to any plan.
+        # Plan fields: uuid, name, status, context_budget,
+        # head_revision_uuid.
+  plan_manager/runtime/context.py (import, do not reimplement):
+    def db_connection(): ...
+        # Context manager yielding a psycopg.Connection. Use as:
+        # with db_connection() as conn: ...
+  plan_manager/cascade/record.py (import, do not reimplement):
+    class CascadeError(ValueError): ...
+    @dataclass(frozen=True)
+    class CascadeRecord:
+        uuid: uuid.UUID
+        plan_uuid: uuid.UUID
+        name: str
+        base_revision_uuid: uuid.UUID | None
+        status: str
+        created_at: datetime
+    def get_open_cascade(conn, plan_uuid) -> CascadeRecord | None: ...
+  plan_manager/cascade/begin.py (import, do not reimplement):
+    def begin_cascade(conn, plan_uuid) -> CascadeRecord: ...
+        # Raises CascadeError when a cascade is already open on the
+        # plan or when the plan has no head revision.
+  def get_cascade_begin_metadata(cls: type) -> dict: ...
+        # Defined in plan_manager/commands/cascade_begin_metadata.py.
+        # Returns the extended documentation metadata dict for cascade_begin.
+
+  Constraints:
+  - Python 3.12+ syntax; use built-in generic types (dict, list) for annotations, not typing.Dict/typing.List.
+  - Do not add any code beyond exactly what this prompt specifies.
+  - Do not add a __main__ guard, logging, or any helper not listed here.
+  - Preserve exactly one blank line between top-level imports and the class definition, and exactly one blank line between methods.
+  - ClassVar values must be exactly: name="cascade_begin", version="1.0.0", category="cascade", author="Vasiliy Zdanovskiy", email="vasilyvz@gmail.com", result_class=SuccessResult, use_queue=False, and descr set to the exact string shown in the content above.
+  - Do not define get_schema, metadata, validate_params, or execute in this step; the class body contains only the ClassVar assignments shown.
+
+  MRS excerpt (concepts referenced by this step):
+  concepts:
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+verification:
+  type: import
+  target: plan_manager.commands.cascade_begin_command.CascadeBeginCommand
+  expected: >
+    Importing plan_manager.commands.cascade_begin_command succeeds and CascadeBeginCommand is a subclass
+    of Command with name == "cascade_begin", version == "1.0.0", category == "cascade", author == "Vasiliy
+    Zdanovskiy", email == "vasilyvz@gmail.com", result_class is SuccessResult, use_queue is False, and
+    descr is a non-empty string.
+status: draft

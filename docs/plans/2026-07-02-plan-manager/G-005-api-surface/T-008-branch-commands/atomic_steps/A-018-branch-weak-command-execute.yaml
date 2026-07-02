@@ -1,0 +1,257 @@
+step_id: A-018
+parent_tactical_step: T-008
+name: BranchWeakCommand execute method
+target_file: plan_manager/commands/branch_weak_command.py
+operation: modify_file
+priority: 5
+depends_on: [A-017]
+concepts: [C-023, C-026, C-013]
+prompt: |
+  Modify the existing file plan_manager/commands/branch_weak_command.py.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+
+  Verbatim foundation/sibling contracts to import and use, never
+  reimplement:
+
+  - plan_manager/commands/errors.py:
+    `def map_exception(exc) -> ErrorResult` — maps a DomainCommandError
+    with code PLAN_NOT_FOUND (raised by resolve_plan when the plan does
+    not resolve) to that code, ScoreRefusedError to code "GATE_RED", and
+    EmbeddingUnavailable to code "EMBEDDINGS_UNAVAILABLE".
+  - plan_manager/commands/resolve.py:
+    `def resolve_plan(conn, plan: str) -> Plan` — Plan has fields uuid,
+    name, status, context_budget, head_revision_uuid.
+  - plan_manager/runtime/context.py:
+    `def db_connection()` — returns a context manager; used as
+    `with db_connection() as conn:` to obtain a psycopg 3 connection.
+    `def app_config() -> AppConfig` — AppConfig has fields
+    embedding_url: str | None, export_root: str,
+    scoring_threshold: float, scoring_aggregation: str,
+    trust_floor: float, concept_weight: float.
+  - plan_manager/scoring/index.py:
+    `@dataclasses.dataclass class ScoringConfig:` fields threshold=85.0,
+    aggregation="minimum", concept_weight=1.0, trust_floor=0.2,
+    embedding_url=None.
+    `class ScoreRefusedError(Exception)`.
+    `def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore`
+    — PlanScore has fields index, color, aggregation,
+    weakest: list[BranchScore] (up to 3, ascending), revision_uuid.
+    `def branch_summary(score: BranchScore, verbose: bool = False) -> dict`.
+
+  CURRENT FILE CONTENT (exact, after all lower-priority AS on this file
+  have been applied):
+
+  """BranchWeakCommand: rank the plan's branches by ascending semantic index."""
+  from typing import Any, ClassVar, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from plan_manager.commands.branch_weak_metadata import get_branch_weak_metadata
+
+
+  class BranchWeakCommand(Command):
+      """Rank the plan's branches by ascending semantic index, read-only."""
+
+      name: ClassVar[str] = "branch_weak"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Rank the plan's branches by ascending semantic index, "
+          "refusing when the plan has not passed the mechanical gate."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :return: A dict with object type, properties for plan (type
+              string) and verbose (type boolean, default False), a
+              required list naming only plan, and additionalProperties
+              False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or UUID).",
+                  },
+                  "verbose": {
+                      "type": "boolean",
+                      "description": (
+                          "When true, include per-estimator internals "
+                          "in each weakest-branch summary."
+                      ),
+                      "default": False,
+                  },
+              },
+              "required": ["plan"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls) -> Dict[str, Any]:
+          """Return extended AI/documentation metadata for this command.
+
+          :return: The dictionary produced by get_branch_weak_metadata(cls).
+          """
+          return get_branch_weak_metadata(cls)
+
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate and normalize the raw parameters for this command.
+
+          :param params: Raw parameter dict as received from the
+              adapter, already checked against get_schema(): object
+              type, plan required and of type string, verbose optional
+              and of type boolean when present, no additional
+              properties.
+          :return: The params dict, unchanged beyond the base validation
+              already performed by the superclass. No further semantic
+              validation applies to this command: plan existence and
+              gate state are resolved and reported as domain errors
+              during execute(), not during schema validation.
+          """
+          params = super().validate_params(params)
+          return params
+
+  REQUIRED CHANGE:
+
+  1. Replace the import block with exactly this new import block (adds
+     ErrorResult to the result import, and adds three new import lines
+     for the foundation/sibling contracts; all other lines are
+     unchanged):
+
+     from typing import Any, ClassVar, Dict
+
+     from mcp_proxy_adapter.commands.base import Command
+     from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+     from plan_manager.commands.branch_weak_metadata import get_branch_weak_metadata
+     from plan_manager.commands.errors import map_exception
+     from plan_manager.commands.resolve import resolve_plan
+     from plan_manager.runtime.context import app_config, db_connection
+     from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
+
+  2. Append this method to the end of the BranchWeakCommand class body,
+     immediately after validate_params, separated by exactly one blank
+     line:
+
+      def execute(self, plan: str, verbose: bool = False) -> SuccessResult | ErrorResult:
+          """Rank the plan's branches by ascending semantic index.
+
+          :param plan: Plan identifier (name or UUID) resolved via
+              resolve_plan(conn, plan) -> Plan (fields uuid, name,
+              status, context_budget, head_revision_uuid).
+          :param verbose: When True, include per-estimator internals in
+              each weakest-branch summary via
+              branch_summary(branch, verbose=True). Defaults to False.
+          :return: SuccessResult(data={"plan_index": float, "color": str,
+              "aggregation": str, "weakest": list[dict],
+              "revision_uuid": str}) on success; ErrorResult from
+              map_exception(exc) for any exception, including a
+              DomainCommandError with code PLAN_NOT_FOUND raised by
+              resolve_plan when the plan does not resolve, a
+              ScoreRefusedError mapped to code GATE_RED when the plan
+              has not passed the mechanical gate at the current
+              revision, and an EmbeddingUnavailable exception mapped to
+              code EMBEDDINGS_UNAVAILABLE when the embedding service is
+              unreachable.
+          """
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  cfg = app_config()
+                  score = score_plan(
+                      conn,
+                      p.uuid,
+                      ScoringConfig(
+                          threshold=cfg.scoring_threshold,
+                          aggregation=cfg.scoring_aggregation,
+                          concept_weight=cfg.concept_weight,
+                          trust_floor=cfg.trust_floor,
+                          embedding_url=cfg.embedding_url,
+                      ),
+                  )
+                  return SuccessResult(
+                      data={
+                          "plan_index": score.index,
+                          "color": score.color,
+                          "aggregation": score.aggregation,
+                          "weakest": [
+                              branch_summary(b, verbose) for b in score.weakest
+                          ],
+                          "revision_uuid": str(score.revision_uuid),
+                      }
+                  )
+          except Exception as exc:
+              return map_exception(exc)
+
+  Constraints:
+  - Do not modify any other part of the existing file content shown
+    above beyond the single import-block replacement and the single
+    method append described.
+  - The method signature is exactly
+    `def execute(self, plan: str, verbose: bool = False) -> SuccessResult | ErrorResult:`.
+  - The ScoringConfig instance passed to score_plan is constructed
+    exactly as shown, reading threshold from cfg.scoring_threshold,
+    aggregation from cfg.scoring_aggregation, concept_weight from
+    cfg.concept_weight, trust_floor from cfg.trust_floor, and
+    embedding_url from cfg.embedding_url.
+  - The success data dict has exactly the five keys plan_index, color,
+    aggregation, weakest, revision_uuid, computed exactly as shown
+    (weakest is a list comprehension calling branch_summary(b, verbose)
+    for each b in score.weakest, in the order score.weakest already
+    provides; revision_uuid is str(score.revision_uuid)).
+  - The single try/except wraps the entire `with db_connection() as conn:`
+    block, catches `Exception as exc`, and returns `map_exception(exc)`
+    as the final handler. No other exception handling is added; the
+    mapping of ScoreRefusedError to GATE_RED and of EmbeddingUnavailable
+    to EMBEDDINGS_UNAVAILABLE happens entirely inside map_exception.
+verification:
+  type: import
+  target: plan_manager.commands.branch_weak_command
+  expected: >
+    The module imports without error; BranchWeakCommand.execute(self, plan,
+    verbose=False) resolves the plan, builds a ScoringConfig from app_config()
+    fields, calls score_plan, and returns SuccessResult(data={"plan_index",
+    "color", "aggregation", "weakest", "revision_uuid"}) on success; a
+    ScoreRefusedError raised by score_plan is mapped by map_exception to an
+    ErrorResult with code GATE_RED; an EmbeddingUnavailable exception is mapped
+    to code EMBEDDINGS_UNAVAILABLE; a plan resolution failure is mapped to code
+    PLAN_NOT_FOUND.
+status: draft

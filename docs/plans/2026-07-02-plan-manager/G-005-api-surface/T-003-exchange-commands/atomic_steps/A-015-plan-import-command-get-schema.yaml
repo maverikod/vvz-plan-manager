@@ -1,0 +1,123 @@
+step_id: A-015
+parent_tactical_step: T-003
+name: plan-import-command-get-schema
+target_file: plan_manager/commands/plan_import_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-014]
+concepts: [C-023]
+prompt: |
+  Modify the file plan_manager/commands/plan_import_command.py. Its full
+  current content (after all lower-priority AS on this file have been
+  applied) is exactly:
+
+  """PlanImportCommand: create a new plan from a standard file layout."""
+
+  from pathlib import Path
+  from typing import Any, ClassVar, Dict, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.plan_import_metadata import get_plan_import_metadata
+  from plan_manager.exchange.importer import import_plan, validate_layout
+  from plan_manager.runtime.context import app_config, db_connection
+
+
+  class PlanImportCommand(Command):
+      """Create a new plan from a standard file layout under the export root."""
+
+      name: ClassVar[str] = "plan_import"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Import a plan from a standard file layout under the configured export root."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = True
+
+  Append exactly one blank line after the last line shown (`use_queue:
+  ClassVar[bool] = True`), then append the following method, indented
+  4 spaces as a member of class PlanImportCommand:
+
+  @classmethod
+  def get_schema(cls) -> Dict[str, Any]:
+      """Return the machine-readable input schema for plan_import.
+
+      Returns:
+          A JSON-schema-shaped dictionary with an explicit
+          additionalProperties=False and an exact required list.
+      """
+      return {
+          "type": "object",
+          "properties": {
+              "source": {
+                  "type": "string",
+                  "description": (
+                      "Name of the standard layout directory under the "
+                      "configured export root."
+                  ),
+              },
+              "dry_run": {
+                  "type": "boolean",
+                  "description": (
+                      "When true (the default), only validate the "
+                      "layout without writing to the database."
+                  ),
+                  "default": True,
+              },
+          },
+          "required": ["source"],
+          "additionalProperties": False,
+      }
+
+  Constraints (all explicit, no open decisions):
+  - Do not change any line that already exists in the file; only append
+    the blank line and the method shown.
+  - The method is decorated @classmethod with exact signature
+    `def get_schema(cls) -> Dict[str, Any]:` per
+    docs/standards/planning/metadatastd.yaml,
+    command_class_shape.required_methods.get_schema.
+  - The returned dict has top-level keys exactly "type", "properties",
+    "required", "additionalProperties" — no other top-level key.
+  - "type" is the literal string "object".
+  - "properties" contains exactly two keys, "source" and "dry_run".
+    "source" has "type": "string" and a non-empty "description"; it has
+    no "default" key. "dry_run" has "type": "boolean", a non-empty
+    "description", and "default": True — the default is documented here
+    because execute() actually applies it (dry_run: bool = True), per
+    metadatastd.yaml get_schema.rules: "use default only when
+    implementation actually handles omitted value as that default".
+  - "required" is the literal list ["source"] (dry_run is optional with
+    documented default True — the safety default is on).
+  - "additionalProperties" is the literal boolean False.
+  - Do not add any other method, import, or class to this file. Do not
+    read or modify any other file.
+
+  MRS excerpt (concept definition relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+verification:
+  type: import
+  target: plan_manager.commands.plan_import_command.PlanImportCommand.get_schema
+  expected: >
+    PlanImportCommand.get_schema() returns a dict with type="object",
+    properties containing "source" (string, no default) and "dry_run"
+    (boolean, default True), required equal to ["source"], and
+    additionalProperties equal to False.
+status: draft

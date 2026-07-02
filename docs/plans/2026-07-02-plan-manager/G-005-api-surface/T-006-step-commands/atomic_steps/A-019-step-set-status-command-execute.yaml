@@ -1,0 +1,284 @@
+step_id: A-019
+parent_tactical_step: T-006
+name: step_set_status command execute implementation
+target_file: plan_manager/commands/step_set_status_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-018]
+concepts: [C-023, C-026, C-007, C-016]
+prompt: |
+  Modify the file `plan_manager/commands/step_set_status_command.py`. Its
+  full current content (as produced by the prior AS on this file) is:
+
+  ```python
+  """Command: drive a step through the lifecycle state machine."""
+
+  import uuid
+  from typing import Any, ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from plan_manager.cascade.record import CascadeError
+  from plan_manager.cascade.regime import check_admission, frozen_at_or_below
+  from plan_manager.cascade.write import cascade_write, step_snapshot
+  from plan_manager.cascade.propagation import step_invalidation
+  from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.step_set_status_metadata import get_step_set_status_metadata
+  from plan_manager.domain.step_store import get_step, set_step_status
+  from plan_manager.runtime.context import db_connection
+  from plan_manager.storage.version_store import record_revision
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  class StepSetStatusCommand(Command):
+      """Transition a step's status, refusing illegal and cascade-reserved transitions."""
+
+      name: ClassVar[str] = "step_set_status"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Transition a step's status, refusing illegal and cascade-reserved transitions."
+      category: ClassVar[str] = "step"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[type] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+      @classmethod
+      def get_schema(cls) -> dict[str, Any]:
+          """Return the machine-readable input schema for step_set_status.
+
+          Returns:
+              A JSON-Schema-shaped dict with `type`, `properties`, `required`,
+              and `additionalProperties` keys.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or name) to resolve the plan against the catalog.",
+                  },
+                  "step_id": {
+                      "type": "string",
+                      "description": "Human-readable identifier of the step to transition.",
+                  },
+                  "status": {
+                      "type": "string",
+                      "description": "The new status to transition the step to.",
+                      "enum": ["draft", "ready_for_review", "frozen", "needs_review", "in_progress", "done"],
+                  },
+                  "cascade_uuid": {
+                      "type": "string",
+                      "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen target.",
+                  },
+              },
+              "required": ["plan", "step_id", "status"],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+          """Validate step_set_status parameters beyond the base schema check.
+
+          Args:
+              params: Raw parameter dict as received by the adapter.
+
+          Returns:
+              The validated parameter dict, unchanged beyond the base
+              validator's own normalization.
+
+          Raises:
+              ValueError: If cascade_uuid is not a valid UUID string.
+          """
+          params = super().validate_params(params)
+          cascade_uuid = params.get("cascade_uuid")
+          if cascade_uuid is not None:
+              uuid.UUID(cascade_uuid)
+          return params
+
+      async def execute(
+          self,
+          plan: str,
+          step_id: str,
+          status: str,
+          cascade_uuid: str | None = None,
+      ) -> SuccessResult | ErrorResult:
+          """Transition a step's status and record the transition as a revision.
+
+          Args:
+              plan: Plan identifier (UUID or name).
+              step_id: Human-readable identifier of the step to transition.
+              status: The new status to transition the step to.
+              cascade_uuid: Open cascade identifier to admit this mutation
+                  under, or None for direct-mode mutation.
+
+          Returns:
+              SuccessResult with the transitioned step's identity, status, and
+              revision_uuid on success, or ErrorResult with a stable domain
+              error code on failure.
+          """
+          raise NotImplementedError
+
+      @classmethod
+      def metadata(cls) -> dict[str, Any]:
+          """Return the extended documentation metadata for step_set_status.
+
+          Returns:
+              The dict produced by `get_step_set_status_metadata(cls)`.
+          """
+          return get_step_set_status_metadata(cls)
+  ```
+
+  Replace only the body of the `execute` method (keep its signature and
+  docstring exactly as shown above) with the following implementation:
+
+  ```python
+          try:
+              with db_connection() as conn:
+                  p = resolve_plan(conn, plan)
+                  nodes = load_steps(conn, p.uuid)
+                  target = next((s for s in nodes.values() if s.step_id == step_id), None)
+                  if target is None:
+                      raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")
+                  parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
+                  try:
+                      rec = check_admission(conn, p.uuid, "step", target.uuid, parsed_cascade_uuid)
+                  except CascadeError as exc:
+                      if cascade_uuid is not None:
+                          return domain_error("CASCADE_CONFLICT", str(exc))
+                      if frozen_at_or_below(nodes, target.uuid):
+                          return domain_error("FROZEN_ARTIFACT", str(exc))
+                      return domain_error("CASCADE_REQUIRED", str(exc))
+                  set_step_status(conn, target.uuid, status)
+                  transitioned = get_step(conn, target.uuid)
+                  snapshot = step_snapshot(transitioned, status)
+                  if rec is not None:
+                      status_updates = step_invalidation(load_steps(conn, p.uuid), target.uuid)
+                      revision = cascade_write(
+                          conn, p.uuid, rec, target.uuid, snapshot, status_updates, "api",
+                          f"step_set_status: {transitioned.step_id}",
+                      )
+                  else:
+                      revision = record_revision(
+                          conn, p.uuid, "api", f"step_set_status: {transitioned.step_id}",
+                          [(target.uuid, snapshot)], p.head_revision_uuid, ref_name=None,
+                      )
+                  verified = get_step(conn, target.uuid)
+                  data = {
+                      "uuid": str(verified.uuid),
+                      "step_id": verified.step_id,
+                      "status": verified.status,
+                      "revision_uuid": str(revision),
+                  }
+                  return SuccessResult(data=data)
+          except Exception as exc:
+              return map_exception(exc)
+  ```
+
+  Constraints:
+  - Do not change the module docstring, imports, class attributes,
+    `get_schema`, `validate_params`, or `metadata` — they remain
+    byte-identical to the content shown above.
+  - `set_step_status` is called with exactly three positional arguments
+    `(conn, target.uuid, status)`; it raises `StatusTransitionError` on an
+    illegal or cascade-reserved transition (including a direct request for
+    `needs_review`), which propagates to the outer `except Exception` and
+    is mapped by `map_exception` to `"INVALID_TRANSITION"`.
+  - `rec` being non-`None` means the mutation is admitted under an open
+    cascade (cascade mode), in which case `status_updates` is computed via
+    `step_invalidation(load_steps(conn, p.uuid), target.uuid)`; `rec` being
+    `None` means direct-mode admission, which writes a revision via
+    `record_revision` with `ref_name=None` and no invalidation.
+  - Do not add, remove, or reorder any other method or statement in the
+    file.
+
+  Verbatim contracts used by the imports (for reference; do not redefine
+  these — they already exist in their respective modules):
+  - `plan_manager/commands/errors.py` defines
+    `class DomainCommandError(Exception)` with constructor `(code, message,
+    details=None)`; `def domain_error(code, message, details=None) ->
+    ErrorResult`; `def map_exception(exc) -> ErrorResult` (maps
+    `StatusTransitionError` to `"INVALID_TRANSITION"`).
+  - `plan_manager/commands/resolve.py` defines
+    `def resolve_plan(conn, plan: str) -> Plan` where `Plan` has fields
+    `uuid, name, status, context_budget, head_revision_uuid`.
+  - `plan_manager/runtime/context.py` defines `def db_connection()`, a
+    context manager yielding a `psycopg.Connection`.
+  - `plan_manager/cascade/record.py` defines `class CascadeError(ValueError)`.
+  - `plan_manager/cascade/regime.py` defines `def check_admission(conn,
+    plan_uuid, target_kind, target_uuid, cascade_uuid) -> CascadeRecord |
+    None` and `def frozen_at_or_below(nodes: dict[uuid.UUID, Step],
+    origin_uuid: uuid.UUID) -> bool`.
+  - `plan_manager/cascade/write.py` defines `def cascade_write(conn,
+    plan_uuid, cascade: CascadeRecord, node_uuid, node_snapshot: dict,
+    status_updates: list[tuple[uuid.UUID, str]], author: str, message: str)
+    -> uuid.UUID` and `def step_snapshot(step: Step, status: str) -> dict`.
+  - `plan_manager/cascade/propagation.py` defines `def step_invalidation(
+    nodes: dict[uuid.UUID, Step], origin_uuid) -> list[tuple[uuid.UUID,
+    str]]`.
+  - `plan_manager/storage/version_store.py` defines `def record_revision(
+    conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID,
+    dict]], parent_revision_uuid, ref_name) -> uuid.UUID` (ref_name=None
+    advances the plan head).
+  - `plan_manager/views/dependency_graph.py` defines `def load_steps(conn,
+    plan_uuid) -> dict[uuid.UUID, Step]` where `Step` has fields `uuid,
+    plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
+    depends_on: list[str], concepts: list[str], status: str`.
+  - `plan_manager/domain/step_store.py` defines `def get_step(conn,
+    step_uuid) -> Step` and `def set_step_status(conn, step_uuid,
+    new_status: str) -> None` (validates through the status model with
+    via_cascade=False, raising `StatusTransitionError` on illegal or
+    cascade-reserved transitions, then writes).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  ```yaml
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+  ```
+verification:
+  type: manual
+  target: plan_manager/commands/step_set_status_command.py::StepSetStatusCommand.execute
+  expected: >
+    Against a live plan and database: a legal transition on an existing,
+    non-frozen step in direct mode succeeds and returns SuccessResult data
+    with the step's uuid, step_id, the new status as re-read from storage,
+    and a revision_uuid; an unknown step_id returns ErrorResult with code
+    STEP_NOT_FOUND; requesting an illegal transition, or requesting
+    needs_review directly, returns ErrorResult with code
+    INVALID_TRANSITION; attempting a direct transition on a frozen step
+    without cascade_uuid returns CASCADE_REQUIRED, with FROZEN_ARTIFACT
+    returned instead when frozen_at_or_below reports the step frozen; a
+    cascade_uuid that check_admission rejects returns CASCADE_CONFLICT;
+    when admitted under an open cascade, the revision is written via
+    cascade_write with status_updates computed by step_invalidation.
+status: draft

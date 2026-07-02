@@ -1,0 +1,203 @@
+step_id: A-001
+parent_tactical_step: T-008
+name: branch_prompt extended metadata function
+target_file: plan_manager/commands/branch_prompt_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-008, C-011]
+prompt: |
+  Create the file plan_manager/commands/branch_prompt_metadata.py from
+  scratch (it does not exist yet; assume no pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-011
+    name: Prompt
+    definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
+    properties:
+    - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta
+    - byte-identical for the same tree state; token estimate against the plan's user-set context budget
+    - dump snapshots are derived artifacts never read back
+    - the server never executes prompts
+    source_labels: ["{t3u5}", "{y6q1}", "{s5m8}", "{r9f1}", "{j1w5}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+
+  Domain context: BranchPromptCommand (name "branch_prompt") resolves one
+  branch of the plan tree by its global step, tactical step, and atomic
+  step identifiers, assembles the deterministic executor prompt for that
+  branch (C-011) in the fixed concatenation order MRS excerpt, HRS slice,
+  GS, TS, AS delta, and returns the prompt text together with a token
+  estimate compared against the plan's user-set context budget (plan
+  data, default 4000 tokens, never server configuration). The command is
+  read-only. An unknown plan yields the domain error code PLAN_NOT_FOUND;
+  an unknown step id anywhere in the branch path (C-008) yields the
+  domain error code STEP_NOT_FOUND naming the missing step id.
+
+  Write exactly this file content:
+
+  """BranchPromptCommand: assemble the deterministic executor prompt for one branch."""
+  from typing import Any, Dict
+
+
+  def get_branch_prompt_metadata(cls: type) -> Dict[str, Any]:
+      """Return extended AI/documentation metadata for BranchPromptCommand.
+
+      :param cls: The command class requesting its metadata
+          (BranchPromptCommand). The returned dict reads cls.name,
+          cls.version, cls.descr, cls.category, cls.author, cls.email.
+      :return: A dictionary with the required metadata fields: name,
+          version, description, category, author, email,
+          detailed_description, parameters, return_value, usage_examples,
+          error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Resolves one branch of the plan tree by its global step, "
+              "tactical step, and atomic step identifiers, assembles the "
+              "deterministic executor prompt for that branch in the fixed "
+              "concatenation order (MRS excerpt, HRS slice, GS, TS, AS "
+              "delta), and returns the prompt text together with a token "
+              "estimate compared against the plan's user-set context "
+              "budget (plan data, default 4000 tokens, never server "
+              "configuration). This command is read-only: it does not "
+              "modify the plan, the branch, or any stored artifact. An "
+              "unknown plan yields PLAN_NOT_FOUND; an unknown step id in "
+              "the branch path yields STEP_NOT_FOUND naming the missing "
+              "step."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (name or UUID) resolved against the plan catalog.",
+                  "type": "string",
+                  "required": True,
+              },
+              "gs_step_id": {
+                  "description": "The level-3 global step id (e.g. 'G-005') of the branch.",
+                  "type": "string",
+                  "required": True,
+              },
+              "ts_step_id": {
+                  "description": "The level-4 tactical step id (e.g. 'T-008') of the branch.",
+                  "type": "string",
+                  "required": True,
+              },
+              "as_step_id": {
+                  "description": "The level-5 atomic step id (e.g. 'A-001') of the branch.",
+                  "type": "string",
+                  "required": True,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The assembled prompt with its token estimate and budget verdict.",
+                  "data": {
+                      "prompt": "The assembled executor prompt text.",
+                      "token_estimate": "Estimated token count of the prompt text.",
+                      "context_budget": "The plan's user-set context budget in tokens.",
+                      "within_budget": "True when token_estimate does not exceed context_budget.",
+                  },
+                  "example": {
+                      "prompt": "...",
+                      "token_estimate": 1200,
+                      "context_budget": 4000,
+                      "within_budget": True,
+                  },
+              },
+              "error": {
+                  "description": "The plan or one of the three step identifiers could not be resolved.",
+                  "code": "PLAN_NOT_FOUND | STEP_NOT_FOUND",
+                  "message": "Human-readable description of the missing entity.",
+                  "details": "Additional diagnostic fields when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Assemble the executor prompt for one atomic step.",
+                  "command": {
+                      "plan": "plan_manager",
+                      "gs_step_id": "G-005",
+                      "ts_step_id": "T-008",
+                      "as_step_id": "A-001",
+                  },
+                  "explanation": "Returns the prompt text, its token estimate, and the budget verdict.",
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a plan in the catalog.",
+                  "message": "Plan not found: {plan}",
+                  "solution": "Call the plan catalog command and retry with a valid plan identifier.",
+              },
+              "STEP_NOT_FOUND": {
+                  "description": "One of gs_step_id, ts_step_id, or as_step_id does not resolve within the plan.",
+                  "message": "Step not found: {step_id}",
+                  "solution": "Call the plan tree command to discover valid step ids and retry.",
+              },
+          },
+          "best_practices": [
+              "Check within_budget before handing the prompt to a coder "
+              "model; a False value means the assembled prompt exceeds "
+              "the plan's context budget and the branch should be split "
+              "further.",
+              "This command is read-only and safe to call repeatedly; it "
+              "never mutates the plan.",
+          ],
+      }
+
+  Constraints:
+  - The module docstring is exactly the one-line string shown as the
+    first line of the file.
+  - The only import is `from typing import Any, Dict`.
+  - The function signature is exactly `def get_branch_prompt_metadata(cls: type) -> Dict[str, Any]:`.
+  - The returned dict has exactly the twelve top-level keys shown: name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases,
+    best_practices.
+  - error_cases has exactly the two keys PLAN_NOT_FOUND and
+    STEP_NOT_FOUND, each with description, message, and solution keys.
+  - Do not add any other function, class, or import.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_prompt_metadata.py::get_branch_prompt_metadata
+  expected: >
+    The module defines exactly one function, get_branch_prompt_metadata(cls),
+    that returns a dict containing all twelve required metadata keys (name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices);
+    parameters contains exactly plan, gs_step_id, ts_step_id, as_step_id, all
+    marked required True; error_cases contains exactly PLAN_NOT_FOUND and
+    STEP_NOT_FOUND, each with description, message, and solution.
+status: draft

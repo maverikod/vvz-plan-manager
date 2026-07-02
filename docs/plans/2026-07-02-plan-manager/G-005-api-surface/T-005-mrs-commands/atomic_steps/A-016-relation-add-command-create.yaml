@@ -1,0 +1,147 @@
+step_id: A-016
+parent_tactical_step: T-005
+name: Create relation_add command scaffold (schema and validate_params)
+target_file: plan_manager/commands/relation_add_command.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-004, C-016]
+prompt: |
+  Target file: `plan_manager/commands/relation_add_command.py`. Operation:
+  create_file (the file does not exist yet; create it with exactly the content
+  specified below). A later step will append the execute method to this same
+  file; do not add an execute method here.
+
+  MRS excerpt (verbatim from spec.yaml, only the concepts relevant to this file):
+
+  - concept_id: C-004
+    name: Relation
+    definition: Typed directed edge between two concepts restricted to seven allowed types.
+    properties:
+    - types are uses, owns, implements, extends, depends_on, produces, consumes
+    - free-form types rejected at write time
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - get_schema strict subset with explicit additionalProperties false
+    - use enum for fixed modes, actions, status values, and output formats
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+
+  Imported foundation contracts used in this AS: `mcp_proxy_adapter.commands.base`:
+  `class Command`. `mcp_proxy_adapter.commands.result`: `class SuccessResult`
+  (constructed as `SuccessResult(data=<dict>)`) and `class ErrorResult`. Python
+  standard library `uuid`: `uuid.UUID(str)` raises ValueError on a malformed UUID
+  string.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Command: add a new relation between two concepts (relation_add)."""
+
+  import uuid
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  _RELATION_TYPES = [
+      "uses", "owns", "implements", "extends", "depends_on", "produces", "consumes",
+  ]
+
+
+  class RelationAddCommand(Command):
+      """Add a new MRS relation (C-004) between two concepts under an open cascade (C-016).
+
+      MRS entities are cascade-only at any plan status: every call must carry the
+      UUID of an already-open cascade in cascade_uuid.
+      """
+
+      name = "relation_add"
+      version = "1.0.0"
+      descr = "Add a new relation between two concepts under an open cascade."
+      category = "mrs"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> dict:
+          """Return the strict input schema for relation_add."""
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (UUID or unique plan name) to resolve.",
+                  },
+                  "cascade_uuid": {
+                      "type": "string",
+                      "description": "UUID of the open cascade admitting this mutation. Required: MRS entities are cascade-only at any status.",
+                  },
+                  "from_concept": {
+                      "type": "string",
+                      "description": "Concept identifier of the relation source endpoint.",
+                  },
+                  "to_concept": {
+                      "type": "string",
+                      "description": "Concept identifier of the relation target endpoint.",
+                  },
+                  "type": {
+                      "type": "string",
+                      "enum": _RELATION_TYPES,
+                      "description": "Relation type; one of the seven allowed types.",
+                  },
+              },
+              "required": ["plan", "cascade_uuid", "from_concept", "to_concept", "type"],
+              "additionalProperties": False,
+          }
+
+      def validate_params(self, params: dict) -> dict:
+          """Validate params: shallow schema checks, then parse cascade_uuid format.
+
+          Raises:
+              ValueError: if cascade_uuid is not a well-formed UUID string.
+          """
+          params = super().validate_params(params)
+          uuid.UUID(params["cascade_uuid"])
+          return params
+  ```
+
+  Constraints:
+  - Exactly this file content; no execute method, no additional imports.
+  - Do not read, create, or modify any other file.
+  - The class must be named RelationAddCommand and inherit from Command.
+  - The module-level constant _RELATION_TYPES must be exactly the list
+    ["uses", "owns", "implements", "extends", "depends_on", "produces", "consumes"]
+    (order preserved).
+  - get_schema must return an object schema with additionalProperties: false,
+    required exactly ["plan", "cascade_uuid", "from_concept", "to_concept", "type"],
+    and "type" using "enum": _RELATION_TYPES.
+  - validate_params calls super().validate_params(params) first, then
+    `uuid.UUID(params["cascade_uuid"])` to validate format.
+verification:
+  type: import
+  target: plan_manager/commands/relation_add_command.py
+  expected: >
+    Importing the module succeeds. RelationAddCommand.name == "relation_add",
+    category == "mrs". get_schema() returns an object schema with
+    additionalProperties False, required ==
+    ["plan", "cascade_uuid", "from_concept", "to_concept", "type"], and the
+    "type" property's enum equal to
+    ["uses", "owns", "implements", "extends", "depends_on", "produces", "consumes"].
+    validate_params raises ValueError when cascade_uuid is not a well-formed
+    UUID string and returns the params unchanged otherwise.
+status: draft

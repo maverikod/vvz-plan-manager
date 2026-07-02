@@ -1,0 +1,183 @@
+step_id: A-004
+parent_tactical_step: T-010
+name: cascade_abort metadata module
+target_file: plan_manager/commands/cascade_abort_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-023
+- C-026
+- C-016
+prompt: |-
+  Target file: plan_manager/commands/cascade_abort_metadata.py
+  Operation: create_file
+  Function signature: def get_cascade_abort_metadata(cls: type) -> dict:
+
+  Create the file with exactly the following content, byte-for-byte (including blank lines and trailing newline):
+
+  ```python
+  """Extended metadata for the cascade_abort command."""
+
+
+  def get_cascade_abort_metadata(cls: type) -> dict:
+      """Return the extended documentation metadata for CascadeAbortCommand.
+
+      Args:
+          cls: The CascadeAbortCommand class supplying identity attributes
+              (name, version, descr, category, author, email).
+
+      Returns:
+          A dictionary with all fields required by the command metadata
+          standard: name, version, description, category, author, email,
+          detailed_description, parameters, return_value, usage_examples,
+          error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Discards the plan's currently open cascade and restores the "
+              "working state to the plan's base revision, confirming that "
+              "the published plan (its head revision) is untouched. Safety: "
+              "this command mutates database state by closing the cascade "
+              "record and releasing the per-plan lock; it never advances the "
+              "plan head revision and never touches any published artifact. "
+              "Undo: aborting a cascade is itself the undo operation for "
+              "every mutation accumulated inside that cascade -- once "
+              "aborted, the discarded cascade cannot be reopened, and a new "
+              "cascade must be started with cascade_begin to make further "
+              "edits. Verify: this command re-reads the open cascade record "
+              "after the operation and confirms no cascade remains open for "
+              "the plan before returning the plan's (unchanged) head "
+              "revision."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan UUID or unique plan name.",
+                  "type": "string",
+                  "required": True,
+              }
+          },
+          "return_value": {
+              "success": {
+                  "description": (
+                      "Confirmation that the open cascade was discarded and "
+                      "the plan's head revision, read fresh from the "
+                      "database, is unchanged."
+                  ),
+                  "data": {
+                      "aborted": "Boolean, always true on success.",
+                      "head_revision_uuid": (
+                          "UUID of the plan head revision after the abort, "
+                          "re-read from the database and unchanged by this "
+                          "command."
+                      ),
+                  },
+                  "example": {
+                      "aborted": True,
+                      "head_revision_uuid": (
+                          "1a2b3c4d-5e6f-4071-8899-aabbccddeeff"
+                      ),
+                  },
+              },
+              "error": {
+                  "description": "Domain error result on failure.",
+                  "code": "Stable domain error code string (see error_cases).",
+                  "message": "Human-readable error message.",
+                  "details": "Optional diagnostic fields, present when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Abort the open cascade of a plan by name.",
+                  "command": {"plan": "plan-manager"},
+                  "explanation": (
+                      "Discards the currently open cascade and confirms the "
+                      "plan head revision is unchanged."
+                  ),
+              }
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan parameter does not resolve to any plan.",
+                  "message": "Plan not found: {plan}",
+                  "solution": (
+                      "List existing plans and retry with a valid plan UUID "
+                      "or name."
+                  ),
+              },
+              "CASCADE_REQUIRED": {
+                  "description": "The plan has no open cascade to abort.",
+                  "message": "Plan {plan} has no open cascade.",
+                  "solution": "There is nothing to abort; call cascade_begin to start a new cascade.",
+              },
+          },
+          "best_practices": [
+              "Use cascade_abort to discard a cascade that failed "
+              "cascade_commit with GATE_RED and cannot be easily fixed.",
+              "After cascade_abort, the plan head revision is guaranteed "
+              "unchanged; verify with a plan read command if independent "
+              "confirmation is required.",
+              "A new cascade must be opened with cascade_begin before any "
+              "further mutating command can run on the plan.",
+          ],
+      }
+
+  ```
+
+  Foundation contracts referenced by the content above (import exactly as shown; do not reimplement):
+
+  Constraints:
+  - Python 3.12+ syntax; use built-in generic types (dict, list) for annotations, not typing.Dict/typing.List.
+  - Do not add any code beyond exactly what this prompt specifies.
+  - Do not add a __main__ guard, logging, or any helper not listed here.
+  - Preserve exactly one blank line between top-level imports and the class definition, and exactly one blank line between methods.
+  - The function body must return exactly the literal dict shown in the content above; do not compute any field dynamically beyond reading cls.name, cls.version, cls.descr, cls.category, cls.author, cls.email.
+  - error_cases keys must be exactly: PLAN_NOT_FOUND, CASCADE_REQUIRED (no more, no fewer).
+  - Every error_cases entry must have exactly the keys description, message, solution.
+  - parameters entries must have exactly the keys description, type, required.
+
+  MRS excerpt (concepts referenced by this step):
+  concepts:
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+    source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+  relations:
+  - { from_concept: C-023, to_concept: C-026, type: uses }
+verification:
+  type: import
+  target: plan_manager.commands.cascade_abort_metadata.get_cascade_abort_metadata
+  expected: >
+    Importing plan_manager.commands.cascade_abort_metadata succeeds and calling get_cascade_abort_metadata(SomeClassWithIdentityAttrs)
+    returns a dict containing exactly the keys name, version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices; error_cases contains exactly
+    the keys PLAN_NOT_FOUND, CASCADE_REQUIRED, each with description, message, and solution; parameters
+    contains exactly the key plan with description, type, and required.
+status: draft

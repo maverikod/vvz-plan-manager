@@ -1,0 +1,125 @@
+step_id: A-003
+parent_tactical_step: T-008
+name: BranchPromptCommand get_schema classmethod
+target_file: plan_manager/commands/branch_prompt_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-002]
+concepts: [C-023, C-008]
+prompt: |
+  Modify the existing file plan_manager/commands/branch_prompt_command.py.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  CURRENT FILE CONTENT (exact, after all lower-priority AS on this file
+  have been applied):
+
+  """BranchPromptCommand: assemble the deterministic executor prompt for one branch."""
+  from typing import ClassVar
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+
+  class BranchPromptCommand(Command):
+      """Assemble and return the executor prompt for one branch, read-only."""
+
+      name: ClassVar[str] = "branch_prompt"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = (
+          "Assemble the deterministic executor prompt for one branch and "
+          "report its token estimate against the plan's context budget."
+      )
+      category: ClassVar[str] = "branch"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+  REQUIRED CHANGE:
+
+  1. Replace the first import line `from typing import ClassVar` with
+     `from typing import Any, ClassVar, Dict` (add Any and Dict; keep
+     ClassVar). All other imports are unchanged.
+  2. Append this method to the end of the BranchPromptCommand class body,
+     separated from use_queue by exactly one blank line:
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for this command.
+
+          :return: A dict with object type, properties for plan,
+              gs_step_id, ts_step_id, as_step_id (all type string with
+              descriptions), a required list naming all four, and
+              additionalProperties False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "plan": {
+                      "type": "string",
+                      "description": "Plan identifier (name or UUID).",
+                  },
+                  "gs_step_id": {
+                      "type": "string",
+                      "description": "Global step id of the branch, e.g. 'G-005'.",
+                  },
+                  "ts_step_id": {
+                      "type": "string",
+                      "description": "Tactical step id of the branch, e.g. 'T-008'.",
+                  },
+                  "as_step_id": {
+                      "type": "string",
+                      "description": "Atomic step id of the branch, e.g. 'A-001'.",
+                  },
+              },
+              "required": ["plan", "gs_step_id", "ts_step_id", "as_step_id"],
+              "additionalProperties": False,
+          }
+
+  Constraints:
+  - Do not modify any other part of the existing file content shown
+    above beyond the single import-line replacement and the single
+    method append described.
+  - The method signature is exactly
+    `def get_schema(cls) -> Dict[str, Any]:` decorated with
+    `@classmethod`.
+  - The returned dict has exactly the four keys type, properties,
+    required, additionalProperties, with the exact values shown; no
+    other keys.
+  - properties has exactly the four keys plan, gs_step_id, ts_step_id,
+    as_step_id, each an object with only type and description keys, both
+    type "string".
+  - required is exactly the list ["plan", "gs_step_id", "ts_step_id", "as_step_id"]
+    in that order.
+  - additionalProperties is exactly False.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_prompt_command.py::BranchPromptCommand.get_schema
+  expected: >
+    BranchPromptCommand.get_schema() is a classmethod returning a dict with
+    type "object", properties for exactly plan, gs_step_id, ts_step_id,
+    as_step_id (all type string), required equal to
+    ["plan", "gs_step_id", "ts_step_id", "as_step_id"], and
+    additionalProperties False.
+status: draft

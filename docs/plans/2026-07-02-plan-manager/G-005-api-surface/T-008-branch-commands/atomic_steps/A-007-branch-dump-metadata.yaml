@@ -1,0 +1,184 @@
+step_id: A-007
+parent_tactical_step: T-008
+name: branch_dump extended metadata function
+target_file: plan_manager/commands/branch_dump_metadata.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-023, C-026, C-008, C-011]
+prompt: |
+  Create the file plan_manager/commands/branch_dump_metadata.py from
+  scratch (it does not exist yet; assume no pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-011
+    name: Prompt
+    definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
+    properties:
+    - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta
+    - byte-identical for the same tree state; token estimate against the plan's user-set context budget
+    - dump snapshots are derived artifacts never read back
+    - the server never executes prompts
+    source_labels: ["{t3u5}", "{y6q1}", "{s5m8}", "{r9f1}", "{j1w5}"]
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema, metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email, result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to on
+    source_labels: ["{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{z5t4}", "{r1c7}"]
+
+  - concept_id: C-026
+    name: ErrorModel
+    definition: Two-layer error contract of adapter JSON-RPC codes and stable domain string codes.
+    properties:
+    - every declared error case returnable and every returnable case declared
+    source_labels: ["{g9b1}"]
+
+  Domain context: BranchDumpCommand (name "branch_dump") writes the
+  executor prompt (C-011) of every branch (C-008) of the plan as an
+  explicitly non-authoritative derived snapshot under the configured
+  export root; the snapshot is never read back by the server. dry_run
+  counts branches without writing files. An unknown plan yields the
+  domain error code PLAN_NOT_FOUND.
+
+  Write exactly this file content:
+
+  """BranchDumpCommand: write every branch's prompt as a non-authoritative snapshot."""
+  from typing import Any, Dict
+
+
+  def get_branch_dump_metadata(cls: type) -> Dict[str, Any]:
+      """Return extended AI/documentation metadata for BranchDumpCommand.
+
+      :param cls: The command class requesting its metadata
+          (BranchDumpCommand). The returned dict reads cls.name,
+          cls.version, cls.descr, cls.category, cls.author, cls.email.
+      :return: A dictionary with the required metadata fields: name,
+          version, description, category, author, email,
+          detailed_description, parameters, return_value, usage_examples,
+          error_cases, best_practices.
+      """
+      return {
+          "name": cls.name,
+          "version": cls.version,
+          "description": cls.descr,
+          "category": cls.category,
+          "author": cls.author,
+          "email": cls.email,
+          "detailed_description": (
+              "Enumerates every (global step, tactical step, atomic "
+              "step) triple of the plan, assembles the deterministic "
+              "executor prompt for each resulting branch, and writes "
+              "each prompt to a file under the configured export root "
+              "at <export_root>/prompt_dump/<plan uuid>/<gs step id>/"
+              "<ts step id>/<as step id>.md. The written files are an "
+              "explicitly non-authoritative derived snapshot: the "
+              "server never reads them back, and they carry no plan "
+              "truth. When dry_run is True, branches are counted but no "
+              "file is written, so a dry_run=True call never touches "
+              "disk and is always safe to run against a real plan."
+          ),
+          "parameters": {
+              "plan": {
+                  "description": "Plan identifier (name or UUID) resolved against the plan catalog.",
+                  "type": "string",
+                  "required": True,
+              },
+              "dry_run": {
+                  "description": "When true, count branches only and write no file.",
+                  "type": "boolean",
+                  "required": False,
+                  "default": False,
+              },
+          },
+          "return_value": {
+              "success": {
+                  "description": "The non-authoritative dump snapshot summary.",
+                  "data": {
+                      "branches": "Number of (gs, ts, atomic) branches enumerated.",
+                      "root": "Filesystem path of the dump root for this plan.",
+                      "dry_run": "Echo of the dry_run flag used for this call.",
+                      "non_authoritative": "Always True: the snapshot is never read back by the server.",
+                  },
+                  "example": {
+                      "branches": 42,
+                      "root": "/var/planmgr/export/prompt_dump/<uuid>",
+                      "dry_run": False,
+                      "non_authoritative": True,
+                  },
+              },
+              "error": {
+                  "description": "The plan identifier could not be resolved.",
+                  "code": "PLAN_NOT_FOUND",
+                  "message": "Human-readable description of the missing plan.",
+                  "details": "Additional diagnostic fields when available.",
+              },
+          },
+          "usage_examples": [
+              {
+                  "description": "Count the branches that would be dumped, without writing files.",
+                  "command": {"plan": "plan_manager", "dry_run": True},
+                  "explanation": "Returns the branch count only; disk is not touched.",
+              },
+              {
+                  "description": "Write the full prompt dump snapshot for a plan.",
+                  "command": {"plan": "plan_manager", "dry_run": False},
+                  "explanation": "Writes one Markdown file per branch under the export root.",
+              },
+          ],
+          "error_cases": {
+              "PLAN_NOT_FOUND": {
+                  "description": "The plan identifier does not resolve to a plan in the catalog.",
+                  "message": "Plan not found: {plan}",
+                  "solution": "Call the plan catalog command and retry with a valid plan identifier.",
+              },
+          },
+          "best_practices": [
+              "Use dry_run=True first on a large plan to see how many "
+              "files would be written before committing to the full "
+              "dump.",
+              "Treat the dumped files as a read-only convenience "
+              "snapshot for humans or external tooling; never feed them "
+              "back into the server as plan truth.",
+          ],
+      }
+
+  Constraints:
+  - The module docstring is exactly the one-line string shown as the
+    first line of the file.
+  - The only import is `from typing import Any, Dict`.
+  - The function signature is exactly `def get_branch_dump_metadata(cls: type) -> Dict[str, Any]:`.
+  - The returned dict has exactly the twelve top-level keys shown: name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases,
+    best_practices.
+  - error_cases has exactly the one key PLAN_NOT_FOUND, with
+    description, message, and solution keys.
+  - Do not add any other function, class, or import.
+verification:
+  type: static_analysis
+  target: plan_manager/commands/branch_dump_metadata.py::get_branch_dump_metadata
+  expected: >
+    The module defines exactly one function, get_branch_dump_metadata(cls),
+    that returns a dict containing all twelve required metadata keys (name,
+    version, description, category, author, email, detailed_description,
+    parameters, return_value, usage_examples, error_cases, best_practices);
+    parameters contains exactly plan (required True) and dry_run (required
+    False, default False); error_cases contains exactly PLAN_NOT_FOUND with
+    description, message, and solution.
+status: draft

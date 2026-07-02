@@ -1,0 +1,171 @@
+step_id: A-003
+parent_tactical_step: T-011
+name: info-command-validate-params
+target_file: plan_manager/commands/info_command.py
+operation: modify_file
+priority: 2
+depends_on: [A-002]
+concepts: [C-025, C-023]
+prompt: |
+  Modify the existing Python module at the exact project-relative path
+  `plan_manager/commands/info_command.py`.
+
+  The file currently contains exactly the following content (this is the
+  full, current, post-prior-step state of the file — not the file's
+  original content):
+
+  ```python
+  """Server self-description command (C-025)."""
+  from typing import Any, Dict
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.info_metadata import get_info_metadata
+  from plan_manager.runtime.context import app_config, db_connection
+  from plan_manager.runtime.build_info import build_info, operator_doc
+  from plan_manager.scoring.embedding import EmbeddingUnavailable, fetch_vector
+
+
+  class InfoCommand(Command):
+      """Server self-description command (C-025).
+
+      Read-only command implementing CommandContract (C-023). Returns
+      identity, build metadata, a runtime summary with database and
+      embedding service probes and the open cascade count, and the
+      embedded operator documentation text. An optional "section"
+      parameter restricts the answer to exactly one of these four parts.
+      """
+
+      name = "info"
+      version = "1.0.0"
+      descr = (
+          "Return the server self-description: identity, build metadata, "
+          "runtime summary, and operator documentation."
+      )
+      category = "system"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      result_class = SuccessResult
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the machine-readable input schema for the info command.
+
+          Returns:
+              Dict[str, Any]: JSON-schema-shaped dictionary with one
+              optional "section" property restricted to four enumerated
+              values, an empty required list, and additionalProperties
+              set to False.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "section": {
+                      "type": "string",
+                      "description": (
+                          "Restrict the response to one section: "
+                          "'identity', 'build', 'runtime', or "
+                          "'documentation'. Omitting this parameter "
+                          "returns all four sections."
+                      ),
+                      "enum": [
+                          "identity",
+                          "build",
+                          "runtime",
+                          "documentation",
+                      ],
+                  },
+              },
+              "required": [],
+              "additionalProperties": False,
+          }
+  ```
+
+  Modification: insert exactly one new method into the InfoCommand class,
+  immediately after the get_schema method (same indentation level as
+  get_schema, i.e. one method body indented under the class). Do not
+  change any other existing line. The new method, verbatim:
+
+  ```python
+      def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+          """Validate parameters for the info command.
+
+          Calls the base class validation first (structural checks against
+          get_schema's JSON-schema-shaped output), then re-checks that the
+          optional "section" parameter, if present, is one of the four
+          allowed section names. This re-check is a semantic safety net:
+          schema-level enum enforcement by the platform validator is
+          shallow, so this command re-verifies membership itself. An
+          invalid value raises ValueError, which the platform adapter maps
+          to an invalid-params response; this command never raises a
+          domain error code for a malformed parameter.
+
+          Args:
+              params: Raw parameter dictionary as received by the command,
+                  before semantic validation.
+
+          Returns:
+              Dict[str, Any]: The validated parameter dictionary, unchanged
+              from what the base class validation returns.
+
+          Raises:
+              ValueError: If "section" is present in params and is not one
+                  of "identity", "build", "runtime", "documentation".
+          """
+          params = super().validate_params(params)
+          section = params.get("section")
+          if section is not None and section not in (
+              "identity",
+              "build",
+              "runtime",
+              "documentation",
+          ):
+              raise ValueError(
+                  f"Invalid section: {section!r}. Must be one of "
+                  "'identity', 'build', 'runtime', 'documentation'."
+              )
+          return params
+  ```
+
+  Constraints:
+  - `super().validate_params(params)` calls the base class
+    `mcp_proxy_adapter.commands.base.Command.validate_params`, already
+    available because InfoCommand extends Command (imported at the top of
+    this file, shown in the current file content above). Do not import
+    anything new: `Dict` and `Any` are already imported at the top of the
+    file (`from typing import Any, Dict`, shown above) and are sufficient
+    for this method's annotations.
+  - Do not use a domain error code and do not import or raise
+    DomainCommandError for this validation failure: the standard Python
+    built-in ValueError is raised directly, exactly as shown.
+  - Do not add, remove, or reorder any other line of the file. Do not add
+    an execute method or a metadata method in this step.
+
+  MRS excerpt (concept definitions relevant to this change):
+
+  C-023 CommandContract: "Adapter-conformant command class shape with
+  schema, metadata, and semantic validation." Property used here:
+  "shallow adapter validation compensated by validate_params semantics" —
+  the platform's schema-level enum check is not fully trusted, so
+  validate_params re-verifies membership explicitly.
+
+  C-025 InfoCommand: "Self-description API command returning identity,
+  build metadata, runtime summary, and embedded operator documentation."
+  No additional property beyond the module-level excerpt already
+  established in the current file's class docstring is needed for this
+  change.
+verification:
+  type: import
+  target: plan_manager.commands.info_command.InfoCommand.validate_params
+  expected: >
+    Importing plan_manager.commands.info_command succeeds without
+    raising. InfoCommand defines a validate_params method. Calling
+    InfoCommand.validate_params(self_stub, {"section": "runtime"}) on an
+    instance whose base-class validate_params is a no-op passthrough
+    returns {"section": "runtime"} unchanged. Calling it with
+    {"section": "bogus"} raises ValueError. Calling it with {} (no
+    section key) returns {} without raising.
+status: draft

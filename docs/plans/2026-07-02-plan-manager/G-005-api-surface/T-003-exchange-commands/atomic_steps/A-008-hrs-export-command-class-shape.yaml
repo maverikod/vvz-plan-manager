@@ -1,0 +1,122 @@
+step_id: A-008
+parent_tactical_step: T-003
+name: hrs-export-command-class-shape
+target_file: plan_manager/commands/hrs_export_command.py
+operation: create_file
+priority: 1
+depends_on: [A-007]
+concepts: [C-023, C-021]
+prompt: |
+  Create the file plan_manager/commands/hrs_export_command.py with the
+  exact full content below (operation: create_file — the file does not
+  exist yet, assume no pre-existing content). This AS creates only the
+  module docstring, imports, and the class declaration with its class
+  attributes; it does not define any method.
+
+  Exact full file content to write:
+
+  """HrsExportCommand: read-only export of a plan's HRS Markdown text."""
+
+  from typing import Any, ClassVar, Dict, Type
+
+  from mcp_proxy_adapter.commands.base import Command
+  from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+
+  from plan_manager.commands.errors import map_exception
+  from plan_manager.commands.resolve import resolve_plan
+  from plan_manager.commands.hrs_export_metadata import get_hrs_export_metadata
+  from plan_manager.exchange.exporter import export_hrs
+  from plan_manager.runtime.context import db_connection
+
+
+  class HrsExportCommand(Command):
+      """Return the byte-identical HRS Markdown text of a resolved plan."""
+
+      name: ClassVar[str] = "hrs_export"
+      version: ClassVar[str] = "1.0.0"
+      descr: ClassVar[str] = "Export the byte-identical HRS Markdown text of a plan."
+      category: ClassVar[str] = "exchange"
+      author: ClassVar[str] = "Vasiliy Zdanovskiy"
+      email: ClassVar[str] = "vasilyvz@gmail.com"
+      result_class: ClassVar[Type[SuccessResult]] = SuccessResult
+      use_queue: ClassVar[bool] = False
+
+  Constraints (all explicit, no open decisions):
+  - Reproduce the content above byte-for-byte, including blank lines and
+    indentation (4 spaces).
+  - The class HrsExportCommand extends
+    mcp_proxy_adapter.commands.base.Command (imported exactly as
+    `from mcp_proxy_adapter.commands.base import Command`).
+  - The class attributes are declared with ClassVar type annotations in
+    exactly the order shown: name, version, descr, category, author,
+    email, result_class, use_queue.
+  - result_class is typed ClassVar[Type[SuccessResult]] and set to
+    SuccessResult, imported exactly as `from
+    mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult`.
+  - use_queue is False because hrs_export is read-only, not queue-bound
+    (it returns HRS text synchronously with no filesystem work).
+  - category is the literal string "exchange".
+  - author is the literal string "Vasiliy Zdanovskiy"; email is the
+    literal string "vasilyvz@gmail.com".
+  - descr is a non-empty one-line summary string as shown.
+  - Do not add get_schema, validate_params, metadata, or execute methods
+    in this AS; the class body contains only the eight ClassVar
+    attributes shown, nothing else.
+  - Do not add any other import, function, or class to this file. Do not
+    read or modify any other file.
+
+  Imported foundation/sibling contracts referenced by these imports
+  (quoted verbatim; import them exactly as shown, do not reimplement
+  them):
+  - plan_manager/commands/errors.py exposes: `class DomainCommandError(Exception)`
+    (code, message, details=None); `def domain_error(code, message,
+    details=None) -> ErrorResult`; `def map_exception(exc) -> ErrorResult`.
+  - plan_manager/commands/resolve.py exposes: `def resolve_plan(conn, plan: str) -> Plan`
+    (raises DomainCommandError with code PLAN_NOT_FOUND when not found);
+    Plan has fields uuid, name, status, context_budget, head_revision_uuid.
+  - plan_manager/runtime/context.py exposes: `def db_connection()` — a
+    context manager yielding a psycopg.Connection.
+  - plan_manager/exchange/exporter.py exposes: `def export_hrs(conn, plan_uuid) -> str`
+    (the byte-identical HRS Markdown).
+  - plan_manager/commands/hrs_export_metadata.py exposes:
+    `def get_hrs_export_metadata(cls) -> Dict[str, Any]` returning the
+    metadatastd.yaml-shaped documentation dict for this command.
+
+  MRS excerpt (concept definitions relevant to this AS, verbatim from
+  spec.yaml):
+
+  - concept_id: C-023
+    name: CommandContract
+    definition: Adapter-conformant command class shape with schema,
+      metadata, and semantic validation.
+    properties:
+    - class attributes name, version, descr, category, author, email,
+      result_class, use_queue
+    - get_schema strict subset with explicit additionalProperties false
+    - shallow adapter validation compensated by validate_params semantics
+    - metadata dictionary must never contradict the schema
+    - read commands never mutate; mutating commands verify by re-read
+    - destructive or bulk operations expose a dry-run mode defaulting to
+      on
+
+  - concept_id: C-021
+    name: ExchangeFormat
+    definition: File import/export representation of a plan in the
+      standard layout; HRS as Markdown, all other artifacts as YAML.
+    properties:
+    - export optionally at a named revision; import is the only
+      file-to-truth path
+    - safe YAML emission with mandatory round-trip; hrs_export
+      byte-identical
+verification:
+  type: import
+  target: plan_manager.commands.hrs_export_command.HrsExportCommand
+  expected: >
+    Importing plan_manager.commands.hrs_export_command succeeds and
+    defines a class HrsExportCommand subclassing
+    mcp_proxy_adapter.commands.base.Command with class attributes
+    name="hrs_export", version="1.0.0", a non-empty descr,
+    category="exchange", author="Vasiliy Zdanovskiy",
+    email="vasilyvz@gmail.com", result_class is SuccessResult, and
+    use_queue is False. No method is yet defined on the class.
+status: draft

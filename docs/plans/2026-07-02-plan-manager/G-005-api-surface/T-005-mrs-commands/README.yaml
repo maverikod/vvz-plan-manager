@@ -1,0 +1,77 @@
+step_id: T-005
+parent_global_step: G-005
+name: mrs-commands
+description: >
+  Create the MRS command classes of the inventory: concept_get, concept_list,
+  concept_add, concept_update, concept_remove, relation_list, relation_add,
+  relation_remove, and concept_coverage, each conforming to the
+  CommandContract (C-023). The read commands return one concept (C-003) by
+  identifier, the concept list, and the relation (C-004) list of a resolved
+  plan; an unknown concept identifier yields the concept-not-found code
+  (C-026). The five mutating commands are cascade-only at any artifact
+  status (C-016): a request without an open cascade identity is rejected
+  with the cascade-required code and a mismatched identity with the
+  cascade-conflict code; each admitted mutation enforces at write time the
+  required fields, the concept identifier pattern and uniqueness, the seven
+  allowed relation types, the existence of both relation endpoints, and the
+  resolution of every source label into a stored binding paragraph, so a
+  mechanically invalid MRS entry cannot be written at all — violations yield
+  the duplicate-identifier, concept-not-found, relation-not-found, or
+  import-invalid-peer validation codes with field details; each mutation
+  records its cascade revision with the full node snapshot and verifies by
+  re-read. concept_coverage is the read-only reverse query: for one concept
+  it returns the steps that reference it, classified by artifact path, and
+  the HRS paragraph labels that justify it (C-010). This step defines the
+  nine command classes with schemas, metadata, validation, and execution
+  wiring onto the MRS entity operations, the cascade admission, and the
+  computed views; it registers nothing.
+concepts: [C-023, C-026, C-003, C-004, C-016, C-010]
+inputs:
+- name: mrs_query_request
+  type: command parameters
+  description: >
+    The plan identifier plus a concept identifier for single reads and the
+    reverse coverage query; the plan identifier alone for listings.
+- name: mrs_mutation_request
+  type: command parameters
+  description: >
+    The plan identifier, the mandatory open cascade identity, and the
+    entity payload: concept fields for add and update, the concept
+    identifier for remove, both endpoints and the enumerated type for
+    relation add and remove.
+outputs:
+- name: mrs_read_result
+  type: command result
+  description: >
+    One concept, the concept list, the relation list, or the reverse
+    coverage answer with referencing steps and justifying labels.
+- name: mrs_mutation_result
+  type: command result
+  description: >
+    The written entity verified by re-read with its cascade revision, or
+    the regime and write-time validation errors that prevented the write.
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+- A-013
+- A-014
+- A-015
+- A-016
+- A-017
+- A-018
+- A-019
+- A-020
+- A-021
+- A-022
+- A-023
+status: draft
