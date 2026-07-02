@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -232,4 +231,4 @@ build/
 *.egg-info/
 old_code/
 .trees/
->>>>>>> 424ef14 (Initioal state)
+*.tree
