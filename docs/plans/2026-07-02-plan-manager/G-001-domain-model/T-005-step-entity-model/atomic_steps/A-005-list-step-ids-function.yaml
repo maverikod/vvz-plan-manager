@@ -1,0 +1,111 @@
+step_id: A-005
+parent_tactical_step: T-005
+name: list_step_ids function
+target_file: plan_manager/domain/step_store.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-005]
+prompt: |
+  Create the file plan_manager/domain/step_store.py with exactly the
+  following content (this is a brand-new file; it does not exist yet, so
+  assume no pre-existing content):
+
+  """Storage-layer operations for the Step entity (C-005): scaffolded
+  creation, id assignment, and CRUD against the `step` table.
+  """
+
+
+  import uuid
+
+  import psycopg
+
+
+  def list_step_ids(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      parent_step_uuid: uuid.UUID | None,
+      level: int,
+  ) -> list[str]:
+      """List step_id values in one parent scope of the step table.
+
+      Args:
+          conn: Open database connection.
+          plan_uuid: Plan identity to scope the query to.
+          parent_step_uuid: Parent step identity to scope the query to, or
+              None to select level-3 steps (whose scope is the plan
+              itself). Compared with IS NOT DISTINCT FROM so NULL matches
+              NULL.
+          level: Plan hierarchy level to scope the query to; one of 3, 4,
+              5.
+
+      Returns:
+          The step_id values of every row in the step table matching
+          plan_uuid, parent_step_uuid (NULL-safe), and level. Order is
+          not guaranteed.
+      """
+      cur = conn.execute(
+          "SELECT step_id FROM step "
+          "WHERE plan_uuid = %s "
+          "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+          "AND level = %s",
+          (plan_uuid, parent_step_uuid, level),
+      )
+      return [row[0] for row in cur.fetchall()]
+
+  Exact requirements:
+
+  - The module docstring text must be exactly as shown above (two lines
+    of body text, triple double-quoted), followed by exactly two blank
+    lines.
+  - Import exactly two modules, each on its own `import` line: `import
+    uuid`, then exactly one blank line, then `import psycopg`. No other
+    imports, no `from` imports.
+  - Exactly two blank lines separate `import psycopg` from the function
+    definition below it.
+  - The function signature must be exactly:
+
+    def list_step_ids(
+        conn: psycopg.Connection,
+        plan_uuid: uuid.UUID,
+        parent_step_uuid: uuid.UUID | None,
+        level: int,
+    ) -> list[str]:
+
+  - The docstring text must match exactly what is shown above.
+  - The function body executes a single SQL SELECT via
+    `conn.execute(sql, params)` where `conn` is the `psycopg.Connection`
+    parameter, `sql` is exactly the string
+    `"SELECT step_id FROM step WHERE plan_uuid = %s AND
+    parent_step_uuid IS NOT DISTINCT FROM %s AND level = %s"` (built from
+    the concatenated string literals shown above; the whitespace-joined
+    result must be exactly this SQL text), and `params` is exactly the
+    tuple `(plan_uuid, parent_step_uuid, level)`.
+  - The function returns a list comprehension `[row[0] for row in
+    cur.fetchall()]` over the cursor object returned by `conn.execute`.
+  - The `step` table referenced by this SQL has columns: uuid, plan_uuid,
+    parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
+    status. This AS only reads the plan_uuid, parent_step_uuid, level,
+    and step_id columns.
+  - Do not add any other names, functions, classes, or imports beyond
+    what is listed here.
+
+  MRS excerpt (only the concept relevant to this AS):
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+verification:
+  type: manual
+  target: plan_manager.domain.step_store.list_step_ids
+  expected: >
+    Code review confirms list_step_ids issues exactly one SELECT
+    restricted to plan_uuid, level, and a NULL-safe comparison
+    (IS NOT DISTINCT FROM) on parent_step_uuid, and returns the list of
+    step_id values from the result rows.
+status: draft

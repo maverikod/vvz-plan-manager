@@ -1,0 +1,43 @@
+step_id: T-001
+parent_global_step: G-001
+name: database-substrate
+description: >
+  Establish the relational storage substrate that makes the domain model the single
+  source of truth: the Database (C-035), an in-container PostgreSQL instance with the
+  pgvector extension. This tactical step creates the substrate that stores every plan
+  entity as a row, enforces referential integrity of all identifier references —
+  parent links, depends_on targets, concept references, relation endpoints — at write
+  time, and assigns every stored entity an immutable UUID as its primary identity at
+  creation. Human-readable scoped names (C-NNN, G-NNN, T-NNN, A-NNN, and paragraph
+  labels) are stored as stable names unique within their scope and mapped to those
+  UUIDs, so renames and moves change names but never UUIDs. The Database is the host
+  for the version store (C-018), the per-plan lock (C-019), and the concept embedding
+  cache. This step defines only the substrate and the UUID/name identity mechanism;
+  the version model, the lock behavior, and the individual entity schemas are out of
+  scope for this step and are referenced only as hosted tenants of the database.
+concepts: [C-035, C-018, C-019]
+inputs:
+- name: plan_manager_database_config
+  type: configuration object
+  description: >
+    Database section settings identifying the in-container PostgreSQL+pgvector
+    instance (C-035) that serves as the single source of truth for all plan data.
+- name: entity_write_request
+  type: domain entity payload
+  description: >
+    A create or modify request for any stored plan entity carrying its identifier
+    references (parent link, depends_on targets, concept references, relation
+    endpoints) to be validated at write time.
+outputs:
+- name: persisted_entity_row
+  type: database row
+  description: >
+    The stored entity as a row with an immutable UUID primary identity assigned at
+    creation and its human-readable scoped name mapped to that UUID.
+- name: referential_integrity_verdict
+  type: write-time constraint result
+  description: >
+    Accept or reject decision enforcing that every identifier reference in a write
+    resolves to an existing entity at write time.
+atomic_steps: [A-001, A-002, A-003]
+status: draft

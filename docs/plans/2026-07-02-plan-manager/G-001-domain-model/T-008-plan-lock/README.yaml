@@ -1,0 +1,29 @@
+step_id: T-008
+parent_global_step: G-001
+name: plan-lock
+description: >
+  Create the PlanLock (C-019), the per-plan database advisory lock that serializes
+  cascades and identifier assignment. All concurrency control lives in the database:
+  there are no lock files and no in-process lock state that a server restart could
+  lose. The lock provides a single critical section per plan so that at most one
+  cascade proceeds at a time and so that next-free-id assignment is re-checked under
+  the lock, preventing concurrent creates from obtaining the same id. This step
+  defines the lock entity and its serialization behavior; the cascade and
+  id-assignment operations that acquire it are out of scope for this step and are
+  referenced only as its callers.
+concepts: [C-019]
+inputs:
+- name: serialized_section_request
+  type: concurrency command
+  description: >
+    A request to enter a critical section — a cascade or an identifier assignment —
+    that must be serialized per plan.
+outputs:
+- name: plan_advisory_lock
+  type: database advisory lock
+  description: >
+    The per-plan database advisory lock that serializes cascades and identifier
+    assignment, held entirely in the database with no lock files and no in-process
+    lock state a restart could lose.
+atomic_steps: [A-001, A-002]
+status: draft

@@ -1,0 +1,272 @@
+step_id: A-006
+parent_tactical_step: T-005
+name: create_step function
+target_file: plan_manager/domain/step_store.py
+operation: modify_file
+priority: 2
+depends_on: [A-001, A-002, A-003, A-004, A-005]
+concepts: [C-005, C-006, C-007, C-019]
+prompt: |
+  Modify the file plan_manager/domain/step_store.py. Its full current
+  content (after all lower-priority changes on this file have been
+  applied) is exactly:
+
+  """Storage-layer operations for the Step entity (C-005): scaffolded
+  creation, id assignment, and CRUD against the `step` table.
+  """
+
+
+  import uuid
+
+  import psycopg
+
+
+  def list_step_ids(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      parent_step_uuid: uuid.UUID | None,
+      level: int,
+  ) -> list[str]:
+      """List step_id values in one parent scope of the step table.
+
+      Args:
+          conn: Open database connection.
+          plan_uuid: Plan identity to scope the query to.
+          parent_step_uuid: Parent step identity to scope the query to, or
+              None to select level-3 steps (whose scope is the plan
+              itself). Compared with IS NOT DISTINCT FROM so NULL matches
+              NULL.
+          level: Plan hierarchy level to scope the query to; one of 3, 4,
+              5.
+
+      Returns:
+          The step_id values of every row in the step table matching
+          plan_uuid, parent_step_uuid (NULL-safe), and level. Order is
+          not guaranteed.
+      """
+      cur = conn.execute(
+          "SELECT step_id FROM step "
+          "WHERE plan_uuid = %s "
+          "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+          "AND level = %s",
+          (plan_uuid, parent_step_uuid, level),
+      )
+      return [row[0] for row in cur.fetchall()]
+
+  Apply exactly these two changes:
+
+  1. Replace the two-line import block
+
+     import uuid
+
+     import psycopg
+
+     with exactly:
+
+     import uuid
+
+     import psycopg
+     from psycopg.types.json import Jsonb
+
+     from plan_manager.domain.step import Step, next_free_step_id, validate_step
+     from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
+
+     i.e. insert `from psycopg.types.json import Jsonb` directly below
+     `import psycopg` (no blank line between them), then one blank line,
+     then the two `from plan_manager...` lines directly below each other
+     (no blank line between them). The two blank lines that already
+     separate this import block from `def list_step_ids(` are unchanged.
+
+     `from psycopg.types.json import Jsonb` imports the `Jsonb` wrapper
+     type used to pass a Python dict as a PostgreSQL JSON value.
+     `from plan_manager.domain.step import Step, next_free_step_id,
+     validate_step` imports:
+       - `Step`, a dataclass with fields uuid: UUID, plan_uuid: UUID,
+         parent_step_uuid: UUID | None, level: int, step_id: str,
+         slug: str, fields: dict[str, Any], depends_on: list[str],
+         concepts: list[str], status: str.
+       - `next_free_step_id(existing_step_ids: list[str], level: int) ->
+         str`, which returns the next free zero-padded step_id for the
+         given level given the step_id values already present in one
+         parent scope.
+       - `validate_step(step: Step) -> None`, which raises
+         `plan_manager.domain.step.StepValidationError` when `step` fails
+         validation and otherwise returns None.
+     `from plan_manager.storage.plan_lock import acquire_plan_lock,
+     release_plan_lock` imports exactly these two functions, with exactly
+     these signatures:
+       - `def acquire_plan_lock(conn: psycopg.Connection, plan_uuid:
+         uuid.UUID) -> None` — blocks until the per-plan PostgreSQL
+         advisory lock for `plan_uuid` is held.
+       - `def release_plan_lock(conn: psycopg.Connection, plan_uuid:
+         uuid.UUID) -> None` — releases the per-plan advisory lock for
+         `plan_uuid`.
+
+  2. Append, at the end of the file, separated from list_step_ids by two
+     blank lines, exactly this function:
+
+     def create_step(
+         conn: psycopg.Connection,
+         plan_uuid: uuid.UUID,
+         parent_step_uuid: uuid.UUID | None,
+         level: int,
+         slug: str,
+         fields: dict,
+         depends_on: list[str],
+         concepts: list[str],
+     ) -> Step:
+         """Scaffolded creation of a Step: assign the next free id and insert it.
+
+         Runs the full compute-and-insert sequence between acquire_plan_lock
+         and release_plan_lock (release in a finally block) so concurrent
+         creates in the same parent scope cannot obtain the same step_id.
+         The new row's status is always "draft".
+
+         Steps performed:
+             1. acquire_plan_lock(conn, plan_uuid).
+             2. list_step_ids(conn, plan_uuid, parent_step_uuid, level) to
+                collect the existing step_id values in this parent scope.
+             3. next_free_step_id(existing_step_ids, level) to compute the
+                new step_id.
+             4. Build a Step with a freshly generated uuid.uuid4(), the
+                given plan_uuid, parent_step_uuid, level, the computed
+                step_id, slug, fields, depends_on, concepts, and status
+                "draft".
+             5. validate_step(step) on the built Step.
+             6. INSERT the row into the step table.
+             7. release_plan_lock(conn, plan_uuid) in a finally block,
+                whether or not the prior steps succeeded.
+
+         Args:
+             conn: Open database connection.
+             plan_uuid: Identity of the plan the new step belongs to.
+             parent_step_uuid: Identity of the parent step that defines the
+                 id-uniqueness scope, or None for a level-3 step.
+             level: Plan hierarchy level of the new step; one of 3, 4, 5.
+             slug: Kebab-case short name for the new step.
+             fields: Level-specific required fields, as a plain dict, to
+                 store as JSON.
+             depends_on: step_id values of sibling steps the new step
+                 depends on.
+             concepts: MRS concept_id values referenced by the new step.
+
+         Returns:
+             The created Step, with its assigned uuid and step_id
+             populated.
+
+         Raises:
+             StepValidationError: When the built Step fails validate_step.
+         """
+         acquire_plan_lock(conn, plan_uuid)
+         try:
+             existing_step_ids = list_step_ids(conn, plan_uuid, parent_step_uuid, level)
+             step_id = next_free_step_id(existing_step_ids, level)
+             step = Step(
+                 uuid=uuid.uuid4(),
+                 plan_uuid=plan_uuid,
+                 parent_step_uuid=parent_step_uuid,
+                 level=level,
+                 step_id=step_id,
+                 slug=slug,
+                 fields=fields,
+                 depends_on=depends_on,
+                 concepts=concepts,
+                 status="draft",
+             )
+             validate_step(step)
+             conn.execute(
+                 "INSERT INTO step "
+                 "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+                 "fields, depends_on, concepts, status) "
+                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                 (
+                     step.uuid,
+                     step.plan_uuid,
+                     step.parent_step_uuid,
+                     step.level,
+                     step.step_id,
+                     step.slug,
+                     Jsonb(step.fields),
+                     step.depends_on,
+                     step.concepts,
+                     step.status,
+                 ),
+             )
+             return step
+         finally:
+             release_plan_lock(conn, plan_uuid)
+
+  Exact requirements:
+
+  - The function signature must be exactly the nine-line signature shown
+    above, ending in `-> Step:`.
+  - The docstring text must match exactly what is shown above.
+  - `acquire_plan_lock(conn, plan_uuid)` is called before the `try`
+    block; `release_plan_lock(conn, plan_uuid)` is called in a `finally`
+    block so it always runs.
+  - Inside the `try` block, in order: call `list_step_ids`, call
+    `next_free_step_id`, construct `Step(...)` with `uuid=uuid.uuid4()`
+    and `status="draft"` and the other seven fields taken verbatim from
+    the function's own parameters (plan_uuid, parent_step_uuid, level,
+    step_id computed in the prior line, slug, fields, depends_on,
+    concepts), call `validate_step(step)`, then execute the INSERT via
+    `conn.execute(sql, params)` and `return step`.
+  - The INSERT SQL text (the whitespace-joined concatenation of the
+    string literals shown above) must be exactly: `"INSERT INTO step
+    (uuid, plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+    depends_on, concepts, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+    %s, %s)"`. The params tuple must be exactly `(step.uuid,
+    step.plan_uuid, step.parent_step_uuid, step.level, step.step_id,
+    step.slug, Jsonb(step.fields), step.depends_on, step.concepts,
+    step.status)`, i.e. `step.fields` is wrapped in `Jsonb(...)` and
+    `step.depends_on` / `step.concepts` are passed as plain Python lists
+    (psycopg adapts them to PostgreSQL text[] arrays).
+  - Do not catch `StepValidationError` inside this function; it
+    propagates to the caller if `validate_step` raises it (the `finally`
+    block still runs `release_plan_lock` in that case).
+  - Do not add any other names, functions, or imports beyond what are
+    listed here. Do not modify any line of the file other than the two
+    changes described above.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  - concept_id: C-006
+    name: PlanSchema
+    definition: Declarative configuration object describing identifier patterns, per-level required fields, and exchange-layout naming.
+    properties:
+    - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+    - nothing project-specific is hard-coded in the engine
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+
+  - concept_id: C-019
+    name: PlanLock
+    definition: Per-plan database advisory lock serializing cascades and identifier assignment.
+    properties:
+    - no lock files, no in-process lock state
+verification:
+  type: manual
+  target: plan_manager.domain.step_store.create_step
+  expected: >
+    Code review confirms create_step acquires the per-plan lock before
+    computing the id, computes the next free step_id from
+    list_step_ids/next_free_step_id, builds and validates a Step with
+    status "draft" and a freshly generated uuid, inserts exactly one row
+    with fields stored via Jsonb, returns the created Step, and always
+    releases the per-plan lock in a finally block even when validate_step
+    raises.
+status: draft

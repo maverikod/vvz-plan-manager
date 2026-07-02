@@ -1,0 +1,40 @@
+step_id: T-004
+parent_global_step: G-001
+name: hrs-paragraph-labeling
+description: >
+  Create the Paragraph (C-002), the addressable binding unit of the HRS, and the
+  normative parsing and label-assignment behavior that governs it. A Paragraph
+  carries a stable four-character base36 label in curly braces that is
+  position-independent, unique within one HRS, and survives reordering and external
+  edits. HRS prose is human-owned: this step never authors or rewrites paragraph
+  text; the only textual authority is label management and non-binding markup. The
+  normative parsing algorithm is fixed: paragraphs split on blank-line boundaries; a
+  paragraph is labeled when its first non-whitespace characters match an opening
+  brace, exactly four base36 characters, a closing brace, and one space; non-binding
+  regions are non-nesting maximal ranges between the non-binding markers; heading
+  lines and fenced code blocks are never binding paragraphs. Label assignment is
+  likewise normative: collect existing labels, draw four characters uniformly from
+  the base36 alphabet for each unlabeled binding paragraph in document order, retry on
+  collision, and insert the label at the paragraph start; existing labels are never
+  rewritten, reused, or reordered. Paragraphs inside non-binding blocks carry no
+  labels, are excluded from concept extraction, and never participate in coverage.
+concepts: [C-002]
+inputs:
+- name: hrs_paragraph_text
+  type: markdown text block
+  description: >
+    Human-owned HRS prose split on blank-line boundaries into candidate paragraphs,
+    including non-binding regions, heading lines, and fenced code blocks.
+outputs:
+- name: labeled_paragraph
+  type: stored domain entity
+  description: >
+    A binding Paragraph (C-002) carrying a stable four-character base36 label in curly
+    braces, position-independent and unique within one HRS.
+- name: non_binding_exclusion_set
+  type: classification result
+  description: >
+    The set of paragraphs inside non-binding blocks, heading lines, and fenced code
+    that receive no label and are excluded from concept extraction and coverage.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft

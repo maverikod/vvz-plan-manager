@@ -1,0 +1,85 @@
+step_id: A-001
+parent_tactical_step: T-007
+name: canonical-json
+target_file: plan_manager/storage/canonical.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-018]
+prompt: |
+  Create the new file `plan_manager/storage/canonical.py` with exactly the following
+  content (module docstring, one import, one function). Do not add anything else to
+  the file.
+
+  Operation: create_file. Target file: `plan_manager/storage/canonical.py`. This file
+  does not exist yet; do not assume any pre-existing content.
+
+  Imports required (exact module paths):
+  - `import json`
+
+  Write exactly one function with this exact signature:
+
+  ```python
+  def canonical_json(value: object) -> bytes:
+  ```
+
+  Typing: parameter `value` is typed `object` (any JSON-serializable Python value:
+  dict, list, str, int, float, bool, or None). Return type is `bytes`.
+
+  Docstring (reST-style, `:param` then `:return`, in that order), exact text and
+  format:
+
+  ```
+  Serialize ``value`` to canonical JSON bytes.
+
+  Canonical JSON is defined as ``json.dumps`` with sorted keys, no ASCII
+  escaping of non-ASCII characters, and no insignificant whitespace
+  (comma/colon separators without trailing spaces), encoded as UTF-8.
+
+  :param value: JSON-serializable Python value (e.g. dict, list, str,
+      int, float, bool, None) to serialize.
+  :return: canonical JSON encoding of ``value`` as UTF-8 bytes.
+  ```
+
+  Function body: return
+  `json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")`
+  — this is the exact and only statement in the function body. Do not use any other
+  json.dumps arguments and do not add whitespace beyond what this call produces.
+
+  Constraints (all explicit, no deviation):
+  - The file must contain, in order: a module docstring, the `import json` statement,
+    a blank line, then the function definition. No other imports, functions, classes,
+    or module-level code.
+  - The module docstring text is exactly: `Canonical JSON serialization for
+    content-addressed storage.`
+  - Do not add a `__main__` guard, logging, or any I/O.
+  - Do not add type aliases or constants.
+  - Resulting file must be valid, importable Python 3.12+ source.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+
+  This function implements the canonical JSON rule from C-018: "node versions
+  content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)". This AS
+  implements only the canonical JSON serialization half of that rule; hashing is
+  implemented by a separate function not part of this AS.
+verification:
+  type: import
+  target: plan_manager.storage.canonical
+  expected: >
+    The module imports without error and exposes a callable `canonical_json(value)`
+    that, given a dict whose keys are not already in sorted order, returns UTF-8
+    encoded JSON bytes with the keys reordered alphabetically and no whitespace
+    following any colon or comma separator.
+status: draft

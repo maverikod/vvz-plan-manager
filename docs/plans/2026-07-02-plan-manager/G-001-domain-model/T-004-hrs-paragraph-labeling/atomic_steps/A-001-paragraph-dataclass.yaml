@@ -1,0 +1,97 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: paragraph-dataclass
+target_file: plan_manager/domain/paragraph.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-002]
+prompt: |
+  Create the file plan_manager/domain/paragraph.py with exactly the following
+  content (this is a new file; it does not exist yet, so assume no prior
+  content).
+
+  MRS excerpt (C-002), for context on the entity this module represents:
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Required imports (exact, top of file, in this order):
+    from dataclasses import dataclass
+    from typing import Optional
+
+  Required class:
+    A dataclass named Paragraph, decorated with @dataclass, with exactly
+    three fields, in this order:
+      label: Optional[str]
+      text: str
+      position: int
+
+  Field semantics (must appear in the class docstring, in prose):
+    - label: the four-character base36 label (without surrounding curly
+      braces) already present on this paragraph, or None if the paragraph
+      has not yet been assigned a label.
+    - text: the paragraph's prose text. If the paragraph already carried a
+      label, the "{xxxx} " label prefix has been stripped off; if it did
+      not, text is the paragraph's block text unchanged.
+    - position: zero-based integer document order among binding paragraphs
+      only (non-binding paragraphs, heading lines, and fenced code block
+      lines are not counted).
+
+  Constraints:
+    - The file must contain nothing else besides the module docstring, the
+      two imports, and the Paragraph dataclass.
+    - Do not add a uuid or plan_uuid field to Paragraph: those identity
+      fields belong only to the stored database row, not to this pure-text
+      domain object.
+    - Do not add any parsing function in this file; that is added by a
+      later modification to this same file (out of scope for this
+      operation).
+
+  Write the file with exactly this content:
+
+  ```python
+  """Paragraph domain model and normative HRS text parsing.
+
+  Defines the Paragraph dataclass, the addressable binding unit of the HRS
+  (MRS concept C-002).
+  """
+  from dataclasses import dataclass
+  from typing import Optional
+
+
+  @dataclass
+  class Paragraph:
+      """A binding paragraph of an HRS document (MRS concept C-002).
+
+      Attributes:
+          label: Four-character base36 label (without surrounding curly
+              braces) already present on this paragraph, or None if the
+              paragraph has not yet been assigned a label.
+          text: The paragraph's prose text. If the paragraph already carried
+              a label, the "{xxxx} " label prefix has been stripped off; if
+              it did not, text is the paragraph's block text unchanged.
+          position: Zero-based integer document order among binding
+              paragraphs only (non-binding paragraphs, heading lines, and
+              fenced code block lines are not counted).
+      """
+      label: Optional[str]
+      text: str
+      position: int
+  ```
+verification:
+  type: import
+  target: plan_manager.domain.paragraph.Paragraph
+  expected: >
+    The module plan_manager/domain/paragraph.py imports without error and
+    exposes a dataclass named Paragraph with exactly three attributes,
+    label, text, and position, matching the types Optional[str], str, and
+    int respectively.
+status: draft

@@ -1,0 +1,301 @@
+step_id: A-006
+parent_tactical_step: T-002
+name: set-head-revision-function
+target_file: plan_manager/domain/plan.py
+operation: modify_file
+priority: 6
+depends_on: [A-001, A-002, A-003, A-004, A-005]
+concepts: [C-001, C-018]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  plan_manager/domain/plan.py.
+
+  This is a modify_file operation. The file currently contains exactly the
+  following content (this is the full, current, post-prior-edit state of
+  the file — not the original file and not any other state):
+
+  ```python
+  """Plan aggregate: the root domain entity for a development plan.
+
+  Implements C-001 (Plan) per docs/plans/2026-07-02-plan-manager/spec.yaml.
+  Storage: PostgreSQL table `plan` (columns: uuid, name, status,
+  context_budget, head_revision_uuid), accessed via psycopg 3 with plain SQL
+  (no ORM). DDL for this table is owned by SQL migrations outside this module;
+  this module never emits DDL.
+  """
+
+  from dataclasses import dataclass
+  import uuid
+
+  import psycopg
+
+
+  DEFAULT_CONTEXT_BUDGET = 4000
+
+
+  class PlanNotFoundError(ValueError):
+      """Raised when no Plan row exists for a given uuid."""
+
+
+  @dataclass
+  class Plan:
+      """Domain representation of the Plan aggregate (C-001).
+
+      Attributes:
+          uuid: Immutable primary identity of the plan (PostgreSQL uuid
+              column, generated via uuid.uuid4() at creation).
+          name: Human-readable plan name.
+          status: Current lifecycle status stored as text; set to 'draft' at
+              creation. Legal status values and transition enforcement
+              (C-007) are owned outside this module.
+          context_budget: User-set context budget in tokens consumed by
+              prompt assembly; defaults to DEFAULT_CONTEXT_BUDGET at
+              creation and is changeable later.
+          head_revision_uuid: Identity of the current head revision in the
+              version store (C-018), or None if no revision has been
+              recorded yet.
+      """
+
+      uuid: uuid.UUID
+      name: str
+      status: str
+      context_budget: int
+      head_revision_uuid: uuid.UUID | None
+
+
+  def create_plan(
+      conn: psycopg.Connection,
+      name: str,
+      context_budget: int = DEFAULT_CONTEXT_BUDGET,
+  ) -> Plan:
+      """Create a new Plan aggregate row and return its domain representation.
+
+      Validates that name is non-empty and context_budget is strictly
+      positive, generates a new uuid4 primary identity, inserts the row with
+      status 'draft' and a NULL head_revision_uuid, and returns the
+      resulting Plan.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the insert.
+          name: Human-readable plan name; must be non-empty after stripping
+              whitespace.
+          context_budget: User-set context budget in tokens; must be > 0.
+              Defaults to DEFAULT_CONTEXT_BUDGET (4000).
+
+      Returns:
+          The newly created Plan with status 'draft' and head_revision_uuid
+          set to None.
+
+      Raises:
+          ValueError: If name is empty (or whitespace-only) or if
+              context_budget is not strictly positive.
+      """
+      if not name or not name.strip():
+          raise ValueError("name must be non-empty")
+      if context_budget <= 0:
+          raise ValueError("context_budget must be > 0")
+      plan_uuid = uuid.uuid4()
+      conn.execute(
+          "INSERT INTO plan (uuid, name, status, context_budget, "
+          "head_revision_uuid) VALUES (%s, %s, 'draft', %s, NULL)",
+          (plan_uuid, name, context_budget),
+      )
+      return Plan(
+          uuid=plan_uuid,
+          name=name,
+          status="draft",
+          context_budget=context_budget,
+          head_revision_uuid=None,
+      )
+
+
+  def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
+      """Fetch a Plan aggregate by its primary identity.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Primary identity of the plan to fetch.
+
+      Returns:
+          The Plan matching plan_uuid.
+
+      Raises:
+          PlanNotFoundError: If no plan row with uuid = plan_uuid exists.
+      """
+      cur = conn.execute(
+          "SELECT uuid, name, status, context_budget, head_revision_uuid "
+          "FROM plan WHERE uuid = %s",
+          (plan_uuid,),
+      )
+      row = cur.fetchone()
+      if row is None:
+          raise PlanNotFoundError(f"plan not found: {plan_uuid}")
+      return Plan(
+          uuid=row[0],
+          name=row[1],
+          status=row[2],
+          context_budget=row[3],
+          head_revision_uuid=row[4],
+      )
+
+
+  def list_plans(conn: psycopg.Connection) -> list[Plan]:
+      """Return the plan catalog: every Plan row ordered by name.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+
+      Returns:
+          A list of Plan objects, one per row in the plan table, ordered
+          ascending by name. Empty list if no plans exist.
+      """
+      cur = conn.execute(
+          "SELECT uuid, name, status, context_budget, head_revision_uuid "
+          "FROM plan ORDER BY name"
+      )
+      return [
+          Plan(
+              uuid=row[0],
+              name=row[1],
+              status=row[2],
+              context_budget=row[3],
+              head_revision_uuid=row[4],
+          )
+          for row in cur.fetchall()
+      ]
+
+
+  def set_context_budget(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      context_budget: int,
+  ) -> None:
+      """Update the context budget of an existing Plan.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the update.
+          plan_uuid: Primary identity of the plan to update.
+          context_budget: New context budget in tokens; must be > 0.
+
+      Returns:
+          None.
+
+      Raises:
+          ValueError: If context_budget is not strictly positive.
+      """
+      if context_budget <= 0:
+          raise ValueError("context_budget must be > 0")
+      conn.execute(
+          "UPDATE plan SET context_budget = %s WHERE uuid = %s",
+          (context_budget, plan_uuid),
+      )
+  ```
+
+  Append the following function definition to the end of the file, preceded
+  by two blank lines (PEP 8 spacing between top-level definitions), so the
+  resulting file is the shown content above followed by this function:
+
+  ```python
+  def set_head_revision(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      revision_uuid: uuid.UUID,
+  ) -> None:
+      """Advance the Plan's head revision pointer.
+
+      Called by the version store (C-018) per revision during draft editing
+      and on cascade publication, to record the plan's current head
+      revision.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the update.
+          plan_uuid: Primary identity of the plan whose head revision
+              pointer is being advanced.
+          revision_uuid: Identity of the revision to record as the new
+              head.
+
+      Returns:
+          None.
+      """
+      conn.execute(
+          "UPDATE plan SET head_revision_uuid = %s WHERE uuid = %s",
+          (revision_uuid, plan_uuid),
+      )
+  ```
+
+  Do not modify any part of the existing file content shown above. Only
+  append this one function at the end. This is the last function added to
+  this file by this tactical step; no further edits to this file follow
+  within this tactical step's scope.
+
+  Imports required by this function (already present in the file from
+  prior edits; do not add duplicate import statements): `import uuid`
+  (standard library, provides the `uuid.UUID` type), `import psycopg` (the
+  `psycopg` package, psycopg 3, provides the `psycopg.Connection` type used
+  in the signature).
+
+  Constraints (all explicit, no discretion):
+  - Function name is exactly `set_head_revision`.
+  - Signature is exactly `set_head_revision(conn: psycopg.Connection,
+    plan_uuid: uuid.UUID, revision_uuid: uuid.UUID) -> None`.
+  - `conn` is a psycopg 3 database connection passed explicitly by the
+    caller; the function must not open, close, commit, or rollback the
+    connection, and must not hold any module-level connection state.
+  - No validation is performed on `revision_uuid` in this function; the
+    version store (out of scope for this file) is responsible for
+    guaranteeing `revision_uuid` identifies a valid revision before calling
+    this function.
+  - The SQL statement is exactly: `UPDATE plan SET head_revision_uuid = %s
+    WHERE uuid = %s` executed via `conn.execute(sql, (revision_uuid,
+    plan_uuid))` using `%s` placeholders bound positionally to
+    `revision_uuid`, then `plan_uuid`, in that order.
+  - The function does not check whether a row with `uuid = plan_uuid`
+    exists and does not raise `PlanNotFoundError`; it performs the UPDATE
+    unconditionally.
+  - The function returns `None` (no explicit `return` statement is
+    required beyond the implicit `None`).
+  - The docstring text must be exactly as shown above, in Google-style
+    Args/Returns format.
+  - This function is the sole surface this file exposes for head-revision
+    advancement mechanics; the mechanics of writing revisions, cascade
+    refs, and publication belong to the version store and are not
+    implemented in this file.
+
+  Relevant MRS concept excerpts (verbatim from spec.yaml):
+
+  - concept_id: C-001
+    name: Plan
+    definition: Root aggregate of one development plan with identity, name,
+      status, and head revision.
+    properties:
+    - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+    - multiple plans live in one database, listed by catalog query
+    - head revision advances per revision in draft editing, on publication
+      for cascades
+    - carries a user-set context budget in tokens (default 4000) consumed
+      by prompt assembly
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one
+      revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  Database context (binding, not part of MRS): the `plan` table has columns
+  `uuid` (PostgreSQL uuid, primary identity), `name`, `status` (text),
+  `context_budget` (integer, tokens), `head_revision_uuid` (uuid, nullable).
+verification:
+  type: manual
+  target: plan_manager/domain/plan.py::set_head_revision
+  expected: Calling set_head_revision(conn, plan_uuid, revision_uuid) for an
+    existing plan updates its head_revision_uuid column to revision_uuid and
+    leaves all other columns unchanged; calling it again with a different
+    revision_uuid overwrites the previous value.
+status: draft

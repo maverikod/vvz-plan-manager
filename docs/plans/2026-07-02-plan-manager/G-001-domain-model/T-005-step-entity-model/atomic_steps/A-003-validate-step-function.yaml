@@ -1,0 +1,205 @@
+step_id: A-003
+parent_tactical_step: T-005
+name: validate_step function
+target_file: plan_manager/domain/step.py
+operation: modify_file
+priority: 3
+depends_on: [A-001, A-002]
+concepts: [C-005, C-003, C-007]
+prompt: |
+  Modify the file plan_manager/domain/step.py. Its full current content
+  (after all lower-priority changes on this file have been applied) is
+  exactly:
+
+
+  """Domain model for the Step entity (C-005): the single stored entity for plan
+  levels 3-5 (global step, tactical step, atomic step), with declarative
+  per-level identifier patterns and validation rules.
+  """
+
+
+  import re
+  from dataclasses import dataclass
+  from typing import Any
+  from uuid import UUID
+
+
+  LEVEL_PREFIXES: dict[int, str] = {3: "G", 4: "T", 5: "A"}
+
+
+  STEP_ID_PATTERNS: dict[int, re.Pattern[str]] = {
+      3: re.compile(r"^G-\d{3}$"),
+      4: re.compile(r"^T-\d{3}$"),
+      5: re.compile(r"^A-\d{3}$"),
+  }
+
+
+  SLUG_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+  CONCEPT_ID_PATTERN: re.Pattern[str] = re.compile(r"^C-\d{3}$")
+
+
+  class StepValidationError(ValueError):
+      """Raised when a Step instance fails one or more validate_step checks.
+
+      The exception message lists every failed check found during
+      validation, joined by "; ".
+      """
+
+
+  @dataclass
+  class Step:
+      """Unified stored entity for plan levels 3, 4, and 5 (C-005).
+
+      Attributes:
+          uuid: Immutable primary identity of this step.
+          plan_uuid: Identity of the plan this step belongs to.
+          parent_step_uuid: Identity of the parent step that defines this
+              step's id-uniqueness scope, or None when this step is a
+              level-3 step (whose scope is the plan itself).
+          level: Plan hierarchy level of this step; one of 3, 4, 5.
+          step_id: Human-readable identifier matching the pattern for
+              `level` in STEP_ID_PATTERNS (e.g. "G-001", "T-002", "A-003").
+          slug: Kebab-case short name matching SLUG_PATTERN.
+          fields: Level-specific required fields, as a plain dict.
+          depends_on: step_id values of sibling steps this step depends on;
+              each entry matches the same pattern as `step_id`.
+          concepts: MRS concept_id values referenced by this step; each
+              entry matches CONCEPT_ID_PATTERN (e.g. "C-005").
+          status: Lifecycle status string (e.g. "draft").
+      """
+
+      uuid: UUID
+      plan_uuid: UUID
+      parent_step_uuid: UUID | None
+      level: int
+      step_id: str
+      slug: str
+      fields: dict[str, Any]
+      depends_on: list[str]
+      concepts: list[str]
+      status: str
+
+
+  Apply exactly this one change: append, at the end of the file, separated
+  from the Step dataclass by two blank lines, exactly this function:
+
+
+  def validate_step(step: Step) -> None:
+      """Validate a Step instance against the Step entity rules (C-005).
+
+      Checks, all of which must pass:
+          1. step.level is one of 3, 4, 5.
+          2. step.step_id matches STEP_ID_PATTERNS[step.level] (only
+             checked when check 1 passes; skipped otherwise).
+          3. step.slug matches SLUG_PATTERN.
+          4. Every entry of step.depends_on matches
+             STEP_ID_PATTERNS[step.level] (only checked when check 1
+             passes; skipped otherwise).
+          5. Every entry of step.concepts matches CONCEPT_ID_PATTERN.
+          6. step.status is a non-empty string.
+
+      Args:
+          step: The Step instance to validate.
+
+      Returns:
+          None when all checks pass.
+
+      Raises:
+          StepValidationError: When one or more checks fail. The
+              exception message is every failed check's description
+              joined by "; ".
+      """
+      errors: list[str] = []
+
+      if step.level not in LEVEL_PREFIXES:
+          errors.append(
+              f"level must be one of {sorted(LEVEL_PREFIXES)}, got {step.level!r}"
+          )
+      else:
+          pattern = STEP_ID_PATTERNS[step.level]
+          if not pattern.match(step.step_id):
+              errors.append(
+                  f"step_id {step.step_id!r} does not match pattern for level {step.level}"
+              )
+          for dep in step.depends_on:
+              if not pattern.match(dep):
+                  errors.append(
+                      f"depends_on entry {dep!r} does not match pattern for level {step.level}"
+                  )
+
+      if not SLUG_PATTERN.match(step.slug):
+          errors.append(f"slug {step.slug!r} does not match SLUG_PATTERN")
+
+      for concept_id in step.concepts:
+          if not CONCEPT_ID_PATTERN.match(concept_id):
+              errors.append(
+                  f"concepts entry {concept_id!r} does not match CONCEPT_ID_PATTERN"
+              )
+
+      if not step.status:
+          errors.append("status must be a non-empty string")
+
+      if errors:
+          raise StepValidationError("; ".join(errors))
+
+
+  Exact requirements:
+
+  - The function signature must be exactly `def validate_step(step: Step) -> None:`.
+  - The docstring text must match exactly what is shown above.
+  - The function body must implement exactly the six checks in the order
+    shown, using the module-level names LEVEL_PREFIXES, STEP_ID_PATTERNS,
+    SLUG_PATTERN, and CONCEPT_ID_PATTERN already defined earlier in this
+    file, and the StepValidationError class already defined earlier in
+    this file.
+  - Check 2 and check 4 (step_id and depends_on pattern checks) only run
+    when check 1 (step.level in LEVEL_PREFIXES) passed; when it fails,
+    checks 2 and 4 are skipped entirely (do not attempt to look up
+    STEP_ID_PATTERNS[step.level] when step.level is not a valid key).
+  - All errors found are collected into a single list and joined with
+    "; " into the StepValidationError message; the function does not
+    raise on the first failed check.
+  - When no errors are found, the function returns None (falls through
+    without raising).
+  - Do not add any other names, functions, or imports. Do not modify any
+    line of the file other than appending this function.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+verification:
+  type: manual
+  target: plan_manager.domain.step.validate_step
+  expected: >
+    Code review confirms validate_step performs all six documented checks,
+    skips the step_id and depends_on pattern checks when level is invalid,
+    collects every failing check into one StepValidationError raised with
+    messages joined by "; ", and returns None silently when a Step
+    instance satisfies all six checks.
+status: draft

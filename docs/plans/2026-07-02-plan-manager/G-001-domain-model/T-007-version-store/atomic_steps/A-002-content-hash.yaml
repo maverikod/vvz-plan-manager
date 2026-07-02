@@ -1,0 +1,96 @@
+step_id: A-002
+parent_tactical_step: T-007
+name: content-hash
+target_file: plan_manager/storage/canonical.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-018]
+prompt: |
+  Modify the existing file `plan_manager/storage/canonical.py` to add one new
+  function, `content_hash`, and one new import. Operation: modify_file. Target
+  file: `plan_manager/storage/canonical.py`.
+
+  Full current content of the target file (post-prior-AS state — this is the exact
+  content to modify, not a summary):
+
+  ```python
+  """Canonical JSON serialization for content-addressed storage."""
+  import json
+
+
+  def canonical_json(value: object) -> bytes:
+      """Serialize ``value`` to canonical JSON bytes.
+
+      Canonical JSON is defined as ``json.dumps`` with sorted keys, no ASCII
+      escaping of non-ASCII characters, and no insignificant whitespace
+      (comma/colon separators without trailing spaces), encoded as UTF-8.
+
+      :param value: JSON-serializable Python value (e.g. dict, list, str,
+          int, float, bool, None) to serialize.
+      :return: canonical JSON encoding of ``value`` as UTF-8 bytes.
+      """
+      return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+  ```
+
+  Required changes:
+  1. Add a new import `import hashlib` before `import json`, so the two imports are
+     alphabetically ordered: `import hashlib` then `import json`.
+  2. Append a new function below `canonical_json`, separated by two blank lines, with
+     this exact signature:
+
+  ```python
+  def content_hash(value: object) -> str:
+  ```
+
+  Typing: parameter `value` is typed `object`. Return type is `str`.
+
+  Docstring (reST-style, `:param` then `:return`, in that order), exact text and
+  format:
+
+  ```
+  Compute the SHA-256 hex digest of the canonical JSON of ``value``.
+
+  :param value: JSON-serializable Python value to hash.
+  :return: lowercase hexadecimal SHA-256 digest string of
+      ``canonical_json(value)``.
+  ```
+
+  Function body: return `hashlib.sha256(canonical_json(value)).hexdigest()` — this is
+  the exact and only statement in the function body. `canonical_json` is the function
+  already defined earlier in this same file (shown above); do not reimplement it.
+
+  Constraints (all explicit, no deviation):
+  - Do not modify `canonical_json` or its docstring in any way.
+  - Do not reorder or remove the existing `import json` line; only insert
+    `import hashlib` above it.
+  - No other functions, classes, constants, or module-level code are added.
+  - Resulting file must be valid, importable Python 3.12+ source, complete file
+    length well under 400 lines.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+
+  This function completes the C-018 content-addressing rule: "node versions
+  content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)" — `canonical_json`
+  produces the sorted-key UTF-8 serialization, `content_hash` hashes it with SHA-256.
+verification:
+  type: import
+  target: plan_manager.storage.canonical
+  expected: >
+    The module imports without error and exposes a callable `content_hash(value)`
+    that returns a 64-character lowercase hexadecimal string, equal to the SHA-256
+    digest of that same value's canonical JSON bytes computed independently, and
+    stable (same input always yields the same digest).
+status: draft

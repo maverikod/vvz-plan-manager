@@ -1,0 +1,231 @@
+step_id: A-007
+parent_tactical_step: T-003
+name: concept-store
+target_file: plan_manager/domain/concept_store.py
+operation: create_file
+priority: 1
+depends_on: [A-003]
+concepts: [C-003, C-035]
+prompt: >
+  Create a new Python source file at exact project-relative path
+  plan_manager/domain/concept_store.py.
+
+
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content.
+
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-003 Concept: "MRS basis axis with canonical name, one-sentence
+    definition, properties, and source labels." Properties: identifier
+    pattern is C-NNN and unique within the plan; concepts are selected to
+    be as orthogonal as possible.
+
+  - C-035 Database: "In-container PostgreSQL with pgvector serving as the
+    single source of truth for all plan data." Properties: entities are
+    stored as rows; referential integrity is enforced at write time; every
+    stored entity carries an immutable UUID identity generated at creation;
+    accessed via psycopg 3 with plain SQL, no ORM; runtime code never emits
+    DDL (schema DDL is owned exclusively by migrations outside this code).
+
+
+  Binding project conventions for this file:
+
+  - Python 3.12+. Database access uses psycopg 3 (`import psycopg`) with
+    plain SQL strings; no ORM.
+
+  - The database connection is passed explicitly as a `psycopg.Connection`
+    parameter to each function; no module-level connection state.
+
+  - Table `concept` has columns: `uuid` (PostgreSQL uuid, primary identity),
+    `plan_uuid` (uuid, scopes rows to the owning plan), `concept_id`,
+    `name`, `definition`, `properties` (PostgreSQL `text[]`), and
+    `source_labels` (PostgreSQL `text[]`).
+
+  - The row's primary identity `uuid` is generated in Python via
+    `uuid.uuid4()` at insert time; it is never supplied by the caller.
+
+  - Runtime code in this file never emits DDL (no CREATE/ALTER/DROP) and
+    never catches or translates psycopg exceptions; such exceptions
+    propagate unmodified to the caller.
+
+
+  This file imports three names from a sibling module that a prior step
+  creates at plan_manager/domain/concept.py. That sibling module contains,
+  among other things, exactly the following (quoted signatures and
+  docstring one-liners only):
+
+
+  ```python
+
+  class ConceptValidationError(ValueError):
+      """Raised when a Concept fails write-time validation."""
+
+
+  @dataclass
+  class Concept:
+      """A single MRS concept entry."""
+      concept_id: str
+      name: str
+      definition: str
+      properties: List[str]
+      source_labels: List[str]
+
+
+  def validate_concept(concept: Concept) -> None:
+      """Validate a Concept's fields at write time."""
+      # Raises ConceptValidationError if concept_id does not match the
+      # required C-NNN pattern, if name or definition is empty or
+      # whitespace-only, if properties is not a list of non-empty strings,
+      # or if source_labels is not a list of validly formatted labels.
+      # Returns None (no exception) when the Concept is well formed.
+
+
+  def check_concept_id_unique(
+      concept_id: str, existing_concept_ids: List[str]
+  ) -> None:
+      """Check that a concept_id is not already present in the plan."""
+      # Raises ConceptValidationError if concept_id is present in
+      # existing_concept_ids. Returns None (no exception) otherwise.
+  ```
+
+
+  Write exactly the following file content, verbatim:
+
+
+  ```python
+
+  """Persistence functions for the Concept domain entity (MRS concept
+  C-003).
+
+
+  These functions write and read Concept rows in table `concept`, scoped
+  to one plan via the plan_uuid column. Field validation and concept_id
+  uniqueness checks are delegated to plan_manager.domain.concept before any
+  row is written.
+
+  """
+
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.concept import Concept, validate_concept, check_concept_id_unique
+
+
+  def list_concept_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:
+      """List all concept_id values stored for one plan, ordered by concept_id.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+
+      Returns:
+          List of concept_id strings from table concept where the
+          plan_uuid column equals the given plan_uuid, ordered ascending
+          by concept_id.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id FROM concept WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [row[0] for row in rows]
+
+
+  def insert_concept(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, concept: Concept
+  ) -> uuid.UUID:
+      """Validate and insert a new Concept row scoped to one plan.
+
+      Args:
+          conn: Open psycopg database connection.
+          plan_uuid: UUID of the owning plan.
+          concept: The Concept instance to persist.
+
+      Returns:
+          The generated uuid primary identity of the inserted row.
+
+      Raises:
+          ConceptValidationError: propagated unmodified from
+              validate_concept or check_concept_id_unique if concept fails
+              field validation or its concept_id is already present among
+              the plan's existing concept_id values.
+      """
+      validate_concept(concept)
+      check_concept_id_unique(concept.concept_id, list_concept_ids(conn, plan_uuid))
+      row_uuid = uuid.uuid4()
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO concept (uuid, plan_uuid, concept_id, name, definition, "
+              "properties, source_labels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+              (
+                  row_uuid,
+                  plan_uuid,
+                  concept.concept_id,
+                  concept.name,
+                  concept.definition,
+                  concept.properties,
+                  concept.source_labels,
+              ),
+          )
+      return row_uuid
+
+  ```
+
+
+  Constraints:
+
+  - Use exactly the imports shown: `import uuid`, `import psycopg`, `from
+    plan_manager.domain.concept import Concept, validate_concept,
+    check_concept_id_unique`. No other imports.
+
+  - `list_concept_ids` signature must be exactly `def list_concept_ids(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:`. It must open a
+    cursor via `conn.cursor()` used as a context manager, execute exactly
+    the SQL string `"SELECT concept_id FROM concept WHERE plan_uuid = %s
+    ORDER BY concept_id"` with parameter tuple `(plan_uuid,)`, fetch all
+    rows via `cur.fetchall()`, and return a list built as `[row[0] for row
+    in rows]`.
+
+  - `insert_concept` signature must be exactly `def insert_concept(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID, concept: Concept) ->
+    uuid.UUID:`. Its body must, in order: call `validate_concept(concept)`;
+    call `check_concept_id_unique(concept.concept_id,
+    list_concept_ids(conn, plan_uuid))`; generate `row_uuid =
+    uuid.uuid4()`; open a cursor via `conn.cursor()` as a context manager
+    and execute exactly the SQL string `"INSERT INTO concept (uuid,
+    plan_uuid, concept_id, name, definition, properties, source_labels)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)"` with the parameter tuple
+    `(row_uuid, plan_uuid, concept.concept_id, concept.name,
+    concept.definition, concept.properties, concept.source_labels)` in
+    that exact order; then `return row_uuid`.
+
+  - Do not catch or translate any exception raised by `validate_concept`,
+    `check_concept_id_unique`, or by psycopg during `cur.execute`; let all
+    of them propagate unmodified.
+
+  - Do not emit any DDL statement (no CREATE, ALTER, or DROP).
+
+  - Do not add any code beyond what is shown above. Do not add a
+    `if __name__ == "__main__":` block. Do not add logging. Do not add a
+    module-level connection or any module-level mutable state.
+verification:
+  type: import
+  target: plan_manager.domain.concept_store
+  expected: >
+    The module plan_manager.domain.concept_store imports without error
+    (given plan_manager.domain.concept is importable) and exposes exactly
+    two functions: list_concept_ids(conn, plan_uuid) -> list[str], which
+    executes a SELECT against table concept filtered by plan_uuid and
+    ordered by concept_id, returning the concept_id column values as a
+    list; and insert_concept(conn, plan_uuid, concept) -> uuid.UUID, which
+    calls validate_concept and check_concept_id_unique before generating a
+    new uuid and executing an INSERT into table concept with columns uuid,
+    plan_uuid, concept_id, name, definition, properties, source_labels in
+    that order, returning the generated uuid. Validation and psycopg
+    exceptions are not caught by this module.
+status: draft

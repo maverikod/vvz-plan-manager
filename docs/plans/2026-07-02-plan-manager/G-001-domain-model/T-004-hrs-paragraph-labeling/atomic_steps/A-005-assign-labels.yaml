@@ -1,0 +1,352 @@
+step_id: A-005
+parent_tactical_step: T-004
+name: assign-labels
+target_file: plan_manager/domain/labeling.py
+operation: modify_file
+priority: 3
+depends_on: [A-004]
+concepts: [C-002]
+prompt: |
+  Modify the file plan_manager/domain/labeling.py. Its current content
+  (the full file as it exists right now, before this modification) is
+  exactly:
+
+  ```python
+  """Label assignment for HRS binding paragraphs.
+
+  Normative label-assignment algorithm (MRS concept C-002): draws unique
+  four-character base36 labels for unlabeled binding paragraphs of an HRS
+  document, in document order, and inserts them into the document text
+  without disturbing any other content. Existing labels are never
+  rewritten, reused, or reordered.
+  """
+  import random
+
+  BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+  def _draw_label(existing_labels: set[str]) -> str:
+      """Draw a new four-character base36 label not present in existing_labels.
+
+      Args:
+          existing_labels: The set of labels (four-character strings) that
+              are already in use and must not be produced. Not mutated by
+              this function.
+
+      Returns:
+          A four-character string drawn from BASE36_ALPHABET that is not a
+          member of existing_labels.
+      """
+      while True:
+          candidate = "".join(random.choice(BASE36_ALPHABET) for _ in range(4))
+          if candidate not in existing_labels:
+              return candidate
+
+
+  def _binding_block_start_lines(document_text: str) -> list[int]:
+      """Find the starting line index of each binding paragraph block.
+
+      Args:
+          document_text: The full HRS document text.
+
+      Returns:
+          A list of 0-based line indices into document_text.splitlines(),
+          one per binding paragraph block, in document order: each entry
+          is the index of that block's first line. The order and count of
+          this list corresponds exactly, element for element, to the
+          order and count of the list returned by
+          plan_manager.domain.paragraph.parse_paragraphs(document_text),
+          because both functions classify lines using the identical
+          boundary rules.
+      """
+      lines = document_text.splitlines()
+      in_non_binding = False
+      in_fence = False
+      block_open = False
+      start_lines: list[int] = []
+
+      for i, line in enumerate(lines):
+          stripped = line.strip()
+          if stripped == "<!-- non-binding -->":
+              if not in_non_binding:
+                  in_non_binding = True
+              block_open = False
+              continue
+          if stripped == "<!-- /non-binding -->":
+              if in_non_binding:
+                  in_non_binding = False
+              block_open = False
+              continue
+          if stripped.startswith("```"):
+              in_fence = not in_fence
+              block_open = False
+              continue
+          if in_fence:
+              block_open = False
+              continue
+          if stripped.startswith("#"):
+              block_open = False
+              continue
+          if stripped == "":
+              block_open = False
+              continue
+          if not block_open:
+              block_open = True
+              if not in_non_binding:
+                  start_lines.append(i)
+
+      return start_lines
+  ```
+
+  MRS excerpt (C-002):
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Required change: add one new import line and one new module-level
+  function to this file. Do not change the existing docstring, the
+  "import random" line, the BASE36_ALPHABET constant, _draw_label, or
+  _binding_block_start_lines in any way.
+
+  New import to add (insert as a new import block, after
+  "import random", separated from it by one blank line, exactly as a
+  standard third-party/local import group):
+    from plan_manager.domain.paragraph import Paragraph, parse_paragraphs
+
+  Signatures and contracts of the imported names (already implemented in
+  plan_manager/domain/paragraph.py; use them exactly as follows, do not
+  redefine them):
+    - class Paragraph: a dataclass with fields label: Optional[str],
+      text: str, position: int.
+    - def parse_paragraphs(document_text: str) -> list[Paragraph]:
+      returns a list of Paragraph objects, one per binding paragraph of
+      document_text, in document order, position 0, 1, 2, ... in that
+      order; label is the existing four-character label with the "{xxxx}
+      " prefix stripped from text, or label is None and text is the
+      paragraph's unmodified block text if the paragraph carries no
+      existing label.
+
+  New function signature (exact):
+    def assign_labels(document_text: str) -> tuple[str, list[Paragraph]]:
+
+  Docstring: must describe args, returns (the two-element tuple, with the
+  semantics of each element as stated below), and the algorithm in prose.
+
+  Algorithm (normative, must be followed exactly — this is the only
+  correct behavior, do not deviate or invent alternate rules):
+    1. paragraphs = parse_paragraphs(document_text).
+    2. start_lines = _binding_block_start_lines(document_text).
+       (By construction, len(paragraphs) == len(start_lines), and for
+       every index i, start_lines[i] is the line index of paragraphs[i]'s
+       first line.)
+    3. existing_labels = the set built from {p.label for p in paragraphs
+       if p.label is not None}.
+    4. lines = document_text.splitlines().
+    5. result: list[Paragraph] = [].
+    6. For i, para in enumerate(paragraphs):
+       a. If para.label is not None: append para to result unchanged;
+          continue to the next i (this paragraph's label is never
+          rewritten, reused, or reordered).
+       b. Else:
+          - new_label = _draw_label(existing_labels).
+          - Add new_label to existing_labels (so later draws in the same
+            call cannot collide with it).
+          - line = lines[start_lines[i]].
+          - indent_len = len(line) - len(line.lstrip()).
+          - prefix = line[:indent_len]; rest = line[indent_len:].
+          - lines[start_lines[i]] = prefix + "{" + new_label + "} " + rest
+            (insert the four-character label wrapped in curly braces plus
+            one trailing space, immediately before the first
+            non-whitespace character of that line; all leading whitespace
+            on the line is preserved unchanged; no other line is
+            modified).
+          - Append Paragraph(label=new_label, text=para.text,
+            position=para.position) to result.
+    7. new_document_text = "\n".join(lines).
+    8. Return (new_document_text, result).
+
+  Returns semantics (must appear in the docstring, in prose):
+    - new_document_text: document_text with a "{xxxx} " label prefix
+      inserted, immediately before the first non-whitespace character of
+      each previously-unlabeled binding paragraph's first line, for every
+      newly assigned label. All other content (non-binding regions,
+      heading lines, fenced code blocks, blank lines, already-labeled
+      paragraphs, and all whitespace not at the insertion point) is left
+      unchanged. Lines are rejoined with "\n"; this does not preserve a
+      trailing newline if document_text ended with one, since
+      str.splitlines() discards line terminators.
+    - paragraphs: the list of Paragraph objects in the same document
+      order as parse_paragraphs(document_text), except every Paragraph
+      that had label=None is replaced by a new Paragraph with the same
+      text and position and with label set to its newly assigned
+      four-character label; paragraphs that already had a label are
+      included unchanged.
+
+  Constraints:
+    - Do not alter _draw_label, _binding_block_start_lines, the module
+      docstring, the "import random" line, or the BASE36_ALPHABET
+      constant.
+    - Do not add any other function, class, or constant to this file in
+      this operation.
+    - The final file must not exceed 400 lines.
+
+  After this change, the file's full content must be exactly:
+
+  ```python
+  """Label assignment for HRS binding paragraphs.
+
+  Normative label-assignment algorithm (MRS concept C-002): draws unique
+  four-character base36 labels for unlabeled binding paragraphs of an HRS
+  document, in document order, and inserts them into the document text
+  without disturbing any other content. Existing labels are never
+  rewritten, reused, or reordered.
+  """
+  import random
+
+  from plan_manager.domain.paragraph import Paragraph, parse_paragraphs
+
+  BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+  def _draw_label(existing_labels: set[str]) -> str:
+      """Draw a new four-character base36 label not present in existing_labels.
+
+      Args:
+          existing_labels: The set of labels (four-character strings) that
+              are already in use and must not be produced. Not mutated by
+              this function.
+
+      Returns:
+          A four-character string drawn from BASE36_ALPHABET that is not a
+          member of existing_labels.
+      """
+      while True:
+          candidate = "".join(random.choice(BASE36_ALPHABET) for _ in range(4))
+          if candidate not in existing_labels:
+              return candidate
+
+
+  def _binding_block_start_lines(document_text: str) -> list[int]:
+      """Find the starting line index of each binding paragraph block.
+
+      Args:
+          document_text: The full HRS document text.
+
+      Returns:
+          A list of 0-based line indices into document_text.splitlines(),
+          one per binding paragraph block, in document order: each entry
+          is the index of that block's first line. The order and count of
+          this list corresponds exactly, element for element, to the
+          order and count of the list returned by
+          plan_manager.domain.paragraph.parse_paragraphs(document_text),
+          because both functions classify lines using the identical
+          boundary rules.
+      """
+      lines = document_text.splitlines()
+      in_non_binding = False
+      in_fence = False
+      block_open = False
+      start_lines: list[int] = []
+
+      for i, line in enumerate(lines):
+          stripped = line.strip()
+          if stripped == "<!-- non-binding -->":
+              if not in_non_binding:
+                  in_non_binding = True
+              block_open = False
+              continue
+          if stripped == "<!-- /non-binding -->":
+              if in_non_binding:
+                  in_non_binding = False
+              block_open = False
+              continue
+          if stripped.startswith("```"):
+              in_fence = not in_fence
+              block_open = False
+              continue
+          if in_fence:
+              block_open = False
+              continue
+          if stripped.startswith("#"):
+              block_open = False
+              continue
+          if stripped == "":
+              block_open = False
+              continue
+          if not block_open:
+              block_open = True
+              if not in_non_binding:
+                  start_lines.append(i)
+
+      return start_lines
+
+
+  def assign_labels(document_text: str) -> tuple[str, list[Paragraph]]:
+      """Assign labels to every unlabeled binding paragraph of document_text.
+
+      Args:
+          document_text: The full HRS document text.
+
+      Returns:
+          A tuple (new_document_text, paragraphs):
+          - new_document_text: document_text with a "{xxxx} " label prefix
+            inserted, immediately before the first non-whitespace
+            character of each previously-unlabeled binding paragraph's
+            first line, for every newly assigned label. All other content
+            (non-binding regions, heading lines, fenced code blocks,
+            blank lines, already-labeled paragraphs, and all whitespace
+            not at the insertion point) is left unchanged. Lines are
+            rejoined with "\n"; this does not preserve a trailing newline
+            if document_text ended with one, since str.splitlines()
+            discards line terminators.
+          - paragraphs: the list of Paragraph objects in the same
+            document order as parse_paragraphs(document_text), except
+            every Paragraph that had label=None is replaced by a new
+            Paragraph with the same text and position and with label set
+            to its newly assigned four-character label; paragraphs that
+            already had a label are included unchanged. Existing labels
+            are never rewritten, reused, or reordered.
+      """
+      paragraphs = parse_paragraphs(document_text)
+      start_lines = _binding_block_start_lines(document_text)
+      existing_labels = {p.label for p in paragraphs if p.label is not None}
+      lines = document_text.splitlines()
+      result: list[Paragraph] = []
+
+      for i, para in enumerate(paragraphs):
+          if para.label is not None:
+              result.append(para)
+              continue
+          new_label = _draw_label(existing_labels)
+          existing_labels.add(new_label)
+          line = lines[start_lines[i]]
+          indent_len = len(line) - len(line.lstrip())
+          prefix = line[:indent_len]
+          rest = line[indent_len:]
+          lines[start_lines[i]] = f"{prefix}{{{new_label}}} {rest}"
+          result.append(Paragraph(label=new_label, text=para.text, position=para.position))
+
+      new_document_text = "\n".join(lines)
+      return new_document_text, result
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.labeling.assign_labels
+  expected: >
+    On a two-paragraph document where the first paragraph already reads
+    "{ab12} First paragraph." and the second paragraph reads "Second
+    paragraph." with no label, assign_labels returns a new_document_text
+    where only the second paragraph's line gains a "{xxxx} " prefix (four
+    lowercase base36 characters, xxxx != "ab12") and every other character
+    of the document is unchanged, together with a paragraphs list of two
+    Paragraph objects: the first with label "ab12" and text "First
+    paragraph.", position 0; the second with the newly drawn label and
+    text "Second paragraph.", position 1.
+status: draft

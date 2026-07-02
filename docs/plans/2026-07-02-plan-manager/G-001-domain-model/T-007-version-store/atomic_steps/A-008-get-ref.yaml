@@ -1,0 +1,204 @@
+step_id: A-008
+parent_tactical_step: T-007
+name: get-ref
+target_file: plan_manager/storage/version_store.py
+operation: modify_file
+priority: 6
+depends_on: [A-007]
+concepts: [C-018]
+prompt: |
+  Modify the existing file `plan_manager/storage/version_store.py` to add one new
+  function, `get_ref`. Operation: modify_file. Target file:
+  `plan_manager/storage/version_store.py`.
+
+  Full current content of the target file (post-prior-AS state — this is the exact
+  content to modify, not a summary):
+
+  ```python
+  """Version-store writes: node versions, revisions, and refs."""
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+  from psycopg.types.json import Jsonb
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class VersionStoreError(ValueError):
+      """Raised when a version-store lookup (e.g. a ref or revision) is not found."""
+
+
+  def insert_node_version(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      entity_uuid: uuid.UUID,
+      content: dict,
+  ) -> uuid.UUID:
+      """Store ``content`` as a node version, reusing an identical existing one.
+
+      Content addressing: the SHA-256 hex digest of the canonical JSON of
+      ``content`` (via ``content_hash``) is computed first. If a node_version
+      row already exists for the same ``(plan_uuid, entity_uuid, hash)``, its
+      uuid is returned and no new row is inserted. Otherwise a new node_version
+      row is inserted with a freshly generated uuid.
+
+      :param conn: open database connection.
+      :param plan_uuid: uuid of the plan the node version belongs to.
+      :param entity_uuid: uuid of the domain entity this version snapshots.
+      :param content: JSON-serializable content of the node version.
+      :return: uuid of the existing or newly inserted node_version row.
+      """
+      hash_value = content_hash(content)
+      cur = conn.execute(
+          "SELECT uuid FROM node_version WHERE plan_uuid = %s AND entity_uuid = %s AND hash = %s",
+          (plan_uuid, entity_uuid, hash_value),
+      )
+      row = cur.fetchone()
+      if row is not None:
+          return row[0]
+      new_uuid = uuid.uuid4()
+      conn.execute(
+          "INSERT INTO node_version (uuid, plan_uuid, entity_uuid, hash, content) "
+          "VALUES (%s, %s, %s, %s, %s)",
+          (new_uuid, plan_uuid, entity_uuid, hash_value, Jsonb(content)),
+      )
+      return new_uuid
+
+
+  def insert_revision(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      parent_uuid: uuid.UUID | None,
+      author: str,
+      message: str,
+      node_version_uuids: list[uuid.UUID],
+  ) -> uuid.UUID:
+      """Insert a new revision row.
+
+      :param conn: open database connection.
+      :param plan_uuid: uuid of the plan the revision belongs to.
+      :param parent_uuid: uuid of the parent revision, or None for the first
+          revision of the plan.
+      :param author: identifier of the revision's author.
+      :param message: human-readable revision message.
+      :param node_version_uuids: uuids of the node_version rows changed by
+          this revision.
+      :return: uuid of the newly inserted revision row.
+      """
+      new_uuid = uuid.uuid4()
+      created_at = datetime.now(timezone.utc)
+      conn.execute(
+          "INSERT INTO revision (uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids) "
+          "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+          (new_uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids),
+      )
+      return new_uuid
+
+
+  def create_ref(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      name: str,
+      revision_uuid: uuid.UUID,
+  ) -> uuid.UUID:
+      """Create a new ref row pointing a named ref at a revision.
+
+      :param conn: open database connection.
+      :param plan_uuid: uuid of the plan the ref belongs to.
+      :param name: name of the ref (e.g. the cascade identifier).
+      :param revision_uuid: uuid of the revision the ref points to.
+      :return: uuid of the newly inserted ref row.
+      """
+      new_uuid = uuid.uuid4()
+      conn.execute(
+          "INSERT INTO ref (uuid, plan_uuid, name, revision_uuid) VALUES (%s, %s, %s, %s)",
+          (new_uuid, plan_uuid, name, revision_uuid),
+      )
+      return new_uuid
+
+
+  def delete_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> None:
+      """Delete the ref row named ``name`` for ``plan_uuid``.
+
+      :param conn: open database connection.
+      :param plan_uuid: uuid of the plan the ref belongs to.
+      :param name: name of the ref to delete.
+      :return: None.
+      """
+      conn.execute("DELETE FROM ref WHERE plan_uuid = %s AND name = %s", (plan_uuid, name))
+  ```
+
+  Required change: append a new function below `delete_ref`, separated by two
+  blank lines, with this exact signature. No new imports are needed;
+  `VersionStoreError` used below is the class already defined earlier in this same
+  file.
+
+  ```python
+  def get_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> uuid.UUID:
+  ```
+
+  Docstring (reST-style, `:param` entries in parameter order then `:return` then
+  `:raises`), exact text and format:
+
+  ```
+  Look up the revision uuid a named ref currently points to.
+
+  :param conn: open database connection.
+  :param plan_uuid: uuid of the plan the ref belongs to.
+  :param name: name of the ref to look up.
+  :return: uuid of the revision the ref points to.
+  :raises VersionStoreError: if no ref named ``name`` exists for ``plan_uuid``.
+  ```
+
+  Function body, exactly this logic (reading from the `ref` table, whose columns
+  are `uuid`, `plan_uuid`, `name`, `revision_uuid`):
+
+  ```python
+      cur = conn.execute(
+          "SELECT revision_uuid FROM ref WHERE plan_uuid = %s AND name = %s",
+          (plan_uuid, name),
+      )
+      row = cur.fetchone()
+      if row is None:
+          raise VersionStoreError(f"ref not found: plan_uuid={plan_uuid} name={name}")
+      return row[0]
+  ```
+
+  Constraints (all explicit, no deviation):
+  - Do not modify `VersionStoreError`, `insert_node_version`, `insert_revision`,
+    `create_ref`, or `delete_ref` in any way.
+  - Do not add any new import lines.
+  - SQL uses `%s` placeholders exactly as shown; do not use f-strings or `%`
+    formatting to build SQL text (the f-string is only used for the
+    `VersionStoreError` message, not for SQL).
+  - Use `conn.execute(sql, params)` directly; do not call `conn.cursor()`
+    separately.
+  - Row lookup uses positional indexing (`row[0]`), not column names.
+  - Resulting file must be valid, importable Python 3.12+ source, well under 400
+    lines total.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+
+  This function is a read accessor for the C-018 "refs" table family, used to
+  resolve a cascade ref name to its current revision uuid.
+verification:
+  type: import
+  target: plan_manager.storage.version_store
+  expected: >
+    The module imports without error and exposes a callable
+    `get_ref(conn, plan_uuid, name)` with the exact parameter and return types shown
+    in the signature above, raising `VersionStoreError` on a missing ref.
+status: draft

@@ -1,0 +1,78 @@
+step_id: A-003
+parent_tactical_step: T-007
+name: version-store-error
+target_file: plan_manager/storage/version_store.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-018]
+prompt: |
+  Create the new file `plan_manager/storage/version_store.py` with a module
+  docstring, two imports, and one exception class. Operation: create_file. Target
+  file: `plan_manager/storage/version_store.py`. This file does not exist yet; do
+  not assume any pre-existing content.
+
+  Imports required (exact module paths, in this exact order with a blank line
+  between the standard-library group and the third-party group):
+
+  ```python
+  import uuid
+
+  import psycopg
+  ```
+
+  `psycopg` is the third-party `psycopg` package (psycopg 3). It is imported only
+  so its `Connection` type can be used in type annotations by later code in this
+  file; this AS does not use it directly beyond the import.
+
+  Write exactly one class with this exact definition:
+
+  ```python
+  class VersionStoreError(ValueError):
+  ```
+
+  It subclasses the Python built-in `ValueError`. No `__init__` override, no
+  additional methods, no additional attributes.
+
+  Docstring for the class (reST-style, single-line, exact text):
+
+  ```
+  Raised when a version-store lookup (e.g. a ref or revision) is not found.
+  ```
+
+  Constraints (all explicit, no deviation):
+  - The file must contain, in order: a module docstring, the `import uuid`
+    statement, a blank line, the `import psycopg` statement, two blank lines, then
+    the class definition. No other imports, functions, or module-level code.
+  - The module docstring text is exactly: `Version-store writes: node versions,
+    revisions, and refs.`
+  - Do not add a `pass` statement in the class body; the docstring is the sole class
+    body content.
+  - Resulting file must be valid, importable Python 3.12+ source.
+
+  Context (not implemented by this AS, informational only so the exception's
+  purpose is clear): this module will later hold functions that write node_version,
+  revision, and ref rows to a PostgreSQL database via `psycopg.Connection` objects
+  passed explicitly as parameters (no module-level connection state), and that raise
+  `VersionStoreError` when a requested ref or revision does not exist.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+verification:
+  type: import
+  target: plan_manager.storage.version_store
+  expected: >
+    The module imports without error and exposes a class `VersionStoreError` that
+    is a subclass of the built-in `ValueError`.
+status: draft

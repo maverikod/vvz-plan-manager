@@ -1,0 +1,40 @@
+step_id: T-003
+parent_global_step: G-001
+name: concept-relation-model
+description: >
+  Create the two entities that form the MRS graph: the Concept (C-003) and the
+  Relation (C-004). A Concept is an MRS entry with a C-NNN identifier unique within
+  the plan, a canonical name, a one-sentence definition, a list of properties, and
+  source labels that reference the HRS paragraphs (C-002) justifying it; concepts are
+  selected to be as orthogonal as possible. A Relation is a typed directed edge from
+  one Concept to another, restricted to exactly seven types — uses, owns, implements,
+  extends, depends_on, produces, consumes — with free-form types rejected at write
+  time; a Relation depends on the existence of the Concepts it connects. This
+  tactical step defines the schema and write-time validation of Concepts and
+  Relations and their reference to source paragraph labels; it does not create the
+  Paragraph entity, which it only references by label.
+concepts: [C-003, C-004, C-002]
+inputs:
+- name: concept_definition_input
+  type: domain entity payload
+  description: >
+    A Concept (C-003) entry with a C-NNN identifier, canonical name, one-sentence
+    definition, properties, and source labels referencing HRS paragraphs (C-002).
+- name: relation_edge_input
+  type: domain entity payload
+  description: >
+    A Relation (C-004) typed directed edge between two concepts carrying a type value
+    to be validated against the seven allowed types.
+outputs:
+- name: stored_concept
+  type: stored domain entity
+  description: >
+    The persisted Concept entry unique within the plan, carrying its definition,
+    properties, and source paragraph labels (C-002).
+- name: stored_relation
+  type: stored domain entity
+  description: >
+    The persisted typed edge whose type is one of the seven allowed types, with
+    free-form types rejected at write time.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft

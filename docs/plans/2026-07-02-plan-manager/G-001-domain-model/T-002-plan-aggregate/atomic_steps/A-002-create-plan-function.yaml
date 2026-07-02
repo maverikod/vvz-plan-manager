@@ -1,0 +1,196 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: create-plan-function
+target_file: plan_manager/domain/plan.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-001, C-007]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  plan_manager/domain/plan.py.
+
+  This is a modify_file operation. The file currently contains exactly the
+  following content (this is the full, current, post-prior-edit state of
+  the file — not the original file and not any other state):
+
+  ```python
+  """Plan aggregate: the root domain entity for a development plan.
+
+  Implements C-001 (Plan) per docs/plans/2026-07-02-plan-manager/spec.yaml.
+  Storage: PostgreSQL table `plan` (columns: uuid, name, status,
+  context_budget, head_revision_uuid), accessed via psycopg 3 with plain SQL
+  (no ORM). DDL for this table is owned by SQL migrations outside this module;
+  this module never emits DDL.
+  """
+
+  from dataclasses import dataclass
+  import uuid
+
+  import psycopg
+
+
+  DEFAULT_CONTEXT_BUDGET = 4000
+
+
+  class PlanNotFoundError(ValueError):
+      """Raised when no Plan row exists for a given uuid."""
+
+
+  @dataclass
+  class Plan:
+      """Domain representation of the Plan aggregate (C-001).
+
+      Attributes:
+          uuid: Immutable primary identity of the plan (PostgreSQL uuid
+              column, generated via uuid.uuid4() at creation).
+          name: Human-readable plan name.
+          status: Current lifecycle status stored as text; set to 'draft' at
+              creation. Legal status values and transition enforcement
+              (C-007) are owned outside this module.
+          context_budget: User-set context budget in tokens consumed by
+              prompt assembly; defaults to DEFAULT_CONTEXT_BUDGET at
+              creation and is changeable later.
+          head_revision_uuid: Identity of the current head revision in the
+              version store (C-018), or None if no revision has been
+              recorded yet.
+      """
+
+      uuid: uuid.UUID
+      name: str
+      status: str
+      context_budget: int
+      head_revision_uuid: uuid.UUID | None
+  ```
+
+  Append the following function definition to the end of the file, preceded
+  by two blank lines (PEP 8 spacing between top-level definitions), so the
+  resulting file is the shown content above followed by this function:
+
+  ```python
+  def create_plan(
+      conn: psycopg.Connection,
+      name: str,
+      context_budget: int = DEFAULT_CONTEXT_BUDGET,
+  ) -> Plan:
+      """Create a new Plan aggregate row and return its domain representation.
+
+      Validates that name is non-empty and context_budget is strictly
+      positive, generates a new uuid4 primary identity, inserts the row with
+      status 'draft' and a NULL head_revision_uuid, and returns the
+      resulting Plan.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the insert.
+          name: Human-readable plan name; must be non-empty after stripping
+              whitespace.
+          context_budget: User-set context budget in tokens; must be > 0.
+              Defaults to DEFAULT_CONTEXT_BUDGET (4000).
+
+      Returns:
+          The newly created Plan with status 'draft' and head_revision_uuid
+          set to None.
+
+      Raises:
+          ValueError: If name is empty (or whitespace-only) or if
+              context_budget is not strictly positive.
+      """
+      if not name or not name.strip():
+          raise ValueError("name must be non-empty")
+      if context_budget <= 0:
+          raise ValueError("context_budget must be > 0")
+      plan_uuid = uuid.uuid4()
+      conn.execute(
+          "INSERT INTO plan (uuid, name, status, context_budget, "
+          "head_revision_uuid) VALUES (%s, %s, 'draft', %s, NULL)",
+          (plan_uuid, name, context_budget),
+      )
+      return Plan(
+          uuid=plan_uuid,
+          name=name,
+          status="draft",
+          context_budget=context_budget,
+          head_revision_uuid=None,
+      )
+  ```
+
+  Do not modify any part of the existing file content shown above. Only
+  append this one function at the end.
+
+  Imports required by this function (already present in the file from a
+  prior edit; do not add duplicate import statements): `import uuid`
+  (standard library, provides `uuid.uuid4()` and the `uuid.UUID` type),
+  `import psycopg` (the `psycopg` package, psycopg 3, provides the
+  `psycopg.Connection` type used in the signature). `Plan` and
+  `DEFAULT_CONTEXT_BUDGET` are the module-level `Plan` dataclass and
+  constant already defined earlier in the file.
+
+  Constraints (all explicit, no discretion):
+  - Function name is exactly `create_plan`.
+  - Signature is exactly `create_plan(conn: psycopg.Connection, name: str,
+    context_budget: int = DEFAULT_CONTEXT_BUDGET) -> Plan`.
+  - `conn` is a psycopg 3 database connection (`psycopg.Connection`) passed
+    explicitly by the caller; the function must not open, close, commit, or
+    rollback the connection, and must not hold any module-level connection
+    state.
+  - Validation order: first check `name` is non-empty after `.strip()` and
+    raise `ValueError("name must be non-empty")` if it fails; then check
+    `context_budget > 0` and raise `ValueError("context_budget must be >
+    0")` if it fails.
+  - The plan's primary identity is generated inside this function via
+    `uuid.uuid4()` and assigned to a local variable `plan_uuid`.
+  - The SQL statement is exactly: `INSERT INTO plan (uuid, name, status,
+    context_budget, head_revision_uuid) VALUES (%s, %s, 'draft', %s, NULL)`
+    executed via `conn.execute(sql, (plan_uuid, name, context_budget))`
+    using `%s` placeholders bound positionally to `plan_uuid`, `name`,
+    `context_budget` in that order. The literal `'draft'` and `NULL` are
+    written directly in the SQL text, not passed as bound parameters.
+  - No DDL is emitted by this function; the `plan` table already exists via
+    migrations owned outside this module.
+  - The function returns a `Plan` instance constructed with `uuid=plan_uuid,
+    name=name, status="draft", context_budget=context_budget,
+    head_revision_uuid=None` — it does not re-query the database to build
+    the return value.
+  - The docstring text must be exactly as shown above, in Google-style
+    Args/Returns/Raises format.
+
+  Relevant MRS concept excerpts (verbatim from spec.yaml):
+
+  - concept_id: C-001
+    name: Plan
+    definition: Root aggregate of one development plan with identity, name,
+      status, and head revision.
+    properties:
+    - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+    - multiple plans live in one database, listed by catalog query
+    - head revision advances per revision in draft editing, on publication
+      for cascades
+    - carries a user-set context budget in tokens (default 4000) consumed
+      by prompt assembly
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced
+      legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps
+      add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct
+      request
+
+  Database context (binding, not part of MRS): the `plan` table has columns
+  `uuid` (PostgreSQL uuid, primary identity), `name`, `status` (text),
+  `context_budget` (integer, tokens), `head_revision_uuid` (uuid, nullable).
+  Status transition validation is owned by a sibling tactical step and is
+  out of scope here: this function only stores the initial literal value
+  `'draft'`.
+verification:
+  type: manual
+  target: plan_manager/domain/plan.py::create_plan
+  expected: Calling create_plan(conn, "My Plan") inserts one row into the
+    plan table with status 'draft', a NULL head_revision_uuid, and
+    context_budget 4000, and returns a Plan object with matching field
+    values and a freshly generated uuid; calling it with an empty or
+    whitespace-only name raises ValueError; calling it with
+    context_budget=0 or a negative context_budget raises ValueError.
+status: draft

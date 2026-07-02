@@ -1,0 +1,110 @@
+step_id: A-001
+parent_tactical_step: T-005
+name: Step identifier constants, patterns, and StepValidationError
+target_file: plan_manager/domain/step.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-005, C-003]
+prompt: |
+  Create the file plan_manager/domain/step.py with exactly the following
+  content (this is a brand-new file; it does not exist yet, so assume no
+  pre-existing content):
+
+
+  """Domain model for the Step entity (C-005): the single stored entity for plan
+  levels 3-5 (global step, tactical step, atomic step), with declarative
+  per-level identifier patterns and validation rules.
+  """
+
+
+  import re
+
+
+  LEVEL_PREFIXES: dict[int, str] = {3: "G", 4: "T", 5: "A"}
+
+
+  STEP_ID_PATTERNS: dict[int, re.Pattern[str]] = {
+      3: re.compile(r"^G-\d{3}$"),
+      4: re.compile(r"^T-\d{3}$"),
+      5: re.compile(r"^A-\d{3}$"),
+  }
+
+
+  SLUG_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+  CONCEPT_ID_PATTERN: re.Pattern[str] = re.compile(r"^C-\d{3}$")
+
+
+  class StepValidationError(ValueError):
+      """Raised when a Step instance fails one or more validate_step checks.
+
+      The exception message lists every failed check found during
+      validation, joined by "; ".
+      """
+
+
+  Exact requirements:
+
+  - The module docstring text must be exactly as shown above (three lines,
+    triple double-quoted).
+  - Import exactly one module: `import re`. No other imports.
+  - LEVEL_PREFIXES: a module-level dict[int, str] constant mapping plan
+    hierarchy level to its identifier prefix: 3 -> "G" (level 3 = global
+    step), 4 -> "T" (level 4 = tactical step), 5 -> "A" (level 5 = atomic
+    step). Type-annotate it as `dict[int, str]`.
+  - STEP_ID_PATTERNS: a module-level dict[int, re.Pattern[str]] constant
+    mapping the same three levels to compiled regular expressions: level 3
+    -> `re.compile(r"^G-\d{3}$")`, level 4 -> `re.compile(r"^T-\d{3}$")`,
+    level 5 -> `re.compile(r"^A-\d{3}$")`. Type-annotate it as
+    `dict[int, re.Pattern[str]]`.
+  - SLUG_PATTERN: a module-level re.Pattern[str] constant, exactly
+    `re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")`, matching kebab-case slugs
+    (lowercase alphanumeric segments separated by single hyphens, no
+    leading/trailing hyphen, no empty segments). Type-annotate it as
+    `re.Pattern[str]`.
+  - CONCEPT_ID_PATTERN: a module-level re.Pattern[str] constant, exactly
+    `re.compile(r"^C-\d{3}$")`, matching MRS concept_id values such as
+    "C-005". Type-annotate it as `re.Pattern[str]`.
+  - StepValidationError: a class that subclasses the built-in `ValueError`
+    (no other base classes), with exactly the docstring shown above (two
+    lines of docstring body). The class body contains only the docstring;
+    no additional methods or attributes.
+  - Use two blank lines between the module docstring and `import re`, two
+    blank lines between `import re` and LEVEL_PREFIXES, two blank lines
+    between each subsequent top-level constant, and two blank lines before
+    the `class StepValidationError` definition, matching the layout shown
+    above.
+  - Do not add any other names, functions, classes, or imports beyond what
+    is listed here.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+verification:
+  type: import
+  target: plan_manager.domain.step
+  expected: >
+    The module plan_manager/domain/step.py imports without error and
+    exposes the module-level names LEVEL_PREFIXES, STEP_ID_PATTERNS,
+    SLUG_PATTERN, CONCEPT_ID_PATTERN, and the class StepValidationError,
+    with StepValidationError being a subclass of the built-in ValueError.
+status: draft

@@ -1,0 +1,172 @@
+step_id: A-006
+parent_tactical_step: T-003
+name: relation-endpoints-exist-check
+target_file: plan_manager/domain/relation.py
+operation: modify_file
+priority: 3
+depends_on: [A-005]
+concepts: [C-004, C-003]
+prompt: >
+  Modify the existing Python source file at exact project-relative path
+  plan_manager/domain/relation.py.
+
+
+  Operation: modify_file. The current full content of the file (state after
+  all lower-priority AS on this file have been applied) is exactly the
+  following:
+
+
+  ```python
+
+  """Relation domain entity (MRS concept C-004).
+
+
+  A Relation is a typed directed edge from one Concept (C-003) to another,
+  restricted to exactly seven types: uses, owns, implements, extends,
+  depends_on, produces, consumes. Free-form types are rejected at write
+  time. A Relation depends on the existence of the Concepts (identified by
+  concept_id, pattern C-NNN) it connects. Self-referencing relations (a
+  concept related to itself) are permitted.
+
+  """
+
+
+  from dataclasses import dataclass
+
+  from typing import List
+
+
+  from plan_manager.domain.concept import CONCEPT_ID_PATTERN
+
+
+  RELATION_TYPES = frozenset(
+      {"uses", "owns", "implements", "extends", "depends_on", "produces", "consumes"}
+  )
+
+
+  class RelationValidationError(ValueError):
+      """Raised when a Relation fails write-time validation."""
+
+
+  @dataclass
+  class Relation:
+      """A single typed directed edge between two concepts.
+
+      Attributes:
+          from_concept: concept_id (pattern C-NNN) of the source concept.
+          to_concept: concept_id (pattern C-NNN) of the target concept.
+          type: Relation type; must be one of RELATION_TYPES.
+      """
+
+      from_concept: str
+      to_concept: str
+      type: str
+
+
+  def validate_relation(relation: Relation) -> None:
+      """Validate a Relation's fields at write time.
+
+      Args:
+          relation: The Relation instance to validate.
+
+      Raises:
+          RelationValidationError: If any of the following hold:
+              - relation.type is not a member of RELATION_TYPES (the set
+                {"uses", "owns", "implements", "extends", "depends_on",
+                "produces", "consumes"}).
+              - relation.from_concept does not match CONCEPT_ID_PATTERN
+                (pattern "^C-\\d{3}$", e.g. "C-003").
+              - relation.to_concept does not match CONCEPT_ID_PATTERN
+                (pattern "^C-\\d{3}$", e.g. "C-003").
+      """
+      if relation.type not in RELATION_TYPES:
+          raise RelationValidationError(
+              f"type '{relation.type}' is not one of {sorted(RELATION_TYPES)}"
+          )
+      if not CONCEPT_ID_PATTERN.match(relation.from_concept):
+          raise RelationValidationError(
+              f"from_concept '{relation.from_concept}' does not match "
+              f"pattern '{CONCEPT_ID_PATTERN.pattern}'"
+          )
+      if not CONCEPT_ID_PATTERN.match(relation.to_concept):
+          raise RelationValidationError(
+              f"to_concept '{relation.to_concept}' does not match pattern "
+              f"'{CONCEPT_ID_PATTERN.pattern}'"
+          )
+  ```
+
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - C-004 Relation: "a Relation depends on the existence of the Concepts it
+    connects" (relation C-004 depends_on C-003 in the MRS relation list).
+
+
+  Required change: append the following function definition to the end of
+  the file, after `validate_relation`, separated from it by exactly two
+  blank lines. Do not change any existing line in the file shown above.
+
+
+  ```python
+
+  def check_relation_endpoints_exist(
+      relation: Relation, existing_concept_ids: List[str]
+  ) -> None:
+      """Check that both endpoints of a Relation reference existing concepts.
+
+      Args:
+          relation: The Relation instance whose endpoints are checked.
+          existing_concept_ids: List of concept_id strings currently
+              present in the plan.
+
+      Raises:
+          RelationValidationError: If relation.from_concept is not present
+              in existing_concept_ids, or if relation.to_concept is not
+              present in existing_concept_ids.
+      """
+      if relation.from_concept not in existing_concept_ids:
+          raise RelationValidationError(
+              f"from_concept '{relation.from_concept}' does not reference "
+              f"an existing concept"
+          )
+      if relation.to_concept not in existing_concept_ids:
+          raise RelationValidationError(
+              f"to_concept '{relation.to_concept}' does not reference an "
+              f"existing concept"
+          )
+  ```
+
+
+  Constraints:
+
+  - The function signature must be exactly `def
+    check_relation_endpoints_exist(relation: Relation, existing_concept_ids:
+    List[str]) -> None:` using the `Relation` type already defined in this
+    file and the `List` name already imported from `typing` in this file.
+
+  - Use only names already defined in the file (`RelationValidationError`,
+    `Relation`, `List`). Add no new imports.
+
+  - Check from_concept membership first, then to_concept membership, as
+    shown in the code above. Both checks must run independently (do not use
+    `elif`; if from_concept is missing, still raise on that condition
+    first and stop, matching the code above exactly, which raises on the
+    first failing condition it encounters).
+
+  - Every raised exception must be an instance of `RelationValidationError`
+    with the exact message text shown in the code above (f-strings as
+    written).
+
+  - Do not modify, reorder, or remove any part of the file content shown
+    above as the current state. Only append the new function.
+verification:
+  type: static_analysis
+  target: plan_manager.domain.relation.check_relation_endpoints_exist
+  expected: >
+    The function check_relation_endpoints_exist accepts a Relation and a
+    list of existing concept_id strings, and returns None. It raises
+    RelationValidationError when from_concept is absent from
+    existing_concept_ids, or when to_concept is absent from
+    existing_concept_ids, and returns normally when both endpoints are
+    present in existing_concept_ids.
+status: draft

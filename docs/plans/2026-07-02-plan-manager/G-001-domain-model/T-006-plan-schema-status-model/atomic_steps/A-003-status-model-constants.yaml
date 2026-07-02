@@ -1,0 +1,99 @@
+step_id: A-003
+parent_tactical_step: T-006
+name: status-model-constants-and-exception
+target_file: plan_manager/domain/status_model.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-007]
+prompt: |
+  Create the new file `plan_manager/domain/status_model.py`. This file does
+  not exist yet. Do not assume any pre-existing content: write the entire
+  file content from scratch as specified below.
+
+  Write exactly this Python source as the full content of the file:
+
+  ```python
+  """Lifecycle state machine for plan artifacts with enforced legal
+  transitions (C-007 StatusModel)."""
+
+  from __future__ import annotations
+
+
+  class StatusTransitionError(ValueError):
+      """Raised when a requested status transition is not legal."""
+
+
+  STATUSES: frozenset[str] = frozenset(
+      {"draft", "ready_for_review", "frozen", "needs_review"}
+  )
+  """Statuses legal for all plan artifacts (levels 2-5)."""
+
+  ATOMIC_ONLY_STATUSES: frozenset[str] = frozenset({"in_progress", "done"})
+  """Additional statuses legal only for atomic steps (level 5)."""
+
+  LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
+      "draft": frozenset({"ready_for_review"}),
+      "ready_for_review": frozenset({"frozen", "draft"}),
+      "frozen": frozenset(),
+      "needs_review": frozenset({"draft", "frozen"}),
+      "in_progress": frozenset({"done"}),
+      "done": frozenset(),
+  }
+  """Legal direct transitions per current status. The needs_review target is
+  deliberately excluded from every value here: needs_review is reachable
+  only via cascade propagation, never as a direct transition target, and
+  that rule is enforced separately (not via this table). For atomic steps
+  only, "frozen" additionally allows a direct transition to "in_progress";
+  that extra rule is also enforced separately (not encoded in this table),
+  since this table is shared by both atomic and non-atomic artifacts."""
+  ```
+
+  MRS excerpt used by this AS (concept C-007):
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced
+      legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps
+      add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct
+      request
+
+  Constraints (all binding, no deviation):
+  - The only import in the file is `from __future__ import annotations`.
+  - `StatusTransitionError` is a class that subclasses the built-in
+    `ValueError` directly, with only a docstring in its body (no `__init__`
+    override, no other members).
+  - `STATUSES` must be a module-level variable annotated `frozenset[str]`
+    and assigned exactly `frozenset({"draft", "ready_for_review", "frozen",
+    "needs_review"})`.
+  - `ATOMIC_ONLY_STATUSES` must be a module-level variable annotated
+    `frozenset[str]` and assigned exactly `frozenset({"in_progress",
+    "done"})`.
+  - `LEGAL_TRANSITIONS` must be a module-level variable annotated
+    `dict[str, frozenset[str]]` and assigned exactly the six-entry dict
+    literal shown above, with these exact keys and exact frozenset values:
+    "draft" -> {"ready_for_review"}; "ready_for_review" -> {"frozen",
+    "draft"}; "frozen" -> {} (empty frozenset); "needs_review" -> {"draft",
+    "frozen"}; "in_progress" -> {"done"}; "done" -> {} (empty frozenset).
+  - Use the built-in generic syntax `frozenset[str]` and `dict[str,
+    frozenset[str]]` for type annotations; do not import anything from the
+    `typing` module.
+  - Do not add any other classes, functions, or constants to this file
+    beyond what is specified above.
+  - Do not add any code related to PlanSchema, identifier patterns, or any
+    concept other than C-007 StatusModel.
+verification:
+  type: import
+  target: plan_manager.domain.status_model.STATUSES, ATOMIC_ONLY_STATUSES, LEGAL_TRANSITIONS, StatusTransitionError
+  expected: >
+    Importing plan_manager.domain.status_model succeeds with no errors.
+    STATUSES equals {"draft", "ready_for_review", "frozen", "needs_review"}.
+    ATOMIC_ONLY_STATUSES equals {"in_progress", "done"}. LEGAL_TRANSITIONS
+    is a dict with exactly the six keys "draft", "ready_for_review",
+    "frozen", "needs_review", "in_progress", "done", mapping respectively
+    to the frozensets {"ready_for_review"}, {"frozen", "draft"}, set(),
+    {"draft", "frozen"}, {"done"}, set(). StatusTransitionError is a class
+    that is a subclass of ValueError.
+status: draft

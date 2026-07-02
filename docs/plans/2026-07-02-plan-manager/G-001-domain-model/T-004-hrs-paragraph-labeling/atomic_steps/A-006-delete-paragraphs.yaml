@@ -1,0 +1,115 @@
+step_id: A-006
+parent_tactical_step: T-004
+name: delete-paragraphs
+target_file: plan_manager/domain/paragraph_store.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-002]
+prompt: |
+  Create the file plan_manager/domain/paragraph_store.py with exactly the
+  following content (this is a new file; it does not exist yet, so assume
+  no prior content).
+
+  MRS excerpt (C-002):
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Storage context (binding, not optional): paragraph rows live in a table
+  named paragraph with exactly these columns: uuid (PostgreSQL uuid, the
+  immutable primary identity), plan_uuid (uuid, scopes rows to the owning
+  plan), label (text; every stored row has a non-null label, since only
+  labeled binding paragraphs are ever stored), text (the paragraph prose),
+  position (integer document order). Database access uses psycopg 3 with
+  plain SQL strings; no ORM. Runtime code never emits DDL (the paragraph
+  table's schema is created elsewhere, outside this file, by SQL
+  migrations). Connections are passed explicitly as psycopg.Connection
+  parameters; there is no module-level connection state.
+
+  Required imports (exact, top of file, in this order, with one blank
+  line between the standard-library group and the third-party/local
+  group):
+    import uuid
+
+    import psycopg
+
+    from plan_manager.domain.paragraph import Paragraph
+
+  Signature and contract of the imported name (already implemented in
+  plan_manager/domain/paragraph.py; use it exactly as follows, do not
+  redefine it):
+    - class Paragraph: a dataclass with fields label: Optional[str],
+      text: str, position: int.
+
+  Required function signature (exact):
+    def delete_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+
+  Docstring: must describe args, returns (None), and behavior in prose.
+
+  Behavior (normative, must be followed exactly):
+    Execute, via conn.cursor(), the SQL statement
+    "DELETE FROM paragraph WHERE plan_uuid = %s" with the single
+    parameter plan_uuid. This deletes every row of the paragraph table
+    whose plan_uuid column equals the plan_uuid argument, and no other
+    rows. Do not call conn.commit(): the caller controls the transaction.
+
+  Constraints:
+    - Use conn.cursor() as a context manager (a "with" block).
+    - Use a parameterized query (the %s placeholder with a parameter
+      tuple); do not interpolate plan_uuid into the SQL string.
+    - Do not add any other function, class, or constant to this file in
+      this operation.
+    - The file must contain nothing else besides the module docstring,
+      the three imports, and the delete_paragraphs function.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Storage of HRS binding paragraphs (MRS concept C-002).
+
+  Wholesale replace/read operations against the paragraph table. The
+  paragraph set of a plan is always replaced wholesale from a freshly
+  parsed document: delete_paragraphs then insert_paragraphs. The server
+  never authors or rewrites paragraph prose; these functions only persist
+  already-labeled Paragraph objects.
+  """
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  def delete_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+      """Delete every stored paragraph row belonging to one plan.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; rows where the
+              paragraph table's plan_uuid column equals this value are
+              deleted.
+
+      Returns:
+          None.
+      """
+      with conn.cursor() as cur:
+          cur.execute("DELETE FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.paragraph_store.delete_paragraphs
+  expected: >
+    After inserting paragraph rows for two distinct plan_uuid values into
+    the paragraph table and calling delete_paragraphs(conn, plan_uuid) for
+    one of them, querying the table shows zero remaining rows for that
+    plan_uuid while every row belonging to the other plan_uuid is still
+    present unchanged.
+status: draft

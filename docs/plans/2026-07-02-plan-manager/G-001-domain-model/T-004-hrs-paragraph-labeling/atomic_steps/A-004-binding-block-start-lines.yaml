@@ -1,0 +1,214 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: binding-block-start-lines
+target_file: plan_manager/domain/labeling.py
+operation: modify_file
+priority: 2
+depends_on: [A-003]
+concepts: [C-002]
+prompt: |
+  Modify the file plan_manager/domain/labeling.py. Its current content
+  (the full file as it exists right now, before this modification) is
+  exactly:
+
+  ```python
+  """Label assignment for HRS binding paragraphs.
+
+  Normative label-assignment algorithm (MRS concept C-002): draws unique
+  four-character base36 labels for unlabeled binding paragraphs of an HRS
+  document, in document order, and inserts them into the document text
+  without disturbing any other content. Existing labels are never
+  rewritten, reused, or reordered.
+  """
+  import random
+
+  BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+  def _draw_label(existing_labels: set[str]) -> str:
+      """Draw a new four-character base36 label not present in existing_labels.
+
+      Args:
+          existing_labels: The set of labels (four-character strings) that
+              are already in use and must not be produced. Not mutated by
+              this function.
+
+      Returns:
+          A four-character string drawn from BASE36_ALPHABET that is not a
+          member of existing_labels.
+      """
+      while True:
+          candidate = "".join(random.choice(BASE36_ALPHABET) for _ in range(4))
+          if candidate not in existing_labels:
+              return candidate
+  ```
+
+  MRS excerpt (C-002), for context on the entity this module supports:
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Required change: add exactly one new module-level function to this file,
+  after the existing _draw_label function. Do not change the existing
+  docstring, import, constant, or _draw_label function in any way. Do not
+  add any new import for this change (no new imports are needed).
+
+  New function signature (exact):
+    def _binding_block_start_lines(document_text: str) -> list[int]:
+
+  Docstring: must describe args, returns, and the algorithm in prose, and
+  must state that the returned list corresponds element-for-element, in
+  order and count, to the list returned by
+  plan_manager.domain.paragraph.parse_paragraphs(document_text), because
+  both functions classify lines using the identical boundary rules (blank
+  lines, "<!-- non-binding -->" / "<!-- /non-binding -->" markers, "```"
+  fenced code, and "#" headings).
+
+  Algorithm (normative, must be followed exactly — this is the only
+  correct behavior, do not deviate or invent alternate rules):
+    1. lines = document_text.splitlines().
+    2. Maintain state across the whole walk: in_non_binding = False,
+       in_fence = False, block_open = False, and
+       start_lines: list[int] = [].
+    3. For each line at 0-based index i, compute stripped = line.strip().
+       Then, in this exact order of checks:
+       a. If stripped == "<!-- non-binding -->": if not in_non_binding,
+          set in_non_binding = True. Set block_open = False. Move to the
+          next line.
+       b. Else if stripped == "<!-- /non-binding -->": if in_non_binding,
+          set in_non_binding = False. Set block_open = False. Move to the
+          next line.
+       c. Else if stripped starts with "```"
+          (stripped.startswith("```")): toggle in_fence
+          (in_fence = not in_fence). Set block_open = False. Move to the
+          next line.
+       d. Else if in_fence is True: set block_open = False. Move to the
+          next line.
+       e. Else if stripped starts with "#": set block_open = False. Move
+          to the next line.
+       f. Else if stripped == "" (a blank line): set block_open = False.
+          Move to the next line.
+       g. Else (a content line, not fenced, not blank, not a heading, not
+          a marker): if block_open is False, set block_open = True, and
+          if in_non_binding is False, append i to start_lines. If
+          block_open is already True, do nothing further for this line
+          (it continues the already-open block and is not itself a block
+          start).
+    4. Return start_lines.
+
+  Constraints:
+    - Do not alter _draw_label, the module docstring, the import, or the
+      BASE36_ALPHABET constant.
+    - Do not add any other function, class, or constant to this file in
+      this operation.
+    - The final file must not exceed 400 lines.
+
+  After this change, the file's full content must be exactly:
+
+  ```python
+  """Label assignment for HRS binding paragraphs.
+
+  Normative label-assignment algorithm (MRS concept C-002): draws unique
+  four-character base36 labels for unlabeled binding paragraphs of an HRS
+  document, in document order, and inserts them into the document text
+  without disturbing any other content. Existing labels are never
+  rewritten, reused, or reordered.
+  """
+  import random
+
+  BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+  def _draw_label(existing_labels: set[str]) -> str:
+      """Draw a new four-character base36 label not present in existing_labels.
+
+      Args:
+          existing_labels: The set of labels (four-character strings) that
+              are already in use and must not be produced. Not mutated by
+              this function.
+
+      Returns:
+          A four-character string drawn from BASE36_ALPHABET that is not a
+          member of existing_labels.
+      """
+      while True:
+          candidate = "".join(random.choice(BASE36_ALPHABET) for _ in range(4))
+          if candidate not in existing_labels:
+              return candidate
+
+
+  def _binding_block_start_lines(document_text: str) -> list[int]:
+      """Find the starting line index of each binding paragraph block.
+
+      Args:
+          document_text: The full HRS document text.
+
+      Returns:
+          A list of 0-based line indices into document_text.splitlines(),
+          one per binding paragraph block, in document order: each entry
+          is the index of that block's first line. The order and count of
+          this list corresponds exactly, element for element, to the
+          order and count of the list returned by
+          plan_manager.domain.paragraph.parse_paragraphs(document_text),
+          because both functions classify lines using the identical
+          boundary rules.
+      """
+      lines = document_text.splitlines()
+      in_non_binding = False
+      in_fence = False
+      block_open = False
+      start_lines: list[int] = []
+
+      for i, line in enumerate(lines):
+          stripped = line.strip()
+          if stripped == "<!-- non-binding -->":
+              if not in_non_binding:
+                  in_non_binding = True
+              block_open = False
+              continue
+          if stripped == "<!-- /non-binding -->":
+              if in_non_binding:
+                  in_non_binding = False
+              block_open = False
+              continue
+          if stripped.startswith("```"):
+              in_fence = not in_fence
+              block_open = False
+              continue
+          if in_fence:
+              block_open = False
+              continue
+          if stripped.startswith("#"):
+              block_open = False
+              continue
+          if stripped == "":
+              block_open = False
+              continue
+          if not block_open:
+              block_open = True
+              if not in_non_binding:
+                  start_lines.append(i)
+
+      return start_lines
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.labeling._binding_block_start_lines
+  expected: >
+    On the same three sample documents used to verify parse_paragraphs (a
+    plain two-paragraph document; the same document with an existing
+    label on the first paragraph; a document mixing a plain paragraph, a
+    heading, a fenced code block, and a non-binding-wrapped paragraph),
+    _binding_block_start_lines returns a list whose length equals the
+    length of parse_paragraphs's returned Paragraph list for that same
+    document, and each returned index points at the line in
+    document_text.splitlines() where the corresponding binding
+    paragraph's text begins.
+status: draft

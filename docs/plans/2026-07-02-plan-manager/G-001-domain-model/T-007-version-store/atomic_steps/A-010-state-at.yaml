@@ -1,0 +1,137 @@
+step_id: A-010
+parent_tactical_step: T-007
+name: state-at
+target_file: plan_manager/storage/version_ops.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-018]
+prompt: |
+  Create the new file `plan_manager/storage/version_ops.py` with a module
+  docstring, imports, and one function, `state_at`. Operation: create_file. Target
+  file: `plan_manager/storage/version_ops.py`. This file does not exist yet; do not
+  assume any pre-existing content.
+
+  Imports required (exact module paths, in this exact order with a blank line
+  between the standard-library group and the third-party/local group):
+
+  ```python
+  import uuid
+
+  import psycopg
+
+  from plan_manager.storage.version_store import VersionStoreError
+  ```
+
+  `VersionStoreError` has the exact definition `class VersionStoreError(ValueError):`
+  (defined in `plan_manager/storage/version_store.py`, sibling-owned): a `ValueError`
+  subclass raised when a version-store lookup is not found.
+
+  Write exactly one function with this exact signature:
+
+  ```python
+  def state_at(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, revision_uuid: uuid.UUID
+  ) -> dict[uuid.UUID, uuid.UUID]:
+  ```
+
+  Docstring (reST-style, `:param` entries in parameter order then `:return` then
+  `:raises`), exact text and format:
+
+  ```
+  Reconstruct the entity state at a revision by walking the parent chain.
+
+  Walks from ``revision_uuid`` back to the root revision (parent_uuid is
+  None) via each revision's ``parent_uuid``. For each entity_uuid touched
+  by any revision on the walk, the node_version from the FIRST revision
+  encountered during the walk is kept (i.e. the most recent revision on
+  the walk that touched that entity); node versions from revisions
+  encountered later in the walk for the same entity_uuid are ignored.
+
+  :param conn: open database connection.
+  :param plan_uuid: uuid of the plan to reconstruct state for.
+  :param revision_uuid: uuid of the revision to reconstruct state at.
+  :return: dict mapping entity_uuid to the node_version uuid holding that
+      entity's content at ``revision_uuid``.
+  :raises VersionStoreError: if ``revision_uuid`` does not exist for
+      ``plan_uuid``.
+  ```
+
+  Function body, exactly this logic (reading the `revision` table, whose columns
+  are `uuid`, `plan_uuid`, `parent_uuid`, `author`, `message`, `created_at`,
+  `node_version_uuids`, and the `node_version` table, whose columns are `uuid`,
+  `plan_uuid`, `entity_uuid`, `hash`, `content`):
+
+  ```python
+      state: dict[uuid.UUID, uuid.UUID] = {}
+      current_uuid: uuid.UUID | None = revision_uuid
+      while current_uuid is not None:
+          cur = conn.execute(
+              "SELECT parent_uuid, node_version_uuids FROM revision WHERE plan_uuid = %s AND uuid = %s",
+              (plan_uuid, current_uuid),
+          )
+          row = cur.fetchone()
+          if row is None:
+              raise VersionStoreError(
+                  f"revision not found: plan_uuid={plan_uuid} uuid={current_uuid}"
+              )
+          parent_uuid, node_version_uuids = row
+          if node_version_uuids:
+              nv_cur = conn.execute(
+                  "SELECT uuid, entity_uuid FROM node_version WHERE uuid = ANY(%s)",
+                  (list(node_version_uuids),),
+              )
+              for node_version_uuid, entity_uuid in nv_cur.fetchall():
+                  if entity_uuid not in state:
+                      state[entity_uuid] = node_version_uuid
+          current_uuid = parent_uuid
+      return state
+  ```
+
+  Constraints (all explicit, no deviation):
+  - The file must contain, in order: a module docstring, the import block exactly
+    as shown, two blank lines, then the function definition. No other functions,
+    classes, or module-level code.
+  - The module docstring text is exactly: `Version-store read operations: state
+    reconstruction, log, diff, checkout, revert.`
+  - SQL uses `%s` placeholders exactly as shown; do not use f-strings or `%`
+    formatting to build SQL text (the f-string is only used for the
+    `VersionStoreError` message, not for SQL).
+  - Use `conn.execute(sql, params)` directly; do not call `conn.cursor()`
+    separately.
+  - Row and cursor-row unpacking uses positional tuple unpacking exactly as shown,
+    not column names.
+  - `node_version_uuids` from the `revision` row is converted to a Python `list`
+    before being passed as a query parameter to `ANY(%s)`.
+  - The `if node_version_uuids:` guard skips the node_version lookup entirely when
+    a revision's `node_version_uuids` is empty or None (there is nothing to merge
+    into `state` for that revision).
+  - The walk terminates when `parent_uuid` is `None` (the root revision).
+  - Resulting file must be valid, importable Python 3.12+ source.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+
+  This function implements the C-018 property "any intermediate plan state is
+  addressable by revision id" — it is the shared state-reconstruction primitive that
+  `log`, `diff`, `checkout-read`, and `revert` (each implemented by a separate
+  function not part of this AS) build on.
+verification:
+  type: import
+  target: plan_manager.storage.version_ops
+  expected: >
+    The module imports without error and exposes a callable `state_at(conn,
+    plan_uuid, revision_uuid)` with the exact parameter and return types shown in
+    the signature above.
+status: draft

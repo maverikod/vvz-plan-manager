@@ -1,0 +1,178 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: storage-identity
+target_file: plan_manager/storage/identity.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-035, C-018]
+prompt: >
+  Create the file plan_manager/storage/identity.py from scratch (operation:
+  create_file). The file does not exist yet; do not assume any pre-existing
+  content. This module realizes the UUID/name identity mechanism: every
+  stored entity's primary identity is an immutable UUID assigned at
+  creation, and human-readable ids are scoped names mapped to that UUID.
+
+
+  MRS excerpt (only the concepts relevant to this file):
+
+  C-035 Database: "In-container PostgreSQL with pgvector serving as the
+  single source of truth for all plan data." Relevant properties: "entities
+  as rows; referential integrity at write time"; "every stored entity
+  carries an immutable UUID identity; human-readable ids are scoped names
+  mapped to it"; "accessed via psycopg 3 with plain SQL; no ORM; runtime
+  code never emits DDL."
+
+  C-018 VersionStore: "Git-like append-only version model of node versions,
+  revisions, and refs inside the database." Relevant property: the version
+  store is realized by three table families — node versions, revisions, and
+  refs — which, like every other stored entity, carry the immutable UUID
+  identity described under C-035.
+
+
+  Required imports, with exact module paths:
+
+    import uuid
+
+    import psycopg
+
+    from plan_manager.storage.errors import NotFoundError
+
+
+  The imported NotFoundError has exactly this definition (from
+  plan_manager/storage/errors.py, already created):
+
+    class NotFoundError(StorageError):
+        """Raised when a lookup by scoped name or UUID finds no matching row."""
+
+  where StorageError subclasses Exception with no custom __init__ — so
+  NotFoundError is constructed with a single positional str message
+  argument, e.g. NotFoundError("some message").
+
+
+  The module must define exactly this function, with this exact signature,
+  typing, and docstring:
+
+    def new_entity_uuid() -> uuid.UUID:
+        """Generate a new immutable primary identity for a stored entity.
+
+        Returns:
+            uuid.UUID
+                A random UUID (uuid.uuid4()). This is the primary identity
+                assigned once at creation time to every row in every table
+                listed in ALLOWED_TABLES; it never changes for the lifetime
+                of the row.
+        """
+
+  Implementation: return uuid.uuid4() and nothing else.
+
+
+  The module must define exactly these two module-level constants, with
+  exactly these names, types, and members (order of members inside the
+  frozenset() call does not matter, but membership must be exact):
+
+    ALLOWED_TABLES = frozenset({
+        "plan", "paragraph", "concept", "relation", "step",
+        "node_version", "revision", "ref",
+    })
+
+    ALLOWED_NAME_COLUMNS = frozenset({"concept_id", "step_id", "label", "name"})
+
+
+  The module must define exactly this function, with this exact signature,
+  typing, and docstring:
+
+    def resolve_scoped_name(
+        conn: psycopg.Connection,
+        table: str,
+        plan_uuid: uuid.UUID,
+        name_column: str,
+        name: str,
+    ) -> uuid.UUID:
+        """Resolve a human-readable scoped name to its immutable entity UUID.
+
+        Parameters:
+            conn: psycopg.Connection
+                An open psycopg 3 connection, as returned by
+                plan_manager.storage.connection.connect.
+            table: str
+                The table to query. Must be a member of ALLOWED_TABLES;
+                otherwise ValueError is raised before any query is
+                executed.
+            plan_uuid: uuid.UUID
+                The UUID of the owning plan; scopes the name lookup to one
+                plan.
+            name_column: str
+                The column holding the human-readable scoped name (e.g.
+                "concept_id" for concepts, "step_id" for steps, "label" for
+                paragraphs, "name" for plans). Must be a member of
+                ALLOWED_NAME_COLUMNS; otherwise ValueError is raised before
+                any query is executed.
+            name: str
+                The scoped name value to look up.
+
+        Returns:
+            uuid.UUID
+                The uuid column value of the matching row.
+
+        Raises:
+            ValueError: if table is not in ALLOWED_TABLES, or name_column is
+                not in ALLOWED_NAME_COLUMNS. Raised before any SQL is
+                executed, before any allowlist-failing value reaches string
+                interpolation.
+            plan_manager.storage.errors.NotFoundError: if no row matches
+                plan_uuid and name in the given table/name_column.
+        """
+
+
+  Implementation constraints for resolve_scoped_name, explicitly
+  enumerated:
+
+  - First check `if table not in ALLOWED_TABLES: raise ValueError(f"table
+    not allowed: {table!r}")`.
+  - Then check `if name_column not in ALLOWED_NAME_COLUMNS: raise
+    ValueError(f"name_column not allowed: {name_column!r}")`.
+  - Only after both checks pass, build the SQL text by interpolating table
+    and name_column directly into the string (they are now known-safe
+    because they passed the allowlist checks), producing exactly this query
+    shape:
+
+      SELECT uuid FROM <table> WHERE plan_uuid = %s AND <name_column> = %s
+
+    with `<table>` and `<name_column>` replaced by the actual validated
+    values, e.g. via an f-string:
+    `f"SELECT uuid FROM {table} WHERE plan_uuid = %s AND {name_column} = %s"`.
+  - Execute the query via `conn.execute(sql, (plan_uuid, name))`, binding
+    plan_uuid and name as query parameters in that order — never
+    interpolated into the SQL text.
+  - Call `.fetchone()` on the returned cursor.
+  - If the result is None, raise
+    `NotFoundError(f"{table}.{name_column}={name!r} not found for plan {plan_uuid}")`.
+  - Otherwise return the first element of the returned row (the uuid
+    value) as the function result.
+  - Do not add any other function, class, constant, or module-level
+    variable to this file beyond new_entity_uuid, ALLOWED_TABLES,
+    ALLOWED_NAME_COLUMNS, and resolve_scoped_name.
+  - Do not add a module docstring beyond a single short summary line at the
+    top of the file describing the module as the UUID/name identity
+    mechanism for plan_manager storage.
+  - No logging, no printing, no side effects beyond the described database
+    read.
+verification:
+  type: import
+  target: plan_manager.storage.identity
+  expected: >
+    The module imports without error given psycopg is installed and
+    plan_manager.storage.errors exists with NotFoundError defined.
+    new_entity_uuid() returns a distinct uuid.UUID instance on each call.
+    ALLOWED_TABLES is a frozenset equal to {"plan", "paragraph", "concept",
+    "relation", "step", "node_version", "revision", "ref"}.
+    ALLOWED_NAME_COLUMNS is a frozenset equal to {"concept_id", "step_id",
+    "label", "name"}. resolve_scoped_name raises ValueError immediately
+    (with no query executed) when table is outside ALLOWED_TABLES or
+    name_column is outside ALLOWED_NAME_COLUMNS; when both are valid, it
+    executes `SELECT uuid FROM <table> WHERE plan_uuid = %s AND
+    <name_column> = %s` with plan_uuid and name bound as parameters, and
+    returns the uuid of the first matching row, or raises
+    plan_manager.storage.errors.NotFoundError when fetchone() returns None.
+status: draft

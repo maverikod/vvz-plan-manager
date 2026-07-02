@@ -1,0 +1,123 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: concept-entity-and-patterns
+target_file: plan_manager/domain/concept.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-003, C-002]
+prompt: >
+  Create a new Python source file at exact project-relative path
+  plan_manager/domain/concept.py.
+
+
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content.
+
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-003 Concept: "MRS basis axis with canonical name, one-sentence
+    definition, properties, and source labels." Properties: identifier
+    pattern is C-NNN and unique within the plan; concepts are selected to be
+    as orthogonal as possible; embedding serialization default is the
+    definition field only.
+
+  - C-002 Paragraph: "Addressable binding unit of the HRS text carrying a
+    stable four-character base36 label." Properties: label is
+    position-independent, unique within one HRS, survives edits;
+    non-binding blocks are excluded from labeling and coverage. The base36
+    alphabet is the 36 characters 0-9 followed by a-z (lowercase). A label
+    is written as the four base36 characters wrapped in curly braces, e.g.
+    "{k2p7}".
+
+
+  Write exactly the following file content, verbatim:
+
+
+  ```python
+
+  """Concept domain entity (MRS concept C-003).
+
+
+  A Concept is an MRS entry with a C-NNN identifier unique within the plan,
+  a canonical name, a one-sentence definition, a list of properties, and
+  source labels referencing the HRS paragraphs (C-002) that justify it.
+  Concepts are selected to be as orthogonal as possible.
+
+  """
+
+
+  import re
+
+  from dataclasses import dataclass
+
+  from typing import List
+
+
+  CONCEPT_ID_PATTERN = re.compile(r"^C-\d{3}$")
+
+  PARAGRAPH_LABEL_PATTERN = re.compile(r"^\{[0-9a-z]{4}\}$")
+
+
+  class ConceptValidationError(ValueError):
+      """Raised when a Concept fails write-time validation."""
+
+
+  @dataclass
+  class Concept:
+      """A single MRS concept entry.
+
+      Attributes:
+          concept_id: Identifier matching pattern C-NNN (e.g. "C-003"),
+              unique within the plan.
+          name: Canonical short name of the concept.
+          definition: One-sentence definition of the concept.
+          properties: List of property strings describing the concept.
+          source_labels: List of HRS paragraph labels (C-002) that justify
+              the concept, each formatted as a four-character base36 string
+              wrapped in curly braces, e.g. "{k2p7}".
+      """
+
+      concept_id: str
+      name: str
+      definition: str
+      properties: List[str]
+      source_labels: List[str]
+
+  ```
+
+
+  Constraints:
+
+  - Use exactly the imports shown: `import re`, `from dataclasses import
+    dataclass`, `from typing import List`. No other imports.
+
+  - CONCEPT_ID_PATTERN must be a compiled regular expression object built
+    from the raw string `r"^C-\d{3}$"` via `re.compile`.
+
+  - PARAGRAPH_LABEL_PATTERN must be a compiled regular expression object
+    built from the raw string `r"^\{[0-9a-z]{4}\}$"` via `re.compile`.
+
+  - ConceptValidationError must subclass the built-in ValueError and have no
+    body other than its docstring.
+
+  - Concept must be a `@dataclass`-decorated class (from the `dataclasses`
+    module) with exactly five fields, in this order: `concept_id: str`,
+    `name: str`, `definition: str`, `properties: List[str]`,
+    `source_labels: List[str]`. No default values on any field. No methods
+    other than what `@dataclass` generates automatically.
+
+  - Do not add any code beyond what is shown above. Do not add a
+    `if __name__ == "__main__":` block. Do not add logging.
+verification:
+  type: import
+  target: plan_manager.domain.concept
+  expected: >
+    The module plan_manager.domain.concept imports without error and
+    exposes: the compiled regular expression CONCEPT_ID_PATTERN, the
+    compiled regular expression PARAGRAPH_LABEL_PATTERN, the exception
+    class ConceptValidationError (subclass of ValueError), and the
+    dataclass Concept with fields concept_id, name, definition, properties,
+    source_labels in that order.
+status: draft

@@ -1,0 +1,150 @@
+step_id: A-001
+parent_tactical_step: T-006
+name: plan-schema-dataclass-and-default-factory
+target_file: plan_manager/domain/plan_schema.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-006]
+prompt: |
+  Create the new file `plan_manager/domain/plan_schema.py`. This file does not
+  exist yet. Do not assume any pre-existing content: write the entire file
+  content from scratch as specified below.
+
+  Write exactly this Python source as the full content of the file:
+
+  ```python
+  """Declarative configuration object describing identifier patterns,
+  per-level required fields, and exchange-layout naming (C-006 PlanSchema)."""
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+
+  @dataclass
+  class PlanSchema:
+      """Declarative configuration object describing identifier patterns,
+      per-level required fields, and exchange-layout naming for a
+      development plan.
+
+      Attributes:
+          identifier_patterns: Mapping from plan level (int) to the
+              identifier pattern string for that level, e.g.
+              {2: "C-NNN", 3: "G-NNN", 4: "T-NNN", 5: "A-NNN"}, where NNN
+              denotes three zero-padded digits.
+          required_fields: Mapping from plan level (int) to the list of
+              required field names for artifacts at that level.
+          exchange_layout: Mapping from exchange layout element name (str)
+              to its naming convention (str), describing the file layout
+              used for import/export of a plan.
+      """
+
+      identifier_patterns: dict[int, str]
+      required_fields: dict[int, list[str]]
+      exchange_layout: dict[str, str]
+
+
+  def default_plan_schema() -> PlanSchema:
+      """Return the default PlanSchema matching the planning standard.
+
+      Returns:
+          PlanSchema: a new PlanSchema instance populated with the standard
+          default identifier patterns, per-level required fields, and
+          exchange layout naming, exactly as follows.
+      """
+      return PlanSchema(
+          identifier_patterns={
+              2: "C-NNN",
+              3: "G-NNN",
+              4: "T-NNN",
+              5: "A-NNN",
+          },
+          required_fields={
+              3: [
+                  "step_id",
+                  "name",
+                  "description",
+                  "concepts",
+                  "relations",
+                  "source_labels",
+                  "depends_on",
+                  "tactical_steps",
+                  "status",
+              ],
+              4: [
+                  "step_id",
+                  "parent_global_step",
+                  "name",
+                  "description",
+                  "concepts",
+                  "inputs",
+                  "outputs",
+                  "atomic_steps",
+                  "status",
+              ],
+              5: [
+                  "step_id",
+                  "parent_tactical_step",
+                  "name",
+                  "target_file",
+                  "operation",
+                  "priority",
+                  "depends_on",
+                  "concepts",
+                  "prompt",
+                  "verification",
+                  "status",
+              ],
+          },
+          exchange_layout={
+              "source_spec": "source_spec.md",
+              "machine_spec": "spec.yaml",
+              "global_step_dir": "G-NNN-<slug>",
+              "tactical_step_dir": "T-NNN-<slug>",
+              "step_readme": "README.yaml",
+              "atomic_step_file": "atomic_steps/A-NNN-<slug>.yaml",
+          },
+      )
+  ```
+
+  MRS excerpt used by this AS (concept C-006):
+  - concept_id: C-006
+    name: PlanSchema
+    definition: Declarative configuration object describing identifier
+      patterns, per-level required fields, and exchange-layout naming.
+    properties:
+    - defaults match plan_standard_machine.yaml; overrides only for exotic
+      layouts
+    - nothing project-specific is hard-coded in the engine
+
+  Constraints (all binding, no deviation):
+  - Target Python version is 3.12+. Use the built-in generic syntax
+    `dict[int, str]`, `dict[int, list[str]]`, `dict[str, str]` for type
+    annotations; do not import anything from the `typing` module.
+  - The only imports in the file are `from __future__ import annotations`
+    and `from dataclasses import dataclass`.
+  - `PlanSchema` must be decorated with `@dataclass` and must declare
+    exactly the three fields shown above, in that order, each with the
+    exact type annotation shown.
+  - `default_plan_schema()` must take no parameters, must be annotated to
+    return `PlanSchema`, and must return a `PlanSchema` instance whose
+    field values are exactly the literal dict values shown above — no
+    additional keys, no omitted keys, no reordering of list elements.
+  - Do not add any other functions, classes, constants, or code to this
+    file beyond what is specified above.
+  - Do not add any code related to status models, transitions, or any
+    concept other than C-006 PlanSchema.
+verification:
+  type: import
+  target: plan_manager.domain.plan_schema.PlanSchema and plan_manager.domain.plan_schema.default_plan_schema
+  expected: >
+    Importing plan_manager.domain.plan_schema succeeds with no errors.
+    PlanSchema is a dataclass with exactly the fields identifier_patterns,
+    required_fields, and exchange_layout. Calling default_plan_schema()
+    returns a PlanSchema instance whose identifier_patterns equals
+    {2: "C-NNN", 3: "G-NNN", 4: "T-NNN", 5: "A-NNN"}, whose required_fields
+    equals the three-level (3, 4, 5) field lists specified in the prompt,
+    and whose exchange_layout equals the six-key mapping specified in the
+    prompt.
+status: draft

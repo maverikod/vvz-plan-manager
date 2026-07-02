@@ -1,0 +1,230 @@
+step_id: A-008
+parent_tactical_step: T-004
+name: list-paragraphs
+target_file: plan_manager/domain/paragraph_store.py
+operation: modify_file
+priority: 3
+depends_on: [A-007]
+concepts: [C-002]
+prompt: |
+  Modify the file plan_manager/domain/paragraph_store.py. Its current
+  content (the full file as it exists right now, before this
+  modification) is exactly:
+
+  ```python
+  """Storage of HRS binding paragraphs (MRS concept C-002).
+
+  Wholesale replace/read operations against the paragraph table. The
+  paragraph set of a plan is always replaced wholesale from a freshly
+  parsed document: delete_paragraphs then insert_paragraphs. The server
+  never authors or rewrites paragraph prose; these functions only persist
+  already-labeled Paragraph objects.
+  """
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  def delete_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+      """Delete every stored paragraph row belonging to one plan.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; rows where the
+              paragraph table's plan_uuid column equals this value are
+              deleted.
+
+      Returns:
+          None.
+      """
+      with conn.cursor() as cur:
+          cur.execute("DELETE FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+
+
+  def insert_paragraphs(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      paragraphs: list[Paragraph],
+  ) -> None:
+      """Insert a plan's binding paragraphs as new paragraph rows.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; stored in each inserted
+              row's plan_uuid column.
+          paragraphs: The binding paragraphs to store. Every element must
+              have a non-None label field (only binding paragraphs, all
+              of which are labeled, are ever stored as paragraph rows).
+
+      Returns:
+          None.
+
+      Raises:
+          ValueError: if any paragraph in paragraphs has label equal to
+              None. The message is exactly "paragraph has no label".
+      """
+      for paragraph in paragraphs:
+          if paragraph.label is None:
+              raise ValueError("paragraph has no label")
+          with conn.cursor() as cur:
+              cur.execute(
+                  "INSERT INTO paragraph (uuid, plan_uuid, label, text, position) "
+                  "VALUES (%s, %s, %s, %s, %s)",
+                  (uuid.uuid4(), plan_uuid, paragraph.label, paragraph.text, paragraph.position),
+              )
+  ```
+
+  MRS excerpt (C-002):
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Storage context (binding, not optional): the paragraph table has
+  columns uuid, plan_uuid, label, text, position (integer document
+  order). Database access uses psycopg 3 with plain SQL strings; no ORM.
+
+  Required change: add exactly one new module-level function to this
+  file, after the existing insert_paragraphs function. Do not change the
+  existing docstring, imports, delete_paragraphs, or insert_paragraphs in
+  any way. Do not add any new import for this change (uuid, psycopg, and
+  Paragraph are already imported; uuid is not needed by this new
+  function but must remain imported for the other functions in the
+  file).
+
+  New function signature (exact):
+    def list_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Paragraph]:
+
+  Docstring: must describe args, returns, and behavior in prose.
+
+  Behavior (normative, must be followed exactly):
+    Execute, via conn.cursor(), the SQL statement
+    "SELECT label, text, position FROM paragraph WHERE plan_uuid = %s
+    ORDER BY position" with the single parameter plan_uuid. Fetch all
+    result rows via cur.fetchall(). For each returned row (a sequence
+    whose first element is the label column value, second element is the
+    text column value, third element is the position column value),
+    construct Paragraph(label=row[0], text=row[1], position=row[2]).
+    Return the list of these Paragraph objects, in the same order as
+    returned by the SQL query (ascending by position, per the ORDER BY
+    clause).
+
+  Constraints:
+    - Use conn.cursor() as a context manager (a "with" block).
+    - Use a parameterized query (the %s placeholder with a parameter
+      tuple); do not interpolate plan_uuid into the SQL string.
+    - Do not include the uuid or plan_uuid columns in the SELECT list or
+      in the constructed Paragraph objects (Paragraph has no such
+      fields).
+    - Do not add any other function, class, or constant to this file in
+      this operation.
+    - The final file must not exceed 400 lines.
+
+  After this change, the file's full content must be exactly:
+
+  ```python
+  """Storage of HRS binding paragraphs (MRS concept C-002).
+
+  Wholesale replace/read operations against the paragraph table. The
+  paragraph set of a plan is always replaced wholesale from a freshly
+  parsed document: delete_paragraphs then insert_paragraphs. The server
+  never authors or rewrites paragraph prose; these functions only persist
+  already-labeled Paragraph objects.
+  """
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  def delete_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+      """Delete every stored paragraph row belonging to one plan.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; rows where the
+              paragraph table's plan_uuid column equals this value are
+              deleted.
+
+      Returns:
+          None.
+      """
+      with conn.cursor() as cur:
+          cur.execute("DELETE FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+
+
+  def insert_paragraphs(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      paragraphs: list[Paragraph],
+  ) -> None:
+      """Insert a plan's binding paragraphs as new paragraph rows.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; stored in each inserted
+              row's plan_uuid column.
+          paragraphs: The binding paragraphs to store. Every element must
+              have a non-None label field (only binding paragraphs, all
+              of which are labeled, are ever stored as paragraph rows).
+
+      Returns:
+          None.
+
+      Raises:
+          ValueError: if any paragraph in paragraphs has label equal to
+              None. The message is exactly "paragraph has no label".
+      """
+      for paragraph in paragraphs:
+          if paragraph.label is None:
+              raise ValueError("paragraph has no label")
+          with conn.cursor() as cur:
+              cur.execute(
+                  "INSERT INTO paragraph (uuid, plan_uuid, label, text, position) "
+                  "VALUES (%s, %s, %s, %s, %s)",
+                  (uuid.uuid4(), plan_uuid, paragraph.label, paragraph.text, paragraph.position),
+              )
+
+
+  def list_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Paragraph]:
+      """List a plan's stored binding paragraphs in document order.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The uuid of the owning plan; only rows whose
+              plan_uuid column equals this value are returned.
+
+      Returns:
+          A list of Paragraph objects, one per stored paragraph row for
+          this plan, ordered by the paragraph table's position column
+          ascending. Each Paragraph is constructed with label set to the
+          row's label column, text set to the row's text column, and
+          position set to the row's position column.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT label, text, position FROM paragraph WHERE plan_uuid = %s ORDER BY position",
+              (plan_uuid,),
+          )
+          rows = cur.fetchall()
+      return [Paragraph(label=row[0], text=row[1], position=row[2]) for row in rows]
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.paragraph_store.list_paragraphs
+  expected: >
+    After inserting three paragraph rows for one plan_uuid with position
+    values 2, 0, and 1 (in that insertion order), calling
+    list_paragraphs(conn, plan_uuid) returns a list of three Paragraph
+    objects ordered by position ascending (0, 1, 2), each with label and
+    text matching the row that was inserted with that position value.
+status: draft

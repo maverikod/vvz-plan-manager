@@ -1,0 +1,100 @@
+step_id: A-003
+parent_tactical_step: T-004
+name: draw-label
+target_file: plan_manager/domain/labeling.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-002]
+prompt: |
+  Create the file plan_manager/domain/labeling.py with exactly the
+  following content (this is a new file; it does not exist yet, so assume
+  no prior content).
+
+  MRS excerpt (C-002), for context on the entity this module supports:
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Required import (exact, top of file):
+    import random
+
+  Required constant (module level, after the import):
+    BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+  This is the exact base36 alphabet: the ten digits 0-9 followed by the
+  26 lowercase letters a-z, in this exact order, as one 36-character
+  string.
+
+  Required function signature (exact):
+    def _draw_label(existing_labels: set[str]) -> str:
+
+  Docstring: must describe that this draws a new four-character base36
+  label that is not a member of existing_labels, and that existing_labels
+  is not mutated by this function.
+
+  Algorithm (normative, must be followed exactly):
+    Loop indefinitely: form a candidate string by concatenating four
+    characters, each drawn independently via
+    random.choice(BASE36_ALPHABET). If the candidate string is not in
+    existing_labels, return it immediately. Otherwise, discard the
+    candidate and draw a new one, repeating until a candidate not in
+    existing_labels is found.
+
+  Constraints:
+    - Do not seed the random module anywhere in this file.
+    - Do not add any other function, class, or constant to this file in
+      this operation.
+    - The file must contain nothing else besides the module docstring,
+      the "import random" line, the BASE36_ALPHABET constant, and the
+      _draw_label function.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Label assignment for HRS binding paragraphs.
+
+  Normative label-assignment algorithm (MRS concept C-002): draws unique
+  four-character base36 labels for unlabeled binding paragraphs of an HRS
+  document, in document order, and inserts them into the document text
+  without disturbing any other content. Existing labels are never
+  rewritten, reused, or reordered.
+  """
+  import random
+
+  BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+  def _draw_label(existing_labels: set[str]) -> str:
+      """Draw a new four-character base36 label not present in existing_labels.
+
+      Args:
+          existing_labels: The set of labels (four-character strings) that
+              are already in use and must not be produced. Not mutated by
+              this function.
+
+      Returns:
+          A four-character string drawn from BASE36_ALPHABET that is not a
+          member of existing_labels.
+      """
+      while True:
+          candidate = "".join(random.choice(BASE36_ALPHABET) for _ in range(4))
+          if candidate not in existing_labels:
+              return candidate
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.labeling._draw_label
+  expected: >
+    Calling _draw_label repeatedly with a small existing_labels set (for
+    example {"aaaa", "bbbb"}) always returns a four-character string
+    composed only of characters from "0123456789abcdefghijklmnopqrstuvwxyz"
+    and never returns "aaaa" or "bbbb"; existing_labels is unchanged after
+    the call.
+status: draft

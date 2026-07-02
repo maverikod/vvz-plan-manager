@@ -1,0 +1,42 @@
+step_id: T-002
+parent_global_step: G-001
+name: plan-aggregate
+description: >
+  Create the Plan (C-001), the root aggregate of one development plan. The Plan
+  carries an identity, a name, a status governed by the status model (C-007), a head
+  revision pointer into the version store (C-018), and a user-set context budget in
+  tokens supplied at plan creation, changeable later, varying from plan to plan, and
+  defaulting to 4000 tokens. Many Plans live in one database and are enumerable by a
+  catalog query. The Plan is the owner of the plan's paragraphs (C-002), concepts
+  (C-003), relations (C-004), and steps (C-005): it holds the ownership references
+  that bind these entities into one plan. In draft editing the head revision advances
+  per revision; on publication of a cascade it advances on the green gate. This
+  tactical step defines only the Plan aggregate — its fields, its ownership
+  references, its catalog listability, and its head-revision advancement rule — and
+  does not define the owned child entities themselves.
+concepts: [C-001, C-002, C-003, C-004, C-005, C-007, C-018]
+inputs:
+- name: plan_creation_request
+  type: domain command payload
+  description: >
+    Request to create a Plan (C-001) with a name and a user-set context budget in
+    tokens defaulting to 4000.
+- name: head_revision_ref
+  type: version-store reference
+  description: >
+    Reference to the current head revision maintained in the version store (C-018)
+    that the Plan aggregate advances in draft editing and on cascade publication.
+outputs:
+- name: plan_aggregate_record
+  type: stored domain entity
+  description: >
+    The Plan root aggregate carrying identity, name, status (C-007), head revision
+    pointer (C-018), and context budget, holding ownership references to its
+    paragraphs (C-002), concepts (C-003), relations (C-004), and steps (C-005).
+- name: plan_catalog_entry
+  type: catalog projection
+  description: >
+    The plan's listable entry enabling the many plans in one database to be
+    enumerated by catalog query.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

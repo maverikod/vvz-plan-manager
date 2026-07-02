@@ -1,0 +1,48 @@
+step_id: T-007
+parent_global_step: G-001
+name: version-store
+description: >
+  Create the VersionStore (C-018), the git-like append-only version model held inside
+  the database. It comprises three table families: immutable node versions
+  content-addressed by the SHA-256 hash of the node's canonical serialization so that
+  identical content is stored once; revisions carrying parent id, author, message,
+  timestamp, and the changed node-version set; and refs, which are the plan head plus
+  one ref per open cascade. The canonical serialization is canonical JSON —
+  lexicographically sorted keys, UTF-8, no insignificant whitespace — hashed with
+  SHA-256. Every entity mutation writes a new immutable node version and produces its
+  own revision record: one mutation, one revision, so the plan state after any
+  individual edit is addressable by revision id. In direct draft editing the head
+  advances with each revision; cascade revisions chain under the cascade ref and reach
+  the head only on publication — a cascade ref is merged into head on commit and
+  deleted on abort. Version operations are log, diff of two revisions into
+  added/removed/changed nodes with field-level detail, checkout-read of any snapshot
+  at an optional revision, and revert as a new revision restoring a prior state;
+  history is only ever appended, never rewritten.
+concepts: [C-018]
+inputs:
+- name: entity_mutation
+  type: domain change
+  description: >
+    A single mutation of one plan entity to be recorded as one immutable node version
+    and one revision.
+outputs:
+- name: node_version
+  type: content-addressed record
+  description: >
+    An immutable node version content-addressed by the SHA-256 hash of the node's
+    canonical JSON serialization (sorted keys, UTF-8, no insignificant whitespace);
+    identical content is stored once.
+- name: revision_record
+  type: version-store record
+  description: >
+    A revision carrying parent id, author, message, timestamp, and the changed
+    node-version set, advancing the head in draft editing or chaining under a cascade
+    ref until publication.
+- name: version_operation_result
+  type: query or command result
+  description: >
+    Result of a version operation — log, diff of two revisions with field-level
+    detail, checkout-read of a snapshot at a revision, or revert as a new appended
+    revision.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009, A-010, A-011, A-012, A-013, A-014, A-015]
+status: draft

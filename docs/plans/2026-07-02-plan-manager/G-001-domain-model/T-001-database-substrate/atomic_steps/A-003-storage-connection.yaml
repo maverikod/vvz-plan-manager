@@ -1,0 +1,78 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: storage-connection
+target_file: plan_manager/storage/connection.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-035]
+prompt: >
+  Create the file plan_manager/storage/connection.py from scratch
+  (operation: create_file). The file does not exist yet; do not assume any
+  pre-existing content. This module is the sole point where a database
+  connection is opened; it holds no module-level connection state, and
+  callers pass connections explicitly as function parameters.
+
+
+  MRS excerpt (only the concept relevant to this file):
+
+  C-035 Database: "In-container PostgreSQL with pgvector serving as the
+  single source of truth for all plan data." Relevant property: "accessed
+  via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL."
+  Building the DSN (connection string) from server configuration is out of
+  scope for this file; this function accepts the DSN exactly as given by
+  its caller.
+
+
+  Required imports, with exact module paths:
+
+    import psycopg
+
+
+  The module must define exactly this function, with this exact signature,
+  typing, and docstring:
+
+    def connect(dsn: str) -> psycopg.Connection:
+        """Open a psycopg 3 connection to the plan_manager database.
+
+        Parameters:
+            dsn: str
+                A complete libpq connection string (DSN), e.g.
+                "postgresql://user:password@host:port/dbname". Building this
+                string from server configuration is out of scope for this
+                function; it accepts the DSN exactly as given.
+
+        Returns:
+            psycopg.Connection
+                An open psycopg 3 connection with autocommit=False (the
+                default transactional mode: callers must call commit() or
+                rollback() explicitly).
+        """
+
+
+  Implementation constraints, explicitly enumerated:
+
+  - The function body is exactly: `return psycopg.connect(dsn,
+    autocommit=False)`.
+  - Do not set any connection parameter other than the dsn positional
+    argument and autocommit=False.
+  - Do not catch, translate, or log any exception raised by
+    psycopg.connect; let it propagate to the caller unchanged.
+  - Do not add any other function, class, constant, or module-level
+    variable to this file.
+  - Do not add any module-level connection object or other module-level
+    mutable state.
+  - Do not add a module docstring beyond a single short summary line at the
+    top of the file describing the module as the database connection
+    substrate for plan_manager storage.
+  - No logging, no printing, no side effects beyond opening the connection.
+verification:
+  type: import
+  target: plan_manager.storage.connection
+  expected: >
+    The module imports without error given psycopg is installed. connect(dsn)
+    calls psycopg.connect(dsn, autocommit=False) and returns its result
+    unchanged, with no other connection parameters set, no exception
+    handling around the call, and no module-level connection state defined
+    anywhere in the file.
+status: draft

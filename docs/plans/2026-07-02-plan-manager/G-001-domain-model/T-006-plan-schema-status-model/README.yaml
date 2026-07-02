@@ -1,0 +1,42 @@
+step_id: T-006
+parent_global_step: G-001
+name: plan-schema-status-model
+description: >
+  Create the two declarative governance entities of the domain model: the PlanSchema
+  (C-006) and the StatusModel (C-007). The PlanSchema is a declarative configuration
+  object describing identifier patterns, per-level required fields, and exchange-layout
+  naming, whose defaults match the planning standard; nothing project-specific is
+  hard-coded, and exotic layouts are supported only by overriding PlanSchema values.
+  The StatusModel is the lifecycle state machine enforcing the legal transitions among
+  draft, ready_for_review, frozen, and needs_review for all artifacts, plus
+  in_progress and done for atomic steps only; needs_review is reserved for cascade
+  propagation and is never set by a direct request. This step defines the schema
+  object and the status transition rules as declarative, reusable configuration
+  consumed by the Step entity and the Plan aggregate; it does not create those
+  consuming entities.
+concepts: [C-006, C-007]
+inputs:
+- name: schema_overrides
+  type: declarative configuration
+  description: >
+    Optional overrides to PlanSchema (C-006) default identifier patterns, per-level
+    required fields, and exchange-layout naming for exotic layouts.
+- name: status_transition_request
+  type: lifecycle command
+  description: >
+    A requested transition of an artifact's status to be validated against the
+    StatusModel (C-007) legal transitions.
+outputs:
+- name: plan_schema_object
+  type: declarative configuration object
+  description: >
+    The PlanSchema describing identifier patterns, per-level required fields, and
+    exchange-layout naming with defaults matching the planning standard.
+- name: status_transition_verdict
+  type: lifecycle result
+  description: >
+    Accept or reject of a status transition among draft, ready_for_review, frozen,
+    needs_review, and the atomic-only in_progress and done, with needs_review
+    reserved for cascade propagation.
+atomic_steps: [A-001, A-002, A-003, A-004]
+status: draft

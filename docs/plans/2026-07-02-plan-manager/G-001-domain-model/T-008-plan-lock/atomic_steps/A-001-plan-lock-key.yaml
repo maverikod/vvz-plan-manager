@@ -1,0 +1,119 @@
+step_id: A-001
+parent_tactical_step: T-008
+name: plan-lock-key-and-error
+target_file: plan_manager/storage/plan_lock.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-019, C-035]
+prompt: |
+  Create the new file `plan_manager/storage/plan_lock.py` with exactly the
+  content specified below. This is a new file: do not assume any
+  pre-existing content in `plan_manager/storage/plan_lock.py`.
+
+  ## MRS excerpt (only the concepts relevant to this AS)
+
+  concept_id: C-019
+  name: PlanLock
+  definition: Per-plan database advisory lock serializing cascades and identifier assignment.
+  properties:
+  - no lock files, no in-process lock state
+
+  concept_id: C-035
+  name: Database
+  definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+  relevant property:
+  - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  ## Required imports (exact module paths, in this exact order, each on its own line, with one blank line between the stdlib group and the third-party group)
+
+  ```python
+  from __future__ import annotations
+
+  import hashlib
+  import uuid
+
+  import psycopg
+  ```
+
+  Note: `psycopg` (the top-level package import) must be present even though
+  this particular file does not call any `psycopg` attribute directly yet;
+  it is required by the `psycopg.Connection` type annotations added to this
+  same file by a later step, and importing it here keeps the import block
+  complete and stable across that later edit.
+
+  ## Exact content to write
+
+  Write the file with exactly the following elements, in this order:
+
+  1. A module docstring (triple-quoted, placed as the very first statement
+     in the file) with exactly this text:
+
+     ```
+     Per-plan PostgreSQL advisory lock (C-019) serializing cascades and identifier assignment.
+
+     All plan-lock state lives in PostgreSQL: there are no lock files and no
+     in-process lock state that a server restart could lose.
+     ```
+
+  2. The imports block shown above, immediately after the module docstring,
+     separated from it by exactly one blank line.
+
+  3. An exception class, separated from the imports block by exactly two
+     blank lines:
+
+     ```python
+     class PlanLockError(RuntimeError):
+         """Raised when a plan advisory lock operation reports the lock was not held."""
+     ```
+
+     Constraints: `PlanLockError` subclasses the builtin `RuntimeError`
+     exactly (no other base classes). It has no body other than the
+     docstring shown (no `__init__` override, no additional attributes,
+     no `pass` statement — the docstring alone is a valid class body).
+
+  4. A function, separated from the exception class by exactly two blank
+     lines, with this exact signature, docstring, and body:
+
+     ```python
+     def plan_lock_key(plan_uuid: uuid.UUID) -> int:
+         """Derive the deterministic PostgreSQL advisory lock key for a plan.
+
+         Args:
+             plan_uuid: The immutable UUID identity of the plan.
+
+         Returns:
+             A deterministic signed 64-bit integer key derived from the SHA-256
+             digest of the plan UUID's string representation, suitable as the
+             key argument to PostgreSQL's pg_advisory_lock and
+             pg_advisory_unlock functions.
+         """
+         digest = hashlib.sha256(str(plan_uuid).encode("utf-8")).digest()
+         return int.from_bytes(digest[:8], byteorder="big", signed=True)
+     ```
+
+  Constraints (all explicit, no discretion):
+  - `plan_uuid` is typed `uuid.UUID`; the return type of `plan_lock_key` is
+    `int`.
+  - The key is computed as: take `str(plan_uuid)` (the standard hyphenated
+    UUID string form), encode it as UTF-8, compute its SHA-256 digest with
+    `hashlib.sha256`, take the first 8 bytes of that digest
+    (`digest[:8]`), and convert those 8 bytes to a Python `int` using
+    `int.from_bytes` with `byteorder="big"` and `signed=True`.
+  - Do not add any other functions, classes, constants, `__all__` export
+    list, or `if __name__ == "__main__":` block to this file in this step.
+  - Do not add blank trailing whitespace at end of lines.
+  - The file must end with a single trailing newline.
+verification:
+  type: import
+  target: plan_manager.storage.plan_lock
+  expected: >
+    The module plan_manager/storage/plan_lock.py imports successfully with no
+    errors and defines exactly two names: the exception class PlanLockError,
+    a plain RuntimeError subclass with no added behavior, and the function
+    plan_lock_key, which takes a plan UUID and returns an integer. Calling
+    plan_lock_key twice with the same UUID value returns the same integer
+    both times, and that integer is the big-endian signed integer formed
+    from the first eight bytes of the SHA-256 digest of the UUID's string
+    representation encoded as UTF-8.
+status: draft

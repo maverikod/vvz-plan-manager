@@ -1,0 +1,172 @@
+step_id: A-005
+parent_tactical_step: T-007
+name: insert-revision
+target_file: plan_manager/storage/version_store.py
+operation: modify_file
+priority: 3
+depends_on: [A-004]
+concepts: [C-018]
+prompt: |
+  Modify the existing file `plan_manager/storage/version_store.py` to add one new
+  import and one new function, `insert_revision`. Operation: modify_file. Target
+  file: `plan_manager/storage/version_store.py`.
+
+  Full current content of the target file (post-prior-AS state — this is the exact
+  content to modify, not a summary):
+
+  ```python
+  """Version-store writes: node versions, revisions, and refs."""
+  import uuid
+
+  import psycopg
+  from psycopg.types.json import Jsonb
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class VersionStoreError(ValueError):
+      """Raised when a version-store lookup (e.g. a ref or revision) is not found."""
+
+
+  def insert_node_version(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      entity_uuid: uuid.UUID,
+      content: dict,
+  ) -> uuid.UUID:
+      """Store ``content`` as a node version, reusing an identical existing one.
+
+      Content addressing: the SHA-256 hex digest of the canonical JSON of
+      ``content`` (via ``content_hash``) is computed first. If a node_version
+      row already exists for the same ``(plan_uuid, entity_uuid, hash)``, its
+      uuid is returned and no new row is inserted. Otherwise a new node_version
+      row is inserted with a freshly generated uuid.
+
+      :param conn: open database connection.
+      :param plan_uuid: uuid of the plan the node version belongs to.
+      :param entity_uuid: uuid of the domain entity this version snapshots.
+      :param content: JSON-serializable content of the node version.
+      :return: uuid of the existing or newly inserted node_version row.
+      """
+      hash_value = content_hash(content)
+      cur = conn.execute(
+          "SELECT uuid FROM node_version WHERE plan_uuid = %s AND entity_uuid = %s AND hash = %s",
+          (plan_uuid, entity_uuid, hash_value),
+      )
+      row = cur.fetchone()
+      if row is not None:
+          return row[0]
+      new_uuid = uuid.uuid4()
+      conn.execute(
+          "INSERT INTO node_version (uuid, plan_uuid, entity_uuid, hash, content) "
+          "VALUES (%s, %s, %s, %s, %s)",
+          (new_uuid, plan_uuid, entity_uuid, hash_value, Jsonb(content)),
+      )
+      return new_uuid
+  ```
+
+  Required changes:
+  1. Add one new import after `import psycopg` and before `from psycopg.types.json
+     import Jsonb`, so the import block becomes:
+
+  ```python
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+  from psycopg.types.json import Jsonb
+
+  from plan_manager.storage.canonical import content_hash
+  ```
+
+  2. Append a new function below `insert_node_version`, separated by two blank
+     lines, with this exact signature:
+
+  ```python
+  def insert_revision(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      parent_uuid: uuid.UUID | None,
+      author: str,
+      message: str,
+      node_version_uuids: list[uuid.UUID],
+  ) -> uuid.UUID:
+  ```
+
+  Docstring (reST-style, `:param` entries in parameter order then `:return`), exact
+  text and format:
+
+  ```
+  Insert a new revision row.
+
+  :param conn: open database connection.
+  :param plan_uuid: uuid of the plan the revision belongs to.
+  :param parent_uuid: uuid of the parent revision, or None for the first
+      revision of the plan.
+  :param author: identifier of the revision's author.
+  :param message: human-readable revision message.
+  :param node_version_uuids: uuids of the node_version rows changed by
+      this revision.
+  :return: uuid of the newly inserted revision row.
+  ```
+
+  Function body, exactly this logic (inserting into the `revision` table, whose
+  columns are `uuid`, `plan_uuid`, `parent_uuid`, `author`, `message`,
+  `created_at`, `node_version_uuids`):
+
+  ```python
+      new_uuid = uuid.uuid4()
+      created_at = datetime.now(timezone.utc)
+      conn.execute(
+          "INSERT INTO revision (uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids) "
+          "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+          (new_uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids),
+      )
+      return new_uuid
+  ```
+
+  Constraints (all explicit, no deviation):
+  - Do not modify `VersionStoreError` or `insert_node_version` in any way.
+  - Insert `from datetime import datetime, timezone` exactly where shown (after
+    `import uuid`, before the blank line that precedes `import psycopg`); do not
+    reorder any other existing import line.
+  - `created_at` is set in Python via `datetime.now(timezone.utc)`, never left to a
+    database default.
+  - SQL uses `%s` placeholders exactly as shown; do not use f-strings or `%`
+    formatting to build SQL text.
+  - Use `conn.execute(sql, params)` directly; do not call `conn.cursor()`
+    separately. Do not call `conn.commit()` inside this function.
+  - `uuid.uuid4()` is the sole mechanism for generating the new revision identity.
+  - `node_version_uuids` is passed through as-is (a Python list of `uuid.UUID`) for
+    psycopg 3 to adapt to the PostgreSQL `uuid[]` column type; no manual array
+    formatting.
+  - Resulting file must be valid, importable Python 3.12+ source, well under 400
+    lines total.
+
+  MRS excerpt (concept referenced: C-018):
+
+  ```yaml
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+  ```
+
+  This function implements the C-018 property "revisions carry parent, author,
+  change set; one mutation produces one revision" — this is the low-level revision
+  row writer; the "one mutation, one revision" orchestration itself is implemented
+  by a separate function not part of this AS.
+verification:
+  type: import
+  target: plan_manager.storage.version_store
+  expected: >
+    The module imports without error and exposes a callable
+    `insert_revision(conn, plan_uuid, parent_uuid, author, message,
+    node_version_uuids)` with the exact parameter and return types shown in the
+    signature above.
+status: draft

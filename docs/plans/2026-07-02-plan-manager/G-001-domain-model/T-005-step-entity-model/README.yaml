@@ -1,0 +1,43 @@
+step_id: T-005
+parent_global_step: G-001
+name: step-entity-model
+description: >
+  Create the Step (C-005), the single stored entity for plan levels 3 to 5. A Step
+  carries a level, a zero-padded step id unique within its scope, a kebab-case slug,
+  the level-specific required fields, depends_on references to sibling steps, concept
+  references to the MRS entries (C-003) it touches, and a status governed by the
+  status model (C-007). Operations on Steps are uniform across levels while the
+  differing required-field sets remain declarative schema drawn from PlanSchema
+  (C-006). Scaffolded creation auto-assigns the next free id by the normative
+  next-free-id algorithm: within the parent scope collect the numeric ids matching
+  the level pattern, assign max+1 (1 for an empty scope) zero-padded to three digits,
+  and re-check the assignment under the per-plan lock (C-019) so concurrent creates
+  cannot obtain the same id. This step defines the Step entity schema, its uniform
+  operations, and its id-assignment behavior; it references but does not create the
+  concept, schema, status, and lock entities it depends on.
+concepts: [C-005, C-003, C-006, C-007, C-019]
+inputs:
+- name: step_creation_request
+  type: domain command payload
+  description: >
+    A scaffolded create request for a Step (C-005) at level 3, 4, or 5 within a parent
+    scope, to receive the next free zero-padded id.
+- name: level_required_fields
+  type: declarative schema fragment
+  description: >
+    The per-level required-field set from PlanSchema (C-006) that the Step must
+    satisfy for its level.
+outputs:
+- name: stored_step
+  type: stored domain entity
+  description: >
+    The unified Step entity carrying level, zero-padded step id unique within scope,
+    kebab-case slug, level-specific fields, depends_on references, concept references
+    (C-003), and status (C-007).
+- name: assigned_step_id
+  type: identifier
+  description: >
+    The next free zero-padded id assigned as max+1 within the parent scope, re-checked
+    under the per-plan lock (C-019) so concurrent creates cannot collide.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft

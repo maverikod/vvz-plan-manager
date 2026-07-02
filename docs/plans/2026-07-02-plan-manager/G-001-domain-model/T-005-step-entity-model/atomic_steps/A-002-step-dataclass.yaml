@@ -1,0 +1,152 @@
+step_id: A-002
+parent_tactical_step: T-005
+name: Step dataclass
+target_file: plan_manager/domain/step.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-005, C-003, C-007]
+prompt: |
+  Modify the file plan_manager/domain/step.py. Its full current content
+  (after all lower-priority changes on this file have been applied) is
+  exactly:
+
+
+  """Domain model for the Step entity (C-005): the single stored entity for plan
+  levels 3-5 (global step, tactical step, atomic step), with declarative
+  per-level identifier patterns and validation rules.
+  """
+
+
+  import re
+
+
+  LEVEL_PREFIXES: dict[int, str] = {3: "G", 4: "T", 5: "A"}
+
+
+  STEP_ID_PATTERNS: dict[int, re.Pattern[str]] = {
+      3: re.compile(r"^G-\d{3}$"),
+      4: re.compile(r"^T-\d{3}$"),
+      5: re.compile(r"^A-\d{3}$"),
+  }
+
+
+  SLUG_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+  CONCEPT_ID_PATTERN: re.Pattern[str] = re.compile(r"^C-\d{3}$")
+
+
+  class StepValidationError(ValueError):
+      """Raised when a Step instance fails one or more validate_step checks.
+
+      The exception message lists every failed check found during
+      validation, joined by "; ".
+      """
+
+
+  Apply exactly these two changes:
+
+
+  1. Insert three new import lines immediately after `import re` (before the
+     first blank line that follows it), so the import block becomes:
+
+     import re
+     from dataclasses import dataclass
+     from typing import Any
+     from uuid import UUID
+
+     `from dataclasses import dataclass` imports the standard-library
+     `dataclass` decorator. `from typing import Any` imports the standard
+     `typing.Any` type. `from uuid import UUID` imports the standard-library
+     `uuid.UUID` class.
+
+  2. Append, at the end of the file, separated from the StepValidationError
+     class by two blank lines, exactly this dataclass definition:
+
+     @dataclass
+     class Step:
+         """Unified stored entity for plan levels 3, 4, and 5 (C-005).
+
+         Attributes:
+             uuid: Immutable primary identity of this step.
+             plan_uuid: Identity of the plan this step belongs to.
+             parent_step_uuid: Identity of the parent step that defines this
+                 step's id-uniqueness scope, or None when this step is a
+                 level-3 step (whose scope is the plan itself).
+             level: Plan hierarchy level of this step; one of 3, 4, 5.
+             step_id: Human-readable identifier matching the pattern for
+                 `level` in STEP_ID_PATTERNS (e.g. "G-001", "T-002", "A-003").
+             slug: Kebab-case short name matching SLUG_PATTERN.
+             fields: Level-specific required fields, as a plain dict.
+             depends_on: step_id values of sibling steps this step depends on;
+                 each entry matches the same pattern as `step_id`.
+             concepts: MRS concept_id values referenced by this step; each
+                 entry matches CONCEPT_ID_PATTERN (e.g. "C-005").
+             status: Lifecycle status string (e.g. "draft").
+         """
+
+         uuid: UUID
+         plan_uuid: UUID
+         parent_step_uuid: UUID | None
+         level: int
+         step_id: str
+         slug: str
+         fields: dict[str, Any]
+         depends_on: list[str]
+         concepts: list[str]
+         status: str
+
+  Exact requirements:
+
+  - `Step` is decorated with the bare `@dataclass` decorator (no
+    parentheses arguments, no `frozen=True`, no `eq=`/`order=` options).
+  - The class docstring text must match exactly what is shown above,
+    including the "Attributes:" section listing all ten fields in the
+    given order with the given wording.
+  - The ten dataclass fields must appear in exactly this order with exactly
+    these type annotations: uuid: UUID, plan_uuid: UUID,
+    parent_step_uuid: UUID | None, level: int, step_id: str, slug: str,
+    fields: dict[str, Any], depends_on: list[str], concepts: list[str],
+    status: str.
+  - No field has a default value.
+  - Do not add any other names, methods, or imports beyond what is listed
+    here. Do not modify any line of the file other than the two changes
+    described above.
+
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+verification:
+  type: import
+  target: plan_manager.domain.step.Step
+  expected: >
+    plan_manager/domain/step.py imports without error; Step is a dataclass
+    instantiable with the ten documented keyword fields (uuid, plan_uuid,
+    parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
+    status) and exposes them as attributes after construction.
+status: draft

@@ -1,0 +1,157 @@
+step_id: A-002
+parent_tactical_step: T-008
+name: acquire-and-release-plan-lock
+target_file: plan_manager/storage/plan_lock.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-019, C-035]
+prompt: |
+  Modify the existing file `plan_manager/storage/plan_lock.py` by appending
+  two new functions at the end of the file. Do not alter anything above the
+  appended text.
+
+  ## Full current content of plan_manager/storage/plan_lock.py (post-prior-AS state — this is exactly what is on disk before this step's edit)
+
+  ```python
+  """Per-plan PostgreSQL advisory lock (C-019) serializing cascades and identifier assignment.
+
+  All plan-lock state lives in PostgreSQL: there are no lock files and no
+  in-process lock state that a server restart could lose.
+  """
+
+  from __future__ import annotations
+
+  import hashlib
+  import uuid
+
+  import psycopg
+
+
+  class PlanLockError(RuntimeError):
+      """Raised when a plan advisory lock operation reports the lock was not held."""
+
+
+  def plan_lock_key(plan_uuid: uuid.UUID) -> int:
+      """Derive the deterministic PostgreSQL advisory lock key for a plan.
+
+      Args:
+          plan_uuid: The immutable UUID identity of the plan.
+
+      Returns:
+          A deterministic signed 64-bit integer key derived from the SHA-256
+          digest of the plan UUID's string representation, suitable as the
+          key argument to PostgreSQL's pg_advisory_lock and
+          pg_advisory_unlock functions.
+      """
+      digest = hashlib.sha256(str(plan_uuid).encode("utf-8")).digest()
+      return int.from_bytes(digest[:8], byteorder="big", signed=True)
+  ```
+
+  ## MRS excerpt (only the concepts relevant to this AS)
+
+  concept_id: C-019
+  name: PlanLock
+  definition: Per-plan database advisory lock serializing cascades and identifier assignment.
+  properties:
+  - no lock files, no in-process lock state
+
+  concept_id: C-035
+  name: Database
+  definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+  relevant property:
+  - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  ## Edit to make
+
+  Append the following, starting exactly two blank lines after the last
+  line of the current file content shown above (i.e. after the `return`
+  line of `plan_lock_key`):
+
+  1. This function, with this exact signature, docstring, and body:
+
+     ```python
+     def acquire_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+         """Acquire the per-plan PostgreSQL session-level advisory lock.
+
+         Blocks until the lock is held by this session.
+
+         Args:
+             conn: An open psycopg 3 connection; its database session will
+                 hold the advisory lock.
+             plan_uuid: The immutable UUID identity of the plan to lock.
+
+         Returns:
+             None.
+         """
+         key = plan_lock_key(plan_uuid)
+         conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+     ```
+
+  2. Exactly two blank lines, then this function, with this exact
+     signature, docstring, and body:
+
+     ```python
+     def release_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+         """Release the per-plan PostgreSQL session-level advisory lock.
+
+         Args:
+             conn: An open psycopg 3 connection whose database session
+                 currently holds the advisory lock.
+             plan_uuid: The immutable UUID identity of the plan to unlock.
+
+         Returns:
+             None.
+
+         Raises:
+             PlanLockError: If PostgreSQL's pg_advisory_unlock reports (via
+                 its boolean result column) that the lock was not held by
+                 this session.
+         """
+         key = plan_lock_key(plan_uuid)
+         row = conn.execute("SELECT pg_advisory_unlock(%s)", (key,)).fetchone()
+         if row is None or row[0] is False:
+             raise PlanLockError(
+                 f"plan advisory lock not held by this session for plan {plan_uuid}"
+             )
+     ```
+
+  Constraints (all explicit, no discretion):
+  - `conn` is typed `psycopg.Connection` (imported via the existing
+    `import psycopg` statement already present in the file; use the
+    attribute form `psycopg.Connection`, do not add a new import).
+  - `plan_uuid` is typed `uuid.UUID` in both functions; both functions
+    return `None` (typed `-> None`).
+  - Both functions call the already-defined `plan_lock_key(plan_uuid)` to
+    derive the integer key; do not recompute the key inline and do not
+    call `hashlib` or `uuid` functions directly inside these two
+    functions.
+  - `acquire_plan_lock` executes exactly one SQL statement via
+    `conn.execute("SELECT pg_advisory_lock(%s)", (key,))` and does not
+    read or check the result.
+  - `release_plan_lock` executes exactly one SQL statement via
+    `conn.execute("SELECT pg_advisory_unlock(%s)", (key,))`, calls
+    `.fetchone()` on the returned cursor to obtain `row`, and raises
+    `PlanLockError` (already defined earlier in this file) with the exact
+    f-string message `f"plan advisory lock not held by this session for plan {plan_uuid}"`
+    when `row is None or row[0] is False`. Otherwise it returns `None`
+    without raising.
+  - Do not add any other functions, classes, constants, or blocks to this
+    file in this step.
+  - Do not add blank trailing whitespace at end of lines.
+  - The file must end with a single trailing newline after this edit.
+verification:
+  type: import
+  target: plan_manager.storage.plan_lock
+  expected: >
+    The module plan_manager/storage/plan_lock.py imports successfully with no
+    errors and now defines four names in total: the previously defined
+    PlanLockError and plan_lock_key, plus two new functions, acquire_plan_lock
+    and release_plan_lock, each taking a database connection and a plan UUID
+    and returning nothing. Static inspection of release_plan_lock confirms it
+    raises PlanLockError when the fetched advisory-unlock result row is
+    missing or its first column is false, and otherwise returns without
+    raising; inspection of acquire_plan_lock confirms it issues a single
+    advisory-lock statement keyed by the value plan_lock_key derives from the
+    given plan UUID, and returns without producing a value.
+status: draft

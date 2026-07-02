@@ -1,0 +1,152 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: plan-dataclass-module-skeleton
+target_file: plan_manager/domain/plan.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-001, C-007, C-018]
+prompt: |
+  Create a new Python file at the exact project-relative path
+  plan_manager/domain/plan.py.
+
+  This is a create_file operation: the file does not exist yet. Do not
+  assume any pre-existing content. Write exactly the following content,
+  verbatim, as the complete file:
+
+  ```python
+  """Plan aggregate: the root domain entity for a development plan.
+
+  Implements C-001 (Plan) per docs/plans/2026-07-02-plan-manager/spec.yaml.
+  Storage: PostgreSQL table `plan` (columns: uuid, name, status,
+  context_budget, head_revision_uuid), accessed via psycopg 3 with plain SQL
+  (no ORM). DDL for this table is owned by SQL migrations outside this module;
+  this module never emits DDL.
+  """
+
+  from dataclasses import dataclass
+  import uuid
+
+  import psycopg
+
+
+  DEFAULT_CONTEXT_BUDGET = 4000
+
+
+  class PlanNotFoundError(ValueError):
+      """Raised when no Plan row exists for a given uuid."""
+
+
+  @dataclass
+  class Plan:
+      """Domain representation of the Plan aggregate (C-001).
+
+      Attributes:
+          uuid: Immutable primary identity of the plan (PostgreSQL uuid
+              column, generated via uuid.uuid4() at creation).
+          name: Human-readable plan name.
+          status: Current lifecycle status stored as text; set to 'draft' at
+              creation. Legal status values and transition enforcement
+              (C-007) are owned outside this module.
+          context_budget: User-set context budget in tokens consumed by
+              prompt assembly; defaults to DEFAULT_CONTEXT_BUDGET at
+              creation and is changeable later.
+          head_revision_uuid: Identity of the current head revision in the
+              version store (C-018), or None if no revision has been
+              recorded yet.
+      """
+
+      uuid: uuid.UUID
+      name: str
+      status: str
+      context_budget: int
+      head_revision_uuid: uuid.UUID | None
+  ```
+
+  Imports used and their exact module paths:
+  - `from dataclasses import dataclass` (standard library `dataclasses`
+    module, `dataclass` decorator).
+  - `import uuid` (standard library `uuid` module; `uuid.UUID` type and
+    `uuid.uuid4()` are used elsewhere in this file by later edits, so the
+    import must be present even though this file state does not yet call
+    `uuid.uuid4()`).
+  - `import psycopg` (the `psycopg` package, psycopg 3; used elsewhere in
+    this file by later edits for the `psycopg.Connection` type annotation,
+    so the import must be present even though this file state does not yet
+    reference `psycopg.Connection`).
+
+  Constraints (all explicit, no discretion):
+  - The module docstring text must be exactly as shown above.
+  - `DEFAULT_CONTEXT_BUDGET` is a module-level integer constant with value
+    `4000`.
+  - `PlanNotFoundError` is a class that subclasses the built-in `ValueError`
+    directly (`class PlanNotFoundError(ValueError):`), with only the
+    docstring shown above as its body — no additional methods or fields.
+  - `Plan` is a `@dataclass`-decorated class (no arguments to the decorator)
+    with exactly five fields, in this exact order, with these exact type
+    annotations:
+    - `uuid: uuid.UUID`
+    - `name: str`
+    - `status: str`
+    - `context_budget: int`
+    - `head_revision_uuid: uuid.UUID | None`
+  - No `__init__`, `__post_init__`, or other methods are defined on `Plan`
+    beyond what `@dataclass` generates automatically.
+  - Do not add any functions, additional classes, `if __name__ ==
+    "__main__":` blocks, or any other code beyond what is shown above.
+  - Do not add a trailing blank-line-only section beyond normal
+    single-blank-line PEP 8 spacing between top-level definitions (two
+    blank lines between top-level classes, as shown).
+
+  Relevant MRS concept excerpts (verbatim from spec.yaml):
+
+  - concept_id: C-001
+    name: Plan
+    definition: Root aggregate of one development plan with identity, name,
+      status, and head revision.
+    properties:
+    - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+    - multiple plans live in one database, listed by catalog query
+    - head revision advances per revision in draft editing, on publication
+      for cascades
+    - carries a user-set context budget in tokens (default 4000) consumed
+      by prompt assembly
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced
+      legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps
+      add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct
+      request
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one
+      revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  Database context (binding, not part of MRS): the `plan` table has columns
+  `uuid` (PostgreSQL uuid, primary identity), `name`, `status` (text),
+  `context_budget` (integer, tokens), `head_revision_uuid` (uuid, nullable).
+  This AS only defines the in-memory domain representation (the `Plan`
+  dataclass) and the module constant/exception; it does not read or write
+  the database.
+verification:
+  type: import
+  target: plan_manager/domain/plan.py
+  expected: The module imports successfully with Python 3.12+; `Plan` is
+    importable as a dataclass with fields uuid, name, status,
+    context_budget, head_revision_uuid in that order; `DEFAULT_CONTEXT_BUDGET`
+    equals 4000; `PlanNotFoundError` is importable and is a subclass of
+    ValueError.
+status: draft

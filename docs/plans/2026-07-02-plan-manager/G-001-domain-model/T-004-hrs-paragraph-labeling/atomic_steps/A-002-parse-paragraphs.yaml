@@ -1,0 +1,282 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: parse-paragraphs
+target_file: plan_manager/domain/paragraph.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-002]
+prompt: |
+  Modify the file plan_manager/domain/paragraph.py. Its current content
+  (the full file as it exists right now, before this modification) is
+  exactly:
+
+  ```python
+  """Paragraph domain model and normative HRS text parsing.
+
+  Defines the Paragraph dataclass, the addressable binding unit of the HRS
+  (MRS concept C-002).
+  """
+  from dataclasses import dataclass
+  from typing import Optional
+
+
+  @dataclass
+  class Paragraph:
+      """A binding paragraph of an HRS document (MRS concept C-002).
+
+      Attributes:
+          label: Four-character base36 label (without surrounding curly
+              braces) already present on this paragraph, or None if the
+              paragraph has not yet been assigned a label.
+          text: The paragraph's prose text. If the paragraph already carried
+              a label, the "{xxxx} " label prefix has been stripped off; if
+              it did not, text is the paragraph's block text unchanged.
+          position: Zero-based integer document order among binding
+              paragraphs only (non-binding paragraphs, heading lines, and
+              fenced code block lines are not counted).
+      """
+      label: Optional[str]
+      text: str
+      position: int
+  ```
+
+  MRS excerpt (C-002), for context on the entity this module represents:
+    concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles
+      non-binding markup
+    - parsing and label-assignment algorithms are normative
+
+  Required change: add one new module-level import, one new module-level
+  constant, and one new module-level function to this file, after the
+  existing Paragraph class. Do not change the existing docstring, imports,
+  or Paragraph class in any way.
+
+  New import to add (insert as the first import line, before
+  "from dataclasses import dataclass"):
+    import re
+
+  New constant to add (module level, after the Paragraph class):
+    _LABEL_PATTERN = re.compile(r"^\{[0-9a-z]{4}\} ")
+  This is the exact regular expression for detecting an existing label: an
+  opening curly brace, exactly four characters from the base36 alphabet
+  "0123456789abcdefghijklmnopqrstuvwxyz" (lowercase digits and letters),
+  a closing curly brace, and one literal space, all at the start of the
+  string being matched.
+
+  New function signature (exact):
+    def parse_paragraphs(document_text: str) -> list[Paragraph]:
+
+  Docstring (must appear on the function, verbatim in meaning, describing
+  args, returns, and the algorithm below in prose).
+
+  Algorithm (normative, must be followed exactly — this is the only
+  correct behavior, do not deviate or invent alternate rules):
+    1. lines = document_text.splitlines() (this drops line terminators and
+       produces no trailing empty entry for a final newline).
+    2. Walk lines in order (0-based index i). Maintain state across the
+       whole walk: in_non_binding = False, in_fence = False,
+       block_open = False, block_lines: list[str] = [],
+       block_start_non_binding = False, and
+       binding_block_texts: list[str] = [].
+    3. Define "closing the current block" as: if block_open is True and
+       block_start_non_binding is False, append "\n".join(block_lines) to
+       binding_block_texts; then reset block_lines = [] (regardless of
+       block_open or block_start_non_binding).
+    4. For each line, compute stripped = line.strip(). Then, in this exact
+       order of checks:
+       a. If stripped == "<!-- non-binding -->": if not in_non_binding,
+          set in_non_binding = True. Close the current block (step 3). Set
+          block_open = False. Move to the next line.
+       b. Else if stripped == "<!-- /non-binding -->": if in_non_binding,
+          set in_non_binding = False. Close the current block (step 3).
+          Set block_open = False. Move to the next line.
+       c. Else if stripped starts with "```" (stripped.startswith("```")):
+          toggle in_fence (in_fence = not in_fence). Close the current
+          block (step 3). Set block_open = False. Move to the next line.
+       d. Else if in_fence is True: close the current block (step 3). Set
+          block_open = False. Move to the next line.
+       e. Else if stripped starts with "#": close the current block (step
+          3). Set block_open = False. Move to the next line.
+       f. Else if stripped == "" (a blank line): close the current block
+          (step 3). Set block_open = False. Move to the next line.
+       g. Else (a content line, not fenced, not blank, not a heading, not
+          a marker): if block_open is False, open a new block: set
+          block_open = True, block_lines = [],
+          block_start_non_binding = in_non_binding (the current value).
+          Then (whether the block was just opened or was already open)
+          append the original unmodified line to block_lines.
+    5. After the loop over all lines finishes, close the current block one
+       final time (step 3), to flush a block that reaches end of document
+       without a trailing boundary line.
+    6. binding_block_texts now holds every binding paragraph's raw text,
+       in document order.
+    7. Build the result list: for each block_text in binding_block_texts,
+       with position equal to its 0-based index in binding_block_texts:
+       a. lstripped = block_text.lstrip()
+       b. match = _LABEL_PATTERN.match(lstripped)
+       c. If match is not None: label = lstripped[1:5] (the four matched
+          base36 characters); text = lstripped[7:] (lstripped with the
+          matched 7-character prefix "{" + 4 chars + "}" + " " removed).
+       d. Else: label = None; text = block_text (unchanged, not
+          lstripped).
+       e. Append Paragraph(label=label, text=text, position=position) to
+          the result list.
+    8. Return the result list.
+
+  Constraints:
+    - Do not use any import beyond "re" (already used for
+      _LABEL_PATTERN), "dataclasses", and "typing", all of which are
+      already present or added by this change.
+    - Do not alter the existing Paragraph class or its docstring.
+    - Do not add any other function, class, or constant to this file.
+    - The final file must not exceed 400 lines.
+
+  After this change, the file's full content must be exactly:
+
+  ```python
+  """Paragraph domain model and normative HRS text parsing.
+
+  Defines the Paragraph dataclass, the addressable binding unit of the HRS
+  (MRS concept C-002), and the normative pure-text parsing algorithm that
+  splits an HRS markdown document into its binding paragraphs, excluding
+  non-binding regions, heading lines, and fenced code blocks.
+  """
+  import re
+  from dataclasses import dataclass
+  from typing import Optional
+
+
+  @dataclass
+  class Paragraph:
+      """A binding paragraph of an HRS document (MRS concept C-002).
+
+      Attributes:
+          label: Four-character base36 label (without surrounding curly
+              braces) already present on this paragraph, or None if the
+              paragraph has not yet been assigned a label.
+          text: The paragraph's prose text. If the paragraph already carried
+              a label, the "{xxxx} " label prefix has been stripped off; if
+              it did not, text is the paragraph's block text unchanged.
+          position: Zero-based integer document order among binding
+              paragraphs only (non-binding paragraphs, heading lines, and
+              fenced code block lines are not counted).
+      """
+      label: Optional[str]
+      text: str
+      position: int
+
+
+  _LABEL_PATTERN = re.compile(r"^\{[0-9a-z]{4}\} ")
+
+
+  def parse_paragraphs(document_text: str) -> list[Paragraph]:
+      """Parse an HRS markdown document into its ordered binding paragraphs.
+
+      Args:
+          document_text: The full HRS document text.
+
+      Returns:
+          A list of Paragraph objects, one per binding paragraph, in
+          document order, with position 0, 1, 2, ... assigned in that
+          order. Paragraphs inside non-binding regions, heading lines, and
+          fenced code blocks are excluded entirely (they are not
+          returned); this exclusion is the non_binding_exclusion_set
+          classification.
+
+      The parsing algorithm is normative: lines are grouped into blocks on
+      blank-line boundaries; markers "<!-- non-binding -->" and
+      "<!-- /non-binding -->" delimit non-nesting excluded regions; lines
+      starting with "#" (headings) and lines inside fenced code blocks
+      delimited by lines starting with "```" are excluded from binding
+      paragraphs; a block already starting with "{xxxx} " (four base36
+      characters) keeps that label, otherwise label is None.
+      """
+      lines = document_text.splitlines()
+      in_non_binding = False
+      in_fence = False
+      block_open = False
+      block_lines: list[str] = []
+      block_start_non_binding = False
+      binding_block_texts: list[str] = []
+
+      def close_block() -> None:
+          nonlocal block_lines
+          if block_open and not block_start_non_binding:
+              binding_block_texts.append("\n".join(block_lines))
+          block_lines = []
+
+      for line in lines:
+          stripped = line.strip()
+          if stripped == "<!-- non-binding -->":
+              if not in_non_binding:
+                  in_non_binding = True
+              close_block()
+              block_open = False
+              continue
+          if stripped == "<!-- /non-binding -->":
+              if in_non_binding:
+                  in_non_binding = False
+              close_block()
+              block_open = False
+              continue
+          if stripped.startswith("```"):
+              in_fence = not in_fence
+              close_block()
+              block_open = False
+              continue
+          if in_fence:
+              close_block()
+              block_open = False
+              continue
+          if stripped.startswith("#"):
+              close_block()
+              block_open = False
+              continue
+          if stripped == "":
+              close_block()
+              block_open = False
+              continue
+          if not block_open:
+              block_open = True
+              block_lines = []
+              block_start_non_binding = in_non_binding
+          block_lines.append(line)
+
+      close_block()
+
+      result: list[Paragraph] = []
+      for position, block_text in enumerate(binding_block_texts):
+          lstripped = block_text.lstrip()
+          match = _LABEL_PATTERN.match(lstripped)
+          if match is not None:
+              label = lstripped[1:5]
+              text = lstripped[7:]
+          else:
+              label = None
+              text = block_text
+          result.append(Paragraph(label=label, text=text, position=position))
+      return result
+  ```
+verification:
+  type: manual
+  target: plan_manager.domain.paragraph.parse_paragraphs
+  expected: >
+    Manually trace parse_paragraphs against three sample documents: (1) a
+    plain two-paragraph document with a blank line between them yields two
+    Paragraph objects with label=None, positions 0 and 1, and text equal to
+    each paragraph's raw text; (2) the same document with the first
+    paragraph starting "{ab12} " yields label="ab12" for that paragraph
+    with the prefix stripped from text, and label=None for the second; (3)
+    a document containing one plain paragraph, one heading line, one
+    fenced code block, and one paragraph wrapped in
+    "<!-- non-binding -->" / "<!-- /non-binding -->" markers yields exactly
+    one Paragraph (for the plain paragraph only), confirming headings,
+    fenced code, and non-binding content are excluded.
+status: draft

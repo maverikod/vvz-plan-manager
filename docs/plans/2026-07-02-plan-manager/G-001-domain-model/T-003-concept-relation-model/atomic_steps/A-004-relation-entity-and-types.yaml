@@ -1,0 +1,137 @@
+step_id: A-004
+parent_tactical_step: T-003
+name: relation-entity-and-types
+target_file: plan_manager/domain/relation.py
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-004, C-003]
+prompt: >
+  Create a new Python source file at exact project-relative path
+  plan_manager/domain/relation.py.
+
+
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content.
+
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  - C-004 Relation: "Typed directed edge between two concepts restricted to
+    seven allowed types." Properties: types are uses, owns, implements,
+    extends, depends_on, produces, consumes; free-form types rejected at
+    write time. Relation depends_on Concept (a Relation references two
+    Concept entities by their concept_id).
+
+  - C-003 Concept: identifier pattern is C-NNN and unique within the plan.
+
+  - Self-referencing relations are permitted: the MRS relation list
+    contains the entry `{ from_concept: C-005, to_concept: C-005, type:
+    depends_on }`, so from_concept and to_concept are allowed to be equal
+    and no such restriction may be added.
+
+
+  This file imports one name from a sibling module that a prior step
+  creates at plan_manager/domain/concept.py. That sibling module contains,
+  among other things, exactly this line:
+
+
+  ```python
+
+  CONCEPT_ID_PATTERN = re.compile(r"^C-\d{3}$")
+
+  ```
+
+
+  `CONCEPT_ID_PATTERN` is a compiled regular expression object (the result
+  of `re.compile` on the raw string `r"^C-\d{3}$"`) matching a concept_id
+  of the form "C-" followed by exactly three digits, e.g. "C-003".
+
+
+  Write exactly the following file content, verbatim:
+
+
+  ```python
+
+  """Relation domain entity (MRS concept C-004).
+
+
+  A Relation is a typed directed edge from one Concept (C-003) to another,
+  restricted to exactly seven types: uses, owns, implements, extends,
+  depends_on, produces, consumes. Free-form types are rejected at write
+  time. A Relation depends on the existence of the Concepts (identified by
+  concept_id, pattern C-NNN) it connects. Self-referencing relations (a
+  concept related to itself) are permitted.
+
+  """
+
+
+  from dataclasses import dataclass
+
+  from typing import List
+
+
+  from plan_manager.domain.concept import CONCEPT_ID_PATTERN
+
+
+  RELATION_TYPES = frozenset(
+      {"uses", "owns", "implements", "extends", "depends_on", "produces", "consumes"}
+  )
+
+
+  class RelationValidationError(ValueError):
+      """Raised when a Relation fails write-time validation."""
+
+
+  @dataclass
+  class Relation:
+      """A single typed directed edge between two concepts.
+
+      Attributes:
+          from_concept: concept_id (pattern C-NNN) of the source concept.
+          to_concept: concept_id (pattern C-NNN) of the target concept.
+          type: Relation type; must be one of RELATION_TYPES.
+      """
+
+      from_concept: str
+      to_concept: str
+      type: str
+
+  ```
+
+
+  Constraints:
+
+  - Use exactly the imports shown: `from dataclasses import dataclass`,
+    `from typing import List`, `from plan_manager.domain.concept import
+    CONCEPT_ID_PATTERN`. No other imports.
+
+  - RELATION_TYPES must be a `frozenset` built from the literal set
+    `{"uses", "owns", "implements", "extends", "depends_on", "produces",
+    "consumes"}` containing exactly these seven strings and no others.
+
+  - RelationValidationError must subclass the built-in ValueError and have
+    no body other than its docstring.
+
+  - Relation must be a `@dataclass`-decorated class (from the `dataclasses`
+    module) with exactly three fields, in this order: `from_concept: str`,
+    `to_concept: str`, `type: str`. No default values on any field. No
+    methods other than what `@dataclass` generates automatically.
+
+  - Do not add any code beyond what is shown above. Do not add a
+    `if __name__ == "__main__":` block. Do not add logging.
+
+  - Do not add a restriction that from_concept must differ from to_concept;
+    self-referencing relations are valid per the MRS excerpt above.
+verification:
+  type: import
+  target: plan_manager.domain.relation
+  expected: >
+    The module plan_manager.domain.relation imports without error and
+    exposes: the frozenset RELATION_TYPES containing exactly the seven
+    strings uses, owns, implements, extends, depends_on, produces,
+    consumes; the exception class RelationValidationError (subclass of
+    ValueError); and the dataclass Relation with fields from_concept,
+    to_concept, type in that order. The module successfully imports
+    CONCEPT_ID_PATTERN from plan_manager.domain.concept.
+status: draft

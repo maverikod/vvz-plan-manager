@@ -1,0 +1,110 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: storage-errors
+target_file: plan_manager/storage/errors.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-035]
+prompt: >
+  Create the file plan_manager/storage/errors.py from scratch (operation:
+  create_file). The file does not exist yet; do not assume any pre-existing
+  content. This module is the runtime referential-integrity verdict surface:
+  it defines the domain-level storage error hierarchy and a function that
+  translates a rejected database write into one of those domain errors.
+
+
+  MRS excerpt (only the concept relevant to this file):
+
+  C-035 Database: "In-container PostgreSQL with pgvector serving as the
+  single source of truth for all plan data." Relevant properties: "entities
+  as rows; referential integrity at write time"; "every stored entity
+  carries an immutable UUID identity; human-readable ids are scoped names
+  mapped to it"; "accessed via psycopg 3 with plain SQL; no ORM; runtime
+  code never emits DDL." Write-time referential integrity itself is enforced
+  by database constraints (foreign keys, unique constraints) declared in SQL
+  migrations owned elsewhere; this module's job is only to turn a rejected
+  write (an exception psycopg raises when a constraint is violated) into a
+  domain-level verdict that calling code can catch and handle without
+  depending on psycopg's exception types directly.
+
+
+  Required imports, with exact module paths:
+
+    import psycopg
+
+
+  The module must define exactly these four exception classes, in this
+  exact inheritance chain, each with only a one-line docstring (no other
+  body, no custom __init__ — they inherit Exception.__init__ unchanged):
+
+    class StorageError(Exception):
+        """Base class for all domain-level storage errors."""
+
+    class NotFoundError(StorageError):
+        """Raised when a lookup by scoped name or UUID finds no matching row."""
+
+    class DuplicateNameError(StorageError):
+        """Raised when a write would violate a uniqueness constraint (e.g. a scoped name already in use)."""
+
+    class ReferentialIntegrityError(StorageError):
+        """Raised when a write references an identifier that does not resolve to an existing entity."""
+
+
+  The module must also define exactly this function, with this exact
+  signature, typing annotations, and docstring:
+
+    def translate_integrity_error(exc: psycopg.errors.IntegrityError) -> StorageError:
+        """Translate a psycopg IntegrityError into a domain-level StorageError.
+
+        Parameters:
+            exc: psycopg.errors.IntegrityError
+                The integrity error raised by psycopg after a rejected write.
+
+        Returns:
+            StorageError
+                - ReferentialIntegrityError(str(exc)) if exc is an instance of
+                  psycopg.errors.ForeignKeyViolation.
+                - DuplicateNameError(str(exc)) if exc is an instance of
+                  psycopg.errors.UniqueViolation.
+                - StorageError(str(exc)) for any other
+                  psycopg.errors.IntegrityError instance.
+
+        This function returns the translated exception instance; it does not
+        raise it. The caller is responsible for raising the returned
+        exception.
+        """
+
+
+  Implementation constraints, explicitly enumerated:
+
+  - The function body must check isinstance(exc, psycopg.errors.ForeignKeyViolation)
+    first, and if true, return ReferentialIntegrityError(str(exc)).
+  - Else check isinstance(exc, psycopg.errors.UniqueViolation), and if true,
+    return DuplicateNameError(str(exc)).
+  - Else (any other IntegrityError), return StorageError(str(exc)).
+  - Do not add any other function, class, constant, or module-level
+    variable to this file.
+  - Do not add a module docstring beyond a single short summary line at the
+    top of the file describing the module as the domain storage error types
+    and referential-integrity verdict translation for plan_manager.
+  - Do not catch or re-raise exceptions anywhere in this file; the function
+    only constructs and returns exception instances, it never raises them.
+  - No logging, no printing, no side effects.
+verification:
+  type: import
+  target: plan_manager.storage.errors
+  expected: >
+    The module imports without error given psycopg is installed.
+    StorageError, NotFoundError, DuplicateNameError, and
+    ReferentialIntegrityError are defined as Exception subclasses with the
+    stated inheritance chain (NotFoundError, DuplicateNameError, and
+    ReferentialIntegrityError all subclass StorageError, which subclasses
+    Exception). translate_integrity_error is callable and, given a
+    psycopg.errors.ForeignKeyViolation instance, returns a
+    ReferentialIntegrityError whose message equals str of the input
+    exception; given a psycopg.errors.UniqueViolation instance, returns a
+    DuplicateNameError with the same message rule; given any other
+    psycopg.errors.IntegrityError instance, returns a StorageError with the
+    same message rule.
+status: draft
