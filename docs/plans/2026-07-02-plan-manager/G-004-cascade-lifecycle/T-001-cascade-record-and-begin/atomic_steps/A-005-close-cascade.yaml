@@ -1,0 +1,187 @@
+step_id: A-005
+parent_tactical_step: T-001
+name: close-cascade
+target_file: plan_manager/cascade/record.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-016, C-035]
+status: draft
+prompt: |
+  Modify the file plan_manager/cascade/record.py. Its full current content,
+  as it exists after all lower-priority atomic steps on this file have been
+  applied, is exactly:
+
+  """Cascade record entity: lifecycle states and database operations for the cascade table."""
+
+  import uuid
+  from dataclasses import dataclass
+  from datetime import datetime
+
+  import psycopg
+
+
+  CASCADE_STATUSES: frozenset[str] = frozenset({"open", "committed", "aborted"})
+
+
+  class CascadeError(ValueError):
+      """Raised on any cascade lifecycle violation."""
+
+
+  @dataclass(frozen=True)
+  class CascadeRecord:
+      """A cascade record: one row of the cascade table.
+
+      Fields, in order: uuid (the cascade's own identity), plan_uuid (the
+      owning plan), name (the cascade reference name held in the version
+      store, "cascade/<cascade uuid>"), base_revision_uuid (the plan head
+      revision the cascade was anchored at when opened, or None),
+      status (one of the three values in CASCADE_STATUSES), created_at
+      (creation timestamp).
+      """
+
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      name: str
+      base_revision_uuid: uuid.UUID | None
+      status: str
+      created_at: datetime
+
+
+  def insert_cascade(conn: psycopg.Connection, record: CascadeRecord) -> None:
+      """Insert a cascade record into the cascade table.
+
+      Executes an INSERT into the normative `cascade` table with columns
+      (uuid, plan_uuid, name, base_revision_uuid, status, created_at), using
+      the corresponding fields of `record` as the six parameter values, in
+      that column order.
+
+      Raises CascadeError("plan already has an open cascade") if the insert
+      violates the database's partial unique index on (plan_uuid) WHERE
+      status = 'open' (a psycopg.errors.UniqueViolation), because that index
+      allows at most one open cascade per plan.
+      """
+      try:
+          with conn.cursor() as cur:
+              cur.execute(
+                  "INSERT INTO cascade (uuid, plan_uuid, name, base_revision_uuid, status, created_at) "
+                  "VALUES (%s, %s, %s, %s, %s, %s)",
+                  (
+                      record.uuid,
+                      record.plan_uuid,
+                      record.name,
+                      record.base_revision_uuid,
+                      record.status,
+                      record.created_at,
+                  ),
+              )
+      except psycopg.errors.UniqueViolation:
+          raise CascadeError("plan already has an open cascade")
+
+
+  def get_open_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None:
+      """Return the open cascade record for a plan, or None if there is none.
+
+      Executes a SELECT of columns (uuid, plan_uuid, name, base_revision_uuid,
+      status, created_at) from the `cascade` table filtered to
+      `plan_uuid = %s AND status = 'open'`, fetches at most one row, and
+      returns it as a CascadeRecord, or None when no row is found.
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT uuid, plan_uuid, name, base_revision_uuid, status, created_at "
+              "FROM cascade WHERE plan_uuid = %s AND status = 'open'",
+              (plan_uuid,),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return CascadeRecord(
+          uuid=row[0],
+          plan_uuid=row[1],
+          name=row[2],
+          base_revision_uuid=row[3],
+          status=row[4],
+          created_at=row[5],
+      )
+
+  Append the following function to the end of the file, separated from
+  `get_open_cascade` by exactly two blank lines. Do not change anything
+  above it; it must remain byte-identical to what is shown above.
+
+  def close_cascade(conn: psycopg.Connection, cascade_uuid: uuid.UUID, status: str) -> None:
+      """Close an open cascade by transitioning it to a terminal status.
+
+      `status` must be either "committed" or "aborted"; any other value
+      raises CascadeError. Executes an UPDATE of the `cascade` table setting
+      `status` to the given value where `uuid = %s AND status = 'open'`. If
+      no row was updated (cur.rowcount == 0), raises
+      CascadeError("no open cascade with this uuid").
+      """
+      if status not in ("committed", "aborted"):
+          raise CascadeError('status must be "committed" or "aborted"')
+      with conn.cursor() as cur:
+          cur.execute(
+              "UPDATE cascade SET status = %s WHERE uuid = %s AND status = 'open'",
+              (status, cascade_uuid),
+          )
+          if cur.rowcount == 0:
+              raise CascadeError("no open cascade with this uuid")
+
+  Constraints (all binding, no deviation):
+  - Function signature is exactly
+    `def close_cascade(conn: psycopg.Connection, cascade_uuid: uuid.UUID, status: str) -> None:`.
+    `psycopg.Connection` refers to the `psycopg` module already imported in
+    this file as `import psycopg`. `uuid.UUID` refers to the standard
+    library `uuid` module already imported as `import uuid`.
+  - The first check must be `if status not in ("committed", "aborted"):`
+    raising `CascadeError('status must be "committed" or "aborted"')`
+    (`CascadeError` refers to the exception class already defined above in
+    this same file). This check happens before any database access.
+  - The SQL text, parameter order, and WHERE clause must be exactly as
+    shown: two `%s` placeholders bound positionally to
+    `(status, cascade_uuid)`, filtering on `uuid = %s AND status = 'open'`.
+  - Use `with conn.cursor() as cur:` as the cursor context manager, exactly
+    as shown.
+  - After `cur.execute(...)`, if `cur.rowcount == 0`, raise
+    `CascadeError("no open cascade with this uuid")` from inside the `with`
+    block, exactly as shown.
+  - No exceptions from `cur.execute` are caught in this function.
+  - The docstring is exactly the text shown above.
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Context: this function is the shared terminal-transition primitive for the
+  CascadeChange (C-016) lifecycle: both commit and abort (defined outside
+  this tactical step's scope) transition the cascade row in the Database
+  (C-035)'s `cascade` table out of the open state, and this function is the
+  single place that performs that write and enforces that only an open
+  cascade with the given uuid can be closed.
+verification:
+  type: manual
+  target: plan_manager.cascade.record.close_cascade
+  expected: >
+    Reading the function body against the prompt confirms: a status value
+    outside {"committed", "aborted"} raises CascadeError before any database
+    access; the UPDATE statement and two-parameter tuple (status,
+    cascade_uuid) match the specified column and WHERE clause exactly; when
+    cur.rowcount == 0 after the UPDATE, CascadeError("no open cascade with
+    this uuid") is raised; the function returns None on success; no
+    exception from cur.execute is caught.

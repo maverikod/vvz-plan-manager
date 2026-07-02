@@ -1,0 +1,245 @@
+step_id: A-002
+parent_tactical_step: T-005
+name: apply_snapshot row upsert
+target_file: plan_manager/cascade/restore.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-018, C-035]
+prompt: |
+  Modify the existing file `plan_manager/cascade/restore.py`. Its full
+  current content (after all lower-priority atomic steps on this file have
+  been applied) is exactly:
+
+  ```python
+  """Row restoration from the version store for cascade abort (C-018, C-035)."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError
+
+
+  def node_version_content(conn: psycopg.Connection, version_uuid: uuid.UUID) -> dict:
+      """Fetch the content snapshot of a single node version.
+
+      Executes ``SELECT content FROM node_version WHERE uuid = %s`` with
+      ``version_uuid`` bound as the sole parameter, fetches at most one row
+      via ``fetchone()``, and returns that row's ``content`` column value (a
+      dict). If no row is found, raises ``CascadeError("node version not
+      found")``.
+
+      :param conn: open psycopg 3 database connection.
+      :param version_uuid: UUID primary key of the node_version row to fetch.
+      :return: the ``content`` dict stored on that node_version row.
+      :raises CascadeError: when no node_version row has the given uuid.
+      """
+      cur = conn.execute(
+          "SELECT content FROM node_version WHERE uuid = %s", (version_uuid,)
+      )
+      row = cur.fetchone()
+      if row is None:
+          raise CascadeError("node version not found")
+      return row[0]
+  ```
+
+  Apply exactly two changes to this content:
+
+  1. Insert a new import line `from psycopg.types.json import Jsonb`
+     immediately after the `import psycopg` line, so the import block
+     reads:
+
+  ```python
+  import uuid
+
+  import psycopg
+  from psycopg.types.json import Jsonb
+
+  from plan_manager.cascade.record import CascadeError
+  ```
+
+  2. Append the following new function to the end of the file, separated
+     from `node_version_content` by exactly two blank lines:
+
+  ```python
+  def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dict) -> None:
+      """Upsert one working row from a recorded node snapshot.
+
+      Routes on ``snapshot["kind"]`` to the matching table and performs an
+      ``INSERT ... ON CONFLICT (uuid) DO UPDATE`` so the working row for
+      ``node_uuid`` matches the snapshot content exactly, whether or not a
+      row currently exists.
+
+      Supported kinds and their non-uuid columns, all read from ``snapshot``
+      by key:
+
+      - ``"step"``: plan_uuid, parent_step_uuid, level, step_id, slug,
+        fields (wrapped in ``psycopg.types.json.Jsonb``), depends_on,
+        concepts, status.
+      - ``"concept"``: plan_uuid, concept_id, name, definition, properties,
+        source_labels.
+      - ``"relation"``: plan_uuid, from_concept, to_concept, type.
+      - ``"paragraph"``: plan_uuid, label, text, position.
+
+      :param conn: open psycopg 3 database connection.
+      :param node_uuid: uuid of the node whose working row is being written;
+          used as the row's ``uuid`` column value.
+      :param snapshot: full node snapshot dict as read from a node_version's
+          ``content`` column; must carry key ``"kind"``.
+      :raises CascadeError: when ``snapshot["kind"]`` is not one of
+          "step", "concept", "relation", "paragraph".
+      """
+      kind = snapshot["kind"]
+      if kind == "step":
+          conn.execute(
+              "INSERT INTO step "
+              "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+              "fields, depends_on, concepts, status) "
+              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+              "ON CONFLICT (uuid) DO UPDATE SET "
+              "plan_uuid = EXCLUDED.plan_uuid, "
+              "parent_step_uuid = EXCLUDED.parent_step_uuid, "
+              "level = EXCLUDED.level, "
+              "step_id = EXCLUDED.step_id, "
+              "slug = EXCLUDED.slug, "
+              "fields = EXCLUDED.fields, "
+              "depends_on = EXCLUDED.depends_on, "
+              "concepts = EXCLUDED.concepts, "
+              "status = EXCLUDED.status",
+              (
+                  node_uuid,
+                  snapshot["plan_uuid"],
+                  snapshot["parent_step_uuid"],
+                  snapshot["level"],
+                  snapshot["step_id"],
+                  snapshot["slug"],
+                  Jsonb(snapshot["fields"]),
+                  snapshot["depends_on"],
+                  snapshot["concepts"],
+                  snapshot["status"],
+              ),
+          )
+      elif kind == "concept":
+          conn.execute(
+              "INSERT INTO concept "
+              "(uuid, plan_uuid, concept_id, name, definition, properties, "
+              "source_labels) "
+              "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+              "ON CONFLICT (uuid) DO UPDATE SET "
+              "plan_uuid = EXCLUDED.plan_uuid, "
+              "concept_id = EXCLUDED.concept_id, "
+              "name = EXCLUDED.name, "
+              "definition = EXCLUDED.definition, "
+              "properties = EXCLUDED.properties, "
+              "source_labels = EXCLUDED.source_labels",
+              (
+                  node_uuid,
+                  snapshot["plan_uuid"],
+                  snapshot["concept_id"],
+                  snapshot["name"],
+                  snapshot["definition"],
+                  snapshot["properties"],
+                  snapshot["source_labels"],
+              ),
+          )
+      elif kind == "relation":
+          conn.execute(
+              "INSERT INTO relation "
+              "(uuid, plan_uuid, from_concept, to_concept, type) "
+              "VALUES (%s, %s, %s, %s, %s) "
+              "ON CONFLICT (uuid) DO UPDATE SET "
+              "plan_uuid = EXCLUDED.plan_uuid, "
+              "from_concept = EXCLUDED.from_concept, "
+              "to_concept = EXCLUDED.to_concept, "
+              "type = EXCLUDED.type",
+              (
+                  node_uuid,
+                  snapshot["plan_uuid"],
+                  snapshot["from_concept"],
+                  snapshot["to_concept"],
+                  snapshot["type"],
+              ),
+          )
+      elif kind == "paragraph":
+          conn.execute(
+              "INSERT INTO paragraph "
+              "(uuid, plan_uuid, label, text, position) "
+              "VALUES (%s, %s, %s, %s, %s) "
+              "ON CONFLICT (uuid) DO UPDATE SET "
+              "plan_uuid = EXCLUDED.plan_uuid, "
+              "label = EXCLUDED.label, "
+              "text = EXCLUDED.text, "
+              "position = EXCLUDED.position",
+              (
+                  node_uuid,
+                  snapshot["plan_uuid"],
+                  snapshot["label"],
+                  snapshot["text"],
+                  snapshot["position"],
+              ),
+          )
+      else:
+          raise CascadeError(f"unknown node snapshot kind: {kind!r}")
+  ```
+
+  Constraints, all binding:
+  - Do not modify `node_version_content` in any way.
+  - `Jsonb` is `psycopg.types.json.Jsonb`, imported exactly as shown; wrap
+    only the `fields` value of a `"step"` snapshot in `Jsonb(...)` as
+    shown; do not wrap any other value.
+  - The four branch tables (`step`, `concept`, `relation`, `paragraph`)
+    are existing database tables with exactly the columns named in the
+    respective `INSERT` statement above (each also has a `uuid` primary
+    key column, populated here from the `node_uuid` parameter, not from
+    `snapshot`); this AS does not create these tables.
+  - `snapshot["kind"]` selects the branch; the four literal string values
+    are exactly `"step"`, `"concept"`, `"relation"`, `"paragraph"`.
+  - When `kind` matches none of the four values, raise `CascadeError(f"unknown
+    node snapshot kind: {kind!r}")` in the trailing `else` branch.
+  - All SQL text, column lists, `ON CONFLICT (uuid) DO UPDATE SET` clauses,
+    and parameter tuples must match exactly what is shown above.
+  - The resulting file must contain exactly these two functions in this
+    order: `node_version_content`, then `apply_snapshot`, and no other
+    top-level definitions.
+
+  MRS excerpt (only the concepts referenced by this AS; quoted verbatim
+  from `spec.yaml`):
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces
+      one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the
+      single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity;
+      human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never
+      emits DDL
+verification:
+  type: import
+  target: plan_manager.cascade.restore
+  expected: >
+    Importing the module plan_manager.cascade.restore succeeds without
+    raising any exception, node_version_content remains present and
+    unchanged, and the module exposes a callable attribute named
+    apply_snapshot accepting exactly three positional parameters (conn,
+    node_uuid, snapshot) that, given a snapshot dict with a "kind" key
+    of "step", "concept", "relation", or "paragraph", issues the matching
+    INSERT ... ON CONFLICT (uuid) DO UPDATE statement, and raises
+    CascadeError for any other kind value.
+status: draft

@@ -1,0 +1,219 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: Add mrs_invalidation to propagation module
+target_file: plan_manager/cascade/propagation.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-016, C-007, C-005]
+prompt: |
+  Modify the existing file plan_manager/cascade/propagation.py. Its full
+  current content (after all lower-priority steps on this file have been
+  applied) is EXACTLY the following:
+
+  ----- BEGIN CURRENT FILE CONTENT -----
+  """Pure computation of needs_review invalidation update sets for CascadeChange (C-016).
+
+  This module contains no database access and no persistence. Every function
+  returns a plain list of (uuid.UUID, str) tuples describing status updates to
+  be applied by the caller inside an open cascade transaction. Illegal status
+  transitions propagate as StatusTransitionError raised by
+  plan_manager.domain.status_model.validate_transition.
+  """
+
+  import uuid
+
+  from plan_manager.domain.status_model import validate_transition
+  from plan_manager.domain.step import Step
+  from plan_manager.views.dependency_graph import impact_set
+
+
+  def step_invalidation(
+      nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID
+  ) -> list[tuple[uuid.UUID, str]]:
+      """Compute the invalidation update set for one changed step.
+
+      Realises the transitive needs_review propagation rule for a changed
+      step (C-005) inside an open cascade (C-016), driven through the status
+      model (C-007): a changed global step invalidates its tactical steps
+      and their atomic steps, a changed tactical step invalidates its
+      atomic steps. The invalidation set is the transitive descendants of
+      origin_uuid by parent linkage, computed by the dependency graph
+      projection (C-009).
+
+      Args:
+          nodes: Mapping of step uuid.UUID to Step, the loaded plan step
+              tree.
+          origin_uuid: uuid.UUID of the changed step that anchors the
+              invalidation.
+
+      Returns:
+          A list of (uuid.UUID, "needs_review") tuples in the deterministic
+          order produced by impact_set, one entry per descendant step whose
+          status is not already "needs_review". Empty when nothing beneath
+          the origin requires invalidation.
+
+      Raises:
+          ValueError: if origin_uuid is not a key of nodes ("origin step
+              not in tree").
+          StatusTransitionError: propagated from validate_transition when a
+              descendant step's current status cannot legally transition to
+              "needs_review" via cascade.
+      """
+      if origin_uuid not in nodes:
+          raise ValueError("origin step not in tree")
+      updates: list[tuple[uuid.UUID, str]] = []
+      for descendant_uuid in impact_set(nodes, origin_uuid):
+          descendant = nodes[descendant_uuid]
+          if descendant.status == "needs_review":
+              continue
+          validate_transition(
+              descendant.status,
+              "needs_review",
+              is_atomic_step=(descendant.level == 5),
+              via_cascade=True,
+          )
+          updates.append((descendant_uuid, "needs_review"))
+      return updates
+  ----- END CURRENT FILE CONTENT -----
+
+  Apply this change: append the new function mrs_invalidation to the end
+  of the file, separated from the end of step_invalidation ("    return
+  updates") by exactly two blank lines, so the file becomes the current
+  content above followed by:
+
+  ----- BEGIN APPENDED CONTENT -----
+
+
+  def mrs_invalidation(nodes: dict[uuid.UUID, Step]) -> list[tuple[uuid.UUID, str]]:
+      """Compute the invalidation update set for a changed MRS entity or paragraph.
+
+      Realises the rule that an HRS change triggers MRS re-projection and an
+      MRS change invalidates all global steps (C-016), driven through the
+      status model (C-007): every global step (Step.level == 3) of the plan
+      whose status is not already "needs_review" is included in the update
+      set, per the rule that a changed MRS entity or a changed paragraph
+      invalidates every global step of the plan.
+
+      Args:
+          nodes: Mapping of step uuid.UUID to Step, the loaded plan step
+              tree.
+
+      Returns:
+          A list of (uuid.UUID, "needs_review") tuples, one entry per
+          global step (Step.level == 3) whose status is not already
+          "needs_review", sorted by Step.step_id ascending. Empty when
+          every global step is already "needs_review".
+
+      Raises:
+          StatusTransitionError: propagated from validate_transition when a
+              global step's current status cannot legally transition to
+              "needs_review" via cascade.
+      """
+      updates: list[tuple[uuid.UUID, str]] = []
+      global_steps = sorted(
+          (s for s in nodes.values() if s.level == 3 and s.status != "needs_review"),
+          key=lambda s: s.step_id,
+      )
+      for step in global_steps:
+          validate_transition(
+              step.status,
+              "needs_review",
+              is_atomic_step=False,
+              via_cascade=True,
+          )
+          updates.append((step.uuid, "needs_review"))
+      return updates
+  ----- END APPENDED CONTENT -----
+
+  Do not modify anything in the current content above the append point.
+  Do not add anything after "    return updates" of mrs_invalidation; write
+  the file with a single trailing newline after that last line and
+  nothing else.
+
+  CONSTRAINTS (explicit, no discretion):
+  - No new imports are needed; uuid, Step, and validate_transition are
+    already imported at the top of the file exactly as shown in the
+    current content above. Do not add, remove, or reorder any import.
+  - The function signature must be exactly:
+    def mrs_invalidation(nodes: dict[uuid.UUID, Step]) ->
+    list[tuple[uuid.UUID, str]]:
+  - The docstring inside mrs_invalidation must appear verbatim as shown
+    above (Google-style Args/Returns/Raises sections), as the first
+    statement of the function body.
+  - Body logic, in order: (1) initialize updates as an empty list typed
+    list[tuple[uuid.UUID, str]]; (2) build global_steps as the result of
+    Python's built-in sorted() over a generator expression that filters
+    nodes.values() to entries where level == 3 and status != "needs_review",
+    with sorted()'s key argument set to a lambda returning s.step_id; (3)
+    for each step in global_steps, call validate_transition(step.status,
+    "needs_review", is_atomic_step=False, via_cascade=True) — do not catch
+    any exception it raises, let it propagate to the caller unmodified;
+    (4) append (step.uuid, "needs_review") to updates; (5) after the loop,
+    return updates.
+  - No database access, no I/O, no persistence, no logging calls anywhere
+    in this file.
+  - No other functions, classes, or module-level code beyond step_invalidation
+    (already present) and mrs_invalidation (appended by this change).
+
+  IMPORTED SIBLING CONTRACTS (quote verbatim; already imported at the top
+  of the current file content above — do not reimplement their bodies):
+  - module plan_manager/domain/status_model.py: `def
+    validate_transition(current: str, new: str, is_atomic_step: bool,
+    via_cascade: bool) -> None` (raises StatusTransitionError(ValueError)
+    on illegal transitions; needs_review is legal ONLY with
+    via_cascade=True).
+  - module plan_manager/domain/step.py: `@dataclass class Step:` with
+    fields `uuid: uuid.UUID, plan_uuid: uuid.UUID, parent_step_uuid:
+    uuid.UUID | None, level: int, step_id: str, slug: str, fields: dict,
+    depends_on: list[str], concepts: list[str], status: str`.
+
+  MRS EXCERPT (definitions and relations relevant to this AS only; quoted
+  verbatim from spec.yaml):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+    source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+    source_labels: ["{n1o3}", "{m2d9}", "{m4c2}"]
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+    source_labels: ["{w2y7}", "{i5n7}", "{m4c2}", "{v8y2}", "{a9y5}"]
+
+  Relevant relations (quoted verbatim from spec.yaml):
+  - { from_concept: C-016, to_concept: C-007, type: uses }
+  - { from_concept: C-005, to_concept: C-007, type: uses }
+verification:
+  type: manual
+  target: plan_manager/cascade/propagation.py::mrs_invalidation
+  expected: >
+    The file plan_manager/cascade/propagation.py still contains
+    step_invalidation unmodified and now also exposes
+    mrs_invalidation(nodes). Calling mrs_invalidation returns a list of
+    (uuid.UUID, "needs_review") tuples covering every Step in nodes with
+    level == 3 whose status is not already "needs_review", sorted
+    ascending by step_id. validate_transition is called for each such
+    global step with current=step.status, new="needs_review",
+    is_atomic_step=False, via_cascade=True, and any StatusTransitionError
+    it raises propagates uncaught to the caller. When every level-3 step
+    is already "needs_review", the function returns an empty list. No
+    database or file I/O occurs anywhere in the module.
+status: draft

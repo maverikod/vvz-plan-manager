@@ -1,0 +1,42 @@
+step_id: T-004
+parent_global_step: G-004
+name: cascade-preview
+description: >
+  Create the preview of CascadeChange (C-016): the read-only report of an
+  open cascade's accumulated state against the plan head. The preview
+  resolves the plan's open cascade record — a typed condition is raised when
+  none exists — reads the base revision recorded at opening and the cascade
+  reference tip from the version store (C-018), and assembles three parts.
+  First, the accumulated change set: the version-store difference between
+  the base revision and the cascade tip, listing added, removed, and changed
+  nodes. Second, the needs_review blast radius: the steps currently in
+  needs_review status (C-007) within the cascade state, classified by
+  artifact path. Third, the mechanical gate (C-012) verdict (C-020) for the
+  cascade state, obtained by running the gate over the plan's current
+  working tree, together with its findings (C-017) report in the
+  machine-checkable form. The preview mutates nothing: it records no
+  revision, changes no status, and does not move the head. This step defines
+  the preview assembly only; it does not admit mutations, does not propagate
+  statuses, and does not commit or abort the cascade.
+concepts: [C-016, C-018, C-007, C-012, C-020, C-017]
+inputs:
+- name: open_cascade_record
+  type: stored entity reference
+  description: >
+    The plan's open cascade record carrying the base revision and the
+    cascade reference name; its absence yields the typed refusal condition.
+- name: cascade_state
+  type: working tree state
+  description: >
+    The plan's current working tree reflecting the cascade's applied
+    changes, read for the blast radius listing and gated for the verdict.
+outputs:
+- name: preview_report
+  type: ephemeral aggregate
+  description: >
+    The read-only report of the accumulated change set (added, removed,
+    changed nodes between base revision and cascade tip), the needs_review
+    blast radius classified by artifact path, and the mechanical gate
+    verdict with its findings report; returned to the caller, never stored.
+atomic_steps: [A-001]
+status: draft

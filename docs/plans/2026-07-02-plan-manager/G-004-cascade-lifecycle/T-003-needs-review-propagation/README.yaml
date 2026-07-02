@@ -1,0 +1,47 @@
+step_id: T-003
+parent_global_step: G-004
+name: needs-review-propagation
+description: >
+  Create the automatic needs_review propagation of CascadeChange (C-016),
+  driven through the status model (C-007). For a changed step (C-005) inside
+  an open cascade, the propagation computation derives the invalidation set
+  as the transitive descendants of the changed step by parent linkage,
+  following the invalidation rule of the dependency projection (C-009): a
+  changed global step invalidates its tactical steps and their atomic steps,
+  a changed tactical step invalidates its atomic steps. For a changed MRS
+  entity or a changed paragraph the invalidation set is every global step of
+  the plan, per the rule that an HRS change triggers MRS re-projection and
+  an MRS change invalidates all global steps. For every step in the
+  invalidation set not already in needs_review the computation produces one
+  status update to needs_review and validates it through the status model as
+  a cascade-driven transition — needs_review is set only by this
+  propagation, never by direct request, and the status model rejects the
+  transition without the cascade flag. The output is the deterministic,
+  order-stable invalidation update set for one changed node, returned to the
+  mutation transaction for application together with the change; recursion
+  over subsequently reviewed and re-changed descendants re-derives the set
+  from each newly changed node. This step defines the computation and its
+  validation only; it persists nothing and records no revision.
+concepts: [C-016, C-007, C-009, C-005]
+inputs:
+- name: changed_node
+  type: change origin descriptor
+  description: >
+    The origin of the invalidation: either one changed step (C-005)
+    identified within the loaded step tree, or the fact of a changed MRS
+    entity or paragraph.
+- name: plan_step_tree
+  type: loaded projection
+  description: >
+    The plan's steps with parent linkage and current statuses, over which
+    the transitive invalidation set is computed (C-009).
+outputs:
+- name: invalidation_update_set
+  type: computed update list
+  description: >
+    The deterministic, order-stable list of (step, needs_review) status
+    updates for the changed origin, each validated by the status model
+    (C-007) as a cascade-driven transition; empty when nothing beneath the
+    origin requires invalidation.
+atomic_steps: [A-001, A-002]
+status: draft

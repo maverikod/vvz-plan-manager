@@ -1,0 +1,115 @@
+step_id: A-001
+parent_tactical_step: T-005
+name: node_version_content fetch helper
+target_file: plan_manager/cascade/restore.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-018, C-035]
+prompt: |
+  Create the file `plan_manager/cascade/restore.py` (it does not exist yet;
+  do not assume any pre-existing content). Write exactly the following
+  content, byte-identical, as the full content of the file:
+
+  ```python
+  """Row restoration from the version store for cascade abort (C-018, C-035)."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError
+
+
+  def node_version_content(conn: psycopg.Connection, version_uuid: uuid.UUID) -> dict:
+      """Fetch the content snapshot of a single node version.
+
+      Executes ``SELECT content FROM node_version WHERE uuid = %s`` with
+      ``version_uuid`` bound as the sole parameter, fetches at most one row
+      via ``fetchone()``, and returns that row's ``content`` column value (a
+      dict). If no row is found, raises ``CascadeError("node version not
+      found")``.
+
+      :param conn: open psycopg 3 database connection.
+      :param version_uuid: UUID primary key of the node_version row to fetch.
+      :return: the ``content`` dict stored on that node_version row.
+      :raises CascadeError: when no node_version row has the given uuid.
+      """
+      cur = conn.execute(
+          "SELECT content FROM node_version WHERE uuid = %s", (version_uuid,)
+      )
+      row = cur.fetchone()
+      if row is None:
+          raise CascadeError("node version not found")
+      return row[0]
+  ```
+
+  Constraints, all binding:
+  - The module docstring is exactly: `"""Row restoration from the version
+    store for cascade abort (C-018, C-035)."""` on the first line of the
+    file.
+  - Imports, in this exact order, each on its own line, with one blank
+    line between the `uuid` import, the `psycopg` import, and the
+    `plan_manager.cascade.record` import groups as shown: `import uuid`,
+    then `import psycopg`, then `from plan_manager.cascade.record import
+    CascadeError`.
+  - `CascadeError` is an existing, separately authored class in the sibling
+    module `plan_manager/cascade/record.py`, declared there as `class
+    CascadeError(ValueError)`. Do not redefine it in this file; only import
+    it as shown.
+  - Define exactly one function, `node_version_content`, with signature
+    `def node_version_content(conn: psycopg.Connection, version_uuid:
+    uuid.UUID) -> dict:`.
+  - The function body executes the SQL statement `SELECT content FROM
+    node_version WHERE uuid = %s` via `conn.execute(...)`, passing
+    `(version_uuid,)` as the parameter tuple, exactly as shown above
+    (`node_version` is an existing database table with columns including
+    `uuid` and `content`; this AS does not create that table).
+  - Call `.fetchone()` on the cursor returned by `conn.execute(...)` and
+    bind the result to `row`.
+  - If `row is None`, raise `CascadeError("node version not found")`.
+  - Otherwise return `row[0]` (the `content` column value, a `dict`).
+  - Do not add any other functions, classes, or top-level statements to
+    this file.
+  - The docstring text of `node_version_content` must match exactly what
+    is shown in the code block above, including the `:param`, `:return`,
+    and `:raises` fields.
+
+  MRS excerpt (only the concepts referenced by this AS; quoted verbatim
+  from `spec.yaml`):
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces
+      one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the
+      single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity;
+      human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never
+      emits DDL
+verification:
+  type: import
+  target: plan_manager.cascade.restore
+  expected: >
+    Importing the module plan_manager.cascade.restore succeeds without
+    raising any exception, and the module exposes a callable attribute
+    named node_version_content accepting exactly two positional
+    parameters (conn, version_uuid) and returning a dict at runtime when
+    given a connection and a version uuid that exists in node_version;
+    it raises CascadeError when the row is absent.
+status: draft

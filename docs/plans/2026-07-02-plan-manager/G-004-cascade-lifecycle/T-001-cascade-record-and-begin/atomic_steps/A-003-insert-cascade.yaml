@@ -1,0 +1,136 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: insert-cascade
+target_file: plan_manager/cascade/record.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-016, C-035]
+status: draft
+prompt: |
+  Modify the file plan_manager/cascade/record.py. Its full current content,
+  as it exists after all lower-priority atomic steps on this file have been
+  applied, is exactly:
+
+  """Cascade record entity: lifecycle states and database operations for the cascade table."""
+
+  import uuid
+  from dataclasses import dataclass
+  from datetime import datetime
+
+  import psycopg
+
+
+  CASCADE_STATUSES: frozenset[str] = frozenset({"open", "committed", "aborted"})
+
+
+  class CascadeError(ValueError):
+      """Raised on any cascade lifecycle violation."""
+
+
+  @dataclass(frozen=True)
+  class CascadeRecord:
+      """A cascade record: one row of the cascade table.
+
+      Fields, in order: uuid (the cascade's own identity), plan_uuid (the
+      owning plan), name (the cascade reference name held in the version
+      store, "cascade/<cascade uuid>"), base_revision_uuid (the plan head
+      revision the cascade was anchored at when opened, or None),
+      status (one of the three values in CASCADE_STATUSES), created_at
+      (creation timestamp).
+      """
+
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      name: str
+      base_revision_uuid: uuid.UUID | None
+      status: str
+      created_at: datetime
+
+  Append the following function to the end of the file, separated from the
+  `CascadeRecord` class by exactly two blank lines. Do not change anything
+  above it; it must remain byte-identical to what is shown above.
+
+  def insert_cascade(conn: psycopg.Connection, record: CascadeRecord) -> None:
+      """Insert a cascade record into the cascade table.
+
+      Executes an INSERT into the normative `cascade` table with columns
+      (uuid, plan_uuid, name, base_revision_uuid, status, created_at), using
+      the corresponding fields of `record` as the six parameter values, in
+      that column order.
+
+      Raises CascadeError("plan already has an open cascade") if the insert
+      violates the database's partial unique index on (plan_uuid) WHERE
+      status = 'open' (a psycopg.errors.UniqueViolation), because that index
+      allows at most one open cascade per plan.
+      """
+      try:
+          with conn.cursor() as cur:
+              cur.execute(
+                  "INSERT INTO cascade (uuid, plan_uuid, name, base_revision_uuid, status, created_at) "
+                  "VALUES (%s, %s, %s, %s, %s, %s)",
+                  (
+                      record.uuid,
+                      record.plan_uuid,
+                      record.name,
+                      record.base_revision_uuid,
+                      record.status,
+                      record.created_at,
+                  ),
+              )
+      except psycopg.errors.UniqueViolation:
+          raise CascadeError("plan already has an open cascade")
+
+  Constraints (all binding, no deviation):
+  - Function signature is exactly
+    `def insert_cascade(conn: psycopg.Connection, record: CascadeRecord) -> None:`.
+    `psycopg.Connection` refers to the `psycopg` module already imported in
+    this file as `import psycopg`. `CascadeRecord` refers to the dataclass
+    already defined above in this same file.
+  - The SQL text and parameter order must be exactly as shown: six `%s`
+    placeholders bound positionally to
+    `(record.uuid, record.plan_uuid, record.name, record.base_revision_uuid, record.status, record.created_at)`.
+  - The `cur.execute(...)` call must be wrapped in a `try` block; the
+    `except psycopg.errors.UniqueViolation:` clause must re-raise as
+    `CascadeError("plan already has an open cascade")` — `CascadeError`
+    refers to the exception class already defined above in this same file.
+  - Use `with conn.cursor() as cur:` as the cursor context manager, exactly
+    as shown. Do not call `conn.commit()` or `conn.rollback()` inside this
+    function — transaction control is the caller's responsibility.
+  - No other exception types are caught.
+  - The docstring is exactly the text shown above.
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Context: this function performs the write side of the one-open-cascade-per-plan
+  rule (CascadeChange, C-016) by delegating uniqueness enforcement to the
+  database (C-035)'s partial unique index on (plan_uuid) WHERE status='open',
+  translating the resulting psycopg.errors.UniqueViolation into the typed
+  CascadeError already defined in this file.
+verification:
+  type: manual
+  target: plan_manager.cascade.record.insert_cascade
+  expected: >
+    Reading the function body against the prompt confirms: the SQL statement
+    and six-parameter tuple match the specified column order exactly; a
+    psycopg.errors.UniqueViolation raised during cur.execute is caught and
+    re-raised as CascadeError("plan already has an open cascade"); no other
+    exception is caught; the cursor is opened via the "with conn.cursor() as cur"
+    context manager; the function returns None on success.

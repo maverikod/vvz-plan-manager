@@ -1,0 +1,104 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: record-dataclass
+target_file: plan_manager/cascade/record.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-016, C-035]
+status: draft
+prompt: |
+  Modify the file plan_manager/cascade/record.py. Its full current content,
+  as it exists after all lower-priority atomic steps on this file have been
+  applied, is exactly:
+
+  """Cascade record entity: lifecycle states and database operations for the cascade table."""
+
+  import uuid
+  from dataclasses import dataclass
+  from datetime import datetime
+
+  import psycopg
+
+
+  CASCADE_STATUSES: frozenset[str] = frozenset({"open", "committed", "aborted"})
+
+
+  class CascadeError(ValueError):
+      """Raised on any cascade lifecycle violation."""
+
+  Append the following dataclass definition to the end of the file, separated
+  from the `CascadeError` class by exactly two blank lines. Do not change
+  anything above it (module docstring, imports, CASCADE_STATUSES, CascadeError
+  must remain byte-identical to what is shown above).
+
+  @dataclass(frozen=True)
+  class CascadeRecord:
+      """A cascade record: one row of the cascade table.
+
+      Fields, in order: uuid (the cascade's own identity), plan_uuid (the
+      owning plan), name (the cascade reference name held in the version
+      store, "cascade/<cascade uuid>"), base_revision_uuid (the plan head
+      revision the cascade was anchored at when opened, or None),
+      status (one of the three values in CASCADE_STATUSES), created_at
+      (creation timestamp).
+      """
+
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      name: str
+      base_revision_uuid: uuid.UUID | None
+      status: str
+      created_at: datetime
+
+  Constraints (all binding, no deviation):
+  - `CascadeRecord` is decorated with exactly `@dataclass(frozen=True)`
+    (imported from `dataclasses`, already present in the file's import
+    block as `from dataclasses import dataclass`).
+  - Fields appear in exactly this order, with exactly these names and exact
+    type annotations: `uuid: uuid.UUID`, `plan_uuid: uuid.UUID`,
+    `name: str`, `base_revision_uuid: uuid.UUID | None`, `status: str`,
+    `created_at: datetime`. `uuid.UUID` refers to the standard library
+    `uuid` module already imported as `import uuid`. `datetime` refers to
+    the standard library class already imported as
+    `from datetime import datetime`.
+  - No default values on any field, no `__post_init__`, no extra methods,
+    no extra fields.
+  - The class docstring is exactly the text shown above (three-paragraph
+    prose describing the six fields in order).
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Context: CascadeRecord is the in-memory representation of one row of the
+  normative `cascade` table (Database, C-035): columns uuid (uuid PK),
+  plan_uuid (uuid), name (text), base_revision_uuid (uuid, nullable),
+  status (text, one of CASCADE_STATUSES), created_at (timestamptz). It is
+  the record entity of the CascadeChange (C-016) transactional change set.
+verification:
+  type: import
+  target: plan_manager.cascade.record.CascadeRecord
+  expected: >
+    Importing plan_manager.cascade.record succeeds. CascadeRecord is a
+    frozen dataclass (dataclasses.fields(CascadeRecord) returns exactly six
+    fields named uuid, plan_uuid, name, base_revision_uuid, status,
+    created_at in that order). Constructing a CascadeRecord instance with
+    six positional or keyword values of the matching types succeeds and
+    attempting to reassign an attribute on the instance raises
+    dataclasses.FrozenInstanceError.

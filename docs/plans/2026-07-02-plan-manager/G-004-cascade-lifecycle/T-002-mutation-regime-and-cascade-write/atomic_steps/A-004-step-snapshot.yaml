@@ -1,0 +1,130 @@
+step_id: A-004
+parent_tactical_step: T-002
+name: cascade write module and step_snapshot
+target_file: plan_manager/cascade/write.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-005, C-018]
+prompt: |
+  Create the file `plan_manager/cascade/write.py` with EXACTLY the
+  following content (reproduce it byte-for-byte, including blank lines,
+  the module docstring, import grouping, and the single trailing newline
+  at end of file; add nothing else beyond what is shown):
+
+  ```python
+  """Cascade-scoped write path for CascadeChange (C-016).
+
+  Records, for an admitted in-cascade mutation already applied to the
+  stored entity rows (C-035), one revision in the version store (C-018)
+  attributed to the cascade under the cascade reference, applying
+  accompanying step status updates validated by the status model (C-007).
+  """
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, CascadeRecord
+  from plan_manager.domain.status_model import validate_transition
+  from plan_manager.domain.step_store import Step, get_step
+  from plan_manager.storage.version_store import get_ref, record_revision
+
+
+  def step_snapshot(step: Step, status: str) -> dict:
+      """Build the full post-change content snapshot of a step node for
+      the version store (C-018).
+
+      The snapshot reflects `status`, not `step.status` — the caller
+      passes the new status the step is being written under.
+
+      Args:
+          step: the step whose fields are snapshotted.
+          status: the status value to record in the snapshot.
+
+      Returns:
+          A dict with exactly these keys, in this order: "kind", "uuid",
+          "plan_uuid", "parent_step_uuid", "level", "step_id", "slug",
+          "fields", "depends_on", "concepts", "status". "kind" is always
+          the literal string "step". "uuid" and "plan_uuid" are `str(...)`
+          of the corresponding Step uuid fields. "parent_step_uuid" is
+          `str(step.parent_step_uuid)` when it is not None, else None.
+          "level", "step_id", "slug", "fields", "depends_on", and
+          "concepts" are copied verbatim from `step`. "status" is the
+          `status` argument, not `step.status`.
+      """
+      return {
+          "kind": "step",
+          "uuid": str(step.uuid),
+          "plan_uuid": str(step.plan_uuid),
+          "parent_step_uuid": str(step.parent_step_uuid) if step.parent_step_uuid is not None else None,
+          "level": step.level,
+          "step_id": step.step_id,
+          "slug": step.slug,
+          "fields": step.fields,
+          "depends_on": step.depends_on,
+          "concepts": step.concepts,
+          "status": status,
+      }
+  ```
+
+  Constraints:
+  - The module docstring text is exactly as shown above.
+  - Import grouping exactly as shown: `import uuid` on its own line, one
+    blank line, `import psycopg` on its own line, one blank line, then
+    the four `from plan_manager...` lines with no blank lines between
+    them, in the exact order shown.
+  - The imported names `CascadeRecord`, `validate_transition`, and
+    `get_step` are not used anywhere in this file yet; that is
+    intentional. Later modifications to this same file (not part of this
+    task) will use them. Do not remove any import and do not add any
+    other import.
+  - `step_snapshot`'s signature, docstring, and body are reproduced
+    exactly as shown. The returned dict's key order is exactly as listed.
+  - No other function or statement is added.
+
+  Sibling contracts (import verbatim from these modules; do not
+  reimplement any of the following — they already exist as written):
+  - module `plan_manager/cascade/record.py`: `class CascadeError(ValueError)`;
+    `@dataclass(frozen=True) class CascadeRecord:` with fields
+    `uuid: uuid.UUID, plan_uuid: uuid.UUID, name: str,
+    base_revision_uuid: uuid.UUID | None, status: str, created_at: datetime`.
+  - module `plan_manager/domain/status_model.py`:
+    `def validate_transition(current: str, new: str, is_atomic_step: bool, via_cascade: bool) -> None`
+    (raises StatusTransitionError(ValueError) on an illegal transition;
+    needs_review is legal ONLY with via_cascade=True).
+  - module `plan_manager/domain/step_store.py`: `def get_step(conn, step_uuid) -> Step`;
+    `Step` is a dataclass with fields `uuid, plan_uuid, parent_step_uuid,
+    level, step_id, slug, fields: dict, depends_on: list[str],
+    concepts: list[str], status: str`.
+  - module `plan_manager/storage/version_store.py`:
+    `def record_revision(conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID, dict]], parent_revision_uuid, ref_name) -> uuid.UUID`
+    (with ref_name not None the named ref row is UPDATEd to the new
+    revision; the head does not move);
+    `def get_ref(conn, plan_uuid, name) -> uuid.UUID`
+    (raises VersionStoreError(ValueError) when the ref does not exist).
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-005 Step: "Single stored entity for plan levels 3-5 with level,
+    step id, slug, level-specific fields, and status." Relevant property:
+    "mutation regime depends on status (draft direct, frozen via
+    cascade)."
+  - C-018 VersionStore: "Git-like append-only version model of node
+    versions, revisions, and refs inside the database." Relevant
+    property: "node versions content-addressed by SHA-256 of canonical
+    JSON (sorted keys, UTF-8)."
+verification:
+  type: static_analysis
+  target: plan_manager/cascade/write.py
+  expected: >
+    The module parses as valid Python. The six named imports
+    (CascadeError, CascadeRecord, validate_transition, get_step,
+    get_ref, record_revision) succeed once the sibling modules exist.
+    step_snapshot(step, status) returns a dict with exactly the eleven
+    keys "kind", "uuid", "plan_uuid", "parent_step_uuid", "level",
+    "step_id", "slug", "fields", "depends_on", "concepts", "status" in
+    that order, with "kind" equal to "step", "uuid" and "plan_uuid" as
+    strings, "parent_step_uuid" as a string or None matching
+    step.parent_step_uuid, and "status" equal to the status argument
+    rather than step.status.
+status: draft

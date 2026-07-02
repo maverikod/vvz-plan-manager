@@ -1,0 +1,233 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: create preview_cascade function
+target_file: plan_manager/cascade/preview.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-016, C-018, C-007, C-012, C-020, C-017]
+prompt: >
+  Create a new file at the exact project-relative path
+  plan_manager/cascade/preview.py.
+
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content. Write exactly the module described below and
+  nothing else in the file.
+
+  MRS excerpt (only the concepts and relations this AS realises):
+
+  concept_id: C-016
+  name: CascadeChange
+  definition: Transactional top-down change set anchored at the plan head
+    revision, published atomically on green gate.
+  properties:
+  - begin acquires the per-plan lock; commit advances head only when gate
+    is green
+  - automatic needs_review propagation per invalidation rule
+  - one open cascade per plan; MRS mutations are cascade-only at any
+    status
+
+  concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions,
+    revisions, and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted
+    keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one
+    revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+
+  concept_id: C-007
+  name: StatusModel
+  definition: Lifecycle state machine for plan artifacts with enforced
+    legal transitions.
+  properties:
+  - states draft, ready_for_review, frozen, needs_review; atomic steps add
+    in_progress, done
+  - needs_review is set only by cascade propagation, never by direct
+    request
+
+  concept_id: C-012
+  name: MechanicalGate
+  definition: Deterministic binary verification layer catching every
+    mechanical defect before semantics.
+  properties:
+  - fixed check order parse, identity, uniqueness, references, coverage
+  - byte-identical reports for the same tree state; fail-fast only at
+    group boundary
+  - per-branch gating; precondition for any semantic measurement
+  - parser sanity gates make parsing regressions fail loudly instead of
+    passing silently
+
+  concept_id: C-020
+  name: Verdict
+  definition: Gate or score result bound to the exact revision and scope
+    it was computed for.
+  properties:
+  - fresh iff recorded revision equals current revision; comparison never
+    by timestamp
+
+  concept_id: C-017
+  name: Finding
+  definition: Ephemeral result unit of gate and scoring runs with check
+    id, severity, artifact path, and message.
+  properties:
+  - aggregated into reports; never stored as a plan artifact
+
+  relevant relations:
+  - { from_concept: C-016, to_concept: C-019, type: uses }
+  - { from_concept: C-016, to_concept: C-018, type: uses }
+  - { from_concept: C-016, to_concept: C-012, type: depends_on }
+  - { from_concept: C-016, to_concept: C-007, type: uses }
+  - { from_concept: C-020, to_concept: C-017, type: owns }
+  - { from_concept: C-020, to_concept: C-018, type: depends_on }
+  - { from_concept: C-012, to_concept: C-017, type: produces }
+  - { from_concept: C-012, to_concept: C-020, type: produces }
+
+  Imports to place at the top of the file, in this exact order, with these
+  exact module paths and nothing else:
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, get_open_cascade
+
+  from plan_manager.storage.version_store import get_ref
+
+  from plan_manager.storage.version_ops import diff
+
+  from plan_manager.views.dependency_graph import load_steps
+
+  from plan_manager.verify.gate_data import artifact_path_of
+
+  from plan_manager.verify.gate import run_gate
+
+  from plan_manager.verify.finding import render_json
+
+  These imported names come from sibling modules that already exist
+  (authored separately); do not reimplement them, only import and call
+  them exactly as declared here:
+
+  - module plan_manager/cascade/record.py declares: `class
+    CascadeError(ValueError)`; `@dataclass(frozen=True) class
+    CascadeRecord:` with fields `uuid: uuid.UUID, plan_uuid: uuid.UUID,
+    name: str, base_revision_uuid: uuid.UUID | None, status: str,
+    created_at: datetime`; `def get_open_cascade(conn: psycopg.Connection,
+    plan_uuid: uuid.UUID) -> CascadeRecord | None`.
+  - module plan_manager/storage/version_store.py declares: `def
+    get_ref(conn, plan_uuid, name) -> uuid.UUID` (raises
+    VersionStoreError(ValueError) when the ref is absent).
+  - module plan_manager/storage/version_ops.py declares: `def diff(conn,
+    plan_uuid, revision_a, revision_b) -> dict` returning `{"added":
+    [...], "removed": [...], "changed": [...]}` where each list holds node
+    uuids.
+  - module plan_manager/views/dependency_graph.py declares: `def
+    load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]`; Step is a
+    dataclass with fields `uuid, plan_uuid, parent_step_uuid, level,
+    step_id, slug, fields: dict, depends_on: list[str], concepts:
+    list[str], status: str`.
+  - module plan_manager/verify/gate_data.py declares: `def
+    artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str`.
+  - module plan_manager/verify/gate.py declares: `def run_gate(conn,
+    plan_uuid, branch=None, fail_fast=False) -> tuple[Report, Verdict]`
+    where Report has field `green: bool`, and Verdict is
+    `@dataclass(frozen=True)` with fields `kind: str, scope: str,
+    revision_uuid: uuid.UUID | None, green: bool, payload: dict`.
+  - module plan_manager/verify/finding.py declares: `def
+    render_json(report: Report) -> str`.
+
+  Write exactly one module-level docstring as the first line of the file:
+
+  """Read-only preview of the plan's open cascade (C-016)."""
+
+  Then the imports listed above, then exactly one function with this exact
+  signature, typing annotations included:
+
+  def preview_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) ->
+  dict:
+
+  Its docstring, verbatim, must be:
+
+  """Return the read-only preview of the plan's open cascade.
+
+      Resolves the plan's open cascade record, computes the accumulated
+      change set between the cascade's base revision and its current tip,
+      classifies the needs_review blast radius by artifact path, and runs
+      the mechanical gate for a verdict and findings report. Performs no
+      writes: it records no revision, changes no status, and does not
+      move the head.
+
+      Args:
+          conn: An open psycopg 3 database connection.
+          plan_uuid: The UUID identity of the plan whose open cascade is
+              previewed.
+
+      Returns:
+          A dict with exactly these keys, in this order:
+          "cascade_uuid": str -- the open cascade record's UUID.
+          "base_revision_uuid": str -- the revision UUID anchored at
+              cascade opening.
+          "tip_revision_uuid": str -- the current UUID resolved from the
+              cascade's ref.
+          "change_set": dict -- the diff() result between
+              base_revision_uuid and tip_revision_uuid, with keys
+              "added", "removed", "changed", each a list of node uuids.
+          "needs_review": list[str] -- artifact paths of steps whose
+              status equals "needs_review", sorted ascending.
+          "gate_green": bool -- whether the mechanical gate run is green.
+          "gate_report_json": str -- the machine-checkable JSON rendering
+              of the gate findings report.
+
+      Raises:
+          CascadeError: if the plan has no open cascade.
+      """
+
+  The function body must implement exactly this algorithm, with no
+  additional behavior, no additional parameters, and no alternate control
+  flow:
+
+  1. Call `rec = get_open_cascade(conn, plan_uuid)`. If `rec is None`,
+     raise `CascadeError("plan has no open cascade")`.
+  2. Call `tip = get_ref(conn, plan_uuid, rec.name)`.
+  3. Call `change_set = diff(conn, plan_uuid, rec.base_revision_uuid,
+     tip)`.
+  4. Call `nodes = load_steps(conn, plan_uuid)`. Build `blast = sorted(
+     artifact_path_of(nodes, s) for s in nodes.values() if s.status ==
+     "needs_review" )`.
+  5. Call `report, verdict = run_gate(conn, plan_uuid)`. The `verdict`
+     local variable is bound by this call but not otherwise used in the
+     return value.
+  6. Return exactly this dict literal, with these keys in this exact
+     order: `{"cascade_uuid": str(rec.uuid), "base_revision_uuid":
+     str(rec.base_revision_uuid), "tip_revision_uuid": str(tip),
+     "change_set": change_set, "needs_review": blast, "gate_green":
+     report.green, "gate_report_json": render_json(report)}`.
+
+  Constraints:
+
+  - The function makes no INSERT, UPDATE, or DELETE; it calls only the
+    read functions listed above.
+  - The function records no revision, changes no status, and does not
+    move any ref or head.
+  - The function raises no exception itself other than the CascadeError
+    raised explicitly in step 1; it does not catch or wrap exceptions
+    raised by the called functions.
+  - No other function, class, constant, or top-level statement is added
+    to the file.
+  - The file contains no `__main__` guard, no CLI entry point, and no
+    logging setup.
+verification:
+  type: import
+  target: plan_manager.cascade.preview
+  expected: >
+    Importing the module plan_manager.cascade.preview succeeds without
+    raising, and the module exposes exactly one public callable named
+    preview_cascade with the two positional parameters conn and
+    plan_uuid, annotated psycopg.Connection and uuid.UUID respectively,
+    returning dict; calling inspect.signature on it reflects those two
+    parameters and no others.
+status: draft

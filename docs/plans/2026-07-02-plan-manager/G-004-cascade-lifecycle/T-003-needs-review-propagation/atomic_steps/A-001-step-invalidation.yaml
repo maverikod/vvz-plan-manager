@@ -1,0 +1,196 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Create propagation module with step_invalidation
+target_file: plan_manager/cascade/propagation.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-016, C-007, C-009, C-005]
+prompt: |
+  Create the new file plan_manager/cascade/propagation.py with EXACTLY the
+  following content, byte-identical. This is a new file with no
+  pre-existing content — do not assume any prior content. The content
+  begins at the line with the opening triple double-quote and ends at the
+  line "    return updates" (inclusive); write the file with a single
+  trailing newline after that last line and nothing else.
+
+  ----- BEGIN FILE CONTENT -----
+  """Pure computation of needs_review invalidation update sets for CascadeChange (C-016).
+
+  This module contains no database access and no persistence. Every function
+  returns a plain list of (uuid.UUID, str) tuples describing status updates to
+  be applied by the caller inside an open cascade transaction. Illegal status
+  transitions propagate as StatusTransitionError raised by
+  plan_manager.domain.status_model.validate_transition.
+  """
+
+  import uuid
+
+  from plan_manager.domain.status_model import validate_transition
+  from plan_manager.domain.step import Step
+  from plan_manager.views.dependency_graph import impact_set
+
+
+  def step_invalidation(
+      nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID
+  ) -> list[tuple[uuid.UUID, str]]:
+      """Compute the invalidation update set for one changed step.
+
+      Realises the transitive needs_review propagation rule for a changed
+      step (C-005) inside an open cascade (C-016), driven through the status
+      model (C-007): a changed global step invalidates its tactical steps
+      and their atomic steps, a changed tactical step invalidates its
+      atomic steps. The invalidation set is the transitive descendants of
+      origin_uuid by parent linkage, computed by the dependency graph
+      projection (C-009).
+
+      Args:
+          nodes: Mapping of step uuid.UUID to Step, the loaded plan step
+              tree.
+          origin_uuid: uuid.UUID of the changed step that anchors the
+              invalidation.
+
+      Returns:
+          A list of (uuid.UUID, "needs_review") tuples in the deterministic
+          order produced by impact_set, one entry per descendant step whose
+          status is not already "needs_review". Empty when nothing beneath
+          the origin requires invalidation.
+
+      Raises:
+          ValueError: if origin_uuid is not a key of nodes ("origin step
+              not in tree").
+          StatusTransitionError: propagated from validate_transition when a
+              descendant step's current status cannot legally transition to
+              "needs_review" via cascade.
+      """
+      if origin_uuid not in nodes:
+          raise ValueError("origin step not in tree")
+      updates: list[tuple[uuid.UUID, str]] = []
+      for descendant_uuid in impact_set(nodes, origin_uuid):
+          descendant = nodes[descendant_uuid]
+          if descendant.status == "needs_review":
+              continue
+          validate_transition(
+              descendant.status,
+              "needs_review",
+              is_atomic_step=(descendant.level == 5),
+              via_cascade=True,
+          )
+          updates.append((descendant_uuid, "needs_review"))
+      return updates
+  ----- END FILE CONTENT -----
+
+  Do not add anything after "return updates"; do not add a trailing
+  function stub for mrs_invalidation — that function belongs to a
+  different file-write and is out of scope here.
+
+  CONSTRAINTS (explicit, no discretion):
+  - The module docstring shown between "BEGIN FILE CONTENT" and the import
+    statements must appear verbatim as the first statement of the file
+    (triple double-quoted string).
+  - Imports must be exactly, in this order: "import uuid", one blank line,
+    then "from plan_manager.domain.status_model import validate_transition",
+    "from plan_manager.domain.step import Step", "from
+    plan_manager.views.dependency_graph import impact_set" — no other
+    imports, no aliasing, no wildcard imports.
+  - The function signature must be exactly:
+    def step_invalidation(nodes: dict[uuid.UUID, Step], origin_uuid:
+    uuid.UUID) -> list[tuple[uuid.UUID, str]]:
+  - The docstring inside step_invalidation must appear verbatim as shown
+    above (Google-style Args/Returns/Raises sections), as the first
+    statement of the function body.
+  - Body logic, in order: (1) if origin_uuid not in nodes: raise
+    ValueError("origin step not in tree"); (2) initialize updates as an
+    empty list typed list[tuple[uuid.UUID, str]]; (3) iterate
+    impact_set(nodes, origin_uuid) in the order returned — this order is
+    already deterministic, do not re-sort it; (4) for each descendant
+    uuid.UUID, look up nodes[descendant_uuid]; (5) skip (continue) when
+    descendant.status == "needs_review"; (6) otherwise call
+    validate_transition(descendant.status, "needs_review",
+    is_atomic_step=(descendant.level == 5), via_cascade=True) — do not
+    catch any exception it raises, let it propagate to the caller
+    unmodified; (7) append (descendant_uuid, "needs_review") to updates;
+    (8) after the loop, return updates.
+  - No database access, no I/O, no persistence, no logging calls anywhere
+    in this file.
+  - No other functions, classes, or module-level code beyond what is shown
+    between BEGIN/END FILE CONTENT above.
+
+  IMPORTED SIBLING CONTRACTS (quote verbatim; import them, never
+  reimplement their bodies in this file):
+  - module plan_manager/domain/status_model.py: `def
+    validate_transition(current: str, new: str, is_atomic_step: bool,
+    via_cascade: bool) -> None` (raises StatusTransitionError(ValueError)
+    on illegal transitions; needs_review is legal ONLY with
+    via_cascade=True).
+  - module plan_manager/views/dependency_graph.py: `def
+    impact_set(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) ->
+    list[uuid.UUID]` (transitive children of the origin by
+    parent_step_uuid, deterministically sorted).
+  - module plan_manager/domain/step.py: `@dataclass class Step:` with
+    fields `uuid: uuid.UUID, plan_uuid: uuid.UUID, parent_step_uuid:
+    uuid.UUID | None, level: int, step_id: str, slug: str, fields: dict,
+    depends_on: list[str], concepts: list[str], status: str`.
+
+  MRS EXCERPT (definitions and relations relevant to this AS only; quoted
+  verbatim from spec.yaml):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+    source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
+
+  - concept_id: C-007
+    name: StatusModel
+    definition: Lifecycle state machine for plan artifacts with enforced legal transitions.
+    properties:
+    - states draft, ready_for_review, frozen, needs_review; atomic steps add in_progress, done
+    - needs_review is set only by cascade propagation, never by direct request
+    source_labels: ["{n1o3}", "{m2d9}", "{m4c2}"]
+
+  - concept_id: C-009
+    name: DependencyGraph
+    definition: Computed projection set over steps covering execution order, parallelism, cycles, and impact.
+    properties:
+    - edges from depends_on at every level plus priority pairs within (target_file, TS)
+    - Kahn topological order with deterministic tie-break; residual subgraph reported as cycle set
+    - waves partition nodes by prerequisite depth; impact follows the invalidation rule
+    source_labels: ["{d4r8}", "{q6d8}", "{t2a7}", "{y9k4}", "{x4v1}"]
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+    source_labels: ["{w2y7}", "{i5n7}", "{m4c2}", "{v8y2}", "{a9y5}"]
+
+  Relevant relations (quoted verbatim from spec.yaml):
+  - { from_concept: C-016, to_concept: C-007, type: uses }
+  - { from_concept: C-009, to_concept: C-005, type: consumes }
+  - { from_concept: C-005, to_concept: C-007, type: uses }
+verification:
+  type: manual
+  target: plan_manager/cascade/propagation.py::step_invalidation
+  expected: >
+    The file plan_manager/cascade/propagation.py exists and imports
+    cleanly with exactly the three from-imports and the uuid import shown
+    in the prompt. Calling step_invalidation with an origin_uuid that is
+    not a key of nodes raises ValueError with the message "origin step
+    not in tree". Calling step_invalidation with a valid origin_uuid
+    iterates impact_set(nodes, origin_uuid) in its returned order, skips
+    any descendant already at status "needs_review", calls
+    validate_transition for every remaining descendant with via_cascade
+    True and is_atomic_step set to True only when the descendant's level
+    equals 5, lets any StatusTransitionError raised by validate_transition
+    propagate uncaught to the caller, and returns a list of
+    (descendant_uuid, "needs_review") tuples in impact_set's order, empty
+    when no descendant requires invalidation. No database or file I/O
+    occurs anywhere in the module.
+status: draft

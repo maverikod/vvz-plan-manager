@@ -1,0 +1,235 @@
+step_id: A-007
+parent_tactical_step: T-005
+name: abort_cascade discard
+target_file: plan_manager/cascade/close.py
+operation: modify_file
+priority: 3
+depends_on: [A-006, A-004]
+concepts: [C-016, C-019, C-018, C-035]
+prompt: |
+  Modify the existing file `plan_manager/cascade/close.py`. Its full
+  current content (after all lower-priority atomic steps on this file have
+  been applied) is exactly:
+
+  ```python
+  """Commit and abort operations closing a cascade (C-016, C-019, C-020)."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, close_cascade, get_open_cascade
+  from plan_manager.domain.plan import set_head_revision
+  from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
+  from plan_manager.storage.version_store import delete_ref, get_ref
+  from plan_manager.verify.gate import Verdict, run_gate
+
+
+  class CommitRefusedError(RuntimeError):
+      """Raised when a cascade commit is refused because the gate is red."""
+
+
+  def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
+      """Atomically publish the plan's open cascade when the gate is green.
+
+      Acquires the per-plan advisory lock, resolves the plan's open cascade
+      record (raising ``CascadeError("plan has no open cascade")`` when none
+      exists), and runs a fresh mechanical gate over the plan. When the gate
+      report is not green, raises ``CommitRefusedError`` carrying the total
+      finding count summed across all checks in the report, leaving the
+      cascade open and the plan unchanged. When the gate report is green,
+      resolves the cascade's ref to its tip revision, advances the plan head
+      to that revision, marks the cascade record committed, deletes the
+      cascade ref, and returns the gate verdict. The per-plan lock is always
+      released before returning or raising.
+
+      :param conn: open psycopg 3 database connection.
+      :param plan_uuid: uuid of the plan whose open cascade is committed.
+      :return: the ``Verdict`` produced by the fresh mechanical gate run.
+      :raises CascadeError: when the plan has no open cascade.
+      :raises CommitRefusedError: when the fresh gate run is not green.
+      """
+      acquire_plan_lock(conn, plan_uuid)
+      try:
+          rec = get_open_cascade(conn, plan_uuid)
+          if rec is None:
+              raise CascadeError("plan has no open cascade")
+          report, verdict = run_gate(conn, plan_uuid)
+          if not report.green:
+              finding_count = sum(len(c.findings) for c in report.checks)
+              raise CommitRefusedError(
+                  f"commit refused: mechanical gate not green ({finding_count} findings)"
+              )
+          tip = get_ref(conn, plan_uuid, rec.name)
+          set_head_revision(conn, plan_uuid, tip)
+          close_cascade(conn, rec.uuid, "committed")
+          delete_ref(conn, plan_uuid, rec.name)
+          return verdict
+      finally:
+          release_plan_lock(conn, plan_uuid)
+  ```
+
+  Apply exactly two changes to this content:
+
+  1. Insert a new import line `from plan_manager.cascade.restore import
+     restore_state` immediately after the `from plan_manager.cascade.record
+     import CascadeError, close_cascade, get_open_cascade` line, so the
+     import block reads:
+
+  ```python
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, close_cascade, get_open_cascade
+  from plan_manager.cascade.restore import restore_state
+  from plan_manager.domain.plan import set_head_revision
+  from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
+  from plan_manager.storage.version_store import delete_ref, get_ref
+  from plan_manager.verify.gate import Verdict, run_gate
+  ```
+
+  2. Append the following new function to the end of the file, separated
+     from `commit_cascade` by exactly two blank lines. Do not modify
+     `CommitRefusedError` or `commit_cascade`:
+
+  ```python
+  def abort_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+      """Discard the plan's open cascade without publishing it.
+
+      Acquires the per-plan advisory lock, resolves the plan's open cascade
+      record (raising ``CascadeError("plan has no open cascade")`` when none
+      exists), restores working rows to the cascade's base-revision state via
+      ``restore_state``, deletes the cascade ref, and marks the cascade
+      record aborted. The cascade's recorded revisions remain in the
+      append-only version store, addressable by revision id, with no ref
+      pointing at them; the published plan head is left untouched. The
+      per-plan lock is always released before returning or raising.
+
+      :param conn: open psycopg 3 database connection.
+      :param plan_uuid: uuid of the plan whose open cascade is aborted.
+      :raises CascadeError: when the plan has no open cascade.
+      """
+      acquire_plan_lock(conn, plan_uuid)
+      try:
+          rec = get_open_cascade(conn, plan_uuid)
+          if rec is None:
+              raise CascadeError("plan has no open cascade")
+          tip = get_ref(conn, plan_uuid, rec.name)
+          restore_state(conn, plan_uuid, rec.base_revision_uuid, tip)
+          delete_ref(conn, plan_uuid, rec.name)
+          close_cascade(conn, rec.uuid, "aborted")
+      finally:
+          release_plan_lock(conn, plan_uuid)
+  ```
+
+  Constraints, all binding:
+  - `restore_state` is an existing, separately authored function in the
+    sibling module `plan_manager/cascade/restore.py`, declared there as
+    `def restore_state(conn: psycopg.Connection, plan_uuid: uuid.UUID,
+    base_revision_uuid: uuid.UUID, tip_revision_uuid: uuid.UUID) -> None`;
+    it restores every working row that changed or was removed between
+    `base_revision_uuid` and `tip_revision_uuid` back to its
+    base-revision snapshot, and deletes every working row that was added,
+    without deleting or rewriting any node_version or revision row. Import
+    and call it exactly as shown; do not redefine it in this file.
+  - `CascadeError`, `get_open_cascade`, and `close_cascade` are the same
+    sibling-module entities already imported and used by `commit_cascade`
+    in this file: `class CascadeError(ValueError)`; `def get_open_cascade(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None`
+    where `CascadeRecord` is `@dataclass(frozen=True) class CascadeRecord:`
+    with fields `uuid: uuid.UUID, plan_uuid: uuid.UUID, name: str,
+    base_revision_uuid: uuid.UUID | None, status: str, created_at:
+    datetime`; `def close_cascade(conn: psycopg.Connection, cascade_uuid:
+    uuid.UUID, status: str) -> None`.
+  - `acquire_plan_lock` and `release_plan_lock` are the same sibling-module
+    entities already imported and used by `commit_cascade`: `def
+    acquire_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) ->
+    None` (blocks until acquired); `def release_plan_lock(conn, plan_uuid)
+    -> None` (raises `PlanLockError(RuntimeError)` if not held; this AS
+    does not need to catch that exception).
+  - `get_ref` and `delete_ref` are the same sibling-module entities already
+    imported and used by `commit_cascade`: `def get_ref(conn, plan_uuid,
+    name) -> uuid.UUID` (raises `VersionStoreError(ValueError)` when the
+    named ref is absent); `def delete_ref(conn, plan_uuid, name) -> None`.
+  - The function signature is exactly `def abort_cascade(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> None:`.
+  - Call `acquire_plan_lock(conn, plan_uuid)` first, before the `try`
+    block.
+  - Inside `try`: call `rec = get_open_cascade(conn, plan_uuid)`; if `rec
+    is None`, raise `CascadeError("plan has no open cascade")`.
+  - `tip = get_ref(conn, plan_uuid, rec.name)`.
+  - `restore_state(conn, plan_uuid, rec.base_revision_uuid, tip)` — pass
+    `rec.base_revision_uuid` as `base_revision_uuid` and `tip` as
+    `tip_revision_uuid`.
+  - `delete_ref(conn, plan_uuid, rec.name)`.
+  - `close_cascade(conn, rec.uuid, "aborted")`.
+  - The `finally` block calls `release_plan_lock(conn, plan_uuid)`
+    unconditionally, so the lock is released whether the function returns
+    normally or raises `CascadeError`.
+  - This function has no return value (`-> None`); it does not return
+    anything.
+  - The resulting file must contain, in this order: the module docstring,
+    the import block, the `CommitRefusedError` class, the `commit_cascade`
+    function, then the `abort_cascade` function, and no other top-level
+    definitions.
+
+  MRS excerpt (only the concepts referenced by this AS; quoted verbatim
+  from `spec.yaml`):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan
+      head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when
+      gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any
+      status
+
+  - concept_id: C-019
+    name: PlanLock
+    definition: Per-plan database advisory lock serializing cascades and
+      identifier assignment.
+    properties:
+    - no lock files, no in-process lock state
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces
+      one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the
+      single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity;
+      human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never
+      emits DDL
+verification:
+  type: import
+  target: plan_manager.cascade.close
+  expected: >
+    Importing the module plan_manager.cascade.close succeeds without
+    raising any exception, CommitRefusedError and commit_cascade remain
+    present and unchanged, and the module exposes a callable attribute
+    named abort_cascade accepting exactly two positional parameters
+    (conn, plan_uuid) that acquires the plan lock, raises CascadeError
+    when no cascade is open, restores working rows to the cascade's
+    base-revision state via restore_state, deletes the cascade ref,
+    marks the cascade record aborted, releases the plan lock in all
+    cases, and leaves the published plan head untouched.
+status: draft

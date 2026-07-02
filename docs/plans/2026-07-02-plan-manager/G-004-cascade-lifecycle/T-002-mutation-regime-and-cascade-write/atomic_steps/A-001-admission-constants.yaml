@@ -1,0 +1,97 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: cascade admission module and constants
+target_file: plan_manager/cascade/regime.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-016, C-003, C-004, C-007]
+prompt: |
+  Create the file `plan_manager/cascade/regime.py` with EXACTLY the
+  following content (reproduce it byte-for-byte, including blank lines,
+  the module docstring, import grouping, and the single trailing newline
+  at end of file; add nothing else — no functions, no `__all__`, no
+  additional constants):
+
+  ```python
+  """Mutation admission regime for CascadeChange (C-016).
+
+  Classifies mutation requests by target kind and artifact status per the
+  status model (C-007), admitting a request directly against the plan head
+  or only within the plan's open cascade.
+  """
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade
+  from plan_manager.domain.step_store import Step
+  from plan_manager.views.dependency_graph import impact_set, load_steps
+
+  MRS_ENTITY_KINDS: frozenset[str] = frozenset({"concept", "relation"})
+  DIRECT_STATUSES: frozenset[str] = frozenset({"draft", "ready_for_review"})
+  ```
+
+  Constraints:
+  - `MRS_ENTITY_KINDS` is annotated `frozenset[str]` and its value is
+    exactly `frozenset({"concept", "relation"})`; it names the two MRS
+    entity kinds (C-003 Concept, C-004 Relation) that are cascade-only
+    at any artifact status.
+  - `DIRECT_STATUSES` is annotated `frozenset[str]` and its value is
+    exactly `frozenset({"draft", "ready_for_review"})`; it names the two
+    step statuses (C-007 StatusModel) under which a step mutation may be
+    admitted directly against the plan head.
+  - The six imported names (`CascadeError`, `CascadeRecord`,
+    `get_open_cascade`, `Step`, `impact_set`, `load_steps`) are not used
+    anywhere in this file yet; that is intentional. Later modifications to
+    this same file (not part of this task) will use them. Do not remove
+    any of the six imports and do not add any other imports.
+  - No code besides the module docstring, the six import lines (grouped
+    exactly as shown: `import uuid` on its own line, one blank line,
+    `import psycopg` on its own line, one blank line, then the three
+    `from plan_manager...` lines with no blank lines between them), and
+    the two constant assignments.
+
+  Sibling contracts (import verbatim from these modules; do not
+  reimplement any of the following — they already exist as written):
+  - module `plan_manager/cascade/record.py`: `class CascadeError(ValueError)`;
+    `@dataclass(frozen=True) class CascadeRecord:` with fields
+    `uuid: uuid.UUID, plan_uuid: uuid.UUID, name: str,
+    base_revision_uuid: uuid.UUID | None, status: str, created_at: datetime`;
+    `def get_open_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None`.
+  - module `plan_manager/domain/step_store.py`: `Step` is a dataclass with
+    fields `uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
+    fields: dict, depends_on: list[str], concepts: list[str], status: str`.
+  - module `plan_manager/views/dependency_graph.py`:
+    `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]`;
+    `def impact_set(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> list[uuid.UUID]`
+    (transitive children by parent_step_uuid, deterministically sorted).
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-016 CascadeChange: "Transactional top-down change set anchored at
+    the plan head revision, published atomically on green gate."
+    Relevant property: "one open cascade per plan; MRS mutations are
+    cascade-only at any status."
+  - C-003 Concept: "MRS basis axis with canonical name, one-sentence
+    definition, properties, and source labels."
+  - C-004 Relation: "Typed directed edge between two concepts restricted
+    to seven allowed types."
+  - C-007 StatusModel: "Lifecycle state machine for plan artifacts with
+    enforced legal transitions." Relevant property: "states draft,
+    ready_for_review, frozen, needs_review; atomic steps add in_progress,
+    done."
+verification:
+  type: static_analysis
+  target: plan_manager/cascade/regime.py
+  expected: >
+    The module parses as valid Python. It defines MRS_ENTITY_KINDS equal
+    to frozenset({"concept", "relation"}) and DIRECT_STATUSES equal to
+    frozenset({"draft", "ready_for_review"}), both annotated
+    frozenset[str]. The six named imports (CascadeError, CascadeRecord,
+    get_open_cascade, Step, impact_set, load_steps) succeed once the
+    sibling modules plan_manager/cascade/record.py,
+    plan_manager/domain/step_store.py, and
+    plan_manager/views/dependency_graph.py exist. The file contains no
+    function or class definitions.
+status: draft

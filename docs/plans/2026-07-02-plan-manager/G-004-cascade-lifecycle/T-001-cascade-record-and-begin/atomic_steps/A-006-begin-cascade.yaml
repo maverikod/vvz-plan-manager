@@ -1,0 +1,198 @@
+step_id: A-006
+parent_tactical_step: T-001
+name: begin-cascade
+target_file: plan_manager/cascade/begin.py
+operation: create_file
+priority: 1
+depends_on: [A-005]
+concepts: [C-016, C-019, C-018, C-035]
+status: draft
+prompt: |
+  Create the file plan_manager/cascade/begin.py with EXACTLY the following
+  content (this is the complete, final content of this creation step; do not
+  add anything else, do not assume any pre-existing content):
+
+  """Cascade opening operation: begins a new cascade anchored at the plan head revision."""
+
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade, insert_cascade
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
+  from plan_manager.storage.version_store import create_ref
+
+
+  def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord:
+      """Open a new cascade on a plan, anchored at its current head revision.
+
+      Acquires the per-plan advisory lock for the duration of the operation.
+      Raises CascadeError("plan already has an open cascade") if the plan
+      already has an open cascade record. Raises CascadeError("cannot open
+      a cascade on a plan with no head revision") if the plan has no
+      recorded head revision to anchor at. Otherwise: generates a new
+      cascade uuid, builds the cascade reference name
+      "cascade/<cascade uuid>", creates that reference in the version store
+      pointing at the plan's head revision, builds and inserts the new
+      cascade record in the open state anchored at that head revision, and
+      returns the inserted record. The per-plan lock is always released
+      before returning or raising, whether the operation succeeded or
+      raised any of the above conditions.
+      """
+      acquire_plan_lock(conn, plan_uuid)
+      try:
+          if get_open_cascade(conn, plan_uuid) is not None:
+              raise CascadeError("plan already has an open cascade")
+          plan = get_plan(conn, plan_uuid)
+          if plan.head_revision_uuid is None:
+              raise CascadeError("cannot open a cascade on a plan with no head revision")
+          cascade_uuid = uuid.uuid4()
+          name = f"cascade/{cascade_uuid}"
+          create_ref(conn, plan_uuid, name, plan.head_revision_uuid)
+          record = CascadeRecord(
+              uuid=cascade_uuid,
+              plan_uuid=plan_uuid,
+              name=name,
+              base_revision_uuid=plan.head_revision_uuid,
+              status="open",
+              created_at=datetime.now(timezone.utc),
+          )
+          insert_cascade(conn, record)
+          return record
+      finally:
+          release_plan_lock(conn, plan_uuid)
+
+  Constraints (all binding, no deviation):
+  - The module docstring is exactly the single line shown above.
+  - Imports are exactly these six statements, in this order:
+    `import uuid`; `from datetime import datetime, timezone`;
+    `import psycopg`; a blank line separating stdlib/third-party imports
+    from local imports; then
+    `from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade, insert_cascade`;
+    `from plan_manager.domain.plan import get_plan`;
+    `from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock`;
+    `from plan_manager.storage.version_store import create_ref`. Do not add
+    any other imports.
+  - Function signature is exactly
+    `def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord:`.
+  - Body structure is exactly: call `acquire_plan_lock(conn, plan_uuid)`
+    first, unconditionally, outside any try block; then a `try:` block
+    containing all remaining logic through the `return record` statement;
+    then a `finally:` block containing exactly
+    `release_plan_lock(conn, plan_uuid)`.
+  - Inside the `try` block, in exact order:
+    1. `if get_open_cascade(conn, plan_uuid) is not None:` then
+       `raise CascadeError("plan already has an open cascade")`.
+    2. `plan = get_plan(conn, plan_uuid)`.
+    3. `if plan.head_revision_uuid is None:` then
+       `raise CascadeError("cannot open a cascade on a plan with no head revision")`.
+    4. `cascade_uuid = uuid.uuid4()`.
+    5. `name = f"cascade/{cascade_uuid}"`.
+    6. `create_ref(conn, plan_uuid, name, plan.head_revision_uuid)`.
+    7. Build `record = CascadeRecord(...)` with keyword arguments in
+       exactly this order: `uuid=cascade_uuid`, `plan_uuid=plan_uuid`,
+       `name=name`, `base_revision_uuid=plan.head_revision_uuid`,
+       `status="open"`, `created_at=datetime.now(timezone.utc)`.
+    8. `insert_cascade(conn, record)`.
+    9. `return record`.
+  - No other exception handling, no additional branches, no logging.
+  - The docstring is exactly the text shown above.
+
+  Imported sibling contracts used by this file (quoted verbatim; import them,
+  do not reimplement them):
+
+  - module plan_manager/storage/plan_lock.py:
+    `def acquire_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None`
+    (blocks until acquired).
+    `def release_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None`
+    (raises PlanLockError(RuntimeError) if the lock was not held).
+
+  - module plan_manager/storage/version_store.py:
+    `def create_ref(conn, plan_uuid, name, revision_uuid) -> uuid.UUID`.
+
+  - module plan_manager/domain/plan.py:
+    `def get_plan(conn, plan_uuid) -> Plan` where `Plan` is a dataclass with
+    fields `uuid`, `name`, `status`, `context_budget`, `head_revision_uuid`.
+
+  - module plan_manager/cascade/record.py (already implemented; full
+    relevant signatures):
+    `CASCADE_STATUSES: frozenset[str] = frozenset({"open", "committed", "aborted"})`.
+    `class CascadeError(ValueError):` raised on any cascade lifecycle
+    violation.
+    `@dataclass(frozen=True) class CascadeRecord:` with fields, in order:
+    `uuid: uuid.UUID`, `plan_uuid: uuid.UUID`, `name: str`,
+    `base_revision_uuid: uuid.UUID | None`, `status: str`,
+    `created_at: datetime`.
+    `def get_open_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None`
+    returns the open cascade record for a plan, or None if there is none.
+    `def insert_cascade(conn: psycopg.Connection, record: CascadeRecord) -> None`
+    inserts a cascade record; raises CascadeError("plan already has an open
+    cascade") on a partial-unique-index violation.
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-019
+    name: PlanLock
+    definition: Per-plan database advisory lock serializing cascades and identifier assignment.
+    properties:
+    - no lock files, no in-process lock state
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Relevant relations:
+  - { from_concept: C-016, to_concept: C-019, type: uses }
+  - { from_concept: C-016, to_concept: C-018, type: uses }
+  - { from_concept: C-035, to_concept: C-018, type: owns }
+  - { from_concept: C-035, to_concept: C-019, type: owns }
+
+  Context: begin_cascade is the opening operation of CascadeChange (C-016).
+  It uses PlanLock (C-019) to serialize concurrent cascade opens on the same
+  plan, anchors the new cascade at the plan's current head revision by
+  creating a ref in the VersionStore (C-018) named "cascade/<cascade uuid>"
+  pointing at that revision, and persists the cascade record as a row in the
+  Database (C-035) via the record.py operations already implemented in this
+  same package.
+verification:
+  type: manual
+  target: plan_manager.cascade.begin.begin_cascade
+  expected: >
+    Reading the function body against the prompt confirms: acquire_plan_lock
+    is called first, unconditionally, before the try block; get_open_cascade
+    is checked first inside the try block and raises CascadeError("plan
+    already has an open cascade") when a record is found; get_plan is called
+    and plan.head_revision_uuid is checked next, raising
+    CascadeError("cannot open a cascade on a plan with no head revision")
+    when None; a fresh cascade_uuid is generated via uuid.uuid4() and the
+    ref name is built as f"cascade/{cascade_uuid}"; create_ref is called
+    with the plan's head_revision_uuid; a CascadeRecord is built with
+    status="open" and created_at=datetime.now(timezone.utc) and passed to
+    insert_cascade; the record is returned; release_plan_lock is called in
+    a finally block so it runs whether the function returns normally or
+    raises at any point after acquire_plan_lock.

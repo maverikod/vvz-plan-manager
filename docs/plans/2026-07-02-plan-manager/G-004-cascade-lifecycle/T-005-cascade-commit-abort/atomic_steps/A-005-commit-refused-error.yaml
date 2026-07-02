@@ -1,0 +1,73 @@
+step_id: A-005
+parent_tactical_step: T-005
+name: CommitRefusedError exception type
+target_file: plan_manager/cascade/close.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-016, C-012]
+prompt: |
+  Create the file `plan_manager/cascade/close.py` (it does not exist yet;
+  do not assume any pre-existing content). Write exactly the following
+  content, byte-identical, as the full content of the file:
+
+  ```python
+  """Commit and abort operations closing a cascade (C-016, C-019, C-020)."""
+
+
+  class CommitRefusedError(RuntimeError):
+      """Raised when a cascade commit is refused because the gate is red."""
+  ```
+
+  Constraints, all binding:
+  - The module docstring is exactly: `"""Commit and abort operations
+    closing a cascade (C-016, C-019, C-020)."""` on the first line of the
+    file.
+  - Exactly two blank lines separate the module docstring from the class
+    definition.
+  - Define exactly one class, `CommitRefusedError`, inheriting directly
+    from the builtin `RuntimeError` (no other base classes, no `__init__`
+    override, no additional attributes or methods).
+  - Its class docstring is exactly: `"""Raised when a cascade commit is
+    refused because the gate is red."""`.
+  - Do not add any imports, functions, or other top-level statements to
+    this file.
+  - This exception is distinct from `CascadeError`, an existing, separately
+    authored class in the sibling module `plan_manager/cascade/record.py`,
+    declared there as `class CascadeError(ValueError)`; do not reference
+    `CascadeError` in this file.
+
+  MRS excerpt (only the concepts referenced by this AS; quoted verbatim
+  from `spec.yaml`):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan
+      head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when
+      gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any
+      status
+
+  - concept_id: C-012
+    name: MechanicalGate
+    definition: Deterministic binary verification layer catching every
+      mechanical defect before semantics.
+    properties:
+    - fixed check order parse, identity, uniqueness, references, coverage
+    - byte-identical reports for the same tree state; fail-fast only at
+      group boundary
+    - per-branch gating; precondition for any semantic measurement
+    - parser sanity gates make parsing regressions fail loudly instead of
+      passing silently
+verification:
+  type: import
+  target: plan_manager.cascade.close
+  expected: >
+    Importing the module plan_manager.cascade.close succeeds without
+    raising any exception, and the module exposes a class named
+    CommitRefusedError that is a subclass of the builtin RuntimeError and
+    can be instantiated and raised with a message argument.
+status: draft

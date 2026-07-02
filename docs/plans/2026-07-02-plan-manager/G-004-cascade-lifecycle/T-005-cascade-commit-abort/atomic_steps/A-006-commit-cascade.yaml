@@ -1,0 +1,219 @@
+step_id: A-006
+parent_tactical_step: T-005
+name: commit_cascade publication
+target_file: plan_manager/cascade/close.py
+operation: modify_file
+priority: 2
+depends_on: [A-005]
+concepts: [C-016, C-019, C-012, C-020, C-018]
+prompt: |
+  Modify the existing file `plan_manager/cascade/close.py`. Its full
+  current content (after all lower-priority atomic steps on this file have
+  been applied) is exactly:
+
+  ```python
+  """Commit and abort operations closing a cascade (C-016, C-019, C-020)."""
+
+
+  class CommitRefusedError(RuntimeError):
+      """Raised when a cascade commit is refused because the gate is red."""
+  ```
+
+  Apply exactly two changes to this content:
+
+  1. Insert the following import block immediately after the module
+     docstring, replacing the two blank lines that currently separate the
+     docstring from the class definition with this block followed by two
+     blank lines before the class:
+
+  ```python
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, close_cascade, get_open_cascade
+  from plan_manager.domain.plan import set_head_revision
+  from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
+  from plan_manager.storage.version_store import delete_ref, get_ref
+  from plan_manager.verify.gate import Verdict, run_gate
+  ```
+
+  2. Append the following new function to the end of the file, separated
+     from the `CommitRefusedError` class by exactly two blank lines. Do
+     not modify the `CommitRefusedError` class:
+
+  ```python
+  def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
+      """Atomically publish the plan's open cascade when the gate is green.
+
+      Acquires the per-plan advisory lock, resolves the plan's open cascade
+      record (raising ``CascadeError("plan has no open cascade")`` when none
+      exists), and runs a fresh mechanical gate over the plan. When the gate
+      report is not green, raises ``CommitRefusedError`` carrying the total
+      finding count summed across all checks in the report, leaving the
+      cascade open and the plan unchanged. When the gate report is green,
+      resolves the cascade's ref to its tip revision, advances the plan head
+      to that revision, marks the cascade record committed, deletes the
+      cascade ref, and returns the gate verdict. The per-plan lock is always
+      released before returning or raising.
+
+      :param conn: open psycopg 3 database connection.
+      :param plan_uuid: uuid of the plan whose open cascade is committed.
+      :return: the ``Verdict`` produced by the fresh mechanical gate run.
+      :raises CascadeError: when the plan has no open cascade.
+      :raises CommitRefusedError: when the fresh gate run is not green.
+      """
+      acquire_plan_lock(conn, plan_uuid)
+      try:
+          rec = get_open_cascade(conn, plan_uuid)
+          if rec is None:
+              raise CascadeError("plan has no open cascade")
+          report, verdict = run_gate(conn, plan_uuid)
+          if not report.green:
+              finding_count = sum(len(c.findings) for c in report.checks)
+              raise CommitRefusedError(
+                  f"commit refused: mechanical gate not green ({finding_count} findings)"
+              )
+          tip = get_ref(conn, plan_uuid, rec.name)
+          set_head_revision(conn, plan_uuid, tip)
+          close_cascade(conn, rec.uuid, "committed")
+          delete_ref(conn, plan_uuid, rec.name)
+          return verdict
+      finally:
+          release_plan_lock(conn, plan_uuid)
+  ```
+
+  Constraints, all binding:
+  - `CascadeError` is an existing, separately authored class in the sibling
+    module `plan_manager/cascade/record.py`, declared there as `class
+    CascadeError(ValueError)`.
+  - `CascadeRecord` is an existing, separately authored dataclass in the
+    same sibling module, declared there as: `@dataclass(frozen=True) class
+    CascadeRecord:` with fields `uuid: uuid.UUID, plan_uuid: uuid.UUID,
+    name: str, base_revision_uuid: uuid.UUID | None, status: str,
+    created_at: datetime`. This AS does not import `CascadeRecord`
+    directly by name; `get_open_cascade` returns one (or `None`).
+  - `get_open_cascade` is an existing, separately authored function in the
+    same sibling module, declared there as `def get_open_cascade(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None`.
+  - `close_cascade` is an existing, separately authored function in the
+    same sibling module, declared there as `def close_cascade(conn:
+    psycopg.Connection, cascade_uuid: uuid.UUID, status: str) -> None`.
+  - `acquire_plan_lock` and `release_plan_lock` are existing, separately
+    authored functions in the sibling module
+    `plan_manager/storage/plan_lock.py`, declared there as: `def
+    acquire_plan_lock(conn: psycopg.Connection, plan_uuid: uuid.UUID) ->
+    None` (blocks until acquired) and `def release_plan_lock(conn,
+    plan_uuid) -> None` (raises `PlanLockError(RuntimeError)` if not held;
+    this AS does not need to catch that exception).
+  - `get_ref` and `delete_ref` are existing, separately authored functions
+    in the sibling module `plan_manager/storage/version_store.py`,
+    declared there as: `def get_ref(conn, plan_uuid, name) -> uuid.UUID`
+    (raises `VersionStoreError(ValueError)` when the named ref is absent)
+    and `def delete_ref(conn, plan_uuid, name) -> None`.
+  - `set_head_revision` is an existing, separately authored function in
+    the sibling module `plan_manager/domain/plan.py`, declared there as
+    `def set_head_revision(conn, plan_uuid, revision_uuid) -> None`.
+  - `run_gate` is an existing, separately authored function in the sibling
+    module `plan_manager/verify/gate.py`, declared there as `def
+    run_gate(conn, plan_uuid, branch=None, fail_fast=False) -> tuple[Report,
+    Verdict]`. In this AS it is called with exactly two positional
+    arguments, `conn` and `plan_uuid`, relying on the declared defaults for
+    `branch` and `fail_fast`.
+  - `Report` is an existing, separately authored dataclass in the same
+    sibling module with fields `checks: list[CheckResult]` and `green:
+    bool`. `CheckResult` is an existing, separately authored type in the
+    same module with fields `check_id: str`, `passed: bool`, `findings:
+    list[Finding]`. `Report` has no `findings` attribute of its own;
+    findings live per-check inside each `CheckResult` in `report.checks`.
+  - `Verdict` is an existing, separately authored `@dataclass(frozen=True)`
+    in the same sibling module with fields `kind: str, scope: str,
+    revision_uuid: uuid.UUID | None, green: bool, payload: dict`.
+  - The function signature is exactly `def commit_cascade(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:`.
+  - Call `acquire_plan_lock(conn, plan_uuid)` first, before the `try`
+    block.
+  - Inside `try`: call `rec = get_open_cascade(conn, plan_uuid)`; if `rec
+    is None`, raise `CascadeError("plan has no open cascade")`.
+  - Call `report, verdict = run_gate(conn, plan_uuid)`.
+  - If `not report.green`: compute `finding_count = sum(len(c.findings)
+    for c in report.checks)` and raise `CommitRefusedError(f"commit
+    refused: mechanical gate not green ({finding_count} findings)")`.
+  - Otherwise (gate green): `tip = get_ref(conn, plan_uuid, rec.name)`;
+    `set_head_revision(conn, plan_uuid, tip)`; `close_cascade(conn,
+    rec.uuid, "committed")`; `delete_ref(conn, plan_uuid, rec.name)`;
+    `return verdict`.
+  - The `finally` block calls `release_plan_lock(conn, plan_uuid)`
+    unconditionally, so the lock is released whether the function returns
+    normally or raises `CascadeError` or `CommitRefusedError`.
+  - The resulting file must contain, in this order: the module docstring,
+    the import block, the `CommitRefusedError` class, then the
+    `commit_cascade` function, and no other top-level definitions.
+
+  MRS excerpt (only the concepts referenced by this AS; quoted verbatim
+  from `spec.yaml`):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan
+      head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when
+      gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any
+      status
+
+  - concept_id: C-019
+    name: PlanLock
+    definition: Per-plan database advisory lock serializing cascades and
+      identifier assignment.
+    properties:
+    - no lock files, no in-process lock state
+
+  - concept_id: C-012
+    name: MechanicalGate
+    definition: Deterministic binary verification layer catching every
+      mechanical defect before semantics.
+    properties:
+    - fixed check order parse, identity, uniqueness, references, coverage
+    - byte-identical reports for the same tree state; fail-fast only at
+      group boundary
+    - per-branch gating; precondition for any semantic measurement
+    - parser sanity gates make parsing regressions fail loudly instead of
+      passing silently
+
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope
+      it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison
+      never by timestamp
+
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - node versions content-addressed by SHA-256 of canonical JSON (sorted
+      keys, UTF-8)
+    - revisions carry parent, author, change set; one mutation produces
+      one revision
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    - operations log, diff, checkout-read, revert; history never rewritten
+verification:
+  type: import
+  target: plan_manager.cascade.close
+  expected: >
+    Importing the module plan_manager.cascade.close succeeds without
+    raising any exception, CommitRefusedError remains present and
+    unchanged, and the module exposes a callable attribute named
+    commit_cascade accepting exactly two positional parameters (conn,
+    plan_uuid) that acquires the plan lock, raises CascadeError when no
+    cascade is open, raises CommitRefusedError with a finding-count
+    message when a fresh gate run is not green, advances the plan head
+    and closes the cascade as committed and deletes its ref when the gate
+    is green, and releases the plan lock in all cases.
+status: draft

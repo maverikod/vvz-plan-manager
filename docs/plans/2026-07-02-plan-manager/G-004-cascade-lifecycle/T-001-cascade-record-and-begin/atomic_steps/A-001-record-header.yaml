@@ -1,0 +1,85 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: record-header
+target_file: plan_manager/cascade/record.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-016, C-035]
+status: draft
+prompt: |
+  Create the file plan_manager/cascade/record.py with EXACTLY the following content
+  (this is the complete, final content of this creation step; do not add anything
+  else, do not assume any pre-existing content):
+
+  """Cascade record entity: lifecycle states and database operations for the cascade table."""
+
+  import uuid
+  from dataclasses import dataclass
+  from datetime import datetime
+
+  import psycopg
+
+
+  CASCADE_STATUSES: frozenset[str] = frozenset({"open", "committed", "aborted"})
+
+
+  class CascadeError(ValueError):
+      """Raised on any cascade lifecycle violation."""
+
+  Constraints (all binding, no deviation):
+  - The module docstring is exactly the single line shown above.
+  - Imports are exactly these four statements, in this order: `import uuid`,
+    `from dataclasses import dataclass`, `from datetime import datetime`,
+    `import psycopg`. The `dataclass` import is unused by this creation step
+    but is required because a later step in this same file will use it; keep
+    it present.
+  - `CASCADE_STATUSES` is a module-level constant of type `frozenset[str]`
+    with the exact type annotation `frozenset[str]`, assigned the frozenset
+    literal `frozenset({"open", "committed", "aborted"})`. These three
+    strings are the only three lifecycle states a cascade record can hold.
+  - `CascadeError` is a class that subclasses the built-in `ValueError`
+    (no other base class, no additional methods, no `__init__` override).
+    Its docstring is exactly `"""Raised on any cascade lifecycle violation."""`.
+  - Do not add a `__main__` block, do not add any other constants, classes,
+    or functions. Do not add type-checking imports (e.g. `typing`) — none
+    are needed for this content.
+  - Blank-line spacing: exactly two blank lines between the imports block
+    and `CASCADE_STATUSES`, exactly two blank lines between `CASCADE_STATUSES`
+    and `class CascadeError`, matching the layout shown above (PEP 8 style
+    for top-level definitions).
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  - concept_id: C-016
+    name: CascadeChange
+    definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+    properties:
+    - begin acquires the per-plan lock; commit advances head only when gate is green
+    - automatic needs_review propagation per invalidation rule
+    - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Context: CASCADE_STATUSES enumerates the three lifecycle states of the
+  CascadeChange (C-016) record entity that will be stored as a row in the
+  Database (C-035), in a normative table named `cascade` with a column
+  `status` constrained to these three values. CascadeError is the typed
+  exception raised whenever an operation on that entity violates the
+  lifecycle rules (for example: opening a second cascade while one is
+  already open).
+verification:
+  type: import
+  target: plan_manager.cascade.record
+  expected: >
+    Importing plan_manager.cascade.record succeeds with no errors.
+    plan_manager.cascade.record.CASCADE_STATUSES equals the frozenset
+    {"open", "committed", "aborted"}. plan_manager.cascade.record.CascadeError
+    is a class and issubclass(CascadeError, ValueError) is True.

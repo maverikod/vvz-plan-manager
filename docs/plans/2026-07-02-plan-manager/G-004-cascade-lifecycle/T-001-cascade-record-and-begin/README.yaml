@@ -1,0 +1,53 @@
+step_id: T-001
+parent_global_step: G-004
+name: cascade-record-and-begin
+description: >
+  Create the durable cascade record entity and the opening operation of
+  CascadeChange (C-016). The cascade record is a stored row in the database
+  (C-035) carrying an immutable UUID identity, the owning plan, the name of
+  the cascade reference held in the version store (C-018), the base revision
+  anchored at the plan head at the moment of opening, a lifecycle state with
+  exactly three values — open, committed, aborted — and the creation
+  timestamp; a partial uniqueness constraint over the owning plan admits at
+  most one record in the open state, enforcing the one-open-cascade-per-plan
+  rule at write time in the database. The opening operation acquires the
+  per-plan advisory lock (C-019), verifies that the plan has no open cascade
+  record and that the plan has a recorded head revision — opening is refused
+  as a typed condition otherwise — reads the current head revision, creates
+  the cascade reference in the version store pointing at that head revision,
+  inserts the open cascade record anchored at it, and returns the cascade
+  identity that every mutation inside the transaction must carry. This step
+  defines the record entity, its lifecycle states, and the opening operation
+  only; it does not admit or route mutations, does not compute propagation,
+  and does not preview, commit, or abort a cascade.
+concepts: [C-016, C-019, C-018, C-035]
+inputs:
+- name: plan_identity
+  type: stored entity reference
+  description: >
+    The plan whose head revision anchors the new cascade and whose open
+    cascade record set is checked for the single-open-cascade rule.
+- name: plan_head_revision
+  type: version-store reference
+  description: >
+    The current head revision of the plan (C-018), read at opening time and
+    recorded as the base revision of the cascade.
+outputs:
+- name: open_cascade_record
+  type: stored entity
+  description: >
+    The inserted cascade record in the open state, carrying the cascade
+    identity, the owning plan, the cascade reference name, the base
+    revision, and the creation timestamp.
+- name: cascade_identity
+  type: identifier
+  description: >
+    The UUID identity of the opened cascade, returned to the caller and
+    required on every mutation request inside the transaction.
+- name: open_refusal
+  type: typed condition
+  description: >
+    The explicit condition raised when the plan already has an open cascade
+    or has no recorded head revision to anchor at.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

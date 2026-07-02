@@ -1,0 +1,54 @@
+step_id: T-005
+parent_global_step: G-004
+name: cascade-commit-abort
+description: >
+  Create the two closing operations of CascadeChange (C-016). Commit
+  publishes atomically: it acquires the per-plan advisory lock (C-019),
+  resolves the open cascade record — a typed condition is raised when none
+  exists — runs the mechanical gate (C-012) over the cascade state now, and
+  only when that fresh run is green, with its verdict (C-020) computed on
+  the cascade state, advances the plan head to the cascade tip revision in
+  the version store (C-018), marks the cascade record committed, deletes the
+  cascade reference, and releases the lock; when the gate run is red the
+  commit is refused as a typed condition carrying the finding count, the
+  cascade stays open, and nothing changes. Publication is thereby atomic: a
+  new state becomes visible to plan consumers only after the full cascade
+  has passed its gate. Abort discards the cascade without publishing: it
+  acquires the per-plan lock, restores the stored entity rows (C-035) to the
+  base-revision state through the version store's checkout-read of the
+  recorded node snapshots — the cascade's recorded revisions are never
+  rewritten or deleted; they remain addressable by revision identifier while
+  no reference points at them — deletes the cascade reference, marks the
+  cascade record aborted, and releases the lock, leaving the published plan
+  untouched. This step defines commit, abort, and the row restoration they
+  rely on; it does not open cascades, admit mutations, compute propagation,
+  or assemble previews.
+concepts: [C-016, C-019, C-012, C-020, C-018, C-035]
+inputs:
+- name: open_cascade_record
+  type: stored entity reference
+  description: >
+    The plan's open cascade record carrying the base revision and the
+    cascade reference name; its absence yields the typed refusal condition.
+- name: cascade_gate_result
+  type: ephemeral result binding
+  description: >
+    The mechanical gate (C-012) report and verdict (C-020) obtained by the
+    fresh gate run over the cascade state inside the commit operation.
+outputs:
+- name: commit_result
+  type: publication outcome
+  description: >
+    On green gate: the head advanced to the cascade tip, the record marked
+    committed, the cascade reference deleted, the lock released, and the
+    gate verdict returned. On red gate: the typed refusal condition with
+    the finding count; the cascade remains open and unchanged.
+- name: abort_result
+  type: discard outcome
+  description: >
+    The stored entity rows restored to the base-revision state, the cascade
+    reference deleted, the record marked aborted, the lock released; the
+    cascade's revisions remain in the append-only store without any
+    reference pointing at them.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
+status: draft

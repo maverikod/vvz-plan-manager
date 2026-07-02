@@ -1,0 +1,208 @@
+step_id: A-003
+parent_tactical_step: T-002
+name: check_admission mutation admission rule
+target_file: plan_manager/cascade/regime.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-016, C-007, C-005, C-003, C-004, C-002]
+prompt: |
+  Modify the file `plan_manager/cascade/regime.py`. Its current full
+  content (after all lower-priority atomic steps on this file have been
+  applied) is exactly:
+
+  ```python
+  """Mutation admission regime for CascadeChange (C-016).
+
+  Classifies mutation requests by target kind and artifact status per the
+  status model (C-007), admitting a request directly against the plan head
+  or only within the plan's open cascade.
+  """
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade
+  from plan_manager.domain.step_store import Step
+  from plan_manager.views.dependency_graph import impact_set, load_steps
+
+  MRS_ENTITY_KINDS: frozenset[str] = frozenset({"concept", "relation"})
+  DIRECT_STATUSES: frozenset[str] = frozenset({"draft", "ready_for_review"})
+
+
+  def frozen_at_or_below(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> bool:
+      """Return True iff the step at `origin_uuid`, or any step in its
+      transitive impact set (its children and their children, recursively,
+      as returned by `impact_set`), has status "frozen".
+
+      Args:
+          nodes: mapping of step uuid to Step, as returned by `load_steps`.
+          origin_uuid: uuid of the step to check.
+
+      Returns:
+          True if `nodes[origin_uuid].status == "frozen"` or any step
+          reachable via `impact_set(nodes, origin_uuid)` has status
+          "frozen"; False otherwise.
+
+      Raises:
+          CascadeError: if `origin_uuid` is not a key of `nodes`.
+      """
+      if origin_uuid not in nodes:
+          raise CascadeError(f"step {origin_uuid} not found among the loaded nodes")
+      if nodes[origin_uuid].status == "frozen":
+          return True
+      for child_uuid in impact_set(nodes, origin_uuid):
+          if nodes[child_uuid].status == "frozen":
+              return True
+      return False
+  ```
+
+  Apply this change: append, after the end of `frozen_at_or_below`, two
+  blank lines and then the following new function, so that the file ends
+  with this function and a single trailing newline:
+
+  ```python
+  def check_admission(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      target_kind: str,
+      target_uuid: uuid.UUID | None,
+      cascade_uuid: uuid.UUID | None,
+  ) -> CascadeRecord | None:
+      """Classify a mutation request under the admission rule (C-016, C-007).
+
+      Args:
+          conn: open database connection.
+          plan_uuid: identity of the plan the request targets.
+          target_kind: one of "concept", "relation", "step", "paragraph".
+          target_uuid: identity of the targeted step when `target_kind` is
+              "step"; ignored (may be None) for the other three kinds.
+          cascade_uuid: identity of the cascade the request claims to run
+              inside, or None for a request claiming direct admission.
+
+      Returns:
+          The plan's open CascadeRecord when the request is admitted as
+          cascade-scoped (cascade_uuid was given and matches the plan's
+          open cascade). None when the request is admitted directly
+          against the plan head.
+
+      Raises:
+          CascadeError: for every rejection case:
+              - `target_kind` is not one of "concept", "relation", "step",
+                "paragraph".
+              - `cascade_uuid` is not None but does not match the plan's
+                open cascade (including when the plan has no open
+                cascade).
+              - `cascade_uuid` is None and the plan already has an open
+                cascade (direct mutation rejected while a cascade is
+                open).
+              - `cascade_uuid` is None and `target_kind` is "concept" or
+                "relation" (MRS entities are cascade-only).
+              - `cascade_uuid` is None, `target_kind` is "step", and
+                `target_uuid` is None.
+              - `cascade_uuid` is None, `target_kind` is "step", and
+                `target_uuid` is not found among the plan's steps.
+              - `cascade_uuid` is None, `target_kind` is "step", and the
+                target step's status is not in DIRECT_STATUSES, or the
+                target step is frozen_at_or_below.
+              - `cascade_uuid` is None, `target_kind` is "paragraph", and
+                any step of the plan has status "frozen".
+      """
+      if target_kind not in {"concept", "relation", "step", "paragraph"}:
+          raise CascadeError(f"unknown target kind: {target_kind!r}")
+      if cascade_uuid is not None:
+          rec = get_open_cascade(conn, plan_uuid)
+          if rec is None or rec.uuid != cascade_uuid:
+              raise CascadeError("cascade id does not match the open cascade")
+          return rec
+      if get_open_cascade(conn, plan_uuid) is not None:
+          raise CascadeError("plan has an open cascade; direct mutation rejected")
+      if target_kind in MRS_ENTITY_KINDS:
+          raise CascadeError("MRS entities are cascade-only")
+      if target_kind == "step":
+          if target_uuid is None:
+              raise CascadeError("a step mutation requires a target_uuid")
+          nodes = load_steps(conn, plan_uuid)
+          if target_uuid not in nodes:
+              raise CascadeError(f"step {target_uuid} not found in plan {plan_uuid}")
+          if nodes[target_uuid].status not in DIRECT_STATUSES or frozen_at_or_below(nodes, target_uuid):
+              raise CascadeError(f"step {target_uuid} is not directly mutable")
+          return None
+      nodes = load_steps(conn, plan_uuid)
+      if any(step.status == "frozen" for step in nodes.values()):
+          raise CascadeError("plan has a frozen step; direct paragraph mutation rejected")
+      return None
+  ```
+
+  Constraints:
+  - The function signature (parameter names, types, order) and return
+    type are reproduced exactly as shown above.
+  - The body's control flow, condition order, and exact CascadeError
+    messages for the three quoted-message cases ("cascade id does not
+    match the open cascade", "plan has an open cascade; direct mutation
+    rejected", "MRS entities are cascade-only") are reproduced exactly as
+    shown. Messages for the other CascadeError call sites are exactly the
+    f-strings/strings shown above.
+  - The final two statements (`nodes = load_steps(conn, plan_uuid)` and
+    the `any(...)` check for the paragraph case) are reached only when
+    `target_kind == "paragraph"`, since every other branch of the
+    preceding `if target_kind == "step":` block always returns or raises.
+    Do not add an explicit `elif target_kind == "paragraph":` guard; rely
+    on the step branch always terminating the function.
+  - Nothing else in the file changes: the module docstring, imports, the
+    two constants, and `frozen_at_or_below` are left byte-identical to
+    the current content shown above.
+
+  Sibling contracts used (import verbatim from the modules already
+  imported into this file; do not reimplement):
+  - module `plan_manager/cascade/record.py`: `class CascadeError(ValueError)`;
+    `@dataclass(frozen=True) class CascadeRecord:` with fields
+    `uuid: uuid.UUID, plan_uuid: uuid.UUID, name: str,
+    base_revision_uuid: uuid.UUID | None, status: str, created_at: datetime`;
+    `def get_open_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord | None`.
+  - module `plan_manager/domain/step_store.py`: `Step` is a dataclass with
+    fields `uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
+    fields: dict, depends_on: list[str], concepts: list[str], status: str`.
+  - module `plan_manager/views/dependency_graph.py`:
+    `def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]`.
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-016 CascadeChange: "Transactional top-down change set anchored at
+    the plan head revision, published atomically on green gate."
+    Relevant properties: "begin acquires the per-plan lock; commit
+    advances head only when gate is green"; "one open cascade per plan;
+    MRS mutations are cascade-only at any status."
+  - C-007 StatusModel: "Lifecycle state machine for plan artifacts with
+    enforced legal transitions." Relevant property: "states draft,
+    ready_for_review, frozen, needs_review; atomic steps add in_progress,
+    done."
+  - C-005 Step: "Single stored entity for plan levels 3-5 with level,
+    step id, slug, level-specific fields, and status." Relevant property:
+    "mutation regime depends on status (draft direct, frozen via
+    cascade)."
+  - C-003 Concept: "MRS basis axis with canonical name, one-sentence
+    definition, properties, and source labels."
+  - C-004 Relation: "Typed directed edge between two concepts restricted
+    to seven allowed types."
+  - C-002 Paragraph: "Addressable binding unit of the HRS text carrying a
+    stable four-character base36 label."
+verification:
+  type: static_analysis
+  target: plan_manager.cascade.regime.check_admission
+  expected: >
+    The module still parses as valid Python. check_admission raises
+    CascadeError for an unknown target_kind; returns the matching open
+    CascadeRecord when cascade_uuid matches get_open_cascade's result;
+    raises CascadeError when cascade_uuid is given but does not match (or
+    no cascade is open); raises CascadeError when cascade_uuid is None
+    and an open cascade already exists; raises CascadeError when
+    cascade_uuid is None and target_kind is "concept" or "relation";
+    for target_kind "step" with cascade_uuid None, raises CascadeError
+    when target_uuid is None, when target_uuid is absent from
+    load_steps's result, or when the target step's status is outside
+    DIRECT_STATUSES or frozen_at_or_below is True for it, and otherwise
+    returns None; for target_kind "paragraph" with cascade_uuid None,
+    raises CascadeError when any loaded step has status "frozen" and
+    otherwise returns None.
+status: draft

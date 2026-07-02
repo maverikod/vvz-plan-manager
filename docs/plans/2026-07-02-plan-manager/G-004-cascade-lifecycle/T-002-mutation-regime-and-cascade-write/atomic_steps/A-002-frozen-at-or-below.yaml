@@ -1,0 +1,108 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: frozen_at_or_below helper
+target_file: plan_manager/cascade/regime.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-016, C-005, C-007]
+prompt: |
+  Modify the file `plan_manager/cascade/regime.py`. Its current full
+  content (after all lower-priority atomic steps on this file have been
+  applied) is exactly:
+
+  ```python
+  """Mutation admission regime for CascadeChange (C-016).
+
+  Classifies mutation requests by target kind and artifact status per the
+  status model (C-007), admitting a request directly against the plan head
+  or only within the plan's open cascade.
+  """
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade
+  from plan_manager.domain.step_store import Step
+  from plan_manager.views.dependency_graph import impact_set, load_steps
+
+  MRS_ENTITY_KINDS: frozenset[str] = frozenset({"concept", "relation"})
+  DIRECT_STATUSES: frozenset[str] = frozenset({"draft", "ready_for_review"})
+  ```
+
+  Apply this change: append, after the `DIRECT_STATUSES` line, two blank
+  lines and then the following new function, so that the file ends with
+  this function and a single trailing newline:
+
+  ```python
+  def frozen_at_or_below(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> bool:
+      """Return True iff the step at `origin_uuid`, or any step in its
+      transitive impact set (its children and their children, recursively,
+      as returned by `impact_set`), has status "frozen".
+
+      Args:
+          nodes: mapping of step uuid to Step, as returned by `load_steps`.
+          origin_uuid: uuid of the step to check.
+
+      Returns:
+          True if `nodes[origin_uuid].status == "frozen"` or any step
+          reachable via `impact_set(nodes, origin_uuid)` has status
+          "frozen"; False otherwise.
+
+      Raises:
+          CascadeError: if `origin_uuid` is not a key of `nodes`.
+      """
+      if origin_uuid not in nodes:
+          raise CascadeError(f"step {origin_uuid} not found among the loaded nodes")
+      if nodes[origin_uuid].status == "frozen":
+          return True
+      for child_uuid in impact_set(nodes, origin_uuid):
+          if nodes[child_uuid].status == "frozen":
+              return True
+      return False
+  ```
+
+  Constraints:
+  - The function signature, parameter types, return type, docstring text,
+    and body are reproduced exactly as shown above.
+  - Nothing else in the file changes: the module docstring, imports, and
+    the two constants (`MRS_ENTITY_KINDS`, `DIRECT_STATUSES`) are left
+    byte-identical to the current content shown above.
+  - No other function or statement is added.
+
+  Sibling contracts used (import verbatim from the module already
+  imported into this file; do not reimplement):
+  - module `plan_manager/cascade/record.py`: `class CascadeError(ValueError)`.
+  - module `plan_manager/domain/step_store.py`: `Step` is a dataclass with
+    fields `uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
+    fields: dict, depends_on: list[str], concepts: list[str], status: str`.
+  - module `plan_manager/views/dependency_graph.py`:
+    `def impact_set(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> list[uuid.UUID]`
+    (transitive children by parent_step_uuid, deterministically sorted).
+
+  MRS excerpt (concept definitions relevant to this AS):
+  - C-016 CascadeChange: "Transactional top-down change set anchored at
+    the plan head revision, published atomically on green gate." Relevant
+    property: "one open cascade per plan; MRS mutations are cascade-only
+    at any status."
+  - C-005 Step: "Single stored entity for plan levels 3-5 with level,
+    step id, slug, level-specific fields, and status." Relevant property:
+    "mutation regime depends on status (draft direct, frozen via
+    cascade)."
+  - C-007 StatusModel: "Lifecycle state machine for plan artifacts with
+    enforced legal transitions." Relevant property: "states draft,
+    ready_for_review, frozen, needs_review; atomic steps add in_progress,
+    done."
+verification:
+  type: static_analysis
+  target: plan_manager.cascade.regime.frozen_at_or_below
+  expected: >
+    The module still parses as valid Python and still exposes
+    MRS_ENTITY_KINDS and DIRECT_STATUSES unchanged. frozen_at_or_below
+    raises CascadeError when origin_uuid is absent from nodes; returns
+    True when nodes[origin_uuid].status == "frozen"; returns True when
+    any uuid in impact_set(nodes, origin_uuid) maps to a Step with status
+    "frozen"; returns False when neither the origin nor any of its impact
+    set is frozen.
+status: draft

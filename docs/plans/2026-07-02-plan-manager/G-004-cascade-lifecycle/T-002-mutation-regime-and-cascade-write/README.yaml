@@ -1,0 +1,65 @@
+step_id: T-002
+parent_global_step: G-004
+name: mutation-regime-and-cascade-write
+description: >
+  Create the mutation admission regime and the cascade-scoped write path of
+  CascadeChange (C-016). The admission rule classifies every mutation request
+  by target kind and artifact status (C-007): a mutation of an MRS entity — a
+  concept (C-003) or a relation (C-004) — is admitted only when the request
+  carries the identity of the plan's open cascade, whatever the artifact
+  status; a mutation of a step (C-005) is admitted directly against the plan
+  head while the target step's status is draft or ready_for_review and
+  neither the target nor any artifact beneath it is frozen; a change of a
+  paragraph (C-002) is admitted directly only while no step of the plan is
+  frozen; once an artifact is frozen, any change to it or to an artifact
+  above it is rejected unless the request carries the open cascade identity.
+  A request carrying a cascade identity that does not match the plan's open
+  cascade record is rejected as a typed condition. The cascade-scoped write
+  path records, for every admitted in-cascade change already applied to the
+  stored entity rows (C-035) by the owning domain operation, one revision in
+  the version store (C-018) attributed to the cascade under the cascade
+  reference; the revision's change set carries the full node snapshot of the
+  changed node together with the full snapshots of every step whose status
+  the accompanying invalidation update set turns to needs_review, and the
+  write path applies those status updates to the stored step rows after the
+  status model (C-007) validates each one as a cascade-driven transition.
+  The plan head reference does not move, so the published plan state remains
+  the head revision and intermediate cascade states are never published.
+  This step defines admission and the cascade write path; it does not
+  compute the invalidation set itself and does not open or close cascades.
+concepts: [C-016, C-007, C-005, C-003, C-004, C-002, C-018, C-035]
+inputs:
+- name: mutation_request
+  type: classified request
+  description: >
+    One mutation of a plan artifact: the target kind (concept, relation,
+    step, or paragraph), the target identity, the artifact status where the
+    kind carries one, and the cascade identity when the request runs inside
+    a cascade.
+- name: node_snapshot
+  type: content snapshot
+  description: >
+    The full post-change content snapshot of the mutated node, produced by
+    the owning domain operation and recorded verbatim in the version store.
+- name: invalidation_update_set
+  type: computed update list
+  description: >
+    The deterministic list of (step, needs_review) status updates that
+    accompany the change, computed by the propagation rule for the changed
+    node.
+outputs:
+- name: admission_decision
+  type: classification result
+  description: >
+    Direct admission against the plan head, cascade-scoped admission bound
+    to the open cascade record, or the typed rejection condition for a
+    request violating the regime.
+- name: cascade_revision
+  type: version-store revision
+  description: >
+    The one revision per admitted in-cascade mutation, attributed to the
+    cascade under the cascade reference, carrying the changed node snapshot
+    and the applied status-update snapshots; the head reference is not
+    moved.
+atomic_steps: [A-001-admission-constants, A-002-frozen-at-or-below, A-003-check-admission, A-004-step-snapshot, A-005-apply-status-updates, A-006-cascade-write]
+status: draft
