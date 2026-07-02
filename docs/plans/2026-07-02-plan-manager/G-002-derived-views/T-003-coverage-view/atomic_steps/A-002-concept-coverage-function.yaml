@@ -1,0 +1,251 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: Define concept_coverage function
+target_file: plan_manager/views/coverage.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-010, C-003, C-005]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/views/coverage.py`.
+
+  This is a modify_file operation. The file currently contains exactly
+  the following content (this is the full, current, post-prior-edit
+  state of the file — not any other state):
+
+  ```python
+  """On-demand coverage views for the plan tree (CoverageView, C-010).
+
+  Coverage is never stored as a matrix file: every report in this module
+  is computed from the current state of the step, concept, relation, and
+  paragraph tables at query time, and no derived artifact is ever read
+  back as input to a check.
+  """
+
+  from dataclasses import dataclass
+
+
+  @dataclass
+  class CoverageReport:
+      """Result of one coverage set comparison (CoverageView, C-010).
+
+      Attributes:
+          missing: Sorted ascending list of element identifiers required
+              by one side of the comparison but not found on the other
+              side. Always a list, never a bare boolean; empty when
+              nothing is missing.
+          extra: Sorted ascending list of element identifiers found but
+              not required. Always a list, never a bare boolean; empty
+              when nothing is extra.
+      """
+
+      missing: list[str]
+      extra: list[str]
+  ```
+
+  Apply exactly these two changes:
+
+  1. Insert two new import lines so the top of the file reads: `import
+     uuid` on its own line, then `from dataclasses import dataclass` on
+     the next line (no blank line between them — both are standard
+     library), then one blank line, then `import psycopg` on its own
+     line (third-party), then two blank lines before the `CoverageReport`
+     class. `import uuid` provides `uuid.UUID`, the type of the
+     `plan_uuid` parameter below. `import psycopg` provides
+     `psycopg.Connection`, the type of the `conn` parameter below.
+
+  2. Append, at the end of the file, separated from `CoverageReport` by
+     two blank lines, exactly this function:
+
+  ```python
+  def concept_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:
+      """Compute plan-level concept coverage (CoverageView, C-010).
+
+      Compares the union of the `concepts` column (text[]) of every
+      level-3 step of the plan against the set of `concept_id` values in
+      the `concept` table for the same plan, for set equality.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          CoverageReport whose `missing` list holds `concept_id` values
+          from the `concept` table not present in the union of
+          `concepts` across all level-3 steps of the plan, and whose
+          `extra` list holds `concepts` entries from level-3 steps not
+          present as a `concept_id` in the `concept` table. Both lists
+          are sorted ascending. Set equality holds iff both lists are
+          empty.
+      """
+      gs_cur = conn.execute(
+          "SELECT concepts FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_concepts: set[str] = set()
+      for row in gs_cur.fetchall():
+          if row[0] is not None:
+              gs_concepts.update(row[0])
+      concept_cur = conn.execute(
+          "SELECT concept_id FROM concept WHERE plan_uuid = %s",
+          (plan_uuid,),
+      )
+      mrs_concept_ids: set[str] = {row[0] for row in concept_cur.fetchall()}
+      return CoverageReport(
+          missing=sorted(mrs_concept_ids - gs_concepts),
+          extra=sorted(gs_concepts - mrs_concept_ids),
+      )
+  ```
+
+  The resulting full file content, after both changes, must be exactly:
+
+  ```python
+  """On-demand coverage views for the plan tree (CoverageView, C-010).
+
+  Coverage is never stored as a matrix file: every report in this module
+  is computed from the current state of the step, concept, relation, and
+  paragraph tables at query time, and no derived artifact is ever read
+  back as input to a check.
+  """
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+
+  @dataclass
+  class CoverageReport:
+      """Result of one coverage set comparison (CoverageView, C-010).
+
+      Attributes:
+          missing: Sorted ascending list of element identifiers required
+              by one side of the comparison but not found on the other
+              side. Always a list, never a bare boolean; empty when
+              nothing is missing.
+          extra: Sorted ascending list of element identifiers found but
+              not required. Always a list, never a bare boolean; empty
+              when nothing is extra.
+      """
+
+      missing: list[str]
+      extra: list[str]
+
+
+  def concept_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:
+      """Compute plan-level concept coverage (CoverageView, C-010).
+
+      Compares the union of the `concepts` column (text[]) of every
+      level-3 step of the plan against the set of `concept_id` values in
+      the `concept` table for the same plan, for set equality.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          CoverageReport whose `missing` list holds `concept_id` values
+          from the `concept` table not present in the union of
+          `concepts` across all level-3 steps of the plan, and whose
+          `extra` list holds `concepts` entries from level-3 steps not
+          present as a `concept_id` in the `concept` table. Both lists
+          are sorted ascending. Set equality holds iff both lists are
+          empty.
+      """
+      gs_cur = conn.execute(
+          "SELECT concepts FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_concepts: set[str] = set()
+      for row in gs_cur.fetchall():
+          if row[0] is not None:
+              gs_concepts.update(row[0])
+      concept_cur = conn.execute(
+          "SELECT concept_id FROM concept WHERE plan_uuid = %s",
+          (plan_uuid,),
+      )
+      mrs_concept_ids: set[str] = {row[0] for row in concept_cur.fetchall()}
+      return CoverageReport(
+          missing=sorted(mrs_concept_ids - gs_concepts),
+          extra=sorted(gs_concepts - mrs_concept_ids),
+      )
+  ```
+
+  Constraints (all explicit, no discretion):
+
+  - `concept_coverage` has the exact signature `def concept_coverage(conn:
+    psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:`.
+  - `conn` is a psycopg 3 database connection passed explicitly by the
+    caller; the function must not open, close, commit, or rollback the
+    connection, and must not hold any module-level connection state.
+  - Exactly two SELECT statements are issued, both via
+    `conn.execute(sql, params)`; no INSERT, UPDATE, or DELETE.
+  - The first SQL text is exactly `"SELECT concepts FROM step WHERE
+    plan_uuid = %s AND level = 3"` with params `(plan_uuid,)`. `concepts`
+    is the step table's `text[]` column; psycopg 3 returns it as a
+    Python list, or `None` when the column value is SQL NULL — treat
+    `None` as contributing no elements.
+  - The second SQL text is exactly `"SELECT concept_id FROM concept
+    WHERE plan_uuid = %s"` with params `(plan_uuid,)`.
+  - `gs_concepts` accumulates the union (via `set.update`) of every
+    non-`None` `concepts` row from the first query.
+  - `mrs_concept_ids` is the set comprehension `{row[0] for row in
+    concept_cur.fetchall()}` over the second query's rows.
+  - Return `CoverageReport(missing=sorted(mrs_concept_ids -
+    gs_concepts), extra=sorted(gs_concepts - mrs_concept_ids))` — using
+    Python set difference and `sorted()` exactly as shown; `missing` and
+    `extra` are computed with no other transformation.
+  - Do not modify the module docstring or `CoverageReport`; copy them
+    through unchanged exactly as shown.
+  - Do not add any code beyond what is shown above. Later work (not part
+    of this task) will extend this same file with additional functions;
+    do not anticipate or stub them.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+  ```
+
+  Relevant MRS relations:
+
+  ```yaml
+  - { from_concept: C-010, to_concept: C-005, type: consumes }
+  - { from_concept: C-010, to_concept: C-003, type: uses }
+  ```
+
+  `concept_coverage` realises the plan concept coverage formula of C-010:
+  it consumes Step (C-005) rows at level 3 for their `concepts` column
+  and uses the Concept (C-003) basis stored in the `concept` table,
+  reporting missing and extra elements explicitly, never a bare boolean.
+verification:
+  type: manual
+  target: plan_manager.views.coverage.concept_coverage
+  expected: >
+    Given a database where the level-3 steps of a plan collectively claim
+    concepts {"C-001", "C-002"} and the concept table for that plan holds
+    {"C-001", "C-003"}, concept_coverage(conn, plan_uuid) returns
+    CoverageReport(missing=["C-003"], extra=["C-002"]). When the two sets
+    are equal, both missing and extra are empty lists.
+status: draft

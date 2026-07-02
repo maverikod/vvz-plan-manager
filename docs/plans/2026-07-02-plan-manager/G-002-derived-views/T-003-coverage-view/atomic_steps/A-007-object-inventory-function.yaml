@@ -1,0 +1,407 @@
+step_id: A-007
+parent_tactical_step: T-003
+name: Define object_inventory function
+target_file: plan_manager/views/objects.py
+operation: modify_file
+priority: 2
+depends_on: [A-006]
+concepts: [C-010, C-005]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/views/objects.py`.
+
+  This is a modify_file operation. The file currently contains exactly
+  the following content (this is the full, current, post-prior-edit
+  state of the file — not any other state):
+
+  ```python
+  """On-demand object/work-axis inventory view for the plan tree
+  (CoverageView, C-010).
+
+  The inventory in this module is derived from the object declarations of
+  atomic steps; it is never stored as a file and is recomputed from the
+  step table at query time.
+  """
+
+
+  def module_of(target_file: str) -> str:
+      """Derive the classification module of an object from its declaring file.
+
+      Normative module rule: split `target_file` on "/"; within the final
+      path segment only, if it contains a ".", strip the extension by
+      keeping the part before the last "." (`rsplit(".", 1)` applied to
+      that final segment only); a final segment without a "." is kept
+      whole; join all segments — with the final segment as computed above
+      — using "." in place of "/". Example: target file "a/b/c.py" yields
+      module "a.b.c". The resulting module is a classification key: it
+      carries no UUID and is never used as an identity.
+
+      Args:
+          target_file: Project-relative path to a code file, e.g.
+              "plan_manager/views/coverage.py".
+
+      Returns:
+          The dotted module string derived from `target_file` per the
+          rule above.
+      """
+      parts = target_file.split("/")
+      last_segment = parts[-1]
+      if "." in last_segment:
+          last_segment = last_segment.rsplit(".", 1)[0]
+      parts[-1] = last_segment
+      return ".".join(parts)
+  ```
+
+  Apply exactly these two changes:
+
+  1. Insert two new import lines between the module docstring and the
+     `module_of` function, so that structure becomes: module docstring,
+     one blank line, `import uuid`, one blank line, `import psycopg`,
+     two blank lines, then `def module_of(...)`. `import uuid` provides
+     `uuid.UUID`, the type of the `plan_uuid` parameter below. `import
+     psycopg` provides `psycopg.Connection`, the type of the `conn`
+     parameter below.
+
+  2. Append, at the end of the file, separated from `module_of` by two
+     blank lines, exactly this function:
+
+  ```python
+  def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str, dict]:
+      """Build the object/work-axis inventory for the plan (CoverageView, C-010).
+
+      Reads every level-5 step of the plan together with its level-4
+      parent and that parent's level-3 parent, to compute each level-5
+      step's tactical step path "<GS step_id>/<TS step_id>" and full
+      artifact path "<GS step_id>/<TS step_id>/<AS step_id>". For every
+      entry in each level-5 step's `fields.get("objects", [])` list —
+      each entry a dict with keys "name" (str) and "concepts"
+      (list[str]) — accumulates, per distinct object `name`, the owner
+      keys, artifact paths, and concept sets contributed by every
+      declaring level-5 step.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to build the inventory for.
+
+      Returns:
+          Dict keyed by object name. Each value is a dict with keys:
+              "owner_keys": sorted list of [module, tactical_step_path]
+                  two-element lists, deduplicated, where
+                  tactical_step_path is "<GS step_id>/<TS step_id>" and
+                  module is module_of(target_file) of the declaring
+                  level-5 step's fields["target_file"].
+              "modules": sorted list of the distinct modules among this
+                  object's owner_keys.
+              "artifact_paths": sorted list of the distinct full artifact
+                  paths "<GS step_id>/<TS step_id>/<AS step_id>" of every
+                  level-5 step that declares this object.
+              "declared_concepts": sorted list of the union of the
+                  "concepts" list of every declaration entry for this
+                  object name.
+              "as_concepts": sorted list of the union of the `concepts`
+                  column (text[]) of every level-5 step that declares
+                  this object.
+          An object name absent from every level-5 step's
+          fields["objects"] never appears as a key.
+      """
+      gs_cur = conn.execute(
+          "SELECT uuid, step_id FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_step_id_by_uuid: dict[uuid.UUID, str] = {row[0]: row[1] for row in gs_cur.fetchall()}
+
+      ts_cur = conn.execute(
+          "SELECT uuid, parent_step_uuid, step_id FROM step "
+          "WHERE plan_uuid = %s AND level = 4",
+          (plan_uuid,),
+      )
+      ts_path_by_uuid: dict[uuid.UUID, str] = {}
+      for ts_uuid, ts_parent_uuid, ts_step_id in ts_cur.fetchall():
+          gs_step_id = gs_step_id_by_uuid[ts_parent_uuid]
+          ts_path_by_uuid[ts_uuid] = f"{gs_step_id}/{ts_step_id}"
+
+      as_cur = conn.execute(
+          "SELECT parent_step_uuid, step_id, fields, concepts FROM step "
+          "WHERE plan_uuid = %s AND level = 5",
+          (plan_uuid,),
+      )
+
+      accum: dict[str, dict[str, set]] = {}
+      for as_parent_uuid, as_step_id, as_fields, as_concepts in as_cur.fetchall():
+          ts_path = ts_path_by_uuid[as_parent_uuid]
+          artifact_path = f"{ts_path}/{as_step_id}"
+          target_file = (as_fields or {}).get("target_file")
+          module = module_of(target_file) if target_file else ""
+          declaring_concepts = set(as_concepts) if as_concepts is not None else set()
+          declarations = (as_fields or {}).get("objects", [])
+          for declaration in declarations:
+              name = declaration["name"]
+              bucket = accum.setdefault(
+                  name,
+                  {
+                      "owner_keys": set(),
+                      "artifact_paths": set(),
+                      "declared_concepts": set(),
+                      "as_concepts": set(),
+                  },
+              )
+              bucket["owner_keys"].add((module, ts_path))
+              bucket["artifact_paths"].add(artifact_path)
+              bucket["declared_concepts"].update(declaration.get("concepts", []))
+              bucket["as_concepts"].update(declaring_concepts)
+
+      inventory: dict[str, dict] = {}
+      for name, bucket in accum.items():
+          inventory[name] = {
+              "owner_keys": sorted(list(pair) for pair in bucket["owner_keys"]),
+              "modules": sorted({module for module, _ in bucket["owner_keys"]}),
+              "artifact_paths": sorted(bucket["artifact_paths"]),
+              "declared_concepts": sorted(bucket["declared_concepts"]),
+              "as_concepts": sorted(bucket["as_concepts"]),
+          }
+      return inventory
+  ```
+
+  The resulting full file content, after both changes, must be exactly:
+
+  ```python
+  """On-demand object/work-axis inventory view for the plan tree
+  (CoverageView, C-010).
+
+  The inventory in this module is derived from the object declarations of
+  atomic steps; it is never stored as a file and is recomputed from the
+  step table at query time.
+  """
+
+  import uuid
+
+  import psycopg
+
+
+  def module_of(target_file: str) -> str:
+      """Derive the classification module of an object from its declaring file.
+
+      Normative module rule: split `target_file` on "/"; within the final
+      path segment only, if it contains a ".", strip the extension by
+      keeping the part before the last "." (`rsplit(".", 1)` applied to
+      that final segment only); a final segment without a "." is kept
+      whole; join all segments — with the final segment as computed above
+      — using "." in place of "/". Example: target file "a/b/c.py" yields
+      module "a.b.c". The resulting module is a classification key: it
+      carries no UUID and is never used as an identity.
+
+      Args:
+          target_file: Project-relative path to a code file, e.g.
+              "plan_manager/views/coverage.py".
+
+      Returns:
+          The dotted module string derived from `target_file` per the
+          rule above.
+      """
+      parts = target_file.split("/")
+      last_segment = parts[-1]
+      if "." in last_segment:
+          last_segment = last_segment.rsplit(".", 1)[0]
+      parts[-1] = last_segment
+      return ".".join(parts)
+
+
+  def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str, dict]:
+      """Build the object/work-axis inventory for the plan (CoverageView, C-010).
+
+      Reads every level-5 step of the plan together with its level-4
+      parent and that parent's level-3 parent, to compute each level-5
+      step's tactical step path "<GS step_id>/<TS step_id>" and full
+      artifact path "<GS step_id>/<TS step_id>/<AS step_id>". For every
+      entry in each level-5 step's `fields.get("objects", [])` list —
+      each entry a dict with keys "name" (str) and "concepts"
+      (list[str]) — accumulates, per distinct object `name`, the owner
+      keys, artifact paths, and concept sets contributed by every
+      declaring level-5 step.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to build the inventory for.
+
+      Returns:
+          Dict keyed by object name. Each value is a dict with keys:
+              "owner_keys": sorted list of [module, tactical_step_path]
+                  two-element lists, deduplicated, where
+                  tactical_step_path is "<GS step_id>/<TS step_id>" and
+                  module is module_of(target_file) of the declaring
+                  level-5 step's fields["target_file"].
+              "modules": sorted list of the distinct modules among this
+                  object's owner_keys.
+              "artifact_paths": sorted list of the distinct full artifact
+                  paths "<GS step_id>/<TS step_id>/<AS step_id>" of every
+                  level-5 step that declares this object.
+              "declared_concepts": sorted list of the union of the
+                  "concepts" list of every declaration entry for this
+                  object name.
+              "as_concepts": sorted list of the union of the `concepts`
+                  column (text[]) of every level-5 step that declares
+                  this object.
+          An object name absent from every level-5 step's
+          fields["objects"] never appears as a key.
+      """
+      gs_cur = conn.execute(
+          "SELECT uuid, step_id FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_step_id_by_uuid: dict[uuid.UUID, str] = {row[0]: row[1] for row in gs_cur.fetchall()}
+
+      ts_cur = conn.execute(
+          "SELECT uuid, parent_step_uuid, step_id FROM step "
+          "WHERE plan_uuid = %s AND level = 4",
+          (plan_uuid,),
+      )
+      ts_path_by_uuid: dict[uuid.UUID, str] = {}
+      for ts_uuid, ts_parent_uuid, ts_step_id in ts_cur.fetchall():
+          gs_step_id = gs_step_id_by_uuid[ts_parent_uuid]
+          ts_path_by_uuid[ts_uuid] = f"{gs_step_id}/{ts_step_id}"
+
+      as_cur = conn.execute(
+          "SELECT parent_step_uuid, step_id, fields, concepts FROM step "
+          "WHERE plan_uuid = %s AND level = 5",
+          (plan_uuid,),
+      )
+
+      accum: dict[str, dict[str, set]] = {}
+      for as_parent_uuid, as_step_id, as_fields, as_concepts in as_cur.fetchall():
+          ts_path = ts_path_by_uuid[as_parent_uuid]
+          artifact_path = f"{ts_path}/{as_step_id}"
+          target_file = (as_fields or {}).get("target_file")
+          module = module_of(target_file) if target_file else ""
+          declaring_concepts = set(as_concepts) if as_concepts is not None else set()
+          declarations = (as_fields or {}).get("objects", [])
+          for declaration in declarations:
+              name = declaration["name"]
+              bucket = accum.setdefault(
+                  name,
+                  {
+                      "owner_keys": set(),
+                      "artifact_paths": set(),
+                      "declared_concepts": set(),
+                      "as_concepts": set(),
+                  },
+              )
+              bucket["owner_keys"].add((module, ts_path))
+              bucket["artifact_paths"].add(artifact_path)
+              bucket["declared_concepts"].update(declaration.get("concepts", []))
+              bucket["as_concepts"].update(declaring_concepts)
+
+      inventory: dict[str, dict] = {}
+      for name, bucket in accum.items():
+          inventory[name] = {
+              "owner_keys": sorted(list(pair) for pair in bucket["owner_keys"]),
+              "modules": sorted({module for module, _ in bucket["owner_keys"]}),
+              "artifact_paths": sorted(bucket["artifact_paths"]),
+              "declared_concepts": sorted(bucket["declared_concepts"]),
+              "as_concepts": sorted(bucket["as_concepts"]),
+          }
+      return inventory
+  ```
+
+  Constraints (all explicit, no discretion):
+
+  - `object_inventory` has the exact signature `def
+    object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) ->
+    dict[str, dict]:`.
+  - `conn` is a psycopg 3 database connection passed explicitly by the
+    caller; the function must not open, close, commit, or rollback the
+    connection, and must not hold any module-level connection state.
+  - Exactly three SELECT statements are issued, all via
+    `conn.execute(sql, params)`; no INSERT, UPDATE, or DELETE.
+  - The first SQL text is exactly `"SELECT uuid, step_id FROM step WHERE
+    plan_uuid = %s AND level = 3"` with params `(plan_uuid,)`; builds
+    `gs_step_id_by_uuid` mapping each level-3 step's `uuid` to its
+    `step_id`.
+  - The second SQL text is exactly `"SELECT uuid, parent_step_uuid,
+    step_id FROM step WHERE plan_uuid = %s AND level = 4"` with params
+    `(plan_uuid,)`; for each row, `ts_path_by_uuid[ts_uuid]` is set to
+    `f"{gs_step_id}/{ts_step_id}"` where `gs_step_id =
+    gs_step_id_by_uuid[ts_parent_uuid]` (looked up by the level-4 row's
+    `parent_step_uuid`).
+  - The third SQL text is exactly `"SELECT parent_step_uuid, step_id,
+    fields, concepts FROM step WHERE plan_uuid = %s AND level = 5"` with
+    params `(plan_uuid,)`.
+  - For each level-5 row: `ts_path = ts_path_by_uuid[as_parent_uuid]`;
+    `artifact_path = f"{ts_path}/{as_step_id}"`; `target_file =
+    (as_fields or {}).get("target_file")`; `module =
+    module_of(target_file) if target_file else ""` — calling the
+    `module_of` function defined earlier in this same file; `fields` is
+    the step table's JSON column, returned by psycopg 3 as a Python dict
+    or `None`; `concepts` is the step table's `text[]` column, returned
+    as a Python list or `None`.
+  - `declaring_concepts = set(as_concepts) if as_concepts is not None
+    else set()`.
+  - `declarations = (as_fields or {}).get("objects", [])` — a list of
+    dicts, each with key `"name"` (accessed by exact key, never
+    `.get`) and optionally `"concepts"` (accessed via `.get("concepts",
+    [])`, defaulting to an empty list when absent).
+  - For each declaration, accumulate into `accum[name]` (created via
+    `dict.setdefault` with the four-key template shown): add the tuple
+    `(module, ts_path)` to `"owner_keys"`; add `artifact_path` to
+    `"artifact_paths"`; update `"declared_concepts"` with
+    `declaration.get("concepts", [])`; update `"as_concepts"` with
+    `declaring_concepts`.
+  - The final `inventory` dict is built by iterating `accum.items()` and
+    converting: `"owner_keys"` to `sorted(list(pair) for pair in
+    bucket["owner_keys"])` (a sorted list of two-element lists);
+    `"modules"` to `sorted({module for module, _ in
+    bucket["owner_keys"]})`; `"artifact_paths"`, `"declared_concepts"`,
+    `"as_concepts"` each to `sorted(bucket[<key>])`.
+  - An object `name` that appears in no level-5 step's
+    `fields["objects"]` never becomes a key of `accum` or of the
+    returned `inventory`.
+  - Do not modify the module docstring or `module_of`; copy them through
+    unchanged exactly as shown, with the two new import lines inserted
+    exactly where specified.
+  - Do not add any code beyond what is shown above. Later work (not part
+    of this task) will extend this same file with one additional
+    function; do not anticipate or stub it.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+  ```
+
+  Relevant MRS relations:
+
+  ```yaml
+  - { from_concept: C-010, to_concept: C-005, type: consumes }
+  ```
+
+  `object_inventory` realises the object/work-axis inventory of C-010: it
+  consumes Step (C-005) rows at levels 3, 4, and 5, keying each declared
+  object by the pair (module, tactical step path) derived from the
+  declaring atomic step's target file and parent path, per the module
+  rule realised by `module_of`.
+verification:
+  type: manual
+  target: plan_manager.views.objects.object_inventory
+  expected: >
+    Given a plan whose only level-5 step has step_id "A-001", target_file
+    "plan_manager/views/coverage.py", concepts ["C-010"], parent tactical
+    step path "G-002/T-003", and fields["objects"] =
+    [{"name": "CoverageReport", "concepts": ["C-010", "C-005"]}],
+    object_inventory(conn, plan_uuid) returns a dict with one key
+    "CoverageReport" whose value equals {"owner_keys":
+    [["plan_manager.views.coverage", "G-002/T-003"]], "modules":
+    ["plan_manager.views.coverage"], "artifact_paths":
+    ["G-002/T-003/A-001"], "declared_concepts": ["C-005", "C-010"],
+    "as_concepts": ["C-010"]}.
+status: draft

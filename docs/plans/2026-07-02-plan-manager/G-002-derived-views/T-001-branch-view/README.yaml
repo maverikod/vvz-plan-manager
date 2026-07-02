@@ -1,0 +1,44 @@
+step_id: T-001
+parent_global_step: G-002
+name: branch-view
+description: >
+  Create the Branch (C-008), the addressable derived view of one path HRS-slice ->
+  GS -> TS -> AS, computed on demand and never materialized as a stored artifact.
+  A branch address names the plan and the step identifiers of one global step, one
+  tactical step, and one atomic step (C-005); resolution reads the plan tree from
+  the database and produces the in-memory branch view holding the three step
+  contents and the HRS slice — the set of binding paragraphs (C-002) whose labels
+  appear in the global step's source labels, in document order. Resolution is
+  read-only: it verifies that the addressed steps exist, that each child belongs to
+  its addressed parent, and that the levels are 3, 4, and 5 respectively, and
+  reports a resolution error naming the failing path element otherwise. The branch
+  view is the unit of verification and prompt assembly consumed by other derived
+  views; this step creates only the branch address resolution and the branch view
+  structure itself.
+concepts: [C-008, C-005, C-002]
+inputs:
+- name: branch_address
+  type: address tuple
+  description: >
+    Plan identity plus the step identifiers of the global step, tactical step, and
+    atomic step (C-005) naming one HRS-slice -> GS -> TS -> AS path.
+- name: plan_tree_rows
+  type: stored plan data
+  description: >
+    The stored steps (C-005) and binding paragraphs (C-002) of the plan, read from
+    the database at resolution time.
+outputs:
+- name: resolved_branch
+  type: in-memory derived view
+  description: >
+    The branch view holding the global step, tactical step, and atomic step
+    contents plus the HRS slice of binding paragraphs claimed by the global step's
+    source labels in document order; never stored, never written to a file.
+- name: branch_resolution_error
+  type: resolution result
+  description: >
+    A deterministic error naming the failing path element when the address does
+    not resolve: a missing step, a child not belonging to the addressed parent, or
+    a step at the wrong level.
+atomic_steps: [A-001, A-002, A-003, A-004]
+status: draft

@@ -1,0 +1,160 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: Define Branch dataclass
+target_file: plan_manager/views/branch.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-008, C-005, C-002]
+prompt: >
+  Modify the existing Python source file at the exact project-relative path
+  `plan_manager/views/branch.py`.
+
+  The file currently contains exactly this content (this is the full
+  post-prior-step state; open it and modify it in place, do not recreate
+  it from scratch):
+
+  ```python
+  """Branch derived view (C-008): resolves one HRS-slice -> GS -> TS -> AS path
+  from the plan tree stored in the database into an in-memory, never-persisted
+  view. This module is read-only: it issues SELECT statements only against the
+  step and paragraph tables and never INSERTs, UPDATEs, or DELETEs.
+  """
+
+
+  class BranchResolutionError(ValueError):
+      """Raised when a branch address does not resolve.
+
+      The exception message names the failing path element: for a missing
+      step, the level and step_id that could not be found; for a step that
+      does not belong to its addressed parent, the child's step_id and the
+      addressed parent's step_id.
+      """
+  ```
+
+  Change this file to the following full content: insert two import blocks
+  after the module docstring (before the `class BranchResolutionError`
+  definition), and append a new `Branch` dataclass after the
+  `BranchResolutionError` class. The resulting full file content must be
+  exactly:
+
+  ```python
+  """Branch derived view (C-008): resolves one HRS-slice -> GS -> TS -> AS path
+  from the plan tree stored in the database into an in-memory, never-persisted
+  view. This module is read-only: it issues SELECT statements only against the
+  step and paragraph tables and never INSERTs, UPDATEs, or DELETEs.
+  """
+
+  import uuid
+  from dataclasses import dataclass
+
+  from plan_manager.domain.step import Step
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  class BranchResolutionError(ValueError):
+      """Raised when a branch address does not resolve.
+
+      The exception message names the failing path element: for a missing
+      step, the level and step_id that could not be found; for a step that
+      does not belong to its addressed parent, the child's step_id and the
+      addressed parent's step_id.
+      """
+
+
+  @dataclass
+  class Branch:
+      """In-memory branch view: one resolved HRS-slice -> GS -> TS -> AS path.
+
+      Never persisted; held only in process memory for the duration of the
+      consuming operation (verification or prompt assembly).
+      """
+
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+  ```
+
+  Imports used, with exact module paths:
+
+  - `import uuid` (standard library; provides `uuid.UUID`, used as the type
+    of the `plan_uuid` field).
+  - `from dataclasses import dataclass` (standard library; decorator applied
+    to the `Branch` class).
+  - `from plan_manager.domain.step import Step` — the sibling module
+    `plan_manager/domain/step.py` defines exactly:
+    `@dataclass class Step` with fields, in order: `uuid: uuid.UUID`,
+    `plan_uuid: uuid.UUID`, `parent_step_uuid: uuid.UUID | None`,
+    `level: int`, `step_id: str`, `slug: str`, `fields: dict`,
+    `depends_on: list[str]`, `concepts: list[str]`, `status: str`.
+  - `from plan_manager.domain.paragraph import Paragraph` — the sibling
+    module `plan_manager/domain/paragraph.py` defines exactly:
+    `@dataclass class Paragraph` with fields, in order:
+    `label: Optional[str]`, `text: str`, `position: int`.
+
+  Exact class signature being created: `class Branch:` decorated with
+  `@dataclass`, with exactly five fields in this order and these exact
+  types: `plan_uuid: uuid.UUID`, `gs: Step`, `ts: Step`, `atomic: Step`,
+  `hrs_slice: list[Paragraph]`.
+
+  Constraints:
+
+  - Do not modify `BranchResolutionError` or the module docstring; copy
+    them through unchanged exactly as shown.
+  - `Branch` has no methods and no `__post_init__`; only the docstring and
+    the five annotated fields shown above.
+  - Field order in `Branch` must match exactly: plan_uuid, gs, ts, atomic,
+    hrs_slice.
+  - Preserve the two blank lines between top-level definitions (module
+    docstring block, import block, `BranchResolutionError` class, `Branch`
+    class) exactly as shown in the target content above.
+  - Do not add any code beyond what is shown above. Later work (not part of
+    this task) will extend this same file with additional functions; do
+    not anticipate or stub them.
+
+  MRS excerpt (concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+  ```
+
+  Relevant MRS relations:
+
+  ```yaml
+  - { from_concept: C-008, to_concept: C-005, type: uses }
+  - { from_concept: C-008, to_concept: C-002, type: uses }
+  ```
+
+  `Branch` is the in-memory realisation of C-008: it holds the GS, TS, and
+  atomic Step (C-005) rows of one resolved path plus the HRS slice of
+  binding Paragraph (C-002) rows, and is never written to the database or
+  to a file.
+verification:
+  type: import
+  target: plan_manager.views.branch.Branch
+  expected: >
+    The module plan_manager.views.branch imports without error, Branch is
+    a dataclass, and Branch.__dataclass_fields__ lists exactly the five
+    fields plan_uuid, gs, ts, atomic, hrs_slice in that order with the
+    types uuid.UUID, Step, Step, Step, list[Paragraph] respectively.
+status: draft

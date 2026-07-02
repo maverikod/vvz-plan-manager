@@ -1,0 +1,92 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: prompt-assembly-error-and-token-estimate
+target_file: plan_manager/views/prompt_assembly.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-011, C-036]
+prompt: |
+  Target file: plan_manager/views/prompt_assembly.py
+  Operation: create_file
+
+  This file does not exist yet. Create it with exactly the following content —
+  a module docstring, one exception class, and one function. No other content,
+  no other imports, no other symbols.
+
+  Required full content of the file after this step:
+
+  """Deterministic prompt assembly for atomic steps (C-011), per the normative
+  assembly algorithm (C-036).
+  """
+
+
+  class PromptAssemblyError(ValueError):
+      """Raised when a declared concept_id has no matching concept row in the plan."""
+
+
+  def token_estimate(text: str) -> int:
+      """Deterministic character-based estimate of the token count of text.
+
+      Computed as (len(text) + 3) // 4, per the normative token estimate algorithm.
+
+      Args:
+          text: The text to estimate.
+
+      Returns:
+          The estimated token count.
+      """
+      return (len(text) + 3) // 4
+
+  Exact requirements:
+  - Module docstring: exactly the two-line text shown above, as a triple-quoted
+    string, followed by exactly two blank lines before the class definition.
+  - Class PromptAssemblyError: subclasses the built-in ValueError. Body is a
+    single-line docstring, exact text: "Raised when a declared concept_id has
+    no matching concept row in the plan." No __init__, no other methods, no
+    other attributes. Followed by exactly two blank lines before the function.
+  - Function signature exactly: def token_estimate(text: str) -> int:
+  - Function docstring: exactly the text shown above (summary line, blank
+    line, one explanation line, blank line, "Args:" section with one "text:"
+    entry, blank line, "Returns:" section with one line), in Google
+    docstring style.
+  - Function body: exactly one statement, `return (len(text) + 3) // 4`. This
+    is the deterministic, normative token-estimate formula for C-011: the
+    estimate is a pure function of character length, with no other tokenizer
+    or external call involved.
+  - No imports of any kind are required or permitted for this file version.
+  - No trailing whitespace; end the file with a single trailing newline after
+    the last line shown.
+  - Do not add a `__all__`, no `if __name__ == "__main__"` block, no other
+    code.
+
+  MRS excerpt (concepts referenced in this prompt, ascending by concept id):
+
+  - concept_id: C-011
+    name: Prompt
+    definition: "Ephemeral assembled executor input for one atomic step built deterministically from the tree."
+    properties:
+    - "fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta"
+    - "byte-identical for the same tree state; token estimate against the plan's user-set context budget"
+    - "dump snapshots are derived artifacts never read back"
+    - "the server never executes prompts"
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: "The binding algorithm specifications that lower levels refine into code without semantic deviation."
+    properties:
+    - "deviations escalate to the HRS; open parameters have named defaults and are configuration"
+
+  Relations among the concepts above (both endpoints in the declared set):
+  - { from_concept: C-011, to_concept: C-036, type: implements }
+verification:
+  type: import
+  target: plan_manager.views.prompt_assembly
+  expected: >
+    The module plan_manager.views.prompt_assembly imports without error and
+    exposes the symbols PromptAssemblyError, a subclass of the built-in
+    ValueError, and token_estimate, a callable taking one string argument and
+    returning an int. Calling token_estimate with an empty string returns
+    zero, and calling it with a four-character string returns one, matching
+    the normative character-based token estimate algorithm.
+status: draft

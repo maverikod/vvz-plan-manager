@@ -1,0 +1,240 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: Define _get_step_row helper function
+target_file: plan_manager/views/branch.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-005]
+prompt: >
+  Modify the existing Python source file at the exact project-relative path
+  `plan_manager/views/branch.py`.
+
+  The file currently contains exactly this content (this is the full
+  post-prior-step state; open it and modify it in place, do not recreate
+  it from scratch):
+
+  ```python
+  """Branch derived view (C-008): resolves one HRS-slice -> GS -> TS -> AS path
+  from the plan tree stored in the database into an in-memory, never-persisted
+  view. This module is read-only: it issues SELECT statements only against the
+  step and paragraph tables and never INSERTs, UPDATEs, or DELETEs.
+  """
+
+  import uuid
+  from dataclasses import dataclass
+
+  from plan_manager.domain.step import Step
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  class BranchResolutionError(ValueError):
+      """Raised when a branch address does not resolve.
+
+      The exception message names the failing path element: for a missing
+      step, the level and step_id that could not be found; for a step that
+      does not belong to its addressed parent, the child's step_id and the
+      addressed parent's step_id.
+      """
+
+
+  @dataclass
+  class Branch:
+      """In-memory branch view: one resolved HRS-slice -> GS -> TS -> AS path.
+
+      Never persisted; held only in process memory for the duration of the
+      consuming operation (verification or prompt assembly).
+      """
+
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+  ```
+
+  Change this file to the following full content: add one import line
+  (`import psycopg`, placed after the `dataclasses` import and separated by
+  a blank line from the `plan_manager.domain` imports, matching standard
+  import-group ordering: standard library, then blank line, then
+  third-party, then blank line, then first-party), and append a new
+  function `_get_step_row` after the `Branch` class. The resulting full
+  file content must be exactly:
+
+  ```python
+  """Branch derived view (C-008): resolves one HRS-slice -> GS -> TS -> AS path
+  from the plan tree stored in the database into an in-memory, never-persisted
+  view. This module is read-only: it issues SELECT statements only against the
+  step and paragraph tables and never INSERTs, UPDATEs, or DELETEs.
+  """
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.domain.paragraph import Paragraph
+
+
+  class BranchResolutionError(ValueError):
+      """Raised when a branch address does not resolve.
+
+      The exception message names the failing path element: for a missing
+      step, the level and step_id that could not be found; for a step that
+      does not belong to its addressed parent, the child's step_id and the
+      addressed parent's step_id.
+      """
+
+
+  @dataclass
+  class Branch:
+      """In-memory branch view: one resolved HRS-slice -> GS -> TS -> AS path.
+
+      Never persisted; held only in process memory for the duration of the
+      consuming operation (verification or prompt assembly).
+      """
+
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+
+
+  def _get_step_row(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, level: int, step_id: str
+  ) -> Step:
+      """Fetch one step row by plan, level, and step_id.
+
+      Executes exactly:
+          SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug,
+                 fields, depends_on, concepts, status
+          FROM step
+          WHERE plan_uuid = %s AND level = %s AND step_id = %s;
+
+      Parameters
+      ----------
+      conn: psycopg.Connection
+          Open database connection. Only SELECT is issued.
+      plan_uuid: uuid.UUID
+          Identity of the plan owning the step.
+      level: int
+          Step level to match (3 for GS, 4 for TS, 5 for AS).
+      step_id: str
+          Step identifier to match, e.g. "G-002", "T-001", "A-001".
+
+      Returns
+      -------
+      Step
+          Constructed from the fetched row. depends_on and concepts are the
+          row's array columns converted with list(...); when a column
+          value is NULL, an empty list [] is used instead.
+
+      Raises
+      ------
+      BranchResolutionError
+          If no row matches; the message names the level and step_id that
+          could not be found.
+      """
+      row = conn.execute(
+          "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+          "fields, depends_on, concepts, status FROM step "
+          "WHERE plan_uuid = %s AND level = %s AND step_id = %s;",
+          (plan_uuid, level, step_id),
+      ).fetchone()
+      if row is None:
+          raise BranchResolutionError(
+              f"no step found at level {level} with step_id {step_id!r}"
+          )
+      (
+          row_uuid,
+          row_plan_uuid,
+          parent_step_uuid,
+          row_level,
+          row_step_id,
+          slug,
+          fields,
+          depends_on,
+          concepts,
+          status,
+      ) = row
+      return Step(
+          uuid=row_uuid,
+          plan_uuid=row_plan_uuid,
+          parent_step_uuid=parent_step_uuid,
+          level=row_level,
+          step_id=row_step_id,
+          slug=slug,
+          fields=fields,
+          depends_on=list(depends_on) if depends_on is not None else [],
+          concepts=list(concepts) if concepts is not None else [],
+          status=status,
+      )
+  ```
+
+  Imports used, with exact module paths: `import psycopg` (third-party
+  library; provides `psycopg.Connection`, the type of the `conn`
+  parameter). `uuid`, `Step`, and `BranchResolutionError` used in this
+  function are already imported/defined earlier in the same file, as shown
+  in the target content above.
+
+  Exact function signature being created:
+  `def _get_step_row(conn: psycopg.Connection, plan_uuid: uuid.UUID, level: int, step_id: str) -> Step:`
+
+  The sibling module `plan_manager/domain/step.py` defines exactly:
+  `@dataclass class Step` with fields, in order: `uuid: uuid.UUID`,
+  `plan_uuid: uuid.UUID`, `parent_step_uuid: uuid.UUID | None`,
+  `level: int`, `step_id: str`, `slug: str`, `fields: dict`,
+  `depends_on: list[str]`, `concepts: list[str]`, `status: str`.
+
+  Constraints:
+
+  - Do not modify the module docstring, `BranchResolutionError`, or
+    `Branch`; copy them through unchanged exactly as shown.
+  - The SQL text must be exactly the three-line string shown, using `%s`
+    placeholders (psycopg parameter style) — never string interpolation of
+    values into SQL.
+  - `conn.execute(...)` is called with the SQL string and a tuple
+    `(plan_uuid, level, step_id)` as the second positional argument, then
+    `.fetchone()` is called on its result.
+  - Only a SELECT statement is issued; no INSERT, UPDATE, or DELETE.
+  - When `row is None`, raise `BranchResolutionError` with a message
+    containing the level and the step_id (via `!r`) — exact message text as
+    shown: `f"no step found at level {level} with step_id {step_id!r}"`.
+  - Row tuple unpacking order must match the SELECT column order exactly:
+    uuid, plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+    depends_on, concepts, status.
+  - `depends_on` and `concepts` on the returned `Step` must each be
+    `list(...)` of the corresponding row value, or `[]` when that row value
+    is `None` — never left as the raw database array type.
+  - `fields` is passed through unchanged (already a Python dict when read
+    via psycopg's JSON adapter).
+  - Do not add any code beyond what is shown above. Later work (not part of
+    this task) will extend this same file with an additional function; do
+    not anticipate or stub it.
+
+  MRS excerpt (concept relevant to this AS):
+
+  ```yaml
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+  ```
+
+  `_get_step_row` is the single-row-fetch primitive used to realise Step
+  (C-005) lookups by level and step_id when resolving a Branch (C-008)
+  address; it never mutates the `step` table.
+verification:
+  type: static_analysis
+  target: plan_manager.views.branch._get_step_row
+  expected: >
+    _get_step_row has the signature
+    (conn: psycopg.Connection, plan_uuid: uuid.UUID, level: int, step_id: str) -> Step,
+    issues exactly one SELECT statement with a three-column WHERE clause
+    (plan_uuid, level, step_id), raises BranchResolutionError naming the
+    level and step_id when no row is found, and on success returns a Step
+    whose depends_on and concepts fields are plain lists (never None).
+status: draft

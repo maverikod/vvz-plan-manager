@@ -1,0 +1,302 @@
+step_id: A-005
+parent_tactical_step: T-003
+name: Define relation_coverage function
+target_file: plan_manager/views/coverage.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-010, C-005]
+prompt: |
+  Modify the existing Python file at the exact project-relative path
+  `plan_manager/views/coverage.py`.
+
+  This is a modify_file operation. The file currently contains exactly
+  the following content (this is the full, current, post-prior-edit
+  state of the file — not any other state):
+
+  ```python
+  """On-demand coverage views for the plan tree (CoverageView, C-010).
+
+  Coverage is never stored as a matrix file: every report in this module
+  is computed from the current state of the step, concept, relation, and
+  paragraph tables at query time, and no derived artifact is ever read
+  back as input to a check.
+  """
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+
+  @dataclass
+  class CoverageReport:
+      """Result of one coverage set comparison (CoverageView, C-010).
+
+      Attributes:
+          missing: Sorted ascending list of element identifiers required
+              by one side of the comparison but not found on the other
+              side. Always a list, never a bare boolean; empty when
+              nothing is missing.
+          extra: Sorted ascending list of element identifiers found but
+              not required. Always a list, never a bare boolean; empty
+              when nothing is extra.
+      """
+
+      missing: list[str]
+      extra: list[str]
+
+
+  def concept_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:
+      """Compute plan-level concept coverage (CoverageView, C-010).
+
+      Compares the union of the `concepts` column (text[]) of every
+      level-3 step of the plan against the set of `concept_id` values in
+      the `concept` table for the same plan, for set equality.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          CoverageReport whose `missing` list holds `concept_id` values
+          from the `concept` table not present in the union of
+          `concepts` across all level-3 steps of the plan, and whose
+          `extra` list holds `concepts` entries from level-3 steps not
+          present as a `concept_id` in the `concept` table. Both lists
+          are sorted ascending. Set equality holds iff both lists are
+          empty.
+      """
+      gs_cur = conn.execute(
+          "SELECT concepts FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_concepts: set[str] = set()
+      for row in gs_cur.fetchall():
+          if row[0] is not None:
+              gs_concepts.update(row[0])
+      concept_cur = conn.execute(
+          "SELECT concept_id FROM concept WHERE plan_uuid = %s",
+          (plan_uuid,),
+      )
+      mrs_concept_ids: set[str] = {row[0] for row in concept_cur.fetchall()}
+      return CoverageReport(
+          missing=sorted(mrs_concept_ids - gs_concepts),
+          extra=sorted(gs_concepts - mrs_concept_ids),
+      )
+
+
+  def gs_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str, CoverageReport]:
+      """Compute per-GS concept coverage (CoverageView, C-010).
+
+      For every level-3 step of the plan, compares that step's own
+      `concepts` column against the union of the `concepts` columns of
+      its level-4 children (rows whose `parent_step_uuid` equals the
+      level-3 step's `uuid`).
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          Dict keyed by each level-3 step's `step_id`. Each value is a
+          CoverageReport whose `missing` list holds entries of that
+          step's own `concepts` column not present in the union of the
+          `concepts` columns of its level-4 children, sorted ascending,
+          and whose `extra` list is always `[]` (the formula is a
+          superset requirement only; concepts present on a level-4 child
+          but absent from the level-3 step's own concepts are never a
+          finding).
+      """
+      gs_cur = conn.execute(
+          "SELECT uuid, step_id, concepts FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_rows = gs_cur.fetchall()
+      ts_cur = conn.execute(
+          "SELECT parent_step_uuid, concepts FROM step WHERE plan_uuid = %s AND level = 4",
+          (plan_uuid,),
+      )
+      ts_rows = ts_cur.fetchall()
+
+      children_concepts: dict[uuid.UUID, set[str]] = {}
+      for parent_step_uuid, ts_concepts in ts_rows:
+          bucket = children_concepts.setdefault(parent_step_uuid, set())
+          if ts_concepts is not None:
+              bucket.update(ts_concepts)
+
+      result: dict[str, CoverageReport] = {}
+      for gs_uuid, gs_step_id, gs_concepts in gs_rows:
+          own = set(gs_concepts) if gs_concepts is not None else set()
+          children = children_concepts.get(gs_uuid, set())
+          result[gs_step_id] = CoverageReport(missing=sorted(own - children), extra=[])
+      return result
+
+
+  def label_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:
+      """Compute plan-level label coverage (CoverageView, C-010).
+
+      Compares the union of the `fields["source_labels"]` list (strings
+      with braces, e.g. "{k2p7}") of every level-3 step of the plan
+      against the set formed by wrapping every `paragraph.label` value of
+      the plan (four base36 characters, stored without braces; only
+      binding paragraphs are stored as rows) in braces, for set equality.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          CoverageReport whose `missing` list holds braced paragraph
+          labels (`"{" + label + "}"`) claimed by no level-3 step's
+          `fields["source_labels"]`, and whose `extra` list holds braced
+          labels present in some level-3 step's `fields["source_labels"]`
+          with no matching `paragraph` row. Both lists are sorted
+          ascending. Set equality holds iff both lists are empty.
+      """
+      gs_cur = conn.execute(
+          "SELECT fields FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_labels: set[str] = set()
+      for row in gs_cur.fetchall():
+          fields = row[0]
+          if fields:
+              gs_labels.update(fields.get("source_labels", []))
+      paragraph_cur = conn.execute(
+          "SELECT label FROM paragraph WHERE plan_uuid = %s",
+          (plan_uuid,),
+      )
+      hrs_labels: set[str] = {"{" + row[0] + "}" for row in paragraph_cur.fetchall()}
+      return CoverageReport(
+          missing=sorted(hrs_labels - gs_labels),
+          extra=sorted(gs_labels - hrs_labels),
+      )
+  ```
+
+  Apply exactly this one change: append, at the end of the file,
+  separated from `label_coverage` by two blank lines, exactly this
+  function:
+
+  ```python
+  def relation_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageReport:
+      """Compute plan-level relation coverage (CoverageView, C-010).
+
+      Compares the union, over every level-3 step of the plan, of
+      `fields.get("relations", [])` entries — each entry a dict with keys
+      "from_concept", "to_concept", "type", rendered as the string
+      "from_concept|to_concept|type" — against the rows of the
+      `relation` table for the plan, each rendered the same way from its
+      `from_concept`, `to_concept`, `type` columns, for set equality.
+
+      Args:
+          conn: Open psycopg 3 database connection to use for the query.
+          plan_uuid: Identity of the plan to compute coverage for.
+
+      Returns:
+          CoverageReport whose `missing` list holds "from|to|type"
+          strings present as `relation` table rows but implemented by no
+          level-3 step's `fields["relations"]`, and whose `extra` list
+          holds "from|to|type" strings present in some level-3 step's
+          `fields["relations"]` with no matching `relation` table row.
+          Both lists are sorted ascending. Set equality holds iff both
+          lists are empty.
+      """
+      gs_cur = conn.execute(
+          "SELECT fields FROM step WHERE plan_uuid = %s AND level = 3",
+          (plan_uuid,),
+      )
+      gs_relations: set[str] = set()
+      for row in gs_cur.fetchall():
+          fields = row[0]
+          if fields:
+              for entry in fields.get("relations", []):
+                  gs_relations.add(
+                      f"{entry['from_concept']}|{entry['to_concept']}|{entry['type']}"
+                  )
+      relation_cur = conn.execute(
+          "SELECT from_concept, to_concept, type FROM relation WHERE plan_uuid = %s",
+          (plan_uuid,),
+      )
+      mrs_relations: set[str] = {
+          f"{row[0]}|{row[1]}|{row[2]}" for row in relation_cur.fetchall()
+      }
+      return CoverageReport(
+          missing=sorted(mrs_relations - gs_relations),
+          extra=sorted(gs_relations - mrs_relations),
+      )
+  ```
+
+  Constraints (all explicit, no discretion):
+
+  - `relation_coverage` has the exact signature `def
+    relation_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) ->
+    CoverageReport:`.
+  - `conn` is a psycopg 3 database connection passed explicitly by the
+    caller; the function must not open, close, commit, or rollback the
+    connection, and must not hold any module-level connection state.
+  - Exactly two SELECT statements are issued, both via
+    `conn.execute(sql, params)`; no INSERT, UPDATE, or DELETE.
+  - The first SQL text is exactly `"SELECT fields FROM step WHERE
+    plan_uuid = %s AND level = 3"` with params `(plan_uuid,)`.
+  - The second SQL text is exactly `"SELECT from_concept, to_concept,
+    type FROM relation WHERE plan_uuid = %s"` with params
+    `(plan_uuid,)`.
+  - `gs_relations` accumulates, for every row whose `fields` is truthy
+    and for every entry in `fields.get("relations", [])`, the string
+    `f"{entry['from_concept']}|{entry['to_concept']}|{entry['type']}"`
+    via `set.add`; each entry is a dict with keys `"from_concept"`,
+    `"to_concept"`, `"type"` accessed by exact key name, never `.get`
+    with a default.
+  - `mrs_relations` is the set comprehension `{f"{row[0]}|{row[1]}|{row[2]}"
+    for row in relation_cur.fetchall()}` over the second query's rows, in
+    column order `from_concept, to_concept, type`.
+  - Return `CoverageReport(missing=sorted(mrs_relations - gs_relations),
+    extra=sorted(gs_relations - mrs_relations))` exactly as shown.
+  - Do not modify the module docstring, `CoverageReport`,
+    `concept_coverage`, `gs_coverage`, or `label_coverage`; copy them
+    through unchanged exactly as shown.
+  - Do not add any code beyond what is shown above. This is the final
+    function of this file for this tactical step; do not anticipate or
+    stub any additional function.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+  ```
+
+  Relevant MRS relations:
+
+  ```yaml
+  - { from_concept: C-010, to_concept: C-005, type: consumes }
+  ```
+
+  `relation_coverage` realises the relation coverage formula of C-010: it
+  consumes Step (C-005) rows at level 3 for their `fields["relations"]`
+  and compares them against the plan's stored `relation` table rows,
+  reporting missing and extra elements explicitly, never a bare boolean.
+verification:
+  type: manual
+  target: plan_manager.views.coverage.relation_coverage
+  expected: >
+    Given a database where the level-3 steps of a plan collectively
+    claim fields["relations"] equivalent to the strings {"C-001|C-002|uses"}
+    and the relation table for that plan holds rows equivalent to
+    {"C-001|C-002|uses", "C-002|C-003|owns"}, relation_coverage(conn,
+    plan_uuid) returns CoverageReport(missing=["C-002|C-003|owns"],
+    extra=[]). When the two sets of "from|to|type" strings are equal,
+    both missing and extra are empty lists.
+status: draft

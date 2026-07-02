@@ -1,0 +1,147 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: step-content
+target_file: plan_manager/views/prompt_assembly.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-011, C-036]
+prompt: |
+  Target file: plan_manager/views/prompt_assembly.py
+  Operation: modify_file
+
+  Current content of the file before this step (post-prior-AS state — this is
+  the exact, complete, current content of the file; do not assume any other
+  content):
+
+  """Deterministic prompt assembly for atomic steps (C-011), per the normative
+  assembly algorithm (C-036).
+  """
+
+
+  class PromptAssemblyError(ValueError):
+      """Raised when a declared concept_id has no matching concept row in the plan."""
+
+
+  def token_estimate(text: str) -> int:
+      """Deterministic character-based estimate of the token count of text.
+
+      Computed as (len(text) + 3) // 4, per the normative token estimate algorithm.
+
+      Args:
+          text: The text to estimate.
+
+      Returns:
+          The estimated token count.
+      """
+      return (len(text) + 3) // 4
+
+  Required change: insert two import lines immediately after the module
+  docstring (before the blank line that precedes the class), then append one
+  new function at the end of the file, after token_estimate, separated by
+  exactly two blank lines.
+
+  Imports to insert (exact module paths, in this exact order, with one blank
+  line before them separating them from the docstring, and one blank line
+  after them separating them from the class):
+
+  from plan_manager.domain.step import Step
+  from plan_manager.storage.canonical import canonical_json
+
+  Sibling contract for Step (exact dataclass, quoted from
+  plan_manager/domain/step.py — read no other file, this is the complete
+  relevant definition):
+
+  @dataclass
+  class Step:
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      parent_step_uuid: uuid.UUID | None
+      level: int
+      step_id: str
+      slug: str
+      fields: dict
+      depends_on: list[str]
+      concepts: list[str]
+      status: str
+
+  Sibling contract for canonical_json (exact signature, quoted from
+  plan_manager/storage/canonical.py — read no other file):
+
+  def canonical_json(value) -> str
+  # Implemented as json.dumps(value, sort_keys=True, ensure_ascii=False,
+  # separators=(",", ":")). Accepts any JSON-serializable value (dict, list,
+  # str, int, bool, None) and returns the canonical JSON string.
+
+  New function to append, exact signature and body:
+
+  def step_content(step: Step) -> str:
+      """Canonical JSON content of one step, used as a fixed part of prompt assembly.
+
+      Args:
+          step: The step to serialize.
+
+      Returns:
+          canonical_json of a dict with keys step_id, slug, level, depends_on,
+          concepts, status, fields (in that order), taken from the step's
+          matching attributes.
+      """
+      return canonical_json(
+          {
+              "step_id": step.step_id,
+              "slug": step.slug,
+              "level": step.level,
+              "depends_on": step.depends_on,
+              "concepts": step.concepts,
+              "status": step.status,
+              "fields": step.fields,
+          }
+      )
+
+  Exact requirements:
+  - The dict literal key order inside step_content must be exactly step_id,
+    slug, level, depends_on, concepts, status, fields — this is the normative
+    step_content format: step_content(step) = canonical_json({"step_id":
+    step.step_id, "slug": step.slug, "level": step.level, "depends_on":
+    step.depends_on, "concepts": step.concepts, "status": step.status,
+    "fields": step.fields}). canonical_json sorts keys internally
+    (sort_keys=True) so the literal source order does not affect the output,
+    but the source dict must be written in this order for readability and
+    must contain exactly these seven keys, no more, no fewer.
+  - Do not rename, remove, or reorder anything from the prior file content
+    (the PromptAssemblyError class and the token_estimate function must be
+    byte-identical to the prior state, verbatim).
+  - No other imports are added in this step.
+  - No trailing whitespace; file ends with a single trailing newline after
+    the last line.
+
+  MRS excerpt (concepts referenced in this prompt, ascending by concept id):
+
+  - concept_id: C-011
+    name: Prompt
+    definition: "Ephemeral assembled executor input for one atomic step built deterministically from the tree."
+    properties:
+    - "fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta"
+    - "byte-identical for the same tree state; token estimate against the plan's user-set context budget"
+    - "dump snapshots are derived artifacts never read back"
+    - "the server never executes prompts"
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: "The binding algorithm specifications that lower levels refine into code without semantic deviation."
+    properties:
+    - "deviations escalate to the HRS; open parameters have named defaults and are configuration"
+
+  Relations among the concepts above (both endpoints in the declared set):
+  - { from_concept: C-011, to_concept: C-036, type: implements }
+verification:
+  type: import
+  target: plan_manager.views.prompt_assembly
+  expected: >
+    The module plan_manager.views.prompt_assembly imports without error and
+    exposes step_content as a callable taking one Step and returning a str.
+    Calling step_content on a representative step returns the canonical JSON
+    string of a seven-key object built from exactly that step's step_id,
+    slug, level, depends_on, concepts, status, and fields attribute values,
+    in that key order.
+status: draft

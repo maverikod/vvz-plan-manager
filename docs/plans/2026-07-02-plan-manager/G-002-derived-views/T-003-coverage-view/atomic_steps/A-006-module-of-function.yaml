@@ -1,0 +1,115 @@
+step_id: A-006
+parent_tactical_step: T-003
+name: Define module_of function
+target_file: plan_manager/views/objects.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-010]
+prompt: |
+  Create a new Python source file at the exact project-relative path
+  `plan_manager/views/objects.py`.
+
+  This is a create_file operation: the file does not exist yet. Do not
+  assume any pre-existing content. Create it with exactly this full
+  content:
+
+  ```python
+  """On-demand object/work-axis inventory view for the plan tree
+  (CoverageView, C-010).
+
+  The inventory in this module is derived from the object declarations of
+  atomic steps; it is never stored as a file and is recomputed from the
+  step table at query time.
+  """
+
+
+  def module_of(target_file: str) -> str:
+      """Derive the classification module of an object from its declaring file.
+
+      Normative module rule: split `target_file` on "/"; within the final
+      path segment only, if it contains a ".", strip the extension by
+      keeping the part before the last "." (`rsplit(".", 1)` applied to
+      that final segment only); a final segment without a "." is kept
+      whole; join all segments — with the final segment as computed above
+      — using "." in place of "/". Example: target file "a/b/c.py" yields
+      module "a.b.c". The resulting module is a classification key: it
+      carries no UUID and is never used as an identity.
+
+      Args:
+          target_file: Project-relative path to a code file, e.g.
+              "plan_manager/views/coverage.py".
+
+      Returns:
+          The dotted module string derived from `target_file` per the
+          rule above.
+      """
+      parts = target_file.split("/")
+      last_segment = parts[-1]
+      if "." in last_segment:
+          last_segment = last_segment.rsplit(".", 1)[0]
+      parts[-1] = last_segment
+      return ".".join(parts)
+  ```
+
+  Imports used: none. This function uses only `str.split`, `str.rsplit`,
+  and `str.join`, all built-in string methods; no import statement is
+  required.
+
+  Exact function signature being created: `def module_of(target_file:
+  str) -> str:`.
+
+  Constraints:
+
+  - The module docstring text must match exactly what is shown above.
+  - The docstring text of `module_of` must match exactly what is shown
+    above.
+  - `parts = target_file.split("/")` splits on every "/" in the whole
+    path, producing one segment per path component.
+  - `last_segment = parts[-1]` is the final path segment (the file name
+    with its extension, if any).
+  - The extension-stripping `if "." in last_segment: last_segment =
+    last_segment.rsplit(".", 1)[0]` applies only to `last_segment` (the
+    final path segment); it never inspects or modifies any other
+    element of `parts`. `rsplit(".", 1)` splits at most once from the
+    right, so a segment with multiple dots (e.g. "a.b.py") yields "a.b"
+    (only the final extension is stripped).
+  - When `last_segment` contains no ".", it is kept whole (unchanged).
+  - `parts[-1] = last_segment` writes the (possibly extension-stripped)
+    final segment back into the list before joining.
+  - `return ".".join(parts)` joins all segments (including any leading
+    path segments unchanged) with "." as the separator.
+  - Do not add any other names, functions, classes, or imports beyond
+    what is shown above. Later work (not part of this task) will extend
+    this same file with additional functions; do not anticipate or stub
+    them.
+
+  MRS excerpt (only the concept relevant to this AS):
+
+  ```yaml
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+  ```
+
+  `module_of` realises the normative module-derivation rule of C-010: the
+  module of an object is derived deterministically from its declaring
+  atomic step's target file, is used only as a classification key inside
+  the (module, tactical step path) owner-key pair, and is never assigned
+  a UUID or treated as an identity.
+verification:
+  type: import
+  target: plan_manager.views.objects.module_of
+  expected: >
+    The module plan_manager.views.objects imports without error.
+    module_of("plan_manager/views/coverage.py") returns
+    "plan_manager.views.coverage". module_of("a/b/c.py") returns
+    "a.b.c". module_of("README") (a final segment with no ".") returns
+    "README" unchanged. module_of("a.b/c.py") (a "." in a non-final
+    segment) returns "a.b.c" — only the final segment's extension is
+    stripped.
+status: draft

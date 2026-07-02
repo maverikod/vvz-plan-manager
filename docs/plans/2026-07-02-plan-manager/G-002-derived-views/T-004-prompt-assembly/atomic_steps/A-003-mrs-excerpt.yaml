@@ -1,0 +1,243 @@
+step_id: A-003
+parent_tactical_step: T-004
+name: mrs-excerpt
+target_file: plan_manager/views/prompt_assembly.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-003, C-011, C-036]
+prompt: |
+  Target file: plan_manager/views/prompt_assembly.py
+  Operation: modify_file
+
+  Current content of the file before this step (post-prior-AS state — this is
+  the exact, complete, current content of the file; do not assume any other
+  content):
+
+  """Deterministic prompt assembly for atomic steps (C-011), per the normative
+  assembly algorithm (C-036).
+  """
+
+  from plan_manager.domain.step import Step
+  from plan_manager.storage.canonical import canonical_json
+
+
+  class PromptAssemblyError(ValueError):
+      """Raised when a declared concept_id has no matching concept row in the plan."""
+
+
+  def token_estimate(text: str) -> int:
+      """Deterministic character-based estimate of the token count of text.
+
+      Computed as (len(text) + 3) // 4, per the normative token estimate algorithm.
+
+      Args:
+          text: The text to estimate.
+
+      Returns:
+          The estimated token count.
+      """
+      return (len(text) + 3) // 4
+
+
+  def step_content(step: Step) -> str:
+      """Canonical JSON content of one step, used as a fixed part of prompt assembly.
+
+      Args:
+          step: The step to serialize.
+
+      Returns:
+          canonical_json of a dict with keys step_id, slug, level, depends_on,
+          concepts, status, fields (in that order), taken from the step's
+          matching attributes.
+      """
+      return canonical_json(
+          {
+              "step_id": step.step_id,
+              "slug": step.slug,
+              "level": step.level,
+              "depends_on": step.depends_on,
+              "concepts": step.concepts,
+              "status": step.status,
+              "fields": step.fields,
+          }
+      )
+
+  Required change: insert two new import lines and their separating blank
+  lines at the top of the existing import block, then append one new
+  function at the end of the file, after step_content, separated by exactly
+  two blank lines.
+
+  New top of the import block (replace the two-line import block shown above
+  with this four-line block, preserving the blank line before the class
+  definition unchanged):
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.storage.canonical import canonical_json
+
+  (Standard-library import `uuid` first, one blank line, then third-party
+  import `psycopg`, one blank line, then the existing two local imports
+  unchanged and in the same order as before.)
+
+  Sibling contract for psycopg (project convention, not a project source
+  file — DB access uses psycopg 3, plain SQL, no ORM, no DDL; connections are
+  passed as psycopg.Connection parameters; import the top-level package as
+  `import psycopg` and reference the connection type as `psycopg.Connection`):
+
+  New function to append, exact signature and body:
+
+  def mrs_excerpt(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_ids: list[str]) -> str:
+      """Part 1 (MRS excerpt) body of a prompt: concept and relation lines for concept_ids.
+
+      For each id in concept_ids sorted ascending, looks up the concept row of the
+      plan by concept_id and appends one canonical_json line with keys concept_id,
+      name, definition, properties, source_labels (properties and source_labels as
+      lists). If a concept_id has no row, raises PromptAssemblyError naming the
+      missing concept_id. After all concept lines, looks up every relation of the
+      plan whose from_concept and to_concept are both in concept_ids, sorted by
+      (from_concept, to_concept, type), and appends one canonical_json line per
+      relation with keys from_concept, to_concept, type. All lines are joined with
+      the newline character.
+
+      Args:
+          conn: Open database connection.
+          plan_uuid: UUID of the plan.
+          concept_ids: The declared concept ids to excerpt.
+
+      Returns:
+          The part 1 body text.
+
+      Raises:
+          PromptAssemblyError: If a concept_id in concept_ids has no concept row
+              in the plan.
+      """
+      sorted_ids = sorted(concept_ids)
+      lines: list[str] = []
+      with conn.cursor() as cur:
+          for concept_id in sorted_ids:
+              cur.execute(
+                  "SELECT name, definition, properties, source_labels FROM concept "
+                  "WHERE plan_uuid = %s AND concept_id = %s",
+                  (plan_uuid, concept_id),
+              )
+              row = cur.fetchone()
+              if row is None:
+                  raise PromptAssemblyError(
+                      f"concept_id {concept_id} declared but has no concept row in plan {plan_uuid}"
+                  )
+              name, definition, properties, source_labels = row
+              lines.append(
+                  canonical_json(
+                      {
+                          "concept_id": concept_id,
+                          "name": name,
+                          "definition": definition,
+                          "properties": list(properties),
+                          "source_labels": list(source_labels),
+                      }
+                  )
+              )
+          cur.execute(
+              "SELECT from_concept, to_concept, type FROM relation "
+              "WHERE plan_uuid = %s AND from_concept = ANY(%s) AND to_concept = ANY(%s) "
+              "ORDER BY from_concept, to_concept, type",
+              (plan_uuid, sorted_ids, sorted_ids),
+          )
+          for from_concept, to_concept, rel_type in cur.fetchall():
+              lines.append(
+                  canonical_json(
+                      {
+                          "from_concept": from_concept,
+                          "to_concept": to_concept,
+                          "type": rel_type,
+                      }
+                  )
+              )
+      return "\n".join(lines)
+
+  Normative table schema (exact columns; the database is PostgreSQL, plain
+  SQL only, no ORM, no DDL emitted from this code):
+  - table concept: columns uuid, plan_uuid, concept_id, name, definition,
+    properties, source_labels; properties and source_labels are text[]
+    (PostgreSQL array of text) columns.
+  - table relation: columns uuid, plan_uuid, from_concept, to_concept, type.
+
+  Exact requirements:
+  - `sorted_ids = sorted(concept_ids)` sorts ascending by default Python
+    string comparison; do not deduplicate — concept_ids is used exactly as
+    given, only reordered.
+  - The concept lookup query must select exactly the four columns name,
+    definition, properties, source_labels, filtered by plan_uuid and
+    concept_id equality, one row expected.
+  - If `cur.fetchone()` returns None for a concept_id, raise
+    PromptAssemblyError (already defined earlier in this file — do not
+    redefine it) with a message that names the missing concept_id and the
+    plan_uuid, using an f-string exactly as shown.
+  - `properties` and `source_labels` returned from psycopg for a text[]
+    column arrive as native Python lists; wrap each with `list(...)` before
+    placing in the dict, exactly as shown, to guarantee a plain list type
+    regardless of the driver-returned sequence type.
+  - The relation query must filter WHERE plan_uuid = %s AND from_concept =
+    ANY(%s) AND to_concept = ANY(%s), passing sorted_ids as the array
+    parameter for both ANY(%s) placeholders (this enforces that both
+    endpoints of the relation are members of the declared concept_ids set),
+    and must ORDER BY from_concept, to_concept, type in SQL exactly as
+    shown.
+  - Iterate `cur.fetchall()` for the relation query in the order returned
+    (already correctly ordered by the SQL ORDER BY) and append one
+    canonical_json line per row with keys from_concept, to_concept, type in
+    that order.
+  - The final return value is `"\n".join(lines)`, with lines in this exact
+    order: all concept lines (ascending by concept_id) followed by all
+    relation lines (ordered as returned by the SQL).
+  - Use `with conn.cursor() as cur:` exactly once, covering both queries,
+    as shown; do not open a second cursor or a new connection.
+  - Do not modify PromptAssemblyError, token_estimate, or step_content; they
+    must remain byte-identical to the prior state.
+  - No trailing whitespace; file ends with a single trailing newline after
+    the last line.
+
+  MRS excerpt (concepts referenced in this prompt, ascending by concept id):
+
+  - concept_id: C-003
+    name: Concept
+    definition: "MRS basis axis with canonical name, one-sentence definition, properties, and source labels."
+    properties:
+    - "identifier pattern C-NNN, unique within plan"
+    - "selected to be as orthogonal as possible; basis quality is measured"
+    - "embedding serialization default is the definition field only"
+
+  - concept_id: C-011
+    name: Prompt
+    definition: "Ephemeral assembled executor input for one atomic step built deterministically from the tree."
+    properties:
+    - "fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta"
+    - "byte-identical for the same tree state; token estimate against the plan's user-set context budget"
+    - "dump snapshots are derived artifacts never read back"
+    - "the server never executes prompts"
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: "The binding algorithm specifications that lower levels refine into code without semantic deviation."
+    properties:
+    - "deviations escalate to the HRS; open parameters have named defaults and are configuration"
+
+  Relations among the concepts above (both endpoints in the declared set):
+  - { from_concept: C-011, to_concept: C-003, type: uses }
+  - { from_concept: C-011, to_concept: C-036, type: implements }
+verification:
+  type: import
+  target: plan_manager.views.prompt_assembly
+  expected: >
+    The module plan_manager.views.prompt_assembly imports without error and
+    exposes mrs_excerpt as a callable taking a connection, a plan uuid, and a
+    list of concept ids, and returning a str. Against a database holding one
+    concept row and no matching relations, calling mrs_excerpt with that
+    concept's id returns a single canonical JSON line describing that
+    concept. Calling mrs_excerpt with a concept id absent from the concept
+    table raises PromptAssemblyError naming that missing concept id.
+status: draft

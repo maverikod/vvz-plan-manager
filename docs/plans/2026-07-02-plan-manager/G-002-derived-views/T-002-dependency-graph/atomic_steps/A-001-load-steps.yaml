@@ -1,0 +1,137 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create dependency_graph.py with load_steps
+target_file: plan_manager/views/dependency_graph.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-009, C-005, C-036]
+prompt: |
+  Create the new file plan_manager/views/dependency_graph.py with EXACTLY the
+  following content (module docstring, imports, and one function
+  `load_steps`). The file does not exist yet: do not assume any prior content.
+
+  MRS excerpt (concept definitions relevant to this AS):
+
+  - concept_id: C-009
+    name: DependencyGraph
+    definition: Computed projection set over steps covering execution order, parallelism, cycles, and impact.
+    properties:
+    - edges from depends_on at every level plus priority pairs within (target_file, TS)
+    - Kahn topological order with deterministic tie-break; residual subgraph reported as cycle set
+    - waves partition nodes by prerequisite depth; impact follows the invalidation rule
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+
+  Sibling-branch contract, quoted exactly (this module imports Step from
+  plan_manager.domain.step and must not redefine it):
+
+    plan_manager/domain/step.py:
+
+    @dataclass
+    class Step:
+        uuid: uuid.UUID
+        plan_uuid: uuid.UUID
+        parent_step_uuid: uuid.UUID | None
+        level: int
+        step_id: str
+        slug: str
+        fields: dict
+        depends_on: list[str]
+        concepts: list[str]
+        status: str
+
+  Normative database table `step` (columns, exact names and order): uuid,
+  plan_uuid, parent_step_uuid, level, step_id, slug, fields, depends_on,
+  concepts, status. `fields` is stored as JSON. `depends_on` and `concepts`
+  are stored as text[] (SQL array of text; psycopg 3 returns these as Python
+  lists, or None when the array column is NULL). Access is via psycopg 3
+  with plain SQL; no ORM; this function issues SELECT only, never INSERT,
+  UPDATE, or DELETE (G-002 code is read-only on the database).
+
+  Imports required, exact module paths:
+  - `from __future__ import annotations`
+  - `import uuid`
+  - `import psycopg`
+  - `from plan_manager.domain.step import Step`
+
+  Function to create, exact signature:
+
+    def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID, Step]:
+
+  Docstring (Google style, use this exact text and structure):
+
+    """Load every step row of one plan and build Step objects.
+
+    Issues a single read-only SELECT over the step table for all rows
+    whose plan_uuid column equals the given plan_uuid, and builds one
+    Step object per row. Issues no INSERT, UPDATE, or DELETE statement.
+
+    Args:
+        conn: An open psycopg 3 Connection.
+        plan_uuid: The plan (C-001) whose steps are loaded.
+
+    Returns:
+        A dict mapping each step's uuid to its Step object, containing
+        every step row of the plan regardless of level.
+    """
+
+  Implementation constraints, all explicit:
+  1. Build the SQL query string exactly as:
+     "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+     "fields, depends_on, concepts, status FROM step WHERE plan_uuid = %s"
+  2. Declare `nodes: dict[uuid.UUID, Step] = {}` before the query.
+  3. Open a cursor with `with conn.cursor() as cur:`, call
+     `cur.execute(query, (plan_uuid,))`, then iterate
+     `for row in cur.fetchall():`.
+  4. Unpack each row tuple in column order into local variables named
+     row_uuid, row_plan_uuid, parent_step_uuid, level, step_id, slug,
+     fields, depends_on, concepts, status (using a parenthesized
+     multi-line tuple-unpacking assignment from `row`).
+  5. Construct `Step(uuid=row_uuid, plan_uuid=row_plan_uuid,
+     parent_step_uuid=parent_step_uuid, level=level, step_id=step_id,
+     slug=slug, fields=fields, depends_on=list(depends_on) if depends_on
+     else [], concepts=list(concepts) if concepts else [],
+     status=status)` and store it at `nodes[row_uuid]`.
+  6. After the loop (outside the `with` block), `return nodes`.
+  7. No other functions, classes, or module-level statements are added
+     in this AS.
+  8. No comments beyond the docstring.
+
+  Write the complete file content in this exact order: module docstring,
+  blank line, `from __future__ import annotations`, blank line,
+  `import uuid`, blank line, `import psycopg`, blank line,
+  `from plan_manager.domain.step import Step`, two blank lines, the
+  `load_steps` function as specified above, ending with `return nodes`
+  as the file's final line (with a trailing newline).
+
+  Module docstring text (exact):
+
+    """Dependency graph derived view (C-009) for plan_manager.
+
+    Computes execution order, cycle detection, parallel waves, dependency
+    neighborhoods, and impact sets over plan steps (C-005). Every function in
+    this module is a read-only projection: none of them mutate the database
+    or the nodes/edges passed to them.
+    """
+verification:
+  type: import
+  target: plan_manager.views.dependency_graph
+  expected: >-
+    The module imports without error and exposes a callable `load_steps`
+    accepting (conn: psycopg.Connection, plan_uuid: uuid.UUID) and returning
+    a dict.
+status: draft

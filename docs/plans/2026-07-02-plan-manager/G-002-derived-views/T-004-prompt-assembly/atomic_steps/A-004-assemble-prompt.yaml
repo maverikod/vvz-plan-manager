@@ -1,0 +1,287 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: assemble-prompt
+target_file: plan_manager/views/prompt_assembly.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-008, C-011, C-036]
+prompt: |
+  Target file: plan_manager/views/prompt_assembly.py
+  Operation: modify_file
+
+  Current content of the file before this step (post-prior-AS state — this is
+  the exact, complete, current content of the file; do not assume any other
+  content):
+
+  """Deterministic prompt assembly for atomic steps (C-011), per the normative
+  assembly algorithm (C-036).
+  """
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.storage.canonical import canonical_json
+
+
+  class PromptAssemblyError(ValueError):
+      """Raised when a declared concept_id has no matching concept row in the plan."""
+
+
+  def token_estimate(text: str) -> int:
+      """Deterministic character-based estimate of the token count of text.
+
+      Computed as (len(text) + 3) // 4, per the normative token estimate algorithm.
+
+      Args:
+          text: The text to estimate.
+
+      Returns:
+          The estimated token count.
+      """
+      return (len(text) + 3) // 4
+
+
+  def step_content(step: Step) -> str:
+      """Canonical JSON content of one step, used as a fixed part of prompt assembly.
+
+      Args:
+          step: The step to serialize.
+
+      Returns:
+          canonical_json of a dict with keys step_id, slug, level, depends_on,
+          concepts, status, fields (in that order), taken from the step's
+          matching attributes.
+      """
+      return canonical_json(
+          {
+              "step_id": step.step_id,
+              "slug": step.slug,
+              "level": step.level,
+              "depends_on": step.depends_on,
+              "concepts": step.concepts,
+              "status": step.status,
+              "fields": step.fields,
+          }
+      )
+
+
+  def mrs_excerpt(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_ids: list[str]) -> str:
+      """Part 1 (MRS excerpt) body of a prompt: concept and relation lines for concept_ids.
+
+      For each id in concept_ids sorted ascending, looks up the concept row of the
+      plan by concept_id and appends one canonical_json line with keys concept_id,
+      name, definition, properties, source_labels (properties and source_labels as
+      lists). If a concept_id has no row, raises PromptAssemblyError naming the
+      missing concept_id. After all concept lines, looks up every relation of the
+      plan whose from_concept and to_concept are both in concept_ids, sorted by
+      (from_concept, to_concept, type), and appends one canonical_json line per
+      relation with keys from_concept, to_concept, type. All lines are joined with
+      the newline character.
+
+      Args:
+          conn: Open database connection.
+          plan_uuid: UUID of the plan.
+          concept_ids: The declared concept ids to excerpt.
+
+      Returns:
+          The part 1 body text.
+
+      Raises:
+          PromptAssemblyError: If a concept_id in concept_ids has no concept row
+              in the plan.
+      """
+      sorted_ids = sorted(concept_ids)
+      lines: list[str] = []
+      with conn.cursor() as cur:
+          for concept_id in sorted_ids:
+              cur.execute(
+                  "SELECT name, definition, properties, source_labels FROM concept "
+                  "WHERE plan_uuid = %s AND concept_id = %s",
+                  (plan_uuid, concept_id),
+              )
+              row = cur.fetchone()
+              if row is None:
+                  raise PromptAssemblyError(
+                      f"concept_id {concept_id} declared but has no concept row in plan {plan_uuid}"
+                  )
+              name, definition, properties, source_labels = row
+              lines.append(
+                  canonical_json(
+                      {
+                          "concept_id": concept_id,
+                          "name": name,
+                          "definition": definition,
+                          "properties": list(properties),
+                          "source_labels": list(source_labels),
+                      }
+                  )
+              )
+          cur.execute(
+              "SELECT from_concept, to_concept, type FROM relation "
+              "WHERE plan_uuid = %s AND from_concept = ANY(%s) AND to_concept = ANY(%s) "
+              "ORDER BY from_concept, to_concept, type",
+              (plan_uuid, sorted_ids, sorted_ids),
+          )
+          for from_concept, to_concept, rel_type in cur.fetchall():
+              lines.append(
+                  canonical_json(
+                      {
+                          "from_concept": from_concept,
+                          "to_concept": to_concept,
+                          "type": rel_type,
+                      }
+                  )
+              )
+      return "\n".join(lines)
+
+  Required change: insert one new import line at the end of the local import
+  block, then append one new function at the end of the file, after
+  mrs_excerpt, separated by exactly two blank lines.
+
+  New local import to append (after the existing two local imports, no blank
+  line between local imports, preserving the single blank line that already
+  separates the import block from the class definition):
+
+  from plan_manager.views.branch import Branch
+
+  So the full import block becomes:
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.storage.canonical import canonical_json
+  from plan_manager.views.branch import Branch
+
+  Sibling contract for Branch (exact dataclass, quoted from
+  plan_manager/views/branch.py — read no other file, this is the complete
+  relevant definition):
+
+  @dataclass
+  class Branch:
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+
+  Sibling contract for Paragraph (exact dataclass, quoted from
+  plan_manager/domain/paragraph.py — read no other file, this is the
+  complete relevant definition):
+
+  @dataclass
+  class Paragraph:
+      label: Optional[str]
+      text: str
+      position: int
+
+  New function to append, exact signature and body:
+
+  def assemble_prompt(conn: psycopg.Connection, branch: Branch) -> str:
+      """Assemble the full deterministic prompt for one atomic step branch.
+
+      Builds the five parts in fixed order: (1) "# MRS excerpt" with the body from
+      mrs_excerpt(conn, branch.plan_uuid, branch.atomic.concepts); (2) "# HRS slice"
+      with body the paragraphs of branch.hrs_slice in list order, each rendered as
+      "{" + paragraph.label + "} " + paragraph.text, joined pairwise with two
+      newline characters; (3) "# Global step" with body step_content(branch.gs);
+      (4) "# Tactical step" with body step_content(branch.ts); (5) "# Atomic step
+      delta" with body step_content(branch.atomic). Each part is rendered as its
+      header line followed by one newline character and its body. The five
+      rendered parts are joined pairwise with two newline characters.
+
+      Args:
+          conn: Open database connection.
+          branch: The resolved branch to assemble a prompt for.
+
+      Returns:
+          The full assembled prompt text.
+      """
+      parts = [
+          ("# MRS excerpt", mrs_excerpt(conn, branch.plan_uuid, branch.atomic.concepts)),
+          (
+              "# HRS slice",
+              "\n\n".join(
+                  "{" + paragraph.label + "} " + paragraph.text
+                  for paragraph in branch.hrs_slice
+              ),
+          ),
+          ("# Global step", step_content(branch.gs)),
+          ("# Tactical step", step_content(branch.ts)),
+          ("# Atomic step delta", step_content(branch.atomic)),
+      ]
+      return "\n\n".join(header + "\n" + body for header, body in parts)
+
+  Exact requirements:
+  - The five-element `parts` list must be written in exactly this order and
+    with exactly these five header strings: "# MRS excerpt", "# HRS slice",
+    "# Global step", "# Tactical step", "# Atomic step delta".
+  - Part 1 body is `mrs_excerpt(conn, branch.plan_uuid, branch.atomic.concepts)`
+    (already defined earlier in this file — do not redefine it); pass
+    `branch.atomic.concepts` unsorted, since mrs_excerpt sorts internally.
+  - Part 2 body is the paragraphs of `branch.hrs_slice` in list order (the
+    order already present in the list; do not re-sort), each rendered as the
+    string concatenation `"{" + paragraph.label + "} " + paragraph.text`
+    (literal opening brace, the label, literal closing brace, one space,
+    then the text), and the per-paragraph strings joined with
+    `"\n\n".join(...)` (two newline characters between consecutive
+    paragraphs).
+  - Part 3 body is `step_content(branch.gs)`, part 4 body is
+    `step_content(branch.ts)`, part 5 body is `step_content(branch.atomic)`
+    (step_content already defined earlier in this file — do not redefine
+    it).
+  - Each of the five parts is rendered as `header + "\n" + body` (header
+    line, one newline character, then the body) before joining.
+  - The five rendered parts are joined with `"\n\n".join(...)` (two newline
+    characters between consecutive rendered parts) to produce the final
+    return value.
+  - This produces the byte-identical, deterministic full prompt for a given
+    tree state, per the normative assembly algorithm: same tree state always
+    yields the same prompt text.
+  - Do not modify PromptAssemblyError, token_estimate, step_content, or
+    mrs_excerpt; they must remain byte-identical to the prior state.
+  - No trailing whitespace; file ends with a single trailing newline after
+    the last line.
+
+  MRS excerpt (concepts referenced in this prompt, ascending by concept id):
+
+  - concept_id: C-008
+    name: Branch
+    definition: "Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly."
+    properties:
+    - "never materialized as a stored artifact"
+    - "a mechanically clean branch is measurable while siblings are broken"
+
+  - concept_id: C-011
+    name: Prompt
+    definition: "Ephemeral assembled executor input for one atomic step built deterministically from the tree."
+    properties:
+    - "fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta"
+    - "byte-identical for the same tree state; token estimate against the plan's user-set context budget"
+    - "dump snapshots are derived artifacts never read back"
+    - "the server never executes prompts"
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: "The binding algorithm specifications that lower levels refine into code without semantic deviation."
+    properties:
+    - "deviations escalate to the HRS; open parameters have named defaults and are configuration"
+
+  Relations among the concepts above (both endpoints in the declared set):
+  - { from_concept: C-011, to_concept: C-008, type: consumes }
+  - { from_concept: C-011, to_concept: C-036, type: implements }
+verification:
+  type: import
+  target: plan_manager.views.prompt_assembly
+  expected: >
+    The module plan_manager.views.prompt_assembly imports without error and
+    exposes assemble_prompt as a callable taking a connection and a branch,
+    and returning a str. Calling assemble_prompt twice with equal-content
+    branch values against an unchanged database returns byte-identical
+    strings, and the first line of the returned text is the MRS excerpt
+    header line (a number sign, a space, and the words MRS excerpt).
+status: draft

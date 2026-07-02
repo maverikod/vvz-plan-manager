@@ -1,0 +1,62 @@
+step_id: T-002
+parent_global_step: G-002
+name: dependency-graph
+description: >
+  Create the DependencyGraph (C-009), the computed projection set over the plan's
+  steps (C-005), implementing its normative algorithms (C-036) exactly. Graph
+  construction: nodes are the plan's steps; edges are every depends_on reference at
+  every level plus an edge between each consecutive priority pair of atomic steps
+  within one (target file, tactical step) pair. Execution order: Kahn's algorithm
+  with the deterministic tie-break of ascending (level, parent path, step id) among
+  ready nodes; when the ready queue empties before all nodes are ordered, the
+  residual subgraph is reported as the cycle set. Parallel waves: wave 0 holds
+  nodes with no prerequisites, wave N+1 holds nodes whose prerequisites all lie in
+  earlier waves, listed in order with the same tie-break inside each wave. The
+  dependency neighborhood of one node is queryable in both directions: the direct
+  prerequisites of a node and the direct dependents of a node. Impact analysis
+  answers which nodes become needs_review if a node changes, following the
+  invalidation rule — the transitive children of the changed node in the plan
+  tree — and changes nothing: every computation in this step is a read-only
+  projection recomputed on demand from the database, never stored, never read back.
+concepts: [C-009, C-005, C-036]
+inputs:
+- name: plan_step_set
+  type: stored plan data
+  description: >
+    All steps (C-005) of one plan with their levels, parent links, depends_on
+    references, and the priority and target-file fields of atomic steps, read from
+    the database at computation time.
+- name: impact_origin
+  type: step reference
+  description: >
+    The single step (C-005) whose hypothetical change is the origin of an impact
+    analysis query.
+outputs:
+- name: execution_order
+  type: computed projection
+  description: >
+    The Kahn topological order of the plan's steps under the ascending (level,
+    parent path, step id) tie-break among ready nodes.
+- name: cycle_set
+  type: computed projection
+  description: >
+    The residual subgraph — nodes and the edges among them — reported when the
+    ready queue empties before all nodes are ordered.
+- name: parallel_waves
+  type: computed projection
+  description: >
+    The inductive wave partition of the nodes by prerequisite depth, each wave
+    listed under the same deterministic tie-break.
+- name: dependency_neighborhood
+  type: computed projection
+  description: >
+    The direct prerequisites and the direct dependents of one node, queryable in
+    both directions.
+- name: impact_set
+  type: computed projection
+  description: >
+    The set of nodes that become needs_review if the impact origin changes,
+    following the invalidation rule over the plan tree; the computation itself
+    modifies nothing.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009, A-010]
+status: draft

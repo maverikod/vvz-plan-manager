@@ -1,0 +1,96 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Define CoverageReport dataclass
+target_file: plan_manager/views/coverage.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-010]
+prompt: |
+  Create a new Python source file at the exact project-relative path
+  `plan_manager/views/coverage.py`.
+
+  This is a create_file operation: the file does not exist yet. Do not
+  assume any pre-existing content. Create it with exactly this full
+  content:
+
+  ```python
+  """On-demand coverage views for the plan tree (CoverageView, C-010).
+
+  Coverage is never stored as a matrix file: every report in this module
+  is computed from the current state of the step, concept, relation, and
+  paragraph tables at query time, and no derived artifact is ever read
+  back as input to a check.
+  """
+
+  from dataclasses import dataclass
+
+
+  @dataclass
+  class CoverageReport:
+      """Result of one coverage set comparison (CoverageView, C-010).
+
+      Attributes:
+          missing: Sorted ascending list of element identifiers required
+              by one side of the comparison but not found on the other
+              side. Always a list, never a bare boolean; empty when
+              nothing is missing.
+          extra: Sorted ascending list of element identifiers found but
+              not required. Always a list, never a bare boolean; empty
+              when nothing is extra.
+      """
+
+      missing: list[str]
+      extra: list[str]
+  ```
+
+  Imports used, with exact module paths: `from dataclasses import
+  dataclass` (Python standard library; supplies the `@dataclass`
+  decorator applied to `CoverageReport`).
+
+  Exact class signature being created: `class CoverageReport:` decorated
+  with the bare `@dataclass` (no parentheses arguments, no
+  `frozen=True`, no `eq=`/`order=` options), with exactly two fields in
+  this order and these exact types: `missing: list[str]`, `extra:
+  list[str]`. Neither field has a default value.
+
+  Constraints:
+
+  - The module docstring text must match exactly what is shown above.
+  - The class docstring text must match exactly what is shown above,
+    including the "Attributes:" section.
+  - `CoverageReport` has no methods and no `__post_init__`.
+  - `missing` and `extra` are always plain Python lists of strings, never
+    `None` and never a bare boolean; an empty list represents "nothing
+    missing" / "nothing extra" respectively, never a shortcut boolean
+    value.
+  - Do not add any other names, functions, classes, or imports beyond
+    what is shown above. Later work (not part of this task) will extend
+    this same file with additional functions; do not anticipate or stub
+    them.
+
+  MRS excerpt (only the concept relevant to this AS):
+
+  ```yaml
+  - concept_id: C-010
+    name: CoverageView
+    definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
+    properties:
+    - set formulas are normative; reports always list missing and extra elements
+    - object-axis inventory keyed by (module, tactical step path)
+    - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
+  ```
+
+  `CoverageReport` is the uniform result shape used by every coverage
+  function realising C-010 in this module: reports always list missing
+  and extra elements explicitly, never a bare boolean.
+verification:
+  type: import
+  target: plan_manager.views.coverage.CoverageReport
+  expected: >
+    The module plan_manager.views.coverage imports without error,
+    CoverageReport is a dataclass, and
+    CoverageReport.__dataclass_fields__ lists exactly the two fields
+    missing and extra, in that order, both typed list[str] and neither
+    carrying a default value.
+status: draft

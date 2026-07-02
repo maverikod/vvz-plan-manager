@@ -1,0 +1,68 @@
+step_id: T-003
+parent_global_step: G-002
+name: coverage-view
+description: >
+  Create the CoverageView (C-010), the on-demand set computations that replace
+  stored coverage matrices; every view is recomputed from the plan tree in the
+  database and no derived artifact is ever read back as input. The set formulas
+  are normative. Plan concept coverage: the union of concepts of all global steps
+  compared against the MRS concept (C-003) identifiers for set equality. Per-GS
+  coverage: the union of concepts of a global step's tactical steps must be a
+  superset of that global step's concepts. Label coverage: the union of source
+  labels of all global steps compared against the binding paragraph (C-002) labels
+  of the HRS for set equality. Relation coverage: the union of relations
+  implemented by global steps compared against the MRS relations for set equality.
+  Every comparison reports the missing and the extra elements explicitly, never a
+  bare boolean. The object/work-axis inventory is derived from the object
+  declarations of atomic steps (C-005): the owner key of an object is the pair
+  (module derived from the target file, tactical step path); the module is derived
+  deterministically from the target file by stripping the extension and replacing
+  path separators with dots, is a classification key, never an identity, and
+  receives no UUID. Inventory findings are: an object name with more than one
+  owner key, an object name spanning more than one module, and an object concept
+  set that is not a subset of the union of the concept sets of the atomic steps
+  declaring it — always classified by full artifact path, never by bare step
+  number.
+concepts: [C-010, C-005, C-003, C-002]
+inputs:
+- name: plan_tree_axes
+  type: stored plan data
+  description: >
+    The steps (C-005) of the plan with their concepts, source labels, and relation
+    references, the MRS concepts (C-003) and relations, and the binding paragraph
+    (C-002) labels, read from the database at computation time.
+- name: object_declarations
+  type: stored atomic-step data
+  description: >
+    The object declarations of atomic steps (C-005) — declared object names with
+    their concept sets — together with each declaring step's target file and
+    tactical step path.
+outputs:
+- name: concept_coverage_report
+  type: computed set report
+  description: >
+    Plan concept coverage as explicit missing and extra element lists from the set
+    equality comparison of global-step concepts against MRS concept identifiers.
+- name: gs_coverage_report
+  type: computed set report
+  description: >
+    Per-GS coverage as explicit missing element lists from the superset comparison
+    of tactical-step concept unions against each global step's concepts.
+- name: label_coverage_report
+  type: computed set report
+  description: >
+    Label coverage as explicit missing and extra element lists from the set
+    equality comparison of global-step source labels against binding HRS labels.
+- name: relation_coverage_report
+  type: computed set report
+  description: >
+    Relation coverage as explicit missing and extra element lists from the set
+    equality comparison of global-step relations against MRS relations.
+- name: object_inventory
+  type: computed inventory
+  description: >
+    The object/work-axis inventory keyed by (module, tactical step path) with its
+    findings — multiple owner keys, module spanning, and concept sets not covered
+    by declaring atomic steps — classified by full artifact path.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
+status: draft
