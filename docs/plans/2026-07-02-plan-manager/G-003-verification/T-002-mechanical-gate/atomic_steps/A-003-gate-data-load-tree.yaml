@@ -1,0 +1,182 @@
+step_id: A-003
+parent_tactical_step: T-002
+name: Add load_tree to gate_data.py
+target_file: plan_manager/verify/gate_data.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-012, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_data.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  The current full content of plan_manager/verify/gate_data.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Read-only tree loader and scoping helpers for the mechanical gate (C-012)."""
+
+  import uuid
+  from dataclasses import dataclass
+
+  from plan_manager.domain.step import Step
+  from plan_manager.views.dependency_graph import parent_path
+
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+
+
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str:
+      """Return the artifact path of ``step`` within ``nodes``.
+
+      For level 4 and level 5 steps the path is
+      ``parent_path(nodes, step) + "/" + step.step_id``.
+      For level 3 steps the path is ``step.step_id`` (``parent_path`` returns
+      ``""`` for level 3).
+      """
+      if step.level == 3:
+          return step.step_id
+      prefix = parent_path(nodes, step)
+      return f"{prefix}/{step.step_id}"
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Add one import line `import psycopg`, placed as a new import group
+     immediately after `from dataclasses import dataclass` and before
+     `from plan_manager.domain.step import Step`, separated by one blank
+     line, so the top of the file becomes:
+
+  ```python
+  """Read-only tree loader and scoping helpers for the mechanical gate (C-012)."""
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.views.dependency_graph import parent_path
+  ```
+
+  2. Append the following function at the end of the file, separated from
+     artifact_path_of by two blank lines:
+
+  ```python
+  def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
+      """Load the full read-only tree for ``plan_uuid`` needed by the mechanical gate.
+
+      Issues plain read-only SELECT statements against the step, concept,
+      relation, and paragraph tables. Stores nothing; returns a fully
+      populated GateTree. This function performs no writes and no DDL.
+      """
+      steps: dict[uuid.UUID, Step] = {}
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+              "fields, depends_on, concepts, status FROM step WHERE plan_uuid = %s",
+              (plan_uuid,),
+          )
+          for row in cur.fetchall():
+              (
+                  s_uuid, s_plan_uuid, s_parent_step_uuid, s_level, s_step_id,
+                  s_slug, s_fields, s_depends_on, s_concepts, s_status,
+              ) = row
+              steps[s_uuid] = Step(
+                  uuid=s_uuid,
+                  plan_uuid=s_plan_uuid,
+                  parent_step_uuid=s_parent_step_uuid,
+                  level=s_level,
+                  step_id=s_step_id,
+                  slug=s_slug,
+                  fields=s_fields,
+                  depends_on=list(s_depends_on) if s_depends_on else [],
+                  concepts=list(s_concepts) if s_concepts else [],
+                  status=s_status,
+              )
+
+          cur.execute("SELECT concept_id FROM concept WHERE plan_uuid = %s", (plan_uuid,))
+          concept_ids = [row[0] for row in cur.fetchall()]
+
+          cur.execute(
+              "SELECT from_concept, to_concept, type FROM relation WHERE plan_uuid = %s",
+              (plan_uuid,),
+          )
+          relations = [(row[0], row[1], row[2]) for row in cur.fetchall()]
+
+          cur.execute(
+              "SELECT label FROM paragraph WHERE plan_uuid = %s ORDER BY position",
+              (plan_uuid,),
+          )
+          labels = [row[0] for row in cur.fetchall()]
+
+          cur.execute("SELECT count(*) FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+          paragraph_count = cur.fetchone()[0]
+
+      counts = {
+          "steps": len(steps),
+          "concepts": len(concept_ids),
+          "paragraphs": paragraph_count,
+      }
+      return GateTree(
+          steps=steps,
+          concept_ids=concept_ids,
+          relations=relations,
+          labels=labels,
+          counts=counts,
+      )
+  ```
+
+  Database schema this function reads (plain SQL, psycopg 3, no ORM, no DDL,
+  read-only — this function never writes and never emits DDL):
+  - step(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+    depends_on, concepts, status)
+  - concept(uuid, plan_uuid, concept_id, name, definition, properties,
+    source_labels)
+  - relation(uuid, plan_uuid, from_concept, to_concept, type)
+  - paragraph(uuid, plan_uuid, label, text, position) — label is the four
+    base36 characters without braces; only binding paragraphs are stored, so
+    every row has a non-null label.
+
+  conn is a psycopg.Connection; use conn.cursor() as a context manager
+  exactly as shown, cur.execute(sql, params) with a tuple of parameters, and
+  cur.fetchall() / cur.fetchone() to read rows. Do not use an ORM.
+
+  Constraints:
+  - Do not change the GateTree dataclass or the artifact_path_of function.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_data.py.
+  - This function must not write to the database and must not emit DDL.
+verification:
+  type: manual
+  target: plan_manager.verify.gate_data.load_tree
+  expected: >
+    Given a psycopg connection and a plan_uuid, load_tree issues only
+    SELECT statements against step, concept, relation, and paragraph scoped
+    by plan_uuid, and returns a GateTree whose steps dict has one entry per
+    step row, concept_ids and relations and labels match the corresponding
+    tables, and counts equals {"steps": len(steps), "concepts":
+    len(concept_ids), "paragraphs": <paragraph row count>}.
+status: draft

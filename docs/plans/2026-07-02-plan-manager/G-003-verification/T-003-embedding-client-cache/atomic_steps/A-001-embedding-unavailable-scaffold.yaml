@@ -1,0 +1,96 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: embedding-unavailable-scaffold
+target_file: plan_manager/scoring/embedding.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-022]
+prompt: |
+  Create the file `plan_manager/scoring/embedding.py` (operation: create_file).
+
+  This file does not exist yet. Write exactly the following content as the
+  full content of the new file (nothing more, nothing less):
+
+  ```python
+  """Embedding client and cache for EmbeddingService (C-022) integration.
+
+  Provides text embedding retrieval with a database-backed cache keyed by
+  content hash, and an explicit typed unavailability condition instead of
+  raising on service failure.
+  """
+
+  import json
+  import urllib.error
+  import urllib.request
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class EmbeddingUnavailable(Exception):
+      """Raised when the embedding service cannot be reached or returns a
+      malformed response.
+
+      Carries the reason as its single string argument. Callers catch this
+      exception to degrade semantic scoring only; every other function keeps
+      working when the embedding service is unavailable.
+      """
+  ```
+
+  Exact requirements:
+  - The module docstring text must be exactly as shown above.
+  - Imports, in this exact order: `import json`, `import urllib.error`,
+    `import urllib.request`, `import uuid`,
+    `from datetime import datetime, timezone`, then one blank line, then
+    `import psycopg`, then one blank line, then
+    `from plan_manager.storage.canonical import content_hash`, then two
+    blank lines before the class.
+    - `plan_manager.storage.canonical` is a sibling module in this codebase
+      exposing `def content_hash(value) -> str`: it returns the SHA-256 hex
+      digest of the canonical JSON of `value`; for a plain string it hashes
+      the canonical JSON of that string. This import is not used by any
+      code in this AS; it is required because later modifications to this
+      same file add code that uses it. Do not remove it and do not use it
+      in this AS.
+    - `psycopg` is the psycopg 3 database driver package. This import is
+      not used by any code in this AS; it is required for type annotations
+      added by later modifications to this file. Do not remove it and do
+      not use it in this AS.
+  - Define exactly one class, `EmbeddingUnavailable`, inheriting directly
+    from the builtin `Exception`, with no additional methods, no additional
+    attributes, and no `__init__` override — it relies entirely on
+    `Exception.__init__`. Its docstring must be exactly the text shown
+    above.
+  - Do not add any function, constant, or other class. Do not add a
+    `if __name__ == "__main__":` block. Do not add type-checking guards.
+  - The file ends immediately after the closing `"""` of the class
+    docstring, with a single trailing newline (standard end-of-file
+    newline), and nothing else.
+
+  Concept context (MRS excerpt, concept C-022 only):
+  - concept_id: C-022
+    name: EmbeddingService
+    definition: Sole optional external integration providing text
+      embeddings through a configured URL.
+    properties:
+    - unavailability degrades only semantic scoring, with explicit low
+      trust
+    - vectors cached in the database keyed by content hash; no vector
+      files
+
+  `EmbeddingUnavailable` is the explicit typed unavailability condition for
+  C-022: code elsewhere in this file (added later) raises it, carrying the
+  reason as its single string argument, whenever the embedding service
+  cannot be reached or answers malformed, so that callers can degrade
+  semantic scoring instead of crashing.
+verification:
+  type: import
+  target: plan_manager.scoring.embedding
+  expected: The module imports without any error, and EmbeddingUnavailable
+    is defined as a class that is a direct subclass of the builtin
+    Exception.
+status: draft

@@ -1,0 +1,128 @@
+step_id: A-001
+parent_tactical_step: T-006
+name: load-concept-rows
+target_file: plan_manager/scoring/estimators.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-013, C-036, C-003]
+prompt: |
+  Create the file plan_manager/scoring/estimators.py (it does not exist yet;
+  do not assume any pre-existing content). This file will hold deterministic
+  and embedding-based branch estimators for SemanticIndex (C-013); this AS
+  writes only its module docstring, its `from __future__ import annotations`
+  import line, and one function, load_concept_rows. Do not add any other
+  function, class, or import. Do not create, read, or modify any other file.
+
+  Write the file with exactly this content:
+
+  ```python
+  """Deterministic and embedding-based branch estimators for SemanticIndex (C-013).
+
+  Implements the normative estimator formulas of NormativeAlgorithmSet (C-036)
+  consumed by plan_manager.scoring.index.score_branch. Read-only on plan data:
+  every function here returns computed values to its caller and stores nothing.
+  """
+
+  from __future__ import annotations
+
+
+  def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:
+      """Load all concepts of a plan ordered by concept_id.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity to scope the query to.
+
+      Returns:
+          A list of (concept_id, definition, source_labels) tuples, one per
+          concept row, ascending by concept_id. source_labels entries keep
+          their enclosing braces, e.g. "{abcd}".
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, definition, source_labels FROM concept "
+              "WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          return [(row[0], row[1], list(row[2])) for row in cur.fetchall()]
+  ```
+
+  Constraints (all binding, none optional):
+  - The signature is exactly `def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:`
+    with no additional type annotations on `conn` or `plan_uuid` (they are
+    intentionally unannotated, matching the normative sibling contract).
+  - `conn` is an open psycopg 3 database connection (package plan_manager/
+    is Python 3.12+, psycopg 3, plain SQL, no ORM; runtime code never emits
+    DDL). Use `conn.cursor()` as a context manager exactly as shown; do not
+    call `conn.commit()` (this is a read-only SELECT).
+  - The SQL text must be exactly
+    `"SELECT concept_id, definition, source_labels FROM concept WHERE plan_uuid = %s ORDER BY concept_id"`
+    (the two literal strings concatenated by adjacency exactly as shown, or
+    written as one single string with identical content — the executed SQL
+    text and parameter binding must be identical either way), bound with the
+    single parameter tuple `(plan_uuid,)`.
+  - The `concept` table has columns `concept_id` (text), `definition`
+    (text), and `source_labels` (text[], a PostgreSQL text array whose
+    entries include their enclosing braces, e.g. the stored value
+    `"{abcd}"`), plus `uuid` and `plan_uuid` columns not selected here.
+  - Return exactly a list comprehension over `cur.fetchall()` producing
+    3-tuples `(row[0], row[1], list(row[2]))` — `list(row[2])` normalizes
+    the driver-returned array-like value for `source_labels` into a plain
+    Python `list[str]`.
+  - Do not catch or suppress any exception. Do not log anything. Do not
+    cache anything. The result is returned to the caller and never stored
+    (Database C-035 is the single source of truth; this function is a pure
+    read).
+  - No other function, class, constant, or import may appear in this file
+    for this AS.
+
+  MRS excerpt (only the concepts and relations relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+    source_labels: ["{f6s2}", "{k7r9}", "{j8b2}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  ```
+
+  Branch conventions in force for this whole TS (Python 3.12+, package root
+  plan_manager/; psycopg 3, plain SQL SELECTs allowed, read-only on plan
+  data; results returned to caller, never stored): this AS is the first
+  concrete realization of that discipline for the estimators module.
+verification:
+  type: manual
+  target: plan_manager/scoring/estimators.py::load_concept_rows
+  expected: >
+    Given a plan_uuid with three rows in the concept table ordered by
+    concept_id C-001, C-002, C-003 with distinct definitions and
+    source_labels arrays (each entry keeping its enclosing braces),
+    calling load_concept_rows(conn, plan_uuid) returns a list of exactly
+    three (concept_id, definition, source_labels) tuples in that same
+    ascending concept_id order, with source_labels equal to plain Python
+    lists of the original brace-wrapped strings.
+status: draft

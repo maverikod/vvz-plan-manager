@@ -1,0 +1,44 @@
+step_id: T-004
+parent_global_step: G-003
+name: trust-estimate
+description: >
+  Create the TrustEstimate (C-014), the confidence measure of the semantic
+  measurement itself, computed before any branch scoring from the geometry of
+  the concept basis. The computation takes the normalized embeddings of the
+  plan's concepts (C-003) obtained through the embedding integration (C-022),
+  and derives the pairwise cosine matrix, the Gram matrix, its determinant, and
+  its eigenvalue spectrum. Trust decreases monotonically with basis
+  collinearity; the monotone mapping from the geometry to the 0..1 trust value
+  is configuration with a published default. When the embedding integration
+  reports unavailability, trust drops to the declared floor from the scoring
+  configuration instead of failing, so the report distinguishes a weak plan
+  from an unmeasurable plan. This step defines the geometry computation, the
+  monotone mapping, and the unavailability floor; it does not combine estimator
+  votes and does not produce branch scores.
+concepts: [C-014, C-022, C-003]
+inputs:
+- name: concept_basis_embeddings
+  type: numeric vectors
+  description: >
+    The normalized embedding vectors of the plan's concepts (C-003), serialized
+    for embedding by their definitions and obtained through the embedding
+    integration (C-022).
+- name: trust_configuration
+  type: configuration data
+  description: >
+    The published-default monotone mapping parameters and the declared trust
+    floor applied on embedding unavailability.
+outputs:
+- name: trust_value
+  type: computed measure
+  description: >
+    The 0..1 confidence in the semantic measurement, decreasing monotonically
+    with basis collinearity and equal to the declared floor when embeddings are
+    unavailable.
+- name: basis_geometry_report
+  type: computed measure set
+  description: >
+    The pairwise cosine matrix, Gram determinant, and eigenvalue spectrum of the
+    concept basis underlying the trust value.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005]
+status: draft

@@ -1,0 +1,190 @@
+step_id: A-004
+parent_tactical_step: T-002
+name: Add scope_steps to gate_data.py
+target_file: plan_manager/verify/gate_data.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-012, C-008]
+prompt: |
+  Target file: plan_manager/verify/gate_data.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-008 Branch — Addressable derived view of one path HRS-slice -> GS -> TS
+    -> AS; the unit of verification and prompt assembly. Properties: never
+    materialized as a stored artifact; a mechanically clean branch is
+    measurable while siblings are broken.
+
+  The current full content of plan_manager/verify/gate_data.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Read-only tree loader and scoping helpers for the mechanical gate (C-012)."""
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+  from plan_manager.domain.step import Step
+  from plan_manager.views.dependency_graph import parent_path
+
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+
+
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str:
+      """Return the artifact path of ``step`` within ``nodes``.
+
+      For level 4 and level 5 steps the path is
+      ``parent_path(nodes, step) + "/" + step.step_id``.
+      For level 3 steps the path is ``step.step_id`` (``parent_path`` returns
+      ``""`` for level 3).
+      """
+      if step.level == 3:
+          return step.step_id
+      prefix = parent_path(nodes, step)
+      return f"{prefix}/{step.step_id}"
+
+
+  def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
+      """Load the full read-only tree for ``plan_uuid`` needed by the mechanical gate.
+
+      Issues plain read-only SELECT statements against the step, concept,
+      relation, and paragraph tables. Stores nothing; returns a fully
+      populated GateTree. This function performs no writes and no DDL.
+      """
+      steps: dict[uuid.UUID, Step] = {}
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
+              "fields, depends_on, concepts, status FROM step WHERE plan_uuid = %s",
+              (plan_uuid,),
+          )
+          for row in cur.fetchall():
+              (
+                  s_uuid, s_plan_uuid, s_parent_step_uuid, s_level, s_step_id,
+                  s_slug, s_fields, s_depends_on, s_concepts, s_status,
+              ) = row
+              steps[s_uuid] = Step(
+                  uuid=s_uuid,
+                  plan_uuid=s_plan_uuid,
+                  parent_step_uuid=s_parent_step_uuid,
+                  level=s_level,
+                  step_id=s_step_id,
+                  slug=s_slug,
+                  fields=s_fields,
+                  depends_on=list(s_depends_on) if s_depends_on else [],
+                  concepts=list(s_concepts) if s_concepts else [],
+                  status=s_status,
+              )
+
+          cur.execute("SELECT concept_id FROM concept WHERE plan_uuid = %s", (plan_uuid,))
+          concept_ids = [row[0] for row in cur.fetchall()]
+
+          cur.execute(
+              "SELECT from_concept, to_concept, type FROM relation WHERE plan_uuid = %s",
+              (plan_uuid,),
+          )
+          relations = [(row[0], row[1], row[2]) for row in cur.fetchall()]
+
+          cur.execute(
+              "SELECT label FROM paragraph WHERE plan_uuid = %s ORDER BY position",
+              (plan_uuid,),
+          )
+          labels = [row[0] for row in cur.fetchall()]
+
+          cur.execute("SELECT count(*) FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+          paragraph_count = cur.fetchone()[0]
+
+      counts = {
+          "steps": len(steps),
+          "concepts": len(concept_ids),
+          "paragraphs": paragraph_count,
+      }
+      return GateTree(
+          steps=steps,
+          concept_ids=concept_ids,
+          relations=relations,
+          labels=labels,
+          counts=counts,
+      )
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Add one import line, placed immediately after
+     `from plan_manager.domain.step import Step` and before
+     `from plan_manager.views.dependency_graph import parent_path`, so the
+     import block becomes:
+
+  ```python
+  from plan_manager.domain.step import Step
+  from plan_manager.views.branch import Branch
+  from plan_manager.views.dependency_graph import parent_path
+  ```
+
+  2. Append the following function at the end of the file, separated from
+     load_tree by two blank lines:
+
+  ```python
+  def scope_steps(tree: GateTree, branch: Branch | None) -> list[Step]:
+      """Return the steps in scope for a gate run.
+
+      When ``branch`` is None, returns all steps in ``tree`` sorted by
+      ``(level, artifact_path_of(tree.steps, step))``. Otherwise returns
+      exactly ``[branch.gs, branch.ts, branch.atomic]`` in that order.
+      """
+      if branch is None:
+          return sorted(
+              tree.steps.values(),
+              key=lambda s: (s.level, artifact_path_of(tree.steps, s)),
+          )
+      return [branch.gs, branch.ts, branch.atomic]
+  ```
+
+  The imported Branch is an existing sibling dataclass; import it, do not
+  redefine it. Its exact signature, for reference only (module
+  plan_manager/views/branch.py):
+
+  ```python
+  @dataclass
+  class Branch:
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+  ```
+  (Paragraph has fields label: Optional[str], text: str, position: int; not
+  otherwise used by this function.)
+
+  Constraints:
+  - Do not change GateTree, artifact_path_of, or load_tree.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_data.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_data.scope_steps
+  expected: >
+    The module imports without error. scope_steps(tree, None) returns a list
+    of every Step in tree.steps.values() sorted ascending by (level,
+    artifact_path_of(tree.steps, step)). scope_steps(tree, branch) for a
+    non-None branch returns exactly [branch.gs, branch.ts, branch.atomic] in
+    that order, regardless of tree contents.
+status: draft

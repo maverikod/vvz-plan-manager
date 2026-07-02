@@ -1,0 +1,42 @@
+step_id: T-003
+parent_global_step: G-003
+name: embedding-client-cache
+description: >
+  Create the EmbeddingService (C-022) integration: the sole optional external
+  integration of the server, reached through a URL taken from configuration. The
+  client requests the embedding vector of one text, reports unavailability as an
+  explicit typed condition instead of failing the caller, and caches every
+  obtained vector in the database (C-035) keyed by the content hash of the
+  embedded text — a cache hit never contacts the service, no vector file is ever
+  produced, and the server runs no vectorization pipeline of its own. When the
+  service is unavailable every function except semantic scoring keeps working;
+  the unavailability condition is the signal consumed by trust computation and
+  scoring degradation. This step defines the client, the unavailability
+  condition, and the database vector cache; it does not compute trust, scores,
+  or any estimator.
+concepts: [C-022, C-035]
+inputs:
+- name: embedding_endpoint_url
+  type: configuration datum
+  description: >
+    The configured URL of the external embedding service; the single external
+    integration point.
+- name: text_to_embed
+  type: text
+  description: >
+    One text whose embedding vector is requested; its content hash is the cache
+    key.
+outputs:
+- name: embedding_vector
+  type: cached numeric vector
+  description: >
+    The embedding of the text, served from the database cache on a content-hash
+    hit and stored into the cache after a service response on a miss.
+- name: unavailability_condition
+  type: typed condition
+  description: >
+    The explicit condition reported when the service cannot be reached or
+    answers malformed; degrades only semantic scoring, with trust dropping to
+    its declared floor downstream.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

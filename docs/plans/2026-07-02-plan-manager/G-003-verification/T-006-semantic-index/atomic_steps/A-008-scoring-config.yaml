@@ -1,0 +1,135 @@
+step_id: A-008
+parent_tactical_step: T-006
+name: scoring-config
+target_file: plan_manager/scoring/index.py
+operation: create_file
+priority: 1
+depends_on: [A-001, A-002, A-003, A-004, A-005, A-007]
+concepts: [C-013, C-036, C-028]
+prompt: |
+  Create the file plan_manager/scoring/index.py (it does not exist yet; do
+  not assume any pre-existing content). This file will hold the
+  SemanticIndex (C-013) branch and plan-level ensemble measurement; this
+  AS writes only its module docstring, its `from __future__ import
+  annotations` import line, an `import dataclasses` line, and one
+  dataclass, ScoringConfig. Do not add any other function, class, or
+  import. Do not create, read, or modify any other file.
+
+  Write the file with exactly this content:
+
+  ```python
+  """SemanticIndex (C-013) scoring: branch and plan-level ensemble measurement.
+
+  Implements the normative fold and refusal discipline of NormativeAlgorithmSet
+  (C-036). Results are returned to the caller and never stored.
+  """
+
+  from __future__ import annotations
+
+  import dataclasses
+
+
+  @dataclasses.dataclass
+  class ScoringConfig:
+      """Published-default configuration consumed by the SemanticIndex fold.
+
+      Attributes:
+          threshold: branch/plan index threshold, published default 85.0.
+          aggregation: plan-level aggregation mode, "minimum" or
+              "fraction_above_threshold". Published default "minimum".
+          concept_weight: per-concept weight applied to required concepts in
+              embedding_estimator. Published default 1.0.
+          trust_floor: declared trust floor used when the embedding service
+              is unavailable. Published default 0.2.
+          embedding_url: the embedding service base URL, or None when the
+              embedding service is not configured.
+
+      Raises:
+          ValueError: raised by __post_init__ when aggregation is not
+              "minimum" or "fraction_above_threshold".
+      """
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weight: float = 1.0
+      trust_floor: float = 0.2
+      embedding_url: str | None = None
+
+      def __post_init__(self) -> None:
+          if self.aggregation not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(
+                  "aggregation must be 'minimum' or 'fraction_above_threshold', "
+                  f"got {self.aggregation!r}"
+              )
+  ```
+
+  Constraints (all binding, none optional):
+  - The class is declared exactly as `@dataclasses.dataclass\nclass
+    ScoringConfig:` using the `dataclasses` module imported as
+    `import dataclasses` (not `from dataclasses import dataclass`).
+  - Field order, names, types, and default values are exactly:
+    `threshold: float = 85.0`, `aggregation: str = "minimum"`,
+    `concept_weight: float = 1.0`, `trust_floor: float = 0.2`,
+    `embedding_url: str | None = None`. These are the published defaults:
+    threshold 85, minimum aggregation, uniform concept weights (1.0),
+    trust floor 0.2 — matching Configuration (C-028)'s scoring section
+    defaults exactly.
+  - `__post_init__(self) -> None` validates `self.aggregation`: it must be
+    one of the two literal strings `"minimum"` or
+    `"fraction_above_threshold"`; any other value raises `ValueError` with
+    exactly the message
+    `f"aggregation must be 'minimum' or 'fraction_above_threshold', got {self.aggregation!r}"`.
+    No other validation is performed on any other field by this AS.
+  - Do not add any method other than `__post_init__`.
+  - No other function, class, or import may appear in this file for this
+    AS.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - scoring carries published defaults (threshold 85, aggregation minimum, uniform concept weights, definition-only serialization, shared embedding vote, trust floor 0.2)
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+    source_labels: ["{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{b3e6}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  ```
+
+  Branch conventions in force for this whole TS (Python 3.12+, package
+  root plan_manager/; modules plan_manager/scoring/estimators.py and
+  plan_manager/scoring/index.py): this AS begins the index.py module that
+  consumes estimators.py.
+verification:
+  type: manual
+  target: plan_manager/scoring/index.py::ScoringConfig
+  expected: >
+    ScoringConfig() constructs successfully with threshold=85.0,
+    aggregation="minimum", concept_weight=1.0, trust_floor=0.2,
+    embedding_url=None. ScoringConfig(aggregation="fraction_above_threshold")
+    constructs successfully. ScoringConfig(aggregation="bogus") raises
+    ValueError.
+status: draft

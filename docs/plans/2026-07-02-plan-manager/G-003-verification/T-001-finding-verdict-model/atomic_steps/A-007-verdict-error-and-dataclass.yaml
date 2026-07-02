@@ -1,0 +1,126 @@
+step_id: A-007
+parent_tactical_step: T-001
+name: verdict-error-and-dataclass
+target_file: plan_manager/verify/verdict.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-020, C-018]
+prompt: |
+  Create the file plan_manager/verify/verdict.py. This file does not exist
+  yet; do not assume any pre-existing content.
+
+  Operation: create_file at path plan_manager/verify/verdict.py.
+
+  Write exactly the following as the full initial content of the file:
+
+  """Verdict binding for gate and scoring results (C-020 Verdict).
+
+  A Verdict binds a gate or score result to the exact revision and scope it
+  was computed for. Verdicts are returned to the caller and never persisted:
+  no timestamp field exists anywhere in this module.
+  """
+
+  from __future__ import annotations
+
+  import uuid
+  from dataclasses import dataclass
+
+
+  class VerdictError(ValueError):
+      """Raised when a Verdict is constructed with an invalid kind, or when
+      current_head_revision is asked about a plan_uuid that has no row."""
+
+
+  @dataclass(frozen=True)
+  class Verdict:
+      """A gate or score result bound to the exact revision and scope it was
+      computed for.
+
+      Attributes:
+          kind: Either "gate" or "score".
+          scope: "plan" or a branch artifact path such as "G-001/T-002/A-003".
+          revision_uuid: The plan revision identifier the result was computed
+              on, or None.
+          green: True iff the result is green (no findings / passes threshold).
+          payload: The run's result data.
+
+      Raises:
+          VerdictError: If kind is not one of "gate" or "score".
+      """
+
+      kind: str
+      scope: str
+      revision_uuid: uuid.UUID | None
+      green: bool
+      payload: dict
+
+      def __post_init__(self) -> None:
+          if self.kind not in ("gate", "score"):
+              raise VerdictError(f"invalid Verdict kind: {self.kind}")
+
+  Imports required: `from __future__ import annotations`, `import uuid`,
+  `from dataclasses import dataclass`. No other imports.
+
+  Exact signatures:
+  - `class VerdictError(ValueError):` with only the docstring shown above in
+    its body (no `pass`, no additional methods, no additional attributes).
+  - `@dataclass(frozen=True) class Verdict:` with fields, in this order and
+    with these exact type annotations: `kind: str`, `scope: str`,
+    `revision_uuid: uuid.UUID | None`, `green: bool`, `payload: dict`. No
+    default values.
+  - `def __post_init__(self) -> None:` as a method of `Verdict`, defined
+    after the field declarations.
+
+  Docstring text: use the module docstring, the `VerdictError` docstring,
+  and the `Verdict` class docstring exactly as shown above, including the
+  "Attributes:" and "Raises:" sections.
+
+  Constraints:
+  - `VerdictError` subclasses the built-in `ValueError` directly; it adds no
+    `__init__` override.
+  - `__post_init__` is the only place `kind` is validated; it checks
+    `self.kind not in ("gate", "score")` and, if true, raises
+    `VerdictError(f"invalid Verdict kind: {self.kind}")`.
+  - `scope` is typed `str` with no enum-style validation in this AS (the
+    prose values "plan" or a branch artifact path like "G-001/T-002/A-003"
+    are documentation only, not enforced by code).
+  - No timestamp field or timestamp-related logic appears anywhere in this
+    file: freshness is decided elsewhere purely by revision comparison.
+  - The file must contain nothing beyond what is shown above: no other
+    classes, functions, constants, or imports.
+  - Preserve blank-line spacing exactly as shown: one blank line between the
+    module docstring and `from __future__ import annotations`, one blank
+    line between `import uuid` and `from dataclasses import dataclass`, two
+    blank lines before `class VerdictError`, two blank lines before
+    `@dataclass(frozen=True)`, one blank line between the `Verdict`
+    docstring and the first field, one blank line between the last field
+    (`payload: dict`) and `def __post_init__`.
+
+  MRS excerpt (concepts relevant to this AS):
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope
+      it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never
+      by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - any intermediate plan state is addressable by revision id
+    source_labels: ["{q2r9}", "{d5i9}", "{e2b8}"]
+  Relevant relation: { from_concept: C-020, to_concept: C-018, type: depends_on }
+verification:
+  type: import
+  target: plan_manager.verify.verdict (VerdictError and Verdict)
+  expected: Importing plan_manager.verify.verdict succeeds without error.
+    VerdictError is a subclass of ValueError. Constructing Verdict with
+    kind="gate" or kind="score" and valid values for the other fields
+    succeeds and exposes all five fields as attributes; constructing Verdict
+    with any other kind value raises VerdictError whose message names the
+    invalid kind.
+status: draft

@@ -1,0 +1,112 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: Add normalize_rows function
+target_file: plan_manager/scoring/trust.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-014]
+prompt: |
+  Modify the existing Python file `plan_manager/scoring/trust.py`
+  (project-relative path from the repository root, package root
+  `plan_manager/`, Python 3.12+).
+
+  The full current content of the file, exactly as it exists before this
+  change, is:
+
+  ```python
+  """Trust estimate: confidence in the semantic measurement itself (C-014).
+
+  Computes the geometry of the concept embedding basis (pairwise cosines, Gram
+  determinant, eigenvalue spectrum) and maps it to a monotone 0..1 trust value,
+  falling back to a declared floor when the embedding service is unavailable.
+  """
+
+  from dataclasses import dataclass
+
+  import numpy as np
+
+
+  @dataclass
+  class TrustReport:
+      """Confidence report for the semantic measurement.
+
+      Attributes:
+          trust: 0..1 confidence value, decreasing monotonically with basis
+              collinearity; equal to the declared floor when available is
+              False.
+          available: True when the embedding service produced vectors for
+              every concept definition; False when embeddings could not be
+              obtained.
+          pairwise_cosines: Pairwise cosine matrix of the normalized concept
+              embeddings as a nested list; empty when available is False.
+          gram_determinant: Determinant of the Gram matrix of the normalized
+              concept embeddings; 0.0 when available is False.
+          spectrum: Eigenvalue spectrum of the Gram matrix, sorted descending;
+              empty when available is False.
+      """
+
+      trust: float
+      available: bool
+      pairwise_cosines: list[list[float]]
+      gram_determinant: float
+      spectrum: list[float]
+  ```
+
+  Append exactly the following to the end of the file, separated from the
+  `TrustReport` class by two blank lines (the file must end with a single
+  trailing newline after the function body, no extra blank lines beyond
+  that):
+
+  ```python
+  def normalize_rows(vectors: list[list[float]]) -> np.ndarray:
+      """Row-normalize a list of vectors to unit L2 norm.
+
+      Args:
+          vectors: A list of equal-length numeric vectors.
+
+      Returns:
+          A 2-D numpy array of dtype float64 with the same shape as the
+          input, where each row is divided by its L2 norm. A row whose L2
+          norm is zero is left as all-zero (no division by zero).
+      """
+      array = np.asarray(vectors, dtype=np.float64)
+      norms = np.linalg.norm(array, axis=1, keepdims=True)
+      safe_norms = np.where(norms == 0.0, 1.0, norms)
+      return array / safe_norms
+  ```
+
+  No new imports are required: `np` (numpy) is already imported in the file
+  as `import numpy as np`.
+
+  Constraints:
+  - Do not modify the module docstring, the existing imports, or the
+    `TrustReport` class in any way.
+  - `normalize_rows` takes exactly one parameter `vectors: list[list[float]]`
+    and returns exactly `np.ndarray`.
+  - The array dtype must be float64.
+  - A row with L2 norm exactly 0.0 must remain all-zero in the output; no
+    `ZeroDivisionError`, no `RuntimeWarning` from a real division by zero,
+    and no NaN values are permitted in the output for such a row.
+  - Rows with nonzero L2 norm must be divided by their own L2 norm (each row
+    independently, not by any other row's norm).
+  - Do not add any validation of empty input or ragged rows in this
+    function; that validation belongs to a different function.
+  - Do not add any other function, class, or constant in this change.
+
+  Relevant MRS excerpt (concept definitions relevant to this AS):
+  - C-014 TrustEstimate: "Confidence in the measurement itself derived from
+    concept basis geometry and service liveness." Properties: Gram
+    determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are unavailable;
+    distinguishes weak plan from unmeasurable plan. `normalize_rows` is the
+    row-normalization building block used to compute this geometry.
+verification:
+  type: manual
+  target: plan_manager.scoring.trust.normalize_rows
+  expected: >
+    Calling normalize_rows on a list of vectors returns a numpy float64 2-D
+    array where every row with nonzero L2 norm has unit L2 norm in the
+    output, and a row that was originally all zeros stays all zeros in the
+    output without raising an error or producing NaN.
+status: draft

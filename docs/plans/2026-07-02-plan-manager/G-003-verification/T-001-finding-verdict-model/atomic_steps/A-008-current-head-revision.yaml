@@ -1,0 +1,156 @@
+step_id: A-008
+parent_tactical_step: T-001
+name: current-head-revision
+target_file: plan_manager/verify/verdict.py
+operation: modify_file
+priority: 2
+depends_on: [A-007]
+concepts: [C-020, C-018]
+prompt: |
+  Modify the existing file plan_manager/verify/verdict.py.
+
+  Operation: modify_file at path plan_manager/verify/verdict.py.
+
+  The file currently contains exactly this content (post-prior-AS state):
+
+  """Verdict binding for gate and scoring results (C-020 Verdict).
+
+  A Verdict binds a gate or score result to the exact revision and scope it
+  was computed for. Verdicts are returned to the caller and never persisted:
+  no timestamp field exists anywhere in this module.
+  """
+
+  from __future__ import annotations
+
+  import uuid
+  from dataclasses import dataclass
+
+
+  class VerdictError(ValueError):
+      """Raised when a Verdict is constructed with an invalid kind, or when
+      current_head_revision is asked about a plan_uuid that has no row."""
+
+
+  @dataclass(frozen=True)
+  class Verdict:
+      """A gate or score result bound to the exact revision and scope it was
+      computed for.
+
+      Attributes:
+          kind: Either "gate" or "score".
+          scope: "plan" or a branch artifact path such as "G-001/T-002/A-003".
+          revision_uuid: The plan revision identifier the result was computed
+              on, or None.
+          green: True iff the result is green (no findings / passes threshold).
+          payload: The run's result data.
+
+      Raises:
+          VerdictError: If kind is not one of "gate" or "score".
+      """
+
+      kind: str
+      scope: str
+      revision_uuid: uuid.UUID | None
+      green: bool
+      payload: dict
+
+      def __post_init__(self) -> None:
+          if self.kind not in ("gate", "score"):
+              raise VerdictError(f"invalid Verdict kind: {self.kind}")
+
+  Change to make, in two parts:
+
+  Part 1 — add an import. Insert the following import group into the
+  imports block, after the line `from dataclasses import dataclass` and
+  before the two blank lines that precede `class VerdictError`, separated
+  from `from dataclasses import dataclass` by one blank line:
+
+  import psycopg
+
+  This imports the psycopg 3 package; the type `psycopg.Connection` is used
+  below as a plain SQL connection (no ORM, no DDL emitted by this code).
+
+  Part 2 — append the following function to the end of the file, separated
+  from the last line of the current content (the
+  `raise VerdictError(f"invalid Verdict kind: {self.kind}")` line) by
+  exactly two blank lines:
+
+  def current_head_revision(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> uuid.UUID | None:
+      """Look up the current head revision of a plan.
+
+      Args:
+          conn: Open psycopg 3 connection.
+          plan_uuid: UUID identity of the plan row to look up.
+
+      Returns:
+          The value of plan.head_revision_uuid for the row where
+          plan.uuid = plan_uuid, which may be None.
+
+      Raises:
+          VerdictError: If no row in table plan has uuid = plan_uuid. The
+              error message names the plan_uuid.
+      """
+      with conn.cursor() as cur:
+          cur.execute("SELECT head_revision_uuid FROM plan WHERE uuid = %s", (plan_uuid,))
+          row = cur.fetchone()
+      if row is None:
+          raise VerdictError(f"no plan with uuid: {plan_uuid}")
+      return row[0]
+
+  Exact signature:
+  `def current_head_revision(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> uuid.UUID | None:`
+
+  Docstring text: use exactly the docstring shown above, including the
+  Args/Returns/Raises sections.
+
+  Constraints:
+  - The only new import in this AS is `import psycopg`, placed as specified
+    in Part 1.
+  - Table `plan` has columns `(uuid, name, status, context_budget,
+    head_revision_uuid)`; the SQL statement selects only
+    `head_revision_uuid` filtered by `uuid = %s`, using a parameterized
+    query (no string interpolation of `plan_uuid` into the SQL text).
+  - Use `with conn.cursor() as cur:` to open and close the cursor; call
+    `cur.execute(...)` then `cur.fetchone()` inside the `with` block; the
+    `if row is None` check happens after the `with` block exits.
+  - If `row is None` (no matching row), raise
+    `VerdictError(f"no plan with uuid: {plan_uuid}")`.
+  - If a row is found, return `row[0]`, which is the `head_revision_uuid`
+    value (a `uuid.UUID` or `None` — the column itself may be NULL for a
+    plan with no revisions yet, which is a valid, non-error return value
+    distinct from the no-row error case).
+  - This function does not emit any DDL and does not use an ORM.
+  - Do not add any other function or class in this AS.
+  - Everything above the inserted `import psycopg` line and everything
+    between it and `def current_head_revision` must otherwise remain
+    byte-identical to the post-prior-AS state shown above.
+
+  MRS excerpt (concepts relevant to this AS):
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope
+      it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never
+      by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - any intermediate plan state is addressable by revision id
+    - refs are plan head plus one per open cascade
+    source_labels: ["{q2r9}", "{d5i9}", "{e2b8}"]
+  Relevant relation: { from_concept: C-020, to_concept: C-018, type: depends_on }
+verification:
+  type: static_analysis
+  target: plan_manager.verify.verdict.current_head_revision
+  expected: Given an open psycopg connection and a plan_uuid that matches a
+    row in table plan, current_head_revision returns that row's
+    head_revision_uuid value (which may be None if the plan has no
+    revisions). Given a plan_uuid matching no row, it raises VerdictError
+    whose message names the plan_uuid. The SQL query is parameterized (no
+    string interpolation of plan_uuid into the query text) and selects only
+    head_revision_uuid from plan filtered by uuid.
+status: draft

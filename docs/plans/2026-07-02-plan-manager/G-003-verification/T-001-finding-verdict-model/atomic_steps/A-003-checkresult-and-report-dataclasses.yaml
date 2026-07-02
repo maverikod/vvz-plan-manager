@@ -1,0 +1,128 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: checkresult-and-report-dataclasses
+target_file: plan_manager/verify/finding.py
+operation: modify_file
+priority: 3
+depends_on: [A-001]
+concepts: [C-017]
+prompt: |
+  Modify the existing file plan_manager/verify/finding.py.
+
+  Operation: modify_file at path plan_manager/verify/finding.py.
+
+  The file currently contains exactly this content (post-prior-AS state):
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+
+  def sort_findings(findings: list[Finding]) -> list[Finding]:
+      """Return findings sorted into the total deterministic order.
+
+      Sort key is the tuple (artifact_path, check_id, message).
+
+      Args:
+          findings: Findings to sort. Not mutated.
+
+      Returns:
+          A new list of the same Finding objects sorted ascending by
+          (artifact_path, check_id, message).
+      """
+      return sorted(findings, key=lambda f: (f.artifact_path, f.check_id, f.message))
+
+  Change to make: append the following two dataclasses to the end of the
+  file, separated from the last line of the current content by exactly two
+  blank lines, and separated from each other by exactly two blank lines:
+
+  @dataclass
+  class CheckResult:
+      """The outcome of one check within a report.
+
+      Attributes:
+          check_id: Identifier of the check.
+          passed: True iff no finding exists for this check_id.
+          findings: Findings for this check_id, in sort_findings order.
+      """
+
+      check_id: str
+      passed: bool
+      findings: list[Finding]
+
+
+  @dataclass
+  class Report:
+      """The aggregated outcome of a full gate or scoring run.
+
+      Attributes:
+          checks: One CheckResult per check_id, in the order the check_ids
+              were given to build_report.
+          green: True iff no finding exists across every CheckResult.
+      """
+
+      checks: list[CheckResult]
+      green: bool
+
+  Imports required: none beyond what the file already has (`dataclass` is
+  already imported; `Finding` is already defined earlier in the same file).
+
+  Exact signatures:
+  - `@dataclass class CheckResult:` (not frozen) with fields in this order:
+    `check_id: str`, `passed: bool`, `findings: list[Finding]`.
+  - `@dataclass class Report:` (not frozen) with fields in this order:
+    `checks: list[CheckResult]`, `green: bool`.
+
+  Docstring text: use exactly the docstrings shown above, including the
+  "Attributes:" sections.
+
+  Constraints:
+  - Neither dataclass is frozen (no `frozen=True` argument) and neither has
+    default values or extra methods beyond the dataclass-generated ones.
+  - Do not add any function or import in this AS.
+  - Everything above `class CheckResult:` in the file must remain
+    byte-identical to the post-prior-AS state shown above.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: import
+  target: plan_manager.verify.finding (classes CheckResult and Report)
+  expected: Importing plan_manager.verify.finding succeeds without error.
+    CheckResult is instantiable via keyword arguments check_id, passed,
+    findings and exposes them as attributes. Report is instantiable via
+    keyword arguments checks, green and exposes them as attributes. Neither
+    class rejects attribute reassignment (both are ordinary, non-frozen
+    dataclasses).
+status: draft

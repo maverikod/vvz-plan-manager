@@ -1,0 +1,121 @@
+step_id: A-003
+parent_tactical_step: T-005
+name: Add occurs_in_prompt function
+target_file: plan_manager/scoring/simulation.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-015]
+prompt: |
+  Modify the existing Python 3.12+ source file at the exact project-relative
+  path:
+
+  plan_manager/scoring/simulation.py
+
+  Operation: modify_file. This module is PURE PYTHON: no database access,
+  no network access, no psycopg. Do not import anything beyond the standard
+  library.
+
+  The full current content of the file (after all lower-priority steps on
+  this file have been applied) is exactly:
+
+  """Executor simulation detector (C-015).
+
+  Deterministically filters a cheap generative model's answer about entities
+  an assembled prompt (C-011) uses but does not define. The raw model output
+  is treated only as suspicion: every survival judgement is a deterministic
+  text computation against the prompt text, never a model opinion.
+  """
+
+  import re
+
+  SIMULATION_QUESTION = "Name every entity this prompt uses but does not define. Answer with one entity name per line and nothing else."
+
+
+  def build_simulation_input(prompt_text: str) -> str:
+      r"""Build the text sent to the cheap model for executor simulation.
+
+      :param prompt_text: The assembled prompt text (C-011) to inspect.
+      :return: SIMULATION_QUESTION concatenated with prompt_text, separated
+          by a blank line: SIMULATION_QUESTION + "\n\n" + prompt_text.
+      """
+      return SIMULATION_QUESTION + "\n\n" + prompt_text
+
+
+  def extract_candidates(model_output: str) -> list[str]:
+      """Extract candidate entity names from the raw model output.
+
+      Splits model_output on newlines. For each line: strip whitespace, then
+      strip a leading list marker if present (one of "-", "*", or digits
+      followed by "." or ")") plus the whitespace following the marker. Lines
+      that are empty after stripping are dropped. Remaining candidates are
+      deduplicated, preserving first-occurrence order. Case is preserved.
+
+      :param model_output: The raw text answer returned by the cheap model.
+      :return: Ordered list of unique, non-empty candidate entity names.
+      """
+      marker_re = re.compile(r"^(?:[-*]|\d+[.)])\s*")
+      seen: set[str] = set()
+      candidates: list[str] = []
+      for line in model_output.split("\n"):
+          stripped = line.strip()
+          stripped = marker_re.sub("", stripped)
+          if not stripped:
+              continue
+          if stripped not in seen:
+              seen.add(stripped)
+              candidates.append(stripped)
+      return candidates
+
+  Required change: append exactly one new function at the end of the file,
+  separated from the last line above (the "return candidates" line) by
+  exactly two blank lines. Do not modify any existing line. The new
+  function, exact signature, typing annotations, docstring, and body:
+
+  def occurs_in_prompt(candidate: str, prompt_text: str) -> bool:
+      r"""Determine whether candidate occurs as a whole word in prompt_text.
+
+      :param candidate: The candidate entity name to search for.
+      :param prompt_text: The prompt text to search within.
+      :return: True iff re.search(r"\b" + re.escape(candidate) + r"\b",
+          prompt_text) is not None.
+      """
+      return re.search(r"\b" + re.escape(candidate) + r"\b", prompt_text) is not None
+
+  Formatting and behavioral constraints (explicit, no deviation):
+  - The function docstring must be a raw string (prefixed with r, i.e.
+    r"""..."""), because it contains literal backslash-b sequences; a
+    non-raw string would treat backslash-b as the backspace escape
+    character, corrupting the visible text.
+  - The function body is exactly one return statement: it calls
+    re.search with a pattern built by string concatenation of the raw
+    string r"\b", the result of re.escape(candidate), and the raw string
+    r"\b" again, searched against prompt_text; the function returns True
+    if that re.search call's result is not None, and False otherwise
+    (expressed directly via "is not None", not via an if/else).
+  - The variable `re` used here is the module already imported by the
+    "import re" statement present in the file above; do not add a second
+    import of re or any other import.
+  - Do not add any other function, class, constant, or import. No content
+    may appear after this function's closing return line beyond a single
+    trailing newline at end of file.
+  - This step operates only on this one file; do not read or write any
+    other file.
+
+  MRS excerpt (only the concept relevant to this step):
+
+  concept_id: C-015
+  name: ExecutorSimulation
+  definition: Detector estimator asking a cheap model the closed question of undefined entities in a prompt.
+  properties:
+  - output filtered deterministically against prompt text
+  - can only raise suspicion, never mark green
+verification:
+  type: manual
+  target: plan_manager.scoring.simulation.occurs_in_prompt
+  expected: >
+    Calling occurs_in_prompt returns True when the candidate string appears
+    as a whole word (word-boundary delimited) anywhere in prompt_text, and
+    False otherwise, including when the candidate only appears as a
+    substring of a larger word.
+status: draft

@@ -1,0 +1,46 @@
+step_id: T-005
+parent_global_step: G-003
+name: executor-simulation
+description: >
+  Create the ExecutorSimulation (C-015), the detector estimator built on the
+  single closed question asked of a cheap generative model about one assembled
+  prompt (C-011): name every entity this prompt uses but does not define. This
+  step owns the fixed question text, the construction of the question input from
+  the assembled prompt, and the deterministic filter: the raw model output is
+  split into candidate entity names, and a candidate survives only when it
+  occurs in the prompt text and is not defined there — every judgement about
+  survival is a deterministic text computation, never a model opinion. The
+  surviving fraction is the detector's raw value; the detector can only raise
+  suspicion, never mark a branch green: when nothing survives the detector
+  abstains from voting instead of contributing a positive vote. Obtaining the
+  raw model output is not part of this step's scope: the detector consumes the
+  output as an input, so the server itself performs no generative-model
+  integration beyond the single external integration policy (C-022). This step
+  defines the question, the filter, the abstention rule, and the detector value;
+  it does not combine estimator votes.
+concepts: [C-015, C-011, C-022]
+inputs:
+- name: assembled_prompt_text
+  type: ephemeral text
+  description: >
+    The assembled prompt (C-011) of one atomic step against which candidates are
+    deterministically filtered.
+- name: raw_model_output
+  type: external model answer
+  description: >
+    The cheap model's answer to the closed question, supplied to the detector as
+    input; absent when no model answer is available.
+outputs:
+- name: simulation_detector_value
+  type: computed measure
+  description: >
+    The surviving fraction after deterministic filtering, exposed as a
+    suspicion-only detector value with abstention when no candidate survives and
+    when no model answer is supplied.
+- name: surviving_candidates
+  type: computed list
+  description: >
+    The deterministically filtered candidate entity names that occur in the
+    prompt text without being defined there, reported for diagnosis.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
+status: draft

@@ -1,0 +1,146 @@
+step_id: A-005
+parent_tactical_step: T-002
+name: Create gate_structure.py with parse.required_fields check
+target_file: plan_manager/verify/gate_structure.py
+operation: create_file
+priority: 1
+depends_on: [A-001, A-002]
+concepts: [C-012, C-006, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_structure.py
+  Operation: create_file
+
+  Create a new Python module at the exact path
+  plan_manager/verify/gate_structure.py. The file does not exist yet; write
+  exactly the content specified below and nothing else.
+
+  This module holds the parse and identity check groups of the MechanicalGate.
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-006 PlanSchema — Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+    Properties: defaults match plan_standard_machine.yaml; overrides only for
+    exotic layouts; nothing project-specific is hard-coded in the engine.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  This AS writes exactly this file content (module docstring, three imports,
+  one constant, one function — nothing else):
+
+  ```python
+  """Parse and identity check groups for the mechanical gate (C-012)."""
+
+  from plan_manager.domain.step import Step
+  from plan_manager.verify.finding import Finding
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of
+
+  _REQUIRED_FIELDS_BY_LEVEL: dict[int, list[str]] = {
+      3: ["name", "description", "relations", "source_labels"],
+      4: ["name", "description", "inputs", "outputs"],
+      5: ["name", "target_file", "operation", "priority", "prompt", "verification"],
+  }
+
+
+  def check_parse_required_fields(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "parse.required_fields".
+
+      For every step in ``steps``, look up its required field keys in
+      ``_REQUIRED_FIELDS_BY_LEVEL`` by ``step.level`` (the level-5 optional
+      ``objects`` key is never required and is not in this table; unknown
+      levels have an empty required list). For each required key, the step's
+      ``fields`` dict must contain a non-empty value: not None, not "", not
+      [], not {}. Every violation produces one Finding with check_id
+      "parse.required_fields", severity "error", artifact_path
+      artifact_path_of(tree.steps, step), and a message naming the missing
+      or empty field.
+      """
+      findings: list[Finding] = []
+      for step in steps:
+          required = _REQUIRED_FIELDS_BY_LEVEL.get(step.level, [])
+          path = artifact_path_of(tree.steps, step)
+          for key in required:
+              value = step.fields.get(key)
+              if value in (None, "", [], {}):
+                  findings.append(
+                      Finding(
+                          "parse.required_fields",
+                          "error",
+                          path,
+                          f"required field '{key}' is missing or empty",
+                      )
+                  )
+      return findings
+  ```
+
+  The imported Step, Finding, GateTree, artifact_path_of are existing sibling
+  entities; import them, do not redefine them. Exact signatures, for
+  reference only:
+
+  ```python
+  # module plan_manager/domain/step.py
+  @dataclass
+  class Step:
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      parent_step_uuid: uuid.UUID | None
+      level: int
+      step_id: str
+      slug: str
+      fields: dict
+      depends_on: list[str]
+      concepts: list[str]
+      status: str
+
+  # module plan_manager/verify/finding.py
+  @dataclass(frozen=True)
+  class Finding:
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  # module plan_manager/verify/gate_data.py
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str: ...
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+  ```
+
+  Data convention (per level required fields dict keys, normative, matches
+  PlanSchema C-006): level 3 fields keys are name, description, relations,
+  source_labels; level 4 fields keys are name, description, inputs, outputs;
+  level 5 fields keys are name, target_file, operation, priority, prompt,
+  verification, plus an optional objects key that is never required.
+
+  Constraints:
+  - The written file must contain nothing beyond the module docstring, the
+    three imports, the _REQUIRED_FIELDS_BY_LEVEL constant, and the
+    check_parse_required_fields function exactly as shown above.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_structure.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_structure.check_parse_required_fields
+  expected: >
+    The module imports without error. For a level-3 Step whose fields dict is
+    missing the "relations" key, check_parse_required_fields returns a list
+    containing one Finding with check_id "parse.required_fields", severity
+    "error", and artifact_path equal to artifact_path_of(tree.steps, step);
+    for a fully-populated step of any level it returns an empty list.
+status: draft

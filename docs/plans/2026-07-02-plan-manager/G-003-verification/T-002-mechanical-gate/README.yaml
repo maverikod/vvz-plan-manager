@@ -1,0 +1,59 @@
+step_id: T-002
+parent_global_step: G-003
+name: mechanical-gate
+description: >
+  Create the MechanicalGate (C-012), the deterministic binary verification layer
+  implementing its normative algorithm (C-036) exactly. The gate is exhaustive
+  over mechanics and runs five check groups in the fixed published order parse,
+  identity, uniqueness, reference resolution, coverage. The parse group checks
+  structural readability of the stored tree: level-specific field sets present
+  and well-formed per the declarative schema (C-006), structured inputs and
+  outputs on tactical-level steps, a single non-empty project-relative target
+  file per atomic step, and the parser sanity gates — expected non-zero entity
+  counts that make parsing regressions fail loudly instead of passing silently.
+  The identity group checks identifier pattern and zero-padding conformance and
+  slug conformance for steps (C-005), concepts, and paragraph labels. The
+  uniqueness group checks step identifier uniqueness within scope, concept
+  identifier uniqueness within plan, paragraph label uniqueness, and priority
+  uniqueness within one (target file, tactical step) pair. The reference group
+  resolves every reference: depends_on targets, concept identifiers into the
+  MRS, relation endpoints and their types, and source labels into stored binding
+  paragraphs. The coverage group runs the on-the-fly set-theoretic coverage
+  computations of the CoverageView (C-010) and turns missing and extra elements
+  into findings. Each check sees the whole checked scope and emits findings
+  (C-017) sorted by (artifact path, check identifier); occurrences are always
+  classified by artifact path, never by bare step number. With fail-fast enabled
+  the run stops only at a check-group boundary so partial output stays
+  deterministic, and two runs over the same tree state produce byte-identical
+  reports. Gating is per scope: one branch (C-008) is gated independently, so a
+  mechanically clean branch is measurable while sibling branches still carry
+  findings, and the whole plan is gated by the same groups over the whole tree.
+  The gate reads plan data only and produces a finding report and a Verdict
+  (C-020) bound to the measured revision; it stores nothing.
+concepts: [C-012, C-036, C-017, C-020, C-010, C-008, C-006, C-005]
+inputs:
+- name: gated_scope
+  type: scope selector
+  description: >
+    The scope to gate: the whole plan tree read from the database, or one branch
+    (C-008) — its global step, tactical step, atomic step, and claimed binding
+    paragraphs.
+- name: fail_fast_flag
+  type: run option
+  description: >
+    Whether the run stops at the first check-group boundary after a group that
+    produced findings; partial output remains deterministic.
+outputs:
+- name: gate_report
+  type: ephemeral aggregate
+  description: >
+    The deterministic per-check PASS/FAIL report with findings (C-017) sorted by
+    (artifact path, check identifier), plus the machine-checkable JSON form with
+    the overall green flag; byte-identical for the same tree state.
+- name: gate_verdict
+  type: ephemeral result binding
+  description: >
+    The Verdict (C-020) binding the gate result to the measured scope and the
+    plan revision it was computed on; returned to the caller, never stored.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009, A-010, A-011, A-012, A-013, A-014, A-015, A-016, A-017, A-018, A-019, A-020, A-021, A-022, A-023, A-024, A-025, A-026]
+status: draft

@@ -1,0 +1,358 @@
+step_id: A-005
+parent_tactical_step: T-006
+name: reference-estimator
+target_file: plan_manager/scoring/estimators.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-013, C-036, C-008, C-005, C-004, C-003, C-002]
+prompt: |
+  Modify the existing file plan_manager/scoring/estimators.py. Do not
+  create, read, or modify any other file.
+
+  The file currently contains exactly this content (state after all
+  lower-priority AS in this TS have been applied):
+
+  ```python
+  """Deterministic and embedding-based branch estimators for SemanticIndex (C-013).
+
+  Implements the normative estimator formulas of NormativeAlgorithmSet (C-036)
+  consumed by plan_manager.scoring.index.score_branch. Read-only on plan data:
+  every function here returns computed values to its caller and stores nothing.
+  """
+
+  from __future__ import annotations
+
+  from plan_manager.views.branch import Branch
+
+
+  def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:
+      """Load all concepts of a plan ordered by concept_id.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity to scope the query to.
+
+      Returns:
+          A list of (concept_id, definition, source_labels) tuples, one per
+          concept row, ascending by concept_id. source_labels entries keep
+          their enclosing braces, e.g. "{abcd}".
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, definition, source_labels FROM concept "
+              "WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          return [(row[0], row[1], list(row[2])) for row in cur.fetchall()]
+
+
+  def required_concepts(branch: Branch, concept_rows) -> set[str]:
+      """Compute the concept_ids required by the branch's HRS slice.
+
+      A concept is required iff at least one of its source_labels, stripped
+      of its enclosing braces (value[1:-1]), equals the label of a paragraph
+      in branch.hrs_slice. Paragraphs whose label is None are ignored.
+
+      Args:
+          branch: the resolved Branch; uses branch.hrs_slice: list[Paragraph].
+          concept_rows: the list returned by load_concept_rows.
+
+      Returns:
+          The set of required concept_id values.
+      """
+      slice_labels = {p.label for p in branch.hrs_slice if p.label is not None}
+      required: set[str] = set()
+      for concept_id, _definition, source_labels in concept_rows:
+          stripped = {label[1:-1] for label in source_labels}
+          if stripped & slice_labels:
+              required.add(concept_id)
+      return required
+
+
+  def declared_concepts(branch: Branch) -> set[str]:
+      """Compute the concept_ids declared by the branch.
+
+      The union of branch.gs.concepts, branch.ts.concepts, and
+      branch.atomic.concepts (each a Step.concepts: list[str] field).
+
+      Args:
+          branch: the resolved Branch.
+
+      Returns:
+          The set of declared concept_id values.
+      """
+      return set(branch.gs.concepts) | set(branch.ts.concepts) | set(branch.atomic.concepts)
+
+
+  def coverage_estimator(required: set[str], declared: set[str]) -> float:
+      """Deterministic concept-coverage estimator.
+
+      Formula: 1.0 when required is empty; otherwise
+      len(required & declared) / len(required).
+
+      Args:
+          required: concept_ids required by the branch, from required_concepts.
+          declared: concept_ids declared by the branch, from declared_concepts.
+
+      Returns:
+          A float in [0.0, 1.0].
+      """
+      if not required:
+          return 1.0
+      return len(required & declared) / len(required)
+  ```
+
+  Required change: append this new function at the end of the file (after
+  coverage_estimator, separated by exactly two blank lines). Do not change
+  anything above it.
+
+  ```python
+  def reference_estimator(conn, branch: Branch, concept_rows) -> float:
+      """Deterministic reference-resolution estimator.
+
+      Counts total and resolved references across branch.gs, branch.ts, and
+      branch.atomic (each a Step). For every step: each concepts entry is
+      resolved iff it is among the concept_id values in concept_rows; each
+      depends_on entry is resolved iff a sibling step exists with the same
+      plan_uuid, the same parent_step_uuid (NULL-safe), the same level, and
+      that step_id. For branch.gs only, additionally: each entry of
+      branch.gs.fields.get("relations", []) is resolved iff both
+      from_concept and to_concept are among the concept_id values in
+      concept_rows and type is one of uses, owns, implements, extends,
+      depends_on, produces, consumes; each entry of
+      branch.gs.fields.get("source_labels", []) is resolved iff a paragraph
+      row exists with that bare label (value[1:-1]).
+
+      Formula: 1.0 when the total reference count is 0; otherwise
+      resolved / total.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          branch: the resolved Branch.
+          concept_rows: the list returned by load_concept_rows.
+
+      Returns:
+          A float in [0.0, 1.0].
+      """
+      allowed_relation_types = {
+          "uses",
+          "owns",
+          "implements",
+          "extends",
+          "depends_on",
+          "produces",
+          "consumes",
+      }
+      concept_ids = {row[0] for row in concept_rows}
+      total = 0
+      resolved = 0
+
+      for step in (branch.gs, branch.ts, branch.atomic):
+          for concept_id in step.concepts:
+              total += 1
+              if concept_id in concept_ids:
+                  resolved += 1
+          for dep_step_id in step.depends_on:
+              total += 1
+              with conn.cursor() as cur:
+                  cur.execute(
+                      "SELECT 1 FROM step WHERE plan_uuid = %s AND level = %s "
+                      "AND parent_step_uuid IS NOT DISTINCT FROM %s "
+                      "AND step_id = %s",
+                      (branch.plan_uuid, step.level, step.parent_step_uuid, dep_step_id),
+                  )
+                  if cur.fetchone() is not None:
+                      resolved += 1
+
+      for relation in branch.gs.fields.get("relations", []):
+          total += 1
+          from_concept = relation.get("from_concept")
+          to_concept = relation.get("to_concept")
+          relation_type = relation.get("type")
+          if (
+              from_concept in concept_ids
+              and to_concept in concept_ids
+              and relation_type in allowed_relation_types
+          ):
+              resolved += 1
+
+      for source_label in branch.gs.fields.get("source_labels", []):
+          total += 1
+          bare_label = source_label[1:-1]
+          with conn.cursor() as cur:
+              cur.execute(
+                  "SELECT 1 FROM paragraph WHERE plan_uuid = %s AND label = %s",
+                  (branch.plan_uuid, bare_label),
+              )
+              if cur.fetchone() is not None:
+                  resolved += 1
+
+      if total == 0:
+          return 1.0
+      return resolved / total
+  ```
+
+  Constraints (all binding, none optional):
+  - The signature is exactly
+    `def reference_estimator(conn, branch: Branch, concept_rows) -> float:`
+    — `conn` and `concept_rows` are intentionally unannotated (matching
+    the normative sibling contract).
+  - `allowed_relation_types` is the frozen set of the seven allowed
+    Relation (C-004) types, written exactly as the seven string literals
+    shown: `"uses"`, `"owns"`, `"implements"`, `"extends"`,
+    `"depends_on"`, `"produces"`, `"consumes"`.
+  - `concept_ids` is `{row[0] for row in concept_rows}` — the set of
+    concept_id values from `concept_rows` (as returned by
+    `load_concept_rows` in this file).
+  - Iterate `(branch.gs, branch.ts, branch.atomic)` in that literal order
+    (this is a fixed 3-tuple, not a general iterable). For each `step`
+    (a `Step`, see sibling contract below):
+    - for each entry in `step.concepts` (a `list[str]`): increment
+      `total` by 1; if the entry is in `concept_ids`, increment
+      `resolved` by 1.
+    - for each `dep_step_id` in `step.depends_on` (a `list[str]`):
+      increment `total` by 1; execute exactly the SQL
+      `"SELECT 1 FROM step WHERE plan_uuid = %s AND level = %s AND parent_step_uuid IS NOT DISTINCT FROM %s AND step_id = %s"`
+      with parameters `(branch.plan_uuid, step.level, step.parent_step_uuid, dep_step_id)`
+      via `conn.cursor()` as a context manager; if `cur.fetchone() is not None`,
+      increment `resolved` by 1. The `step` table has columns `uuid`,
+      `plan_uuid`, `parent_step_uuid`, `level`, `step_id`, `slug`,
+      `fields` (jsonb), `depends_on`, `concepts`, `status` — one row per
+      stored Step (C-005) at any of plan levels 3-5, mirroring the Step
+      dataclass fields exactly. `IS NOT DISTINCT FROM` is the NULL-safe
+      equality operator required because `parent_step_uuid` is `NULL` for
+      a top-level GS.
+    - after the two inner loops above for all three steps, and only once
+      (not per step): for each `relation` (a `dict`) in
+      `branch.gs.fields.get("relations", [])`: increment `total` by 1;
+      read `from_concept = relation.get("from_concept")`,
+      `to_concept = relation.get("to_concept")`,
+      `relation_type = relation.get("type")`; if `from_concept in
+      concept_ids and to_concept in concept_ids and relation_type in
+      allowed_relation_types`, increment `resolved` by 1.
+    - for each `source_label` (a `str` with enclosing braces, e.g.
+      `"{abcd}"`) in `branch.gs.fields.get("source_labels", [])`:
+      increment `total` by 1; compute `bare_label = source_label[1:-1]`
+      (strip exactly the first and last character); execute exactly the
+      SQL `"SELECT 1 FROM paragraph WHERE plan_uuid = %s AND label = %s"`
+      with parameters `(branch.plan_uuid, bare_label)` via
+      `conn.cursor()` as a context manager; if `cur.fetchone() is not
+      None`, increment `resolved` by 1. The `paragraph` table has columns
+      `uuid`, `plan_uuid`, `label`, `text`, `position` — one row per
+      stored Paragraph (C-002).
+  - The relations loop and the source_labels loop run only over
+    `branch.gs` (not `branch.ts` or `branch.atomic`) because only the GS
+    step's `fields` carry `relations` and `source_labels` keys per the
+    branch conventions (level-3 step fields keys include description,
+    relations, source_labels; level-4 fields carry description only;
+    level-5 fields carry prompt only).
+  - Return exactly `1.0` when `total == 0`; otherwise return exactly
+    `resolved / total`.
+  - Do not add any import.
+  - No other function, class, or import may be added by this AS beyond
+    the one function shown.
+
+  MRS excerpt (only the concepts and relations relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id, slug, level-specific fields, and status.
+    properties:
+    - uniform operations across levels; per-level required fields are declarative schema
+    - scaffolded creation auto-assigns the next free zero-padded id
+    - mutation regime depends on status (draft direct, frozen via cascade)
+    - move rewrites every reference to the moved id in one operation
+    source_labels: ["{w2y7}", "{i5n7}", "{m4c2}", "{v8y2}", "{a9y5}"]
+
+  - concept_id: C-004
+    name: Relation
+    definition: Typed directed edge between two concepts restricted to seven allowed types.
+    properties:
+    - types are uses, owns, implements, extends, depends_on, produces, consumes
+    - free-form types rejected at write time
+    source_labels: ["{g8l4}", "{k7r9}"]
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+    source_labels: ["{f6s2}", "{k7r9}", "{j8b2}"]
+
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+    - parsing and label-assignment algorithms are normative
+    source_labels: ["{b7d1}", "{h3j9}", "{a1z3}", "{u8s4}", "{n2j7}", "{s7g3}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-008, type: consumes }
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  - { from_concept: C-004, to_concept: C-003, type: depends_on }
+  - { from_concept: C-008, to_concept: C-005, type: uses }
+  - { from_concept: C-008, to_concept: C-002, type: uses }
+  - { from_concept: C-008, to_concept: C-003, type: uses }
+  ```
+
+  Sibling contract quoted verbatim (import and reuse; do not reimplement):
+  `plan_manager/views/branch.py: Branch: plan_uuid: uuid.UUID, gs: Step,
+  ts: Step, atomic: Step, hrs_slice: list[Paragraph]. Step: uuid,
+  plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
+  depends_on: list[str], concepts: list[str], status: str.` Normative
+  tables in force for this whole TS: concept (uuid, plan_uuid, concept_id,
+  name, definition, properties, source_labels — arrays text[],
+  source_labels entries WITH braces "{xxxx}"); relation (uuid, plan_uuid,
+  from_concept, to_concept, type). The `step` and `paragraph` tables
+  referenced by this function mirror the Step and Paragraph field
+  contracts above one-for-one (one row per stored entity, per Database
+  C-035: "entities as rows"; every stored entity carries an immutable
+  UUID identity), following the exact same per-entity-table pattern
+  already established by the `concept` and `relation` tables.
+verification:
+  type: manual
+  target: plan_manager/scoring/estimators.py::reference_estimator
+  expected: >
+    Given a branch whose three steps together declare 2 concepts entries
+    (both resolvable against concept_rows) and 1 depends_on entry that
+    resolves to an existing sibling row in the step table, and whose
+    branch.gs.fields has one relations entry with both endpoints
+    resolvable and an allowed type, and one source_labels entry whose
+    bare label has no matching row in the paragraph table, calling
+    reference_estimator(conn, branch, concept_rows) returns 4/5 = 0.8
+    (5 total references, 4 resolved). With an empty branch.gs.fields and
+    no concepts or depends_on entries on any of the three steps, the
+    function returns 1.0.
+status: draft

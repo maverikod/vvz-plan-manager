@@ -1,0 +1,424 @@
+step_id: A-014
+parent_tactical_step: T-006
+name: branch-summary
+target_file: plan_manager/scoring/index.py
+operation: modify_file
+priority: 7
+depends_on: [A-013]
+concepts: [C-013, C-036, C-008, C-014]
+prompt: |
+  Modify the existing file plan_manager/scoring/index.py. Do not create,
+  read, or modify any other file.
+
+  The file currently contains exactly this content (state after all
+  lower-priority AS in this TS have been applied; the module docstring
+  and the ScoringConfig, ScoreRefusedError, BranchScore, score_branch,
+  and PlanScore definitions above score_plan are unchanged and remain in
+  place in that order):
+
+  ```python
+  """SemanticIndex (C-013) scoring: branch and plan-level ensemble measurement.
+
+  Implements the normative fold and refusal discipline of NormativeAlgorithmSet
+  (C-036). Results are returned to the caller and never stored.
+  """
+
+  from __future__ import annotations
+
+  import dataclasses
+  import uuid
+
+  from plan_manager.scoring.embedding import EmbeddingUnavailable
+  from plan_manager.scoring.estimators import (
+      coverage_estimator,
+      declared_concepts,
+      embedding_estimator,
+      load_concept_rows,
+      reference_estimator,
+      required_concepts,
+  )
+  from plan_manager.scoring.simulation import simulation_vote
+  from plan_manager.scoring.trust import compute_trust
+  from plan_manager.verify.gate import run_gate
+  from plan_manager.verify.verdict import current_head_revision
+  from plan_manager.views.branch import resolve_branch
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  @dataclasses.dataclass
+  class ScoringConfig:
+      """Published-default configuration consumed by the SemanticIndex fold.
+
+      Attributes:
+          threshold: branch/plan index threshold, published default 85.0.
+          aggregation: plan-level aggregation mode, "minimum" or
+              "fraction_above_threshold". Published default "minimum".
+          concept_weight: per-concept weight applied to required concepts in
+              embedding_estimator. Published default 1.0.
+          trust_floor: declared trust floor used when the embedding service
+              is unavailable. Published default 0.2.
+          embedding_url: the embedding service base URL, or None when the
+              embedding service is not configured.
+
+      Raises:
+          ValueError: raised by __post_init__ when aggregation is not
+              "minimum" or "fraction_above_threshold".
+      """
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weight: float = 1.0
+      trust_floor: float = 0.2
+      embedding_url: str | None = None
+
+      def __post_init__(self) -> None:
+          if self.aggregation not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(
+                  "aggregation must be 'minimum' or 'fraction_above_threshold', "
+                  f"got {self.aggregation!r}"
+              )
+
+
+  class ScoreRefusedError(Exception):
+      """Raised when a branch or plan scope's mechanical gate is not green.
+
+      A scope whose gate is not green at the current revision is never
+      measured (C-012 precedes C-013): score_branch and score_plan raise
+      this error instead of computing an index.
+      """
+
+
+  @dataclasses.dataclass
+  class BranchScore:
+      """The 0..100 completeness index of one branch (C-008) with its color.
+
+      Attributes:
+          branch_path: the branch's path, e.g. "G-001/T-002/A-003".
+          index: the 0..100 ensemble index.
+          color: "green" iff index >= threshold, else "red".
+          estimator_vector: mapping of estimator name to its vote value.
+          trust: the TrustEstimate (C-014) value accompanying this score.
+          revision_uuid: the plan revision the score was computed on.
+          below_threshold: True iff color == "red".
+      """
+
+      branch_path: str
+      index: float
+      color: str
+      estimator_vector: dict[str, float]
+      trust: float
+      revision_uuid: uuid.UUID | None
+      below_threshold: bool
+
+
+  def score_branch(
+      conn,
+      plan_uuid,
+      gs_step_id: str,
+      ts_step_id: str,
+      as_step_id: str,
+      config: ScoringConfig,
+      model_output: str | None = None,
+  ) -> BranchScore:
+      """Compute the 0..100 SemanticIndex (C-013) score of one branch.
+
+      Runs the mechanical gate for this branch now (so its verdict revision
+      equals the current revision by construction); raises ScoreRefusedError
+      when the gate is not green. Otherwise folds the coverage, references,
+      embedding, and simulation estimators into a 0..100 index with the
+      shared-vote ensemble rule, computes trust, and returns the result
+      bound to the current plan revision.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity.
+          gs_step_id: the global step id, e.g. "G-001".
+          ts_step_id: the tactical step id, e.g. "T-002".
+          as_step_id: the atomic step id, e.g. "A-003".
+          config: the ScoringConfig published-default configuration.
+          model_output: the raw ExecutorSimulation model output for this
+              branch's atomic prompt, or None to abstain that estimator.
+
+      Returns:
+          The computed BranchScore.
+
+      Raises:
+          ScoreRefusedError: when the branch's mechanical gate is not green
+              at the current revision.
+      """
+      branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
+      branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
+
+      report, _verdict = run_gate(conn, plan_uuid, branch=branch)
+      if not report.green:
+          raise ScoreRefusedError(
+              f"{branch_path} refused: mechanical gate not green "
+              f"({sum(len(c.findings) for c in report.checks)} findings)"
+          )
+
+      concept_rows = load_concept_rows(conn, plan_uuid)
+      required = required_concepts(branch, concept_rows)
+      declared = declared_concepts(branch)
+
+      estimator_vector: dict[str, float] = {}
+      weights: dict[str, float] = {}
+
+      estimator_vector["coverage"] = coverage_estimator(required, declared)
+      weights["coverage"] = 1.0
+      estimator_vector["references"] = reference_estimator(conn, branch, concept_rows)
+      weights["references"] = 1.0
+
+      pair_values: dict[str, float] = {}
+
+      if config.embedding_url is not None:
+          try:
+              pair_values["embedding"] = embedding_estimator(
+                  conn,
+                  config.embedding_url,
+                  branch,
+                  concept_rows,
+                  required,
+                  config.concept_weight,
+              )
+          except EmbeddingUnavailable:
+              pass
+
+      sim_vote = simulation_vote(model_output, branch.atomic.fields.get("prompt", ""))
+      if sim_vote is not None:
+          pair_values["simulation"] = sim_vote
+
+      if pair_values:
+          pair_weight = 1.0 / len(pair_values)
+          for name, value in pair_values.items():
+              estimator_vector[name] = value
+              weights[name] = pair_weight
+
+      index = 100.0 * sum(
+          weights[name] * estimator_vector[name] for name in estimator_vector
+      ) / sum(weights.values())
+
+      color = "green" if index >= config.threshold else "red"
+      below_threshold = color == "red"
+
+      if "embedding" in pair_values:
+          trust_report = compute_trust(
+              conn,
+              config.embedding_url,
+              [definition for _, definition, _source_labels in concept_rows],
+              config.trust_floor,
+          )
+          trust = trust_report.trust
+      else:
+          trust = config.trust_floor
+
+      revision_uuid = current_head_revision(conn, plan_uuid)
+
+      return BranchScore(
+          branch_path=branch_path,
+          index=index,
+          color=color,
+          estimator_vector=estimator_vector,
+          trust=trust,
+          revision_uuid=revision_uuid,
+          below_threshold=below_threshold,
+      )
+
+
+  @dataclasses.dataclass
+  class PlanScore:
+      """The conservative plan-level aggregation of every branch's index.
+
+      Attributes:
+          index: the aggregated 0..100 plan index.
+          color: "green" iff index >= threshold, else "red".
+          aggregation: the aggregation mode used, "minimum" or
+              "fraction_above_threshold".
+          weakest: up to 3 BranchScore entries, ascending by index.
+          revision_uuid: the plan revision the score was computed on.
+      """
+
+      index: float
+      color: str
+      aggregation: str
+      weakest: list[BranchScore]
+      revision_uuid: uuid.UUID | None
+
+
+  def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore:
+      """Compute the plan-level SemanticIndex (C-013) aggregation.
+
+      Runs the mechanical gate for the whole plan now; raises
+      ScoreRefusedError when the gate is not green (the plan index is
+      published only when the entire plan is gate-green). Otherwise scores
+      every (GS, TS, AS) branch of the plan and aggregates the branch
+      indexes per config.aggregation.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity.
+          config: the ScoringConfig published-default configuration.
+
+      Returns:
+          The computed PlanScore.
+
+      Raises:
+          ScoreRefusedError: when the plan's mechanical gate is not green
+              at the current revision.
+      """
+      report, _verdict = run_gate(conn, plan_uuid, branch=None)
+      if not report.green:
+          raise ScoreRefusedError(
+              f"plan {plan_uuid} refused: mechanical gate not green "
+              f"({sum(len(c.findings) for c in report.checks)} findings)"
+          )
+
+      steps = load_steps(conn, plan_uuid)
+
+      gs_steps = [s for s in steps.values() if s.level == 3]
+      triples: list[tuple] = []
+      for gs in gs_steps:
+          ts_steps = [
+              s for s in steps.values() if s.level == 4 and s.parent_step_uuid == gs.uuid
+          ]
+          for ts in ts_steps:
+              as_steps = [
+                  s
+                  for s in steps.values()
+                  if s.level == 5 and s.parent_step_uuid == ts.uuid
+              ]
+              for as_step in as_steps:
+                  triples.append((gs, ts, as_step))
+
+      triples.sort(key=lambda t: (t[0].step_id, t[1].step_id, t[2].step_id))
+
+      branch_scores = [
+          score_branch(conn, plan_uuid, gs.step_id, ts.step_id, as_step.step_id, config, None)
+          for gs, ts, as_step in triples
+      ]
+
+      if not branch_scores:
+          index = 100.0
+      elif config.aggregation == "minimum":
+          index = min(score.index for score in branch_scores)
+      else:
+          above = sum(1 for score in branch_scores if score.index >= config.threshold)
+          index = 100.0 * above / len(branch_scores)
+
+      color = "green" if index >= config.threshold else "red"
+      weakest = sorted(branch_scores, key=lambda score: score.index)[:3]
+      revision_uuid = current_head_revision(conn, plan_uuid)
+
+      return PlanScore(
+          index=index,
+          color=color,
+          aggregation=config.aggregation,
+          weakest=weakest,
+          revision_uuid=revision_uuid,
+      )
+  ```
+
+  Required change: append this new function at the end of the file (after
+  score_plan, separated by exactly two blank lines). Do not change
+  anything above it.
+
+  ```python
+  def branch_summary(score: BranchScore, verbose: bool = False) -> dict:
+      """Build the output-discipline summary dict for one BranchScore.
+
+      Always includes branch_path, index, and color. Includes
+      estimator_vector and trust only when score.below_threshold or
+      verbose is True: the internal estimator vector and trust value
+      surface only for a branch below threshold or on explicit request.
+
+      Args:
+          score: the BranchScore to summarize.
+          verbose: when True, always include estimator_vector and trust.
+
+      Returns:
+          A dict with keys "branch_path", "index", "color", and, only when
+          score.below_threshold or verbose is True, also
+          "estimator_vector" and "trust".
+      """
+      summary: dict = {
+          "branch_path": score.branch_path,
+          "index": score.index,
+          "color": score.color,
+      }
+      if score.below_threshold or verbose:
+          summary["estimator_vector"] = score.estimator_vector
+          summary["trust"] = score.trust
+      return summary
+  ```
+
+  Constraints (all binding, none optional):
+  - The signature is exactly
+    `def branch_summary(score: BranchScore, verbose: bool = False) -> dict:`.
+  - Build `summary: dict = {"branch_path": score.branch_path, "index":
+    score.index, "color": score.color}` — exactly these three keys, in
+    this order, always present.
+  - `if score.below_threshold or verbose:` add exactly two more keys to
+    `summary`: `summary["estimator_vector"] = score.estimator_vector` and
+    `summary["trust"] = score.trust`. When the condition is false, do not
+    add these keys.
+  - Return `summary`.
+  - This function performs no I/O: no database access, no network access,
+    no file access. It must not call `score_branch` or `score_plan`.
+  - Do not add any import (`BranchScore` is already defined earlier in
+    this file).
+  - No other function, class, or import may be added by this AS beyond
+    the one function shown.
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-014
+    name: TrustEstimate
+    definition: Confidence in the semantic measurement itself derived from concept basis geometry and service liveness.
+    properties:
+    - Gram determinant, pairwise cosines, spectrum; monotone mapping is configuration
+    - drops to a declared floor when embeddings are unavailable
+    - distinguishes weak plan from unmeasurable plan
+    source_labels: ["{o3v8}", "{l2q6}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-008, type: consumes }
+  - { from_concept: C-013, to_concept: C-014, type: uses }
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  ```
+verification:
+  type: manual
+  target: plan_manager/scoring/index.py::branch_summary
+  expected: >
+    Given a BranchScore with below_threshold=False, branch_summary(score)
+    (verbose defaulting to False) returns a dict with exactly the keys
+    "branch_path", "index", "color". Given the same score with
+    verbose=True, or given a BranchScore with below_threshold=True and
+    verbose=False, the returned dict additionally has the keys
+    "estimator_vector" and "trust" equal to score.estimator_vector and
+    score.trust respectively.
+status: draft

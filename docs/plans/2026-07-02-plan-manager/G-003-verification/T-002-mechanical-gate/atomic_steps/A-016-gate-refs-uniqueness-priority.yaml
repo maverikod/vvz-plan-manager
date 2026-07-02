@@ -1,0 +1,192 @@
+step_id: A-016
+parent_tactical_step: T-002
+name: Add uniqueness.priority check to gate_refs.py
+target_file: plan_manager/verify/gate_refs.py
+operation: modify_file
+priority: 4
+depends_on: [A-015]
+concepts: [C-012, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_refs.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  The current full content of plan_manager/verify/gate_refs.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Uniqueness and reference-resolution check groups for the mechanical gate (C-012)."""
+
+  from plan_manager.domain.step import Step
+  from plan_manager.verify.finding import Finding
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of
+
+
+  def check_uniqueness_step_id(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "uniqueness.step_id".
+
+      Within ``steps``, no two steps may share the triple
+      (step.parent_step_uuid, step.level, step.step_id) — parent_step_uuid is
+      compared NULL-safely (two None values are treated as equal for this
+      grouping). Group ``steps`` by this triple; for every group with more
+      than one member, every member of that group produces one Finding with
+      check_id "uniqueness.step_id", severity "error", artifact_path
+      artifact_path_of(tree.steps, step), and a message naming the duplicated
+      step_id.
+      """
+      findings: list[Finding] = []
+      seen: dict[tuple, list[Step]] = {}
+      for step in steps:
+          key = (step.parent_step_uuid, step.level, step.step_id)
+          seen.setdefault(key, []).append(step)
+      for group in seen.values():
+          if len(group) > 1:
+              for step in group:
+                  path = artifact_path_of(tree.steps, step)
+                  findings.append(
+                      Finding(
+                          "uniqueness.step_id",
+                          "error",
+                          path,
+                          f"step_id '{step.step_id}' is not unique within its scope",
+                      )
+                  )
+      return findings
+
+
+  def check_uniqueness_concept_id(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "uniqueness.concept_id".
+
+      concept_ids must be unique within the plan. Count occurrences of every
+      string in tree.concept_ids; for every concept_id occurring more than
+      once, produces one Finding with check_id "uniqueness.concept_id",
+      severity "error", artifact_path equal to the concept_id string itself,
+      and a message stating the concept_id is not unique within the plan.
+      The ``steps`` parameter is accepted for call-signature uniformity with
+      the other check functions in this module but is not used by this
+      check.
+      """
+      findings: list[Finding] = []
+      seen: dict[str, int] = {}
+      for concept_id in tree.concept_ids:
+          seen[concept_id] = seen.get(concept_id, 0) + 1
+      for concept_id, count in seen.items():
+          if count > 1:
+              findings.append(
+                  Finding(
+                      "uniqueness.concept_id",
+                      "error",
+                      concept_id,
+                      f"concept_id '{concept_id}' is not unique within the plan",
+                  )
+              )
+      return findings
+
+
+  def check_uniqueness_label(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "uniqueness.label".
+
+      Paragraph labels must be unique within the plan. Count occurrences of
+      every bare label string in tree.labels; for every label occurring more
+      than once, produces one Finding with check_id "uniqueness.label",
+      severity "error", artifact_path equal to "{" + label + "}" (the braced
+      form), and a message stating the label is not unique within the plan.
+      The ``steps`` parameter is accepted for call-signature uniformity with
+      the other check functions in this module but is not used by this
+      check.
+      """
+      findings: list[Finding] = []
+      seen: dict[str, int] = {}
+      for label in tree.labels:
+          seen[label] = seen.get(label, 0) + 1
+      for label, count in seen.items():
+          if count > 1:
+              findings.append(
+                  Finding(
+                      "uniqueness.label",
+                      "error",
+                      "{" + label + "}",
+                      f"label '{label}' is not unique within the plan",
+                  )
+              )
+      return findings
+  ```
+
+  Append the following function at the end of the file, separated from
+  check_uniqueness_label by two blank lines. Do not change any existing line.
+
+  ```python
+  def check_uniqueness_priority(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "uniqueness.priority".
+
+      Applies only to level-5 steps in ``steps``. No two level-5 steps that
+      share the same (fields["target_file"], step.parent_step_uuid) pair may
+      share the same fields["priority"] value. Group the level-5 steps of
+      ``steps`` by (fields["target_file"], parent_step_uuid); within each
+      group, further group by fields["priority"]; for every priority-group
+      with more than one member, every member of that group produces one
+      Finding with check_id "uniqueness.priority", severity "error",
+      artifact_path artifact_path_of(tree.steps, step), and a message naming
+      the duplicated priority value and the shared target_file.
+      """
+      findings: list[Finding] = []
+      grouped: dict[tuple, list[tuple[object, Step]]] = {}
+      for step in steps:
+          if step.level != 5:
+              continue
+          target_file = step.fields.get("target_file")
+          priority = step.fields.get("priority")
+          key = (target_file, step.parent_step_uuid)
+          grouped.setdefault(key, []).append((priority, step))
+      for entries in grouped.values():
+          by_priority: dict[object, list[Step]] = {}
+          for priority, step in entries:
+              by_priority.setdefault(priority, []).append(step)
+          for priority, group in by_priority.items():
+              if len(group) > 1:
+                  for step in group:
+                      path = artifact_path_of(tree.steps, step)
+                      findings.append(
+                          Finding(
+                              "uniqueness.priority",
+                              "error",
+                              path,
+                              f"priority {priority!r} is not unique for target_file "
+                              f"'{step.fields.get('target_file')}' within its parent",
+                          )
+                      )
+      return findings
+  ```
+
+  Constraints:
+  - Do not change check_uniqueness_step_id, check_uniqueness_concept_id, or
+    check_uniqueness_label.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_refs.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_refs.check_uniqueness_priority
+  expected: >
+    The module imports without error. For two level-5 Step objects that
+    share the same parent_step_uuid, the same fields["target_file"], and the
+    same fields["priority"], check_uniqueness_priority returns a list with
+    one Finding with check_id "uniqueness.priority" per offending step; for
+    level-5 steps with distinct priorities within their (target_file, parent)
+    group it returns an empty list; level-3 and level-4 steps never produce
+    findings from this check.
+status: draft

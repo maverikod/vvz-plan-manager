@@ -1,0 +1,103 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: text-content-hash
+target_file: plan_manager/scoring/embedding.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-022]
+prompt: |
+  Modify the file `plan_manager/scoring/embedding.py` (operation:
+  modify_file).
+
+  The file currently contains exactly the following content (this is the
+  full current state of the file):
+
+  ```python
+  """Embedding client and cache for EmbeddingService (C-022) integration.
+
+  Provides text embedding retrieval with a database-backed cache keyed by
+  content hash, and an explicit typed unavailability condition instead of
+  raising on service failure.
+  """
+
+  import json
+  import urllib.error
+  import urllib.request
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class EmbeddingUnavailable(Exception):
+      """Raised when the embedding service cannot be reached or returns a
+      malformed response.
+
+      Carries the reason as its single string argument. Callers catch this
+      exception to degrade semantic scoring only; every other function keeps
+      working when the embedding service is unavailable.
+      """
+  ```
+
+  Append exactly one new top-level function after the `EmbeddingUnavailable`
+  class, separated from it by exactly two blank lines, with exactly this
+  signature, docstring, and body:
+
+  ```python
+  def text_content_hash(text: str) -> str:
+      """Return the canonical content hash of ``text``.
+
+      Parameters
+      ----------
+      text:
+          The text whose content hash is computed.
+
+      Returns
+      -------
+      str
+          The SHA-256 hex digest of the canonical JSON of ``text``, as
+          produced by ``plan_manager.storage.canonical.content_hash``.
+      """
+      return content_hash(text)
+  ```
+
+  Exact requirements:
+  - Parameter: `text`, type `str`. Return type: `str`.
+  - The function body is exactly `return content_hash(text)`, calling the
+    `content_hash` function already imported at the top of the file via
+    `from plan_manager.storage.canonical import content_hash`.
+    `plan_manager.storage.canonical.content_hash` has the signature
+    `def content_hash(value) -> str` and returns the SHA-256 hex digest of
+    the canonical JSON of `value`; for a plain string it hashes the
+    canonical JSON of that string.
+  - Do not modify the module docstring, the imports, or the
+    `EmbeddingUnavailable` class in any way. Do not add any other
+    function.
+  - The file must end immediately after the `return content_hash(text)`
+    line, with a single trailing newline, and nothing else.
+
+  Concept context (MRS excerpt, concept C-022 only):
+  - concept_id: C-022
+    name: EmbeddingService
+    definition: Sole optional external integration providing text
+      embeddings through a configured URL.
+    properties:
+    - unavailability degrades only semantic scoring, with explicit low
+      trust
+    - vectors cached in the database keyed by content hash; no vector
+      files
+
+  `text_content_hash` computes the cache key referenced by C-022's
+  property "vectors cached in the database keyed by content hash": every
+  cache lookup and every cache write added later to this file keys the
+  `embedding_cache` table by this content hash.
+verification:
+  type: manual
+  target: plan_manager.scoring.embedding.text_content_hash
+  expected: Calling text_content_hash with a given string returns exactly
+    the same value as calling plan_manager.storage.canonical.content_hash
+    with that same string, since text_content_hash only delegates to it.
+status: draft

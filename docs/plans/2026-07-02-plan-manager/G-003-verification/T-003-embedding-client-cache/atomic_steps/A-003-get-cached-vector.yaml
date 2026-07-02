@@ -1,0 +1,155 @@
+step_id: A-003
+parent_tactical_step: T-003
+name: get-cached-vector
+target_file: plan_manager/scoring/embedding.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-022, C-035]
+prompt: |
+  Modify the file `plan_manager/scoring/embedding.py` (operation:
+  modify_file).
+
+  The file currently contains exactly the following content (this is the
+  full current state of the file):
+
+  ```python
+  """Embedding client and cache for EmbeddingService (C-022) integration.
+
+  Provides text embedding retrieval with a database-backed cache keyed by
+  content hash, and an explicit typed unavailability condition instead of
+  raising on service failure.
+  """
+
+  import json
+  import urllib.error
+  import urllib.request
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class EmbeddingUnavailable(Exception):
+      """Raised when the embedding service cannot be reached or returns a
+      malformed response.
+
+      Carries the reason as its single string argument. Callers catch this
+      exception to degrade semantic scoring only; every other function keeps
+      working when the embedding service is unavailable.
+      """
+
+
+  def text_content_hash(text: str) -> str:
+      """Return the canonical content hash of ``text``.
+
+      Parameters
+      ----------
+      text:
+          The text whose content hash is computed.
+
+      Returns
+      -------
+      str
+          The SHA-256 hex digest of the canonical JSON of ``text``, as
+          produced by ``plan_manager.storage.canonical.content_hash``.
+      """
+      return content_hash(text)
+  ```
+
+  Append exactly one new top-level function after `text_content_hash`,
+  separated from it by exactly two blank lines, with exactly this
+  signature, docstring, and body:
+
+  ```python
+  def get_cached_vector(conn: psycopg.Connection, text: str) -> list[float] | None:
+      """Look up a cached embedding vector by the content hash of ``text``.
+
+      Parameters
+      ----------
+      conn:
+          An open psycopg 3 database connection.
+      text:
+          The text whose cached vector is looked up; the lookup key is its
+          content hash via ``text_content_hash``.
+
+      Returns
+      -------
+      list[float] | None
+          The cached vector as a list of floats if a row exists for the
+          content hash, or ``None`` if there is no cached vector.
+      """
+      key = text_content_hash(text)
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT vector::text FROM embedding_cache WHERE content_hash = %s",
+              (key,),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return json.loads(row[0])
+  ```
+
+  Exact requirements:
+  - Parameters: `conn` of type `psycopg.Connection` (the `psycopg` module
+    is already imported at the top of the file via `import psycopg`);
+    `text` of type `str`. Return type: `list[float] | None`.
+  - Compute the cache key by calling `text_content_hash(text)`, the
+    function already defined earlier in this same file with signature
+    `def text_content_hash(text: str) -> str`.
+  - Open a cursor from `conn` using `with conn.cursor() as cur:` and
+    execute exactly the SQL text
+    `"SELECT vector::text FROM embedding_cache WHERE content_hash = %s"`
+    with the single bound parameter `(key,)`. Fetch one row with
+    `cur.fetchone()`.
+  - If the fetched row is `None`, return `None`.
+  - Otherwise, parse `row[0]` (the text form of the pgvector value, e.g.
+    the string `"[1,2,3]"`, which is valid JSON) with `json.loads` (the
+    `json` module is already imported at the top of the file via
+    `import json`) and return the resulting list of floats.
+  - Do not modify the module docstring, the imports, the
+    `EmbeddingUnavailable` class, or `text_content_hash` in any way. Do
+    not add any other function.
+  - The file must end immediately after the `return json.loads(row[0])`
+    line, with a single trailing newline, and nothing else.
+
+  Normative schema (embedding_cache table, already exists in the
+  database; this AS never emits DDL): columns `uuid`, `content_hash`,
+  `vector`, `created_at` — `content_hash` is `text UNIQUE`; `vector` is a
+  pgvector value read and written through SQL text casts; `created_at` is
+  `timestamptz`.
+
+  Concept context (MRS excerpt):
+  - concept_id: C-022
+    name: EmbeddingService
+    definition: Sole optional external integration providing text
+      embeddings through a configured URL.
+    properties:
+    - unavailability degrades only semantic scoring, with explicit low
+      trust
+    - vectors cached in the database keyed by content hash; no vector
+      files
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the
+      single source of truth for all plan data.
+    properties (relevant to this AS):
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never
+      emits DDL
+
+  `get_cached_vector` implements the cache-hit read path of C-022 against
+  the C-035 database: a hit is served straight from `embedding_cache`
+  without contacting the embedding service.
+verification:
+  type: manual
+  target: plan_manager.scoring.embedding.get_cached_vector
+  expected: With a psycopg connection to a database containing the
+    embedding_cache table, calling get_cached_vector for a text whose
+    content hash has no matching row returns None; calling it for a text
+    whose content hash matches a stored row returns a list of floats
+    parsed from that row's vector column, without any network call.
+status: draft

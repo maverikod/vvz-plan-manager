@@ -1,0 +1,241 @@
+step_id: A-006
+parent_tactical_step: T-001
+name: render-json
+target_file: plan_manager/verify/finding.py
+operation: modify_file
+priority: 6
+depends_on: [A-001, A-003]
+concepts: [C-017]
+prompt: |
+  Modify the existing file plan_manager/verify/finding.py.
+
+  Operation: modify_file at path plan_manager/verify/finding.py.
+
+  The file currently contains exactly this content (post-prior-AS state,
+  after all lower-priority atomic steps on this file have been applied):
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+
+  def sort_findings(findings: list[Finding]) -> list[Finding]:
+      """Return findings sorted into the total deterministic order.
+
+      Sort key is the tuple (artifact_path, check_id, message).
+
+      Args:
+          findings: Findings to sort. Not mutated.
+
+      Returns:
+          A new list of the same Finding objects sorted ascending by
+          (artifact_path, check_id, message).
+      """
+      return sorted(findings, key=lambda f: (f.artifact_path, f.check_id, f.message))
+
+
+  @dataclass
+  class CheckResult:
+      """The outcome of one check within a report.
+
+      Attributes:
+          check_id: Identifier of the check.
+          passed: True iff no finding exists for this check_id.
+          findings: Findings for this check_id, in sort_findings order.
+      """
+
+      check_id: str
+      passed: bool
+      findings: list[Finding]
+
+
+  @dataclass
+  class Report:
+      """The aggregated outcome of a full gate or scoring run.
+
+      Attributes:
+          checks: One CheckResult per check_id, in the order the check_ids
+              were given to build_report.
+          green: True iff no finding exists across every CheckResult.
+      """
+
+      checks: list[CheckResult]
+      green: bool
+
+
+  def build_report(check_ids: list[str], findings: list[Finding]) -> Report:
+      """Build a Report with one CheckResult per check_id, in the given order.
+
+      Args:
+          check_ids: The ordered list of check identifiers to report on. The
+              output has exactly one CheckResult per entry, in this order.
+          findings: All findings produced by the run, in any order.
+
+      Returns:
+          A Report whose checks list has one CheckResult per entry of
+          check_ids (in that order); each CheckResult's findings are the
+          subset of `findings` whose check_id equals that CheckResult's
+          check_id, sorted via sort_findings; passed is True iff that subset
+          is empty; green is True iff `findings` is empty overall.
+
+      Raises:
+          ValueError: If any finding's check_id is not present in check_ids.
+              The error message names the unknown check_id.
+      """
+      known = set(check_ids)
+      for finding in findings:
+          if finding.check_id not in known:
+              raise ValueError(f"unknown check_id: {finding.check_id}")
+      checks: list[CheckResult] = []
+      for check_id in check_ids:
+          matched = sort_findings([f for f in findings if f.check_id == check_id])
+          checks.append(CheckResult(check_id=check_id, passed=len(matched) == 0, findings=matched))
+      return Report(checks=checks, green=len(findings) == 0)
+
+
+  def render_text(report: Report) -> str:
+      """Render a Report as a per-check PASS/FAIL text report.
+
+      Args:
+          report: The Report to render.
+
+      Returns:
+          A string with one line per check: "<check_id>: PASS" if
+          check.passed else "<check_id>: FAIL", immediately followed by one
+          line per finding of that check in the format
+          "  <artifact_path> [<severity>] <message>", all lines joined with
+          "\n" with no trailing newline.
+      """
+      lines: list[str] = []
+      for check in report.checks:
+          status = "PASS" if check.passed else "FAIL"
+          lines.append(f"{check.check_id}: {status}")
+          for finding in check.findings:
+              lines.append(f"  {finding.artifact_path} [{finding.severity}] {finding.message}")
+      return "\n".join(lines)
+
+  Change to make, in two parts:
+
+  Part 1 — add an import. Insert the following line into the imports block,
+  after the line `from dataclasses import dataclass` and before the blank
+  line that precedes `SEVERITIES = ...`, with one blank line separating it
+  from `from dataclasses import dataclass`:
+
+  from plan_manager.storage.canonical import canonical_json
+
+  This imports the sibling function `def canonical_json(value) -> str` from
+  plan_manager/storage/canonical.py, which serializes `value` via
+  `json.dumps` with `sort_keys=True, ensure_ascii=False,
+  separators=(",", ":")`.
+
+  Part 2 — append the following function to the end of the file, separated
+  from the last line of the current content (the `return "\n".join(lines)`
+  line) by exactly two blank lines:
+
+  def render_json(report: Report) -> str:
+      """Render a Report as its canonical JSON form.
+
+      Args:
+          report: The Report to render.
+
+      Returns:
+          The canonical JSON string (via canonical_json) of a dict with keys
+          "green" (report.green) and "checks" (a list with one entry per
+          CheckResult in report.checks, each an object with keys "check_id",
+          "passed", and "findings" — the latter a list with one entry per
+          Finding in that check's findings, each an object with keys
+          "check_id", "severity", "artifact_path", "message"). Byte-identical
+          for the same report content.
+      """
+      return canonical_json(
+          {
+              "green": report.green,
+              "checks": [
+                  {
+                      "check_id": check.check_id,
+                      "passed": check.passed,
+                      "findings": [
+                          {
+                              "check_id": finding.check_id,
+                              "severity": finding.severity,
+                              "artifact_path": finding.artifact_path,
+                              "message": finding.message,
+                          }
+                          for finding in check.findings
+                      ],
+                  }
+                  for check in report.checks
+              ],
+          }
+      )
+
+  Exact signature: `def render_json(report: Report) -> str:`
+
+  Docstring text: use exactly the docstring shown above.
+
+  Constraints:
+  - The only new import in this AS is
+    `from plan_manager.storage.canonical import canonical_json`, placed as
+    specified in Part 1.
+  - The dict passed to canonical_json has exactly two top-level keys,
+    "green" and "checks", in that order in the literal source.
+  - Each entry of "checks" is a dict with exactly the keys "check_id",
+    "passed", "findings" in that order in the literal source, values taken
+    from the corresponding CheckResult in `report.checks`, iterated in
+    `report.checks` order.
+  - Each entry of a check's "findings" is a dict with exactly the keys
+    "check_id", "severity", "artifact_path", "message" in that order in the
+    literal source, values taken from the corresponding Finding, iterated in
+    that CheckResult's `findings` order.
+  - The function body returns the result of `canonical_json(...)` directly;
+    no intermediate string manipulation.
+  - Do not add any other function or class in this AS.
+  - Everything above the inserted import line and everything between the
+    inserted import line and `def render_json` must otherwise remain
+    byte-identical to the post-prior-AS state shown above.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.verify.finding.render_json
+  expected: |-
+    For a given Report, render_json returns the canonical_json
+    serialization of a dict {"green": report.green, "checks": [...]} where
+    each checks entry mirrors one CheckResult (check_id, passed, findings)
+    and each findings entry mirrors one Finding (check_id, severity,
+    artifact_path, message); calling render_json twice on Report values
+    built from equal data produces byte-identical strings, since
+    canonical_json sorts keys and uses a fixed separator.
+status: draft

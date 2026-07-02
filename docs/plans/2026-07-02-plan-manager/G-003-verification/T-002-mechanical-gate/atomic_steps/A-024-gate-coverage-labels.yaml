@@ -1,0 +1,201 @@
+step_id: A-024
+parent_tactical_step: T-002
+name: Add check_coverage_labels to gate.py
+target_file: plan_manager/verify/gate.py
+operation: modify_file
+priority: 4
+depends_on: [A-023]
+concepts: [C-012, C-010]
+prompt: |
+  Target file: plan_manager/verify/gate.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-010 CoverageView — On-demand computed coverage of concepts, labels,
+    relations, and objects replacing stored matrices. Properties: set
+    formulas are normative, reports always list missing and extra elements;
+    object-axis inventory keyed by (module, tactical step path); module
+    derived deterministically from target_file (strip extension, dot the
+    separators) — a classification key, never an identity.
+
+  The current full content of plan_manager/verify/gate.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Mechanical gate orchestrator (C-012): fixed check-group order, byte-identical reports."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.verify.finding import Finding
+  from plan_manager.views.coverage import concept_coverage, gs_coverage
+
+  GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage"]
+
+  CHECK_IDS: dict[str, list[str]] = {
+      "parse": [
+          "parse.required_fields",
+          "parse.inputs_outputs",
+          "parse.target_file",
+          "parse.sanity_counts",
+      ],
+      "identity": [
+          "identity.step_id",
+          "identity.slug",
+          "identity.concept_id",
+          "identity.label",
+      ],
+      "uniqueness": [
+          "uniqueness.step_id",
+          "uniqueness.concept_id",
+          "uniqueness.label",
+          "uniqueness.priority",
+      ],
+      "references": [
+          "references.depends_on",
+          "references.concepts",
+          "references.relations",
+          "references.source_labels",
+      ],
+      "coverage": [
+          "coverage.concepts",
+          "coverage.gs",
+          "coverage.labels",
+          "coverage.relations",
+      ],
+  }
+
+
+  def check_coverage_concepts(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.concepts": plan-wide concept coverage.
+
+      Calls concept_coverage(conn, plan_uuid) to get a CoverageReport(missing,
+      extra). Every entry of report.missing produces one Finding with
+      check_id "coverage.concepts", severity "error", artifact_path "plan",
+      and a message naming the missing concept and stating it is missing.
+      Every entry of report.extra produces one Finding with the same
+      check_id and artifact_path "plan", naming the extra concept and
+      stating it is extra.
+      """
+      findings: list[Finding] = []
+      report = concept_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{extra}' extra")
+          )
+      return findings
+
+
+  def check_coverage_gs(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, gs_step_id: str | None
+  ) -> list[Finding]:
+      """Check id "coverage.gs": per-global-step concept coverage.
+
+      Calls gs_coverage(conn, plan_uuid) to get a dict[str, CoverageReport]
+      keyed by GS step_id. When gs_step_id is None, every (step_id, report)
+      pair of the dict is processed (plan scope: every GS is checked). When
+      gs_step_id is not None, only the (gs_step_id, report) pair is
+      processed if gs_step_id is a key of the dict, otherwise nothing is
+      processed (branch scope: only the branch's own GS is checked). For
+      every processed (step_id, report) pair, every entry of report.missing
+      produces one Finding with check_id "coverage.gs", severity "error",
+      artifact_path equal to step_id (the GS step_id, not
+      artifact_path_of — a bare GS step_id is already its own artifact
+      path), and a message naming the missing concept. report.extra is
+      never used by this check: for coverage.gs only the missing list
+      exists (a GS is required to cover its concept set; extra concepts are
+      not a coverage.gs concern).
+      """
+      findings: list[Finding] = []
+      reports = gs_coverage(conn, plan_uuid)
+      if gs_step_id is None:
+          items = list(reports.items())
+      elif gs_step_id in reports:
+          items = [(gs_step_id, reports[gs_step_id])]
+      else:
+          items = []
+      for step_id, report in items:
+          for missing in report.missing:
+              findings.append(
+                  Finding("coverage.gs", "error", step_id, f"concept '{missing}' missing")
+              )
+      return findings
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Change the import line
+     `from plan_manager.views.coverage import concept_coverage, gs_coverage`
+     to:
+     `from plan_manager.views.coverage import concept_coverage, gs_coverage, label_coverage`
+
+  2. Append the following function at the end of the file, separated from
+     check_coverage_gs by two blank lines:
+
+  ```python
+  def check_coverage_labels(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.labels": plan-wide paragraph label coverage.
+
+      Calls label_coverage(conn, plan_uuid) to get a CoverageReport(missing,
+      extra). Every entry of report.missing produces one Finding with
+      check_id "coverage.labels", severity "error", artifact_path "plan",
+      and a message naming the missing label and stating it is missing.
+      Every entry of report.extra produces one Finding with the same
+      check_id and artifact_path "plan", naming the extra label and stating
+      it is extra.
+      """
+      findings: list[Finding] = []
+      report = label_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.labels", "error", "plan", f"label '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.labels", "error", "plan", f"label '{extra}' extra")
+          )
+      return findings
+  ```
+
+  The imported label_coverage is an existing sibling function; import it, do
+  not redefine it. Exact signature, for reference only (module
+  plan_manager/views/coverage.py):
+
+  ```python
+  @dataclass
+  class CoverageReport:
+      missing: list[str]
+      extra: list[str]
+
+  def label_coverage(conn, plan_uuid) -> CoverageReport: ...
+  ```
+
+  Constraints:
+  - Do not change GROUP_ORDER, CHECK_IDS, check_coverage_concepts, or
+    check_coverage_gs.
+  - Do not add any other function, class, or import beyond the modified
+    import line shown above.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate.check_coverage_labels
+  expected: >
+    The module imports without error. Given a conn/plan_uuid pair for which
+    label_coverage returns CoverageReport(missing=[], extra=["zzzz"]),
+    check_coverage_labels returns a list with exactly one Finding with
+    check_id "coverage.labels", severity "error", artifact_path "plan";
+    when both missing and extra are empty it returns an empty list.
+status: draft

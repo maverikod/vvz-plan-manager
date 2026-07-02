@@ -1,0 +1,91 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: finding-severities-and-dataclass
+target_file: plan_manager/verify/finding.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-017]
+prompt: |
+  Create the file plan_manager/verify/finding.py. This file does not exist
+  yet; do not assume any pre-existing content.
+
+  Operation: create_file at path plan_manager/verify/finding.py.
+
+  Write exactly the following as the full initial content of the file:
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  Imports required: `from __future__ import annotations` and
+  `from dataclasses import dataclass`. No other imports.
+
+  Exact signatures:
+  - Module-level constant `SEVERITIES: frozenset[str]` bound to
+    `frozenset({"error", "warning"})`.
+  - `@dataclass(frozen=True) class Finding:` with fields, in this order and
+    with these exact type annotations: `check_id: str`, `severity: str`,
+    `artifact_path: str`, `message: str`. No default values. No methods
+    beyond the dataclass-generated ones.
+
+  Docstring text: use the module docstring and the class docstring exactly
+  as shown above, including the "Attributes:" section with the four bullet
+  lines exactly as written.
+
+  Constraints:
+  - The file must contain nothing beyond what is shown above: no additional
+    classes, functions, constants, or imports.
+  - `severity` is typed `str` at the dataclass level; SEVERITIES lists the
+    two legal values but this module performs no membership validation in
+    this AS.
+  - Preserve blank-line spacing exactly as shown: one blank line between the
+    module docstring and the `from __future__` import line, one blank line
+    between the two import lines, one blank line before SEVERITIES, two
+    blank lines before the `@dataclass` decorator line, one blank line
+    between the class docstring and the first field.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: import
+  target: plan_manager.verify.finding (module attributes SEVERITIES and Finding)
+  expected: Importing plan_manager.verify.finding succeeds without error.
+    SEVERITIES equals the frozenset containing exactly the strings "error"
+    and "warning". Finding is a frozen dataclass instantiable via keyword
+    arguments check_id, severity, artifact_path, message, each accepted as
+    str and readable back as attributes after construction; reassigning an
+    attribute after construction raises an error because the dataclass is
+    frozen.
+status: draft

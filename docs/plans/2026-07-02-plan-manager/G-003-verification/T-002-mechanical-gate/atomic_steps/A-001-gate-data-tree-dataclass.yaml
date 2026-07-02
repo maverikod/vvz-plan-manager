@@ -1,0 +1,104 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create gate_data.py with GateTree dataclass
+target_file: plan_manager/verify/gate_data.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-012, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_data.py
+  Operation: create_file
+
+  Create a new Python module at the exact path plan_manager/verify/gate_data.py.
+  The file does not exist yet; write exactly the content specified below and
+  nothing else.
+
+  This module is the read-only tree loader and scoping layer of the
+  MechanicalGate. MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  This AS writes exactly this file content (module docstring, two imports,
+  one dataclass — nothing else):
+
+  ```python
+  """Read-only tree loader and scoping helpers for the mechanical gate (C-012)."""
+
+  import uuid
+  from dataclasses import dataclass
+
+  from plan_manager.domain.step import Step
+
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+  ```
+
+  GateTree field semantics (all five fields are mandatory dataclass fields,
+  add no other fields, no methods, no default values):
+  - steps: dict[uuid.UUID, Step] — every Step row belonging to one plan, keyed
+    by its uuid field.
+  - concept_ids: list[str] — every concept_id string of the plan's concept
+    table, in the order they were read.
+  - relations: list[tuple[str, str, str]] — every (from_concept, to_concept,
+    type) triple of the plan's relation table, in the order they were read.
+  - labels: list[str] — the bare label (four base36 characters, no braces) of
+    every stored paragraph belonging to the plan, in paragraph position
+    order. Only binding paragraphs are ever stored, so every row has a label.
+  - counts: dict[str, int] — a dict populated later (by a different AS in
+    this same file) with exactly the keys "steps", "concepts", "paragraphs".
+    This AS does not populate it; it is only a dataclass field declaration.
+
+  The imported Step is an existing sibling dataclass; import it, do not
+  redefine it. Its exact signature, for reference only (module
+  plan_manager/domain/step.py):
+
+  ```python
+  @dataclass
+  class Step:
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      parent_step_uuid: uuid.UUID | None
+      level: int
+      step_id: str
+      slug: str
+      fields: dict
+      depends_on: list[str]
+      concepts: list[str]
+      status: str
+  ```
+
+  Constraints:
+  - The written file must contain nothing beyond the module docstring, the
+    two import statements, and the GateTree dataclass exactly as shown above.
+  - Do not add a `from __future__ import annotations` line.
+  - Do not add any function, any other class, or any other import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_data.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_data
+  expected: >
+    The module imports without error and defines a dataclass GateTree with
+    exactly the fields steps, concept_ids, relations, labels, counts, each of
+    the declared type; instantiating GateTree with keyword arguments for all
+    five fields succeeds and the resulting object's attributes equal the
+    values passed in.
+status: draft

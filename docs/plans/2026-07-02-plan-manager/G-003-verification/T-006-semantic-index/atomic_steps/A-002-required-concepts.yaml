@@ -1,0 +1,187 @@
+step_id: A-002
+parent_tactical_step: T-006
+name: required-concepts
+target_file: plan_manager/scoring/estimators.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-013, C-036, C-008, C-002, C-003]
+prompt: |
+  Modify the existing file plan_manager/scoring/estimators.py. Do not
+  create, read, or modify any other file.
+
+  The file currently contains exactly this content (state after all
+  lower-priority AS in this TS have been applied):
+
+  ```python
+  """Deterministic and embedding-based branch estimators for SemanticIndex (C-013).
+
+  Implements the normative estimator formulas of NormativeAlgorithmSet (C-036)
+  consumed by plan_manager.scoring.index.score_branch. Read-only on plan data:
+  every function here returns computed values to its caller and stores nothing.
+  """
+
+  from __future__ import annotations
+
+
+  def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:
+      """Load all concepts of a plan ordered by concept_id.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity to scope the query to.
+
+      Returns:
+          A list of (concept_id, definition, source_labels) tuples, one per
+          concept row, ascending by concept_id. source_labels entries keep
+          their enclosing braces, e.g. "{abcd}".
+      """
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT concept_id, definition, source_labels FROM concept "
+              "WHERE plan_uuid = %s ORDER BY concept_id",
+              (plan_uuid,),
+          )
+          return [(row[0], row[1], list(row[2])) for row in cur.fetchall()]
+  ```
+
+  Required change 1: replace the single blank-line-separated import block
+  `from __future__ import annotations` (with the two blank lines that
+  follow it) with these two import lines, keeping the blank-line spacing
+  shown (one blank line after `from __future__ import annotations`, then
+  the new import, then two blank lines before the first function):
+
+  ```python
+  from __future__ import annotations
+
+  from plan_manager.views.branch import Branch
+
+  ```
+
+  Required change 2: append this new function at the end of the file
+  (after load_concept_rows, separated by exactly two blank lines):
+
+  ```python
+  def required_concepts(branch: Branch, concept_rows) -> set[str]:
+      """Compute the concept_ids required by the branch's HRS slice.
+
+      A concept is required iff at least one of its source_labels, stripped
+      of its enclosing braces (value[1:-1]), equals the label of a paragraph
+      in branch.hrs_slice. Paragraphs whose label is None are ignored.
+
+      Args:
+          branch: the resolved Branch; uses branch.hrs_slice: list[Paragraph].
+          concept_rows: the list returned by load_concept_rows.
+
+      Returns:
+          The set of required concept_id values.
+      """
+      slice_labels = {p.label for p in branch.hrs_slice if p.label is not None}
+      required: set[str] = set()
+      for concept_id, _definition, source_labels in concept_rows:
+          stripped = {label[1:-1] for label in source_labels}
+          if stripped & slice_labels:
+              required.add(concept_id)
+      return required
+  ```
+
+  Constraints (all binding, none optional):
+  - The signature is exactly `def required_concepts(branch: Branch, concept_rows) -> set[str]:`
+    — `concept_rows` is intentionally unannotated (matching the normative
+    sibling contract); `branch` is annotated with the imported `Branch`
+    type.
+  - Import `Branch` exactly as `from plan_manager.views.branch import Branch`.
+    `Branch` is the sibling dataclass (see MRS excerpt / sibling contract
+    below): `@dataclass Branch: plan_uuid: uuid.UUID, gs: Step, ts: Step,
+    atomic: Step, hrs_slice: list[Paragraph]`. `Paragraph` has attributes
+    `label: Optional[str], text: str, position: int`.
+  - `concept_rows` is a `list[tuple[str, str, list[str]]]` in the shape
+    produced by `load_concept_rows` in this same file: each tuple is
+    `(concept_id, definition, source_labels)` with `source_labels` entries
+    keeping their enclosing braces, e.g. `"{abcd}"`.
+  - `slice_labels` must be built exactly as
+    `{p.label for p in branch.hrs_slice if p.label is not None}` — a set
+    comprehension over `branch.hrs_slice`, excluding any Paragraph whose
+    `label` is `None`.
+  - For each `(concept_id, _definition, source_labels)` in `concept_rows`
+    (iterated in the order given by `concept_rows`, i.e. concept_id
+    order): compute `stripped = {label[1:-1] for label in source_labels}`
+    (strip exactly the first and last character — the enclosing braces —
+    from every source_labels entry); if `stripped & slice_labels` is
+    non-empty, add `concept_id` to the `required` set.
+  - Return the `required` set. Do not return a list, do not sort.
+  - Do not query the database in this function. Do not catch exceptions.
+  - No other function, class, or import may be added by this AS beyond
+    the one import line and the one function shown.
+
+  MRS excerpt (only the concepts and relations relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+    properties:
+    - label is position-independent, unique within one HRS, survives edits
+    - non-binding blocks are excluded from labeling and coverage
+    - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+    - parsing and label-assignment algorithms are normative
+    source_labels: ["{b7d1}", "{h3j9}", "{a1z3}", "{u8s4}", "{n2j7}", "{s7g3}"]
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+    source_labels: ["{f6s2}", "{k7r9}", "{j8b2}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-008, type: consumes }
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  - { from_concept: C-008, to_concept: C-002, type: uses }
+  - { from_concept: C-008, to_concept: C-003, type: uses }
+  ```
+
+  Sibling contract quoted verbatim (import and reuse; do not reimplement):
+  `plan_manager/views/branch.py: @dataclass Branch: plan_uuid: uuid.UUID,
+  gs: Step, ts: Step, atomic: Step, hrs_slice: list[Paragraph]. Step: uuid,
+  plan_uuid, parent_step_uuid, level, step_id, slug, fields: dict,
+  depends_on: list[str], concepts: list[str], status: str. Paragraph:
+  label: Optional[str], text: str, position: int.`
+verification:
+  type: manual
+  target: plan_manager/scoring/estimators.py::required_concepts
+  expected: >
+    Given a Branch whose hrs_slice contains one Paragraph with
+    label="abcd" and one Paragraph with label=None, and concept_rows
+    containing one concept row whose source_labels list includes the
+    string "{abcd}" and a second concept row whose source_labels list
+    does not include "{abcd}", required_concepts(branch, concept_rows)
+    returns a set containing only the concept_id of the first row.
+status: draft

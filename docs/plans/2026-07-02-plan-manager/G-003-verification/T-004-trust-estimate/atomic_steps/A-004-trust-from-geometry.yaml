@@ -1,0 +1,177 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: Add trust_from_geometry function
+target_file: plan_manager/scoring/trust.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-014]
+prompt: |
+  Modify the existing Python file `plan_manager/scoring/trust.py`
+  (project-relative path from the repository root, package root
+  `plan_manager/`, Python 3.12+).
+
+  The full current content of the file, exactly as it exists before this
+  change, is:
+
+  ```python
+  """Trust estimate: confidence in the semantic measurement itself (C-014).
+
+  Computes the geometry of the concept embedding basis (pairwise cosines, Gram
+  determinant, eigenvalue spectrum) and maps it to a monotone 0..1 trust value,
+  falling back to a declared floor when the embedding service is unavailable.
+  """
+
+  from dataclasses import dataclass
+
+  import numpy as np
+
+
+  @dataclass
+  class TrustReport:
+      """Confidence report for the semantic measurement.
+
+      Attributes:
+          trust: 0..1 confidence value, decreasing monotonically with basis
+              collinearity; equal to the declared floor when available is
+              False.
+          available: True when the embedding service produced vectors for
+              every concept definition; False when embeddings could not be
+              obtained.
+          pairwise_cosines: Pairwise cosine matrix of the normalized concept
+              embeddings as a nested list; empty when available is False.
+          gram_determinant: Determinant of the Gram matrix of the normalized
+              concept embeddings; 0.0 when available is False.
+          spectrum: Eigenvalue spectrum of the Gram matrix, sorted descending;
+              empty when available is False.
+      """
+
+      trust: float
+      available: bool
+      pairwise_cosines: list[list[float]]
+      gram_determinant: float
+      spectrum: list[float]
+
+
+  def normalize_rows(vectors: list[list[float]]) -> np.ndarray:
+      """Row-normalize a list of vectors to unit L2 norm.
+
+      Args:
+          vectors: A list of equal-length numeric vectors.
+
+      Returns:
+          A 2-D numpy array of dtype float64 with the same shape as the
+          input, where each row is divided by its L2 norm. A row whose L2
+          norm is zero is left as all-zero (no division by zero).
+      """
+      array = np.asarray(vectors, dtype=np.float64)
+      norms = np.linalg.norm(array, axis=1, keepdims=True)
+      safe_norms = np.where(norms == 0.0, 1.0, norms)
+      return array / safe_norms
+
+
+  def basis_geometry(
+      vectors: list[list[float]],
+  ) -> tuple[list[list[float]], float, list[float]]:
+      """Compute pairwise cosines, Gram determinant, and eigenvalue spectrum.
+
+      Args:
+          vectors: A list of equal-length numeric vectors (concept
+              embeddings).
+
+      Returns:
+          A 3-tuple (cosines, determinant, spectrum):
+              cosines: The pairwise cosine matrix of the row-normalized
+                  vectors, as a nested list of floats. For unit-norm rows
+                  the Gram matrix IS the pairwise cosine matrix; this is
+                  that Gram matrix converted to a nested list.
+              determinant: The determinant of the Gram matrix, as a float.
+              spectrum: The eigenvalues of the Gram matrix, sorted
+                  descending, as a list of floats.
+
+      Raises:
+          ValueError: If vectors is empty or the rows are not all the same
+              length (ragged rows).
+      """
+      if not vectors:
+          raise ValueError("basis_geometry requires a non-empty vector list")
+      lengths = {len(row) for row in vectors}
+      if len(lengths) != 1:
+          raise ValueError(
+              "basis_geometry requires all rows to have equal length"
+          )
+      normalized = normalize_rows(vectors)
+      gram = normalized @ normalized.T
+      determinant = float(np.linalg.det(gram))
+      spectrum = sorted(np.linalg.eigvalsh(gram).tolist(), reverse=True)
+      cosines = gram.tolist()
+      return cosines, determinant, spectrum
+  ```
+
+  Append exactly the following to the end of the file, separated from the
+  `basis_geometry` function by two blank lines (the file must end with a
+  single trailing newline after the function body, no extra blank lines
+  beyond that):
+
+  ```python
+  def trust_from_geometry(gram_determinant: float, n: int) -> float:
+      """Map Gram determinant and basis size to a 0..1 trust value.
+
+      Published-default monotone mapping: the n-th root of the non-negative
+      part of the determinant, clamped to [0.0, 1.0]. More collinearity in
+      the concept basis produces a smaller determinant and therefore a
+      lower trust value.
+
+      Args:
+          gram_determinant: The determinant of the Gram matrix of the
+              normalized concept embeddings.
+          n: The number of concept embeddings (basis size).
+
+      Returns:
+          0.0 when n == 0; otherwise
+          clamp(max(gram_determinant, 0.0) ** (1.0 / n), 0.0, 1.0).
+      """
+      if n == 0:
+          return 0.0
+      base = max(gram_determinant, 0.0)
+      value = base ** (1.0 / n)
+      return min(max(value, 0.0), 1.0)
+  ```
+
+  No new imports are required for this function; it uses only built-in
+  Python operators.
+
+  Constraints:
+  - Do not modify the module docstring, the existing imports, the
+    `TrustReport` class, `normalize_rows`, or `basis_geometry` in any way.
+  - `trust_from_geometry` takes exactly two parameters,
+    `gram_determinant: float` and `n: int`, in that order, and returns
+    exactly `float`.
+  - If `n == 0`, return `0.0` immediately.
+  - Otherwise compute `base = max(gram_determinant, 0.0)`, then
+    `value = base ** (1.0 / n)`, then clamp `value` into the closed
+    interval `[0.0, 1.0]` via `min(max(value, 0.0), 1.0)` and return that.
+  - Do not raise any exception for a negative `gram_determinant`; the
+    `max(gram_determinant, 0.0)` step must prevent a fractional power of a
+    negative number.
+  - Do not add any other function, class, or constant in this change.
+
+  Relevant MRS excerpt (concept definitions relevant to this AS):
+  - C-014 TrustEstimate: "Confidence in the measurement itself derived from
+    concept basis geometry and service liveness." Properties: Gram
+    determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are
+    unavailable; distinguishes weak plan from unmeasurable plan.
+    `trust_from_geometry` is exactly this published-default monotone
+    mapping from Gram determinant to the 0..1 trust value.
+verification:
+  type: manual
+  target: plan_manager.scoring.trust.trust_from_geometry
+  expected: >
+    Calling trust_from_geometry(0.0, 0) returns 0.0. For n > 0, the return
+    value equals max(gram_determinant, 0.0) ** (1.0 / n) clamped into
+    [0.0, 1.0]: a negative gram_determinant does not raise an exception and
+    yields the same result as a gram_determinant of 0.0 at the same n, and
+    for a fixed n a larger non-negative gram_determinant never yields a
+    lower trust value than a smaller one.
+status: draft

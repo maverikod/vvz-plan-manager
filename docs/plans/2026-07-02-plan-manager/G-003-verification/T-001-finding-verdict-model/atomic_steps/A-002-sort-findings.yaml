@@ -1,0 +1,98 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: sort-findings
+target_file: plan_manager/verify/finding.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-017]
+prompt: |
+  Modify the existing file plan_manager/verify/finding.py.
+
+  Operation: modify_file at path plan_manager/verify/finding.py.
+
+  The file currently contains exactly this content (post-prior-AS state):
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  Change to make: append the following function to the end of the file,
+  separated from the last line of the current content (`message: str`) by
+  exactly two blank lines:
+
+  def sort_findings(findings: list[Finding]) -> list[Finding]:
+      """Return findings sorted into the total deterministic order.
+
+      Sort key is the tuple (artifact_path, check_id, message).
+
+      Args:
+          findings: Findings to sort. Not mutated.
+
+      Returns:
+          A new list of the same Finding objects sorted ascending by
+          (artifact_path, check_id, message).
+      """
+      return sorted(findings, key=lambda f: (f.artifact_path, f.check_id, f.message))
+
+  Imports required: none beyond what the file already has (`Finding` is
+  already defined earlier in the same file; no new import statements are
+  added by this change).
+
+  Exact signature: `def sort_findings(findings: list[Finding]) -> list[Finding]:`
+
+  Docstring text: use exactly the docstring shown above, including the
+  "Sort key is the tuple (artifact_path, check_id, message)." sentence and
+  the Args/Returns sections.
+
+  Constraints:
+  - Do not mutate the input list; `sorted(...)` returns a new list.
+  - The sort key is exactly the 3-tuple `(f.artifact_path, f.check_id,
+    f.message)`, compared lexicographically ascending (Python default tuple
+    and str ordering) — this is the total deterministic order.
+  - Do not add any other function, class, or import in this AS.
+  - Everything above `sort_findings` in the file must remain byte-identical
+    to the post-prior-AS state shown above.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.verify.finding.sort_findings
+  expected: For any list of Finding objects, sort_findings returns a new
+    list containing the same objects ordered ascending by the tuple
+    (artifact_path, check_id, message); the input list is left unmodified;
+    calling sort_findings twice on differently-ordered inputs containing the
+    same Finding objects yields identical output order.
+status: draft

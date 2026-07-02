@@ -1,0 +1,148 @@
+step_id: A-009
+parent_tactical_step: T-001
+name: is-fresh
+target_file: plan_manager/verify/verdict.py
+operation: modify_file
+priority: 3
+depends_on: [A-007]
+concepts: [C-020, C-018]
+prompt: |
+  Modify the existing file plan_manager/verify/verdict.py.
+
+  Operation: modify_file at path plan_manager/verify/verdict.py.
+
+  The file currently contains exactly this content (post-prior-AS state,
+  after all lower-priority atomic steps on this file have been applied):
+
+  """Verdict binding for gate and scoring results (C-020 Verdict).
+
+  A Verdict binds a gate or score result to the exact revision and scope it
+  was computed for. Verdicts are returned to the caller and never persisted:
+  no timestamp field exists anywhere in this module.
+  """
+
+  from __future__ import annotations
+
+  import uuid
+  from dataclasses import dataclass
+
+  import psycopg
+
+
+  class VerdictError(ValueError):
+      """Raised when a Verdict is constructed with an invalid kind, or when
+      current_head_revision is asked about a plan_uuid that has no row."""
+
+
+  @dataclass(frozen=True)
+  class Verdict:
+      """A gate or score result bound to the exact revision and scope it was
+      computed for.
+
+      Attributes:
+          kind: Either "gate" or "score".
+          scope: "plan" or a branch artifact path such as "G-001/T-002/A-003".
+          revision_uuid: The plan revision identifier the result was computed
+              on, or None.
+          green: True iff the result is green (no findings / passes threshold).
+          payload: The run's result data.
+
+      Raises:
+          VerdictError: If kind is not one of "gate" or "score".
+      """
+
+      kind: str
+      scope: str
+      revision_uuid: uuid.UUID | None
+      green: bool
+      payload: dict
+
+      def __post_init__(self) -> None:
+          if self.kind not in ("gate", "score"):
+              raise VerdictError(f"invalid Verdict kind: {self.kind}")
+
+
+  def current_head_revision(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> uuid.UUID | None:
+      """Look up the current head revision of a plan.
+
+      Args:
+          conn: Open psycopg 3 connection.
+          plan_uuid: UUID identity of the plan row to look up.
+
+      Returns:
+          The value of plan.head_revision_uuid for the row where
+          plan.uuid = plan_uuid, which may be None.
+
+      Raises:
+          VerdictError: If no row in table plan has uuid = plan_uuid. The
+              error message names the plan_uuid.
+      """
+      with conn.cursor() as cur:
+          cur.execute("SELECT head_revision_uuid FROM plan WHERE uuid = %s", (plan_uuid,))
+          row = cur.fetchone()
+      if row is None:
+          raise VerdictError(f"no plan with uuid: {plan_uuid}")
+      return row[0]
+
+  Change to make: append the following function to the end of the file,
+  separated from the last line of the current content (`return row[0]`) by
+  exactly two blank lines:
+
+  def is_fresh(verdict: Verdict, current_revision_uuid: uuid.UUID | None) -> bool:
+      """Decide whether a Verdict is fresh against a current revision.
+
+      Args:
+          verdict: The Verdict to check.
+          current_revision_uuid: The current revision identifier of the
+              measured state, as returned by current_head_revision.
+
+      Returns:
+          True iff verdict.revision_uuid == current_revision_uuid (strict
+          equality). Freshness is never decided by timestamps.
+      """
+      return verdict.revision_uuid == current_revision_uuid
+
+  Imports required: none beyond what the file already has (`Verdict` and
+  `uuid` are already available earlier in the same file).
+
+  Exact signature:
+  `def is_fresh(verdict: Verdict, current_revision_uuid: uuid.UUID | None) -> bool:`
+
+  Docstring text: use exactly the docstring shown above.
+
+  Constraints:
+  - The function body is exactly one statement:
+    `return verdict.revision_uuid == current_revision_uuid`.
+  - Equality is strict Python `==` comparison between `uuid.UUID` values (or
+    `None`); no normalization, no string conversion, no tolerance window.
+  - No clock, timestamp, or duration is read or compared anywhere in this
+    function.
+  - Do not add any other function or class in this AS.
+  - Everything above `def is_fresh` in the file must remain byte-identical
+    to the post-prior-AS state shown above.
+
+  MRS excerpt (concepts relevant to this AS):
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope
+      it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never
+      by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+  - concept_id: C-018
+    name: VersionStore
+    definition: Git-like append-only version model of node versions,
+      revisions, and refs inside the database.
+    properties:
+    - any intermediate plan state is addressable by revision id
+    source_labels: ["{q2r9}", "{d5i9}", "{e2b8}"]
+  Relevant relation: { from_concept: C-020, to_concept: C-018, type: depends_on }
+verification:
+  type: static_analysis
+  target: plan_manager.verify.verdict.is_fresh
+  expected: is_fresh returns True exactly when verdict.revision_uuid is
+    equal to current_revision_uuid under Python == comparison (including
+    both being None), and False otherwise; no code path in is_fresh
+    inspects any timestamp, clock, or duration value.
+status: draft

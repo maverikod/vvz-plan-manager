@@ -1,0 +1,142 @@
+step_id: A-009
+parent_tactical_step: T-006
+name: score-refused-error
+target_file: plan_manager/scoring/index.py
+operation: modify_file
+priority: 2
+depends_on: [A-008]
+concepts: [C-013, C-036, C-012, C-020, C-008]
+prompt: |
+  Modify the existing file plan_manager/scoring/index.py. Do not create,
+  read, or modify any other file.
+
+  The file currently contains exactly this content (state after all
+  lower-priority AS in this TS have been applied):
+
+  ```python
+  """SemanticIndex (C-013) scoring: branch and plan-level ensemble measurement.
+
+  Implements the normative fold and refusal discipline of NormativeAlgorithmSet
+  (C-036). Results are returned to the caller and never stored.
+  """
+
+  from __future__ import annotations
+
+  import dataclasses
+
+
+  @dataclasses.dataclass
+  class ScoringConfig:
+      """Published-default configuration consumed by the SemanticIndex fold.
+
+      Attributes:
+          threshold: branch/plan index threshold, published default 85.0.
+          aggregation: plan-level aggregation mode, "minimum" or
+              "fraction_above_threshold". Published default "minimum".
+          concept_weight: per-concept weight applied to required concepts in
+              embedding_estimator. Published default 1.0.
+          trust_floor: declared trust floor used when the embedding service
+              is unavailable. Published default 0.2.
+          embedding_url: the embedding service base URL, or None when the
+              embedding service is not configured.
+
+      Raises:
+          ValueError: raised by __post_init__ when aggregation is not
+              "minimum" or "fraction_above_threshold".
+      """
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weight: float = 1.0
+      trust_floor: float = 0.2
+      embedding_url: str | None = None
+
+      def __post_init__(self) -> None:
+          if self.aggregation not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(
+                  "aggregation must be 'minimum' or 'fraction_above_threshold', "
+                  f"got {self.aggregation!r}"
+              )
+  ```
+
+  Required change: append this new exception class at the end of the file
+  (after ScoringConfig, separated by exactly two blank lines). Do not
+  change anything above it.
+
+  ```python
+  class ScoreRefusedError(Exception):
+      """Raised when a branch or plan scope's mechanical gate is not green.
+
+      A scope whose gate is not green at the current revision is never
+      measured (C-012 precedes C-013): score_branch and score_plan raise
+      this error instead of computing an index.
+      """
+  ```
+
+  Constraints (all binding, none optional):
+  - The class is declared exactly as `class ScoreRefusedError(Exception):`
+    with the docstring shown as its entire body (no `pass`, no
+    `__init__` override, no additional methods or attributes).
+  - Do not add any import.
+  - No other function, class, or import may be added by this AS beyond
+    the one exception class shown.
+
+  MRS excerpt (only the concepts and relations relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-012
+    name: MechanicalGate
+    definition: Deterministic binary verification layer catching every mechanical defect before semantics.
+    properties:
+    - fixed check order parse, identity, uniqueness, references, coverage
+    - byte-identical reports for the same tree state; fail-fast only at group boundary
+    - per-branch gating; precondition for any semantic measurement
+    - parser sanity gates make parsing regressions fail loudly instead of passing silently
+    source_labels: ["{m9x4}", "{x8m3}", "{s2z9}", "{j5k7}", "{c6f9}", "{z2b5}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-012, type: depends_on }
+  - { from_concept: C-013, to_concept: C-020, type: produces }
+  - { from_concept: C-012, to_concept: C-020, type: produces }
+  ```
+verification:
+  type: manual
+  target: plan_manager/scoring/index.py::ScoreRefusedError
+  expected: >
+    ScoreRefusedError is a subclass of Exception; raising
+    ScoreRefusedError("G-001/T-002/A-003 refused: mechanical gate not
+    green (2 findings)") and catching it with `except ScoreRefusedError as
+    exc` exposes str(exc) equal to that message.
+status: draft

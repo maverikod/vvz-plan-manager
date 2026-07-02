@@ -1,0 +1,83 @@
+step_id: T-006
+parent_global_step: G-003
+name: semantic-index
+description: >
+  Create the SemanticIndex (C-013), the normalized 0..100 completeness measure
+  of one branch (C-008), implementing its normative algorithm (C-036). The
+  branch's required concept vector c_required maps the HRS slice through source
+  labels onto the MRS concept basis (C-003) with per-concept weights as
+  configuration with published defaults; the actual concept vector c_actual is
+  what the branch expresses across its global, tactical, and atomic steps; the
+  core measure is the cosine between the two vectors computed in the concept
+  basis, never between raw texts. The instrument is an ensemble of weak
+  independent estimators: deterministic concept coverage of the slice,
+  deterministic reference resolution, the embedding cosine obtained through the
+  embedding integration (C-022), and the executor-simulation detector (C-015).
+  Votes combine through a transparent weighted fold with published default
+  weights; estimators sharing the same physics share one down-weighted vote; an
+  abstaining estimator is excluded and the remaining weights are renormalized.
+  Scoring runs only on a scope whose mechanical gate (C-012) verdict (C-020) is
+  green at the current revision: the index checks gate freshness by revision
+  comparison and re-runs the gate or refuses rather than measure a scope with a
+  stale or non-green gate verdict. The trust value (C-014) accompanies every
+  score; on embedding unavailability the index returns the deterministic
+  estimators plus the explicit low-trust verdict instead of failing. Plan-level
+  aggregation is conservative: the default is the minimum branch index, with
+  fraction-above-threshold as the configurable alternative against the
+  published threshold. Output discipline: normally one number and a color per
+  plan with the few weakest branches ranked; the internal estimator vector and
+  the trust value surface only for a branch below threshold or on explicit
+  request. Results are returned to the caller bound to the measured revision
+  and are never stored.
+concepts: [C-013, C-036, C-008, C-003, C-022, C-015, C-014, C-012, C-020]
+inputs:
+- name: scored_branch
+  type: derived view
+  description: >
+    The branch (C-008) to score, with its HRS slice, steps, and declared
+    concepts.
+- name: gate_verdict_state
+  type: ephemeral result binding
+  description: >
+    The mechanical gate (C-012) verdict (C-020) for the scored scope and the
+    current plan revision it is compared against for freshness.
+- name: scoring_configuration
+  type: configuration data
+  description: >
+    Published defaults consumed by the fold: threshold 85, minimum aggregation,
+    uniform per-concept weights, definition-only concept serialization, the
+    shared embedding vote, and the trust floor.
+outputs:
+- name: branch_score
+  type: computed measure
+  description: >
+    The 0..100 branch index with its color, estimator vector, trust value, and
+    the revision it was computed on; internals surface only below threshold or
+    on explicit request.
+- name: plan_score
+  type: computed measure
+  description: >
+    The conservative plan aggregation — minimum branch index by default,
+    fraction-above-threshold as the configured alternative — with the weakest
+    branches ranked; published only when the entire plan is gate-green.
+- name: score_refusal
+  type: typed condition
+  description: >
+    The explicit refusal returned when the scope's gate verdict is stale or not
+    green at the current revision.
+atomic_steps:
+- A-001-load-concept-rows
+- A-002-required-concepts
+- A-003-declared-concepts
+- A-004-coverage-estimator
+- A-005-reference-estimator
+- A-006-branch-text
+- A-007-embedding-estimator
+- A-008-scoring-config
+- A-009-score-refused-error
+- A-010-branch-score
+- A-011-score-branch
+- A-012-plan-score
+- A-013-score-plan
+- A-014-branch-summary
+status: draft

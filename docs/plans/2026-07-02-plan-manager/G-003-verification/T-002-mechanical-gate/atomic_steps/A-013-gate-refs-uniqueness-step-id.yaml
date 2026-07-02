@@ -1,0 +1,136 @@
+step_id: A-013
+parent_tactical_step: T-002
+name: Create gate_refs.py with uniqueness.step_id check
+target_file: plan_manager/verify/gate_refs.py
+operation: create_file
+priority: 1
+depends_on: [A-001, A-002]
+concepts: [C-012, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_refs.py
+  Operation: create_file
+
+  Create a new Python module at the exact path plan_manager/verify/gate_refs.py.
+  The file does not exist yet; write exactly the content specified below and
+  nothing else.
+
+  This module holds the uniqueness and reference-resolution check groups of
+  the MechanicalGate. MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  This AS writes exactly this file content (module docstring, three imports,
+  one function — nothing else):
+
+  ```python
+  """Uniqueness and reference-resolution check groups for the mechanical gate (C-012)."""
+
+  from plan_manager.domain.step import Step
+  from plan_manager.verify.finding import Finding
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of
+
+
+  def check_uniqueness_step_id(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "uniqueness.step_id".
+
+      Within ``steps``, no two steps may share the triple
+      (step.parent_step_uuid, step.level, step.step_id) — parent_step_uuid is
+      compared NULL-safely (two None values are treated as equal for this
+      grouping). Group ``steps`` by this triple; for every group with more
+      than one member, every member of that group produces one Finding with
+      check_id "uniqueness.step_id", severity "error", artifact_path
+      artifact_path_of(tree.steps, step), and a message naming the duplicated
+      step_id.
+      """
+      findings: list[Finding] = []
+      seen: dict[tuple, list[Step]] = {}
+      for step in steps:
+          key = (step.parent_step_uuid, step.level, step.step_id)
+          seen.setdefault(key, []).append(step)
+      for group in seen.values():
+          if len(group) > 1:
+              for step in group:
+                  path = artifact_path_of(tree.steps, step)
+                  findings.append(
+                      Finding(
+                          "uniqueness.step_id",
+                          "error",
+                          path,
+                          f"step_id '{step.step_id}' is not unique within its scope",
+                      )
+                  )
+      return findings
+  ```
+
+  The imported Step, Finding, GateTree, artifact_path_of are existing sibling
+  entities; import them, do not redefine them. Exact signatures, for
+  reference only:
+
+  ```python
+  # module plan_manager/domain/step.py
+  @dataclass
+  class Step:
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      parent_step_uuid: uuid.UUID | None
+      level: int
+      step_id: str
+      slug: str
+      fields: dict
+      depends_on: list[str]
+      concepts: list[str]
+      status: str
+
+  # module plan_manager/verify/finding.py
+  @dataclass(frozen=True)
+  class Finding:
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  # module plan_manager/verify/gate_data.py
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str: ...
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+  ```
+
+  Note on scope: ``steps`` is whatever the caller passed to this check (the
+  whole-plan list or the three-element branch list); the uniqueness triple
+  intentionally omits plan_uuid because every step in one GateTree already
+  belongs to the same plan.
+
+  Constraints:
+  - The written file must contain nothing beyond the module docstring, the
+    three imports, and the check_uniqueness_step_id function exactly as shown
+    above.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_refs.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_refs.check_uniqueness_step_id
+  expected: >
+    The module imports without error. Given two Step objects that share the
+    same parent_step_uuid, level, and step_id, check_uniqueness_step_id
+    returns a list with one Finding with check_id "uniqueness.step_id" per
+    duplicate step; given steps with distinct (parent_step_uuid, level,
+    step_id) triples it returns an empty list.
+status: draft

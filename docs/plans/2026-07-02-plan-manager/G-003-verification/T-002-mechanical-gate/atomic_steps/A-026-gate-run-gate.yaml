@@ -1,0 +1,490 @@
+step_id: A-026
+parent_tactical_step: T-002
+name: Add run_gate orchestrator function to gate.py
+target_file: plan_manager/verify/gate.py
+operation: modify_file
+priority: 6
+depends_on: [A-025]
+concepts: [C-012, C-036, C-020, C-017, C-008]
+prompt: |
+  Target file: plan_manager/verify/gate.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-036 NormativeAlgorithmSet — The binding algorithm specifications that
+    lower levels refine into code without semantic deviation. Properties:
+    deviations escalate to the HRS; open parameters have named defaults and
+    are configuration.
+  - C-020 Verdict — Gate or score result bound to the exact revision and
+    scope it was computed for. Properties: fresh iff recorded revision
+    equals current revision; comparison never by timestamp.
+  - C-017 Finding — Ephemeral result unit of gate and scoring runs with
+    check id, severity, artifact path, and message. Properties: aggregated
+    into reports; never stored as a plan artifact.
+  - C-008 Branch — Addressable derived view of one path HRS-slice -> GS -> TS
+    -> AS; the unit of verification and prompt assembly. Properties: never
+    materialized as a stored artifact; a mechanically clean branch is
+    measurable while siblings are broken.
+
+  The current full content of plan_manager/verify/gate.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Mechanical gate orchestrator (C-012): fixed check-group order, byte-identical reports."""
+
+  import uuid
+
+  import psycopg
+
+  from plan_manager.verify.finding import Finding
+  from plan_manager.views.coverage import (
+      concept_coverage,
+      gs_coverage,
+      label_coverage,
+      relation_coverage,
+  )
+
+  GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage"]
+
+  CHECK_IDS: dict[str, list[str]] = {
+      "parse": [
+          "parse.required_fields",
+          "parse.inputs_outputs",
+          "parse.target_file",
+          "parse.sanity_counts",
+      ],
+      "identity": [
+          "identity.step_id",
+          "identity.slug",
+          "identity.concept_id",
+          "identity.label",
+      ],
+      "uniqueness": [
+          "uniqueness.step_id",
+          "uniqueness.concept_id",
+          "uniqueness.label",
+          "uniqueness.priority",
+      ],
+      "references": [
+          "references.depends_on",
+          "references.concepts",
+          "references.relations",
+          "references.source_labels",
+      ],
+      "coverage": [
+          "coverage.concepts",
+          "coverage.gs",
+          "coverage.labels",
+          "coverage.relations",
+      ],
+  }
+
+
+  def check_coverage_concepts(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.concepts": plan-wide concept coverage.
+
+      Calls concept_coverage(conn, plan_uuid) to get a CoverageReport(missing,
+      extra). Every entry of report.missing produces one Finding with
+      check_id "coverage.concepts", severity "error", artifact_path "plan",
+      and a message naming the missing concept and stating it is missing.
+      Every entry of report.extra produces one Finding with the same
+      check_id and artifact_path "plan", naming the extra concept and
+      stating it is extra.
+      """
+      findings: list[Finding] = []
+      report = concept_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{extra}' extra")
+          )
+      return findings
+
+
+  def check_coverage_gs(
+      conn: psycopg.Connection, plan_uuid: uuid.UUID, gs_step_id: str | None
+  ) -> list[Finding]:
+      """Check id "coverage.gs": per-global-step concept coverage.
+
+      Calls gs_coverage(conn, plan_uuid) to get a dict[str, CoverageReport]
+      keyed by GS step_id. When gs_step_id is None, every (step_id, report)
+      pair of the dict is processed (plan scope: every GS is checked). When
+      gs_step_id is not None, only the (gs_step_id, report) pair is
+      processed if gs_step_id is a key of the dict, otherwise nothing is
+      processed (branch scope: only the branch's own GS is checked). For
+      every processed (step_id, report) pair, every entry of report.missing
+      produces one Finding with check_id "coverage.gs", severity "error",
+      artifact_path equal to step_id (the GS step_id, not
+      artifact_path_of — a bare GS step_id is already its own artifact
+      path), and a message naming the missing concept. report.extra is
+      never used by this check: for coverage.gs only the missing list
+      exists (a GS is required to cover its concept set; extra concepts are
+      not a coverage.gs concern).
+      """
+      findings: list[Finding] = []
+      reports = gs_coverage(conn, plan_uuid)
+      if gs_step_id is None:
+          items = list(reports.items())
+      elif gs_step_id in reports:
+          items = [(gs_step_id, reports[gs_step_id])]
+      else:
+          items = []
+      for step_id, report in items:
+          for missing in report.missing:
+              findings.append(
+                  Finding("coverage.gs", "error", step_id, f"concept '{missing}' missing")
+              )
+      return findings
+
+
+  def check_coverage_labels(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.labels": plan-wide paragraph label coverage.
+
+      Calls label_coverage(conn, plan_uuid) to get a CoverageReport(missing,
+      extra). Every entry of report.missing produces one Finding with
+      check_id "coverage.labels", severity "error", artifact_path "plan",
+      and a message naming the missing label and stating it is missing.
+      Every entry of report.extra produces one Finding with the same
+      check_id and artifact_path "plan", naming the extra label and stating
+      it is extra.
+      """
+      findings: list[Finding] = []
+      report = label_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.labels", "error", "plan", f"label '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.labels", "error", "plan", f"label '{extra}' extra")
+          )
+      return findings
+
+
+  def check_coverage_relations(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.relations": plan-wide relation coverage.
+
+      Calls relation_coverage(conn, plan_uuid) to get a
+      CoverageReport(missing, extra). Every entry of report.missing produces
+      one Finding with check_id "coverage.relations", severity "error",
+      artifact_path "plan", and a message naming the missing relation and
+      stating it is missing. Every entry of report.extra produces one
+      Finding with the same check_id and artifact_path "plan", naming the
+      extra relation and stating it is extra.
+      """
+      findings: list[Finding] = []
+      report = relation_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.relations", "error", "plan", f"relation '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.relations", "error", "plan", f"relation '{extra}' extra")
+          )
+      return findings
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Replace the whole import block (everything from `import uuid` through
+     the closing `)` of the coverage import, i.e. every line before the
+     blank line preceding `GROUP_ORDER = ...`) with the following expanded
+     import block:
+
+  ```python
+  import uuid
+
+  import psycopg
+
+  from plan_manager.verify.finding import Finding, Report, build_report, render_json
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of, load_tree, scope_steps
+  from plan_manager.verify.gate_refs import (
+      check_references_concepts,
+      check_references_depends_on,
+      check_references_relations,
+      check_references_source_labels,
+      check_uniqueness_concept_id,
+      check_uniqueness_label,
+      check_uniqueness_priority,
+      check_uniqueness_step_id,
+  )
+  from plan_manager.verify.gate_structure import (
+      check_identity_concept_id,
+      check_identity_label,
+      check_identity_slug,
+      check_identity_step_id,
+      check_parse_inputs_outputs,
+      check_parse_required_fields,
+      check_parse_sanity_counts,
+      check_parse_target_file,
+  )
+  from plan_manager.verify.verdict import Verdict, current_head_revision
+  from plan_manager.views.branch import Branch
+  from plan_manager.views.coverage import (
+      concept_coverage,
+      gs_coverage,
+      label_coverage,
+      relation_coverage,
+  )
+  ```
+
+     After this change, GROUP_ORDER, CHECK_IDS, and all five existing
+     functions (check_coverage_concepts, check_coverage_gs,
+     check_coverage_labels, check_coverage_relations) remain byte-identical
+     to their current content; only the import block above them changes.
+
+  2. Append the following function at the end of the file, separated from
+     check_coverage_relations by two blank lines:
+
+  ```python
+  def run_gate(
+      conn: psycopg.Connection,
+      plan_uuid: uuid.UUID,
+      branch: Branch | None = None,
+      fail_fast: bool = False,
+  ) -> tuple[Report, Verdict]:
+      """Run the mechanical gate (C-012) over ``plan_uuid``, implementing the
+      normative algorithm (C-036) exactly.
+
+      Loads the tree once via load_tree(conn, plan_uuid), then computes
+      steps = scope_steps(tree, branch). Iterates GROUP_ORDER in order; for
+      each group, runs every check function belonging to that group (listed
+      below) passing (tree, steps), or (tree, steps, branch) for
+      parse.sanity_counts, and passing (conn, plan_uuid, ...) for the
+      coverage group as described next. Collects every group's findings and
+      always extends run_check_ids with CHECK_IDS[group] regardless of
+      whether every check in the group was actually executed (this matters
+      for the coverage group in branch scope, see below).
+
+      Group to check-function mapping (fixed order within each group,
+      matching CHECK_IDS):
+      - parse: check_parse_required_fields, check_parse_inputs_outputs,
+        check_parse_target_file, check_parse_sanity_counts(tree, steps,
+        branch).
+      - identity: check_identity_step_id, check_identity_slug,
+        check_identity_concept_id, check_identity_label.
+      - uniqueness: check_uniqueness_step_id, check_uniqueness_concept_id,
+        check_uniqueness_label, check_uniqueness_priority.
+      - references: check_references_depends_on, check_references_concepts,
+        check_references_relations, check_references_source_labels.
+      - coverage: when branch is None, runs check_coverage_concepts(conn,
+        plan_uuid), check_coverage_gs(conn, plan_uuid, None),
+        check_coverage_labels(conn, plan_uuid), check_coverage_relations(conn,
+        plan_uuid) — all four coverage checks execute in plan scope. When
+        branch is not None, runs only check_coverage_gs(conn, plan_uuid,
+        branch.gs.step_id); the other three coverage check ids
+        ("coverage.concepts", "coverage.labels", "coverage.relations") are
+        still appended to run_check_ids (via CHECK_IDS["coverage"]) but no
+        finding is ever produced for them in branch scope, so build_report
+        reports them as passed with an empty finding list — this is exactly
+        the required behaviour: those three checks are plan-wide set
+        equalities, not branch properties, so in branch scope they are
+        included in the report as passed without being computed.
+
+      fail_fast behaviour: after processing a group (always processing the
+      whole group — every check in it — never stopping mid-group), if
+      fail_fast is True and that group produced at least one finding, the
+      loop stops; groups after that one are not processed at all and their
+      check ids are excluded from run_check_ids (and therefore from the
+      report). This is fail-fast only at the group boundary: partial output
+      stays deterministic because a whole group is always either fully run
+      or not run at all.
+
+      After the loop: findings are sorted by (artifact_path, check_id) —
+      this is the fixed published sort order (occurrences are always
+      classified by artifact path, never by bare step number). A Report is
+      built via build_report(run_check_ids, findings_sorted); two runs over
+      the same tree state produce byte-identical run_check_ids and
+      byte-identical sorted findings, hence byte-identical
+      render_json(report) output.
+
+      The returned Verdict has kind="gate"; scope is "plan" when branch is
+      None, otherwise artifact_path_of(tree.steps, branch.atomic) (the
+      atomic step's own artifact path, per the C-020 rule that a verdict is
+      bound to the exact scope it was computed for); revision_uuid is
+      current_head_revision(conn, plan_uuid); green is report.green; payload
+      is {"json": render_json(report)}. This function reads plan data only
+      and stores nothing.
+      """
+      tree = load_tree(conn, plan_uuid)
+      steps = scope_steps(tree, branch)
+      run_check_ids: list[str] = []
+      findings: list[Finding] = []
+      for group in GROUP_ORDER:
+          group_check_ids = CHECK_IDS[group]
+          group_findings: list[Finding] = []
+          if group == "parse":
+              group_findings.extend(check_parse_required_fields(tree, steps))
+              group_findings.extend(check_parse_inputs_outputs(tree, steps))
+              group_findings.extend(check_parse_target_file(tree, steps))
+              group_findings.extend(check_parse_sanity_counts(tree, steps, branch))
+          elif group == "identity":
+              group_findings.extend(check_identity_step_id(tree, steps))
+              group_findings.extend(check_identity_slug(tree, steps))
+              group_findings.extend(check_identity_concept_id(tree, steps))
+              group_findings.extend(check_identity_label(tree, steps))
+          elif group == "uniqueness":
+              group_findings.extend(check_uniqueness_step_id(tree, steps))
+              group_findings.extend(check_uniqueness_concept_id(tree, steps))
+              group_findings.extend(check_uniqueness_label(tree, steps))
+              group_findings.extend(check_uniqueness_priority(tree, steps))
+          elif group == "references":
+              group_findings.extend(check_references_depends_on(tree, steps))
+              group_findings.extend(check_references_concepts(tree, steps))
+              group_findings.extend(check_references_relations(tree, steps))
+              group_findings.extend(check_references_source_labels(tree, steps))
+          elif group == "coverage":
+              if branch is None:
+                  group_findings.extend(check_coverage_concepts(conn, plan_uuid))
+                  group_findings.extend(check_coverage_gs(conn, plan_uuid, None))
+                  group_findings.extend(check_coverage_labels(conn, plan_uuid))
+                  group_findings.extend(check_coverage_relations(conn, plan_uuid))
+              else:
+                  group_findings.extend(
+                      check_coverage_gs(conn, plan_uuid, branch.gs.step_id)
+                  )
+          run_check_ids.extend(group_check_ids)
+          findings.extend(group_findings)
+          if fail_fast and group_findings:
+              break
+      findings_sorted = sorted(findings, key=lambda f: (f.artifact_path, f.check_id))
+      report = build_report(run_check_ids, findings_sorted)
+      scope_label = "plan" if branch is None else artifact_path_of(tree.steps, branch.atomic)
+      verdict = Verdict(
+          kind="gate",
+          scope=scope_label,
+          revision_uuid=current_head_revision(conn, plan_uuid),
+          green=report.green,
+          payload={"json": render_json(report)},
+      )
+      return report, verdict
+  ```
+
+  The newly imported entities are existing sibling entities; import them, do
+  not redefine them. Exact signatures, for reference only:
+
+  ```python
+  # module plan_manager/verify/finding.py
+  SEVERITIES = frozenset({"error", "warning"})
+
+  @dataclass(frozen=True)
+  class Finding:
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  def build_report(check_ids: list[str], findings: list[Finding]) -> Report: ...
+
+  @dataclass
+  class Report:
+      checks: list[CheckResult]
+      green: bool
+
+  def render_text(report: Report) -> str: ...
+  def render_json(report: Report) -> str: ...
+
+  # module plan_manager/verify/gate_data.py
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str: ...
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+
+  def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree: ...
+  def scope_steps(tree: GateTree, branch: Branch | None) -> list[Step]: ...
+
+  # module plan_manager/verify/verdict.py
+  @dataclass(frozen=True)
+  class Verdict:
+      kind: str
+      scope: str
+      revision_uuid: uuid.UUID | None
+      green: bool
+      payload: dict
+
+  def current_head_revision(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> uuid.UUID | None: ...
+
+  # module plan_manager/views/branch.py
+  @dataclass
+  class Branch:
+      plan_uuid: uuid.UUID
+      gs: Step
+      ts: Step
+      atomic: Step
+      hrs_slice: list[Paragraph]
+
+  # module plan_manager/verify/gate_refs.py (all eight already exist from
+  # earlier AS in this TS)
+  def check_uniqueness_step_id(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_uniqueness_concept_id(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_uniqueness_label(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_uniqueness_priority(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_references_depends_on(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_references_concepts(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_references_relations(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_references_source_labels(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+
+  # module plan_manager/verify/gate_structure.py (all eight already exist
+  # from earlier AS in this TS)
+  def check_parse_required_fields(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_parse_inputs_outputs(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_parse_target_file(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_parse_sanity_counts(tree: GateTree, steps: list[Step], branch: Branch | None) -> list[Finding]: ...
+  def check_identity_step_id(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_identity_slug(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_identity_concept_id(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  def check_identity_label(tree: GateTree, steps: list[Step]) -> list[Finding]: ...
+  ```
+
+  build_report(check_ids, findings) is assumed (per its sibling contract) to
+  compute, for every check_id in check_ids, whether that check passed
+  (no Finding in ``findings`` has that check_id) or failed (at least one
+  Finding has that check_id), and report.green is True iff every check
+  passed; this function relies on that contract and performs no additional
+  pass/fail computation itself.
+
+  Constraints:
+  - Do not change GROUP_ORDER, CHECK_IDS, check_coverage_concepts,
+    check_coverage_gs, check_coverage_labels, or check_coverage_relations.
+  - Do not add any other function, class, or import beyond the import block
+    and the run_gate function shown above.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate.py.
+  - This function must not write to the database and must not emit DDL; it
+    only calls conn-consuming functions that are themselves read-only.
+verification:
+  type: manual
+  target: plan_manager.verify.gate.run_gate
+  expected: >
+    Given a conn and plan_uuid for a plan with no mechanical defects,
+    run_gate(conn, plan_uuid) returns (report, verdict) where report.green is
+    True, report's check list covers every id in the concatenation of
+    CHECK_IDS[g] for g in GROUP_ORDER, and verdict.kind == "gate", verdict.
+    scope == "plan", verdict.green == report.green, verdict.payload["json"]
+    == render_json(report). Given fail_fast=True and a plan whose "parse"
+    group produces a finding, the returned report's check list only covers
+    the "parse" group's four check ids (identity, uniqueness, references,
+    coverage are excluded). Given a non-None branch, verdict.scope equals
+    artifact_path_of(tree.steps, branch.atomic) and the report's coverage
+    group contains findings only for "coverage.gs" restricted to
+    branch.gs.step_id, with "coverage.concepts", "coverage.labels", and
+    "coverage.relations" present in the check list as passed with no
+    findings. Calling run_gate twice against the same unchanged tree state
+    produces two Report objects whose render_json output is byte-identical.
+status: draft

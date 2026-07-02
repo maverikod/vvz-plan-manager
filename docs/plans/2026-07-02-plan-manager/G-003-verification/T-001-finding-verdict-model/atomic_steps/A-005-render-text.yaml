@@ -1,0 +1,186 @@
+step_id: A-005
+parent_tactical_step: T-001
+name: render-text
+target_file: plan_manager/verify/finding.py
+operation: modify_file
+priority: 5
+depends_on: [A-001, A-003]
+concepts: [C-017]
+prompt: |
+  Modify the existing file plan_manager/verify/finding.py.
+
+  Operation: modify_file at path plan_manager/verify/finding.py.
+
+  The file currently contains exactly this content (post-prior-AS state,
+  after all lower-priority atomic steps on this file have been applied):
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+
+  def sort_findings(findings: list[Finding]) -> list[Finding]:
+      """Return findings sorted into the total deterministic order.
+
+      Sort key is the tuple (artifact_path, check_id, message).
+
+      Args:
+          findings: Findings to sort. Not mutated.
+
+      Returns:
+          A new list of the same Finding objects sorted ascending by
+          (artifact_path, check_id, message).
+      """
+      return sorted(findings, key=lambda f: (f.artifact_path, f.check_id, f.message))
+
+
+  @dataclass
+  class CheckResult:
+      """The outcome of one check within a report.
+
+      Attributes:
+          check_id: Identifier of the check.
+          passed: True iff no finding exists for this check_id.
+          findings: Findings for this check_id, in sort_findings order.
+      """
+
+      check_id: str
+      passed: bool
+      findings: list[Finding]
+
+
+  @dataclass
+  class Report:
+      """The aggregated outcome of a full gate or scoring run.
+
+      Attributes:
+          checks: One CheckResult per check_id, in the order the check_ids
+              were given to build_report.
+          green: True iff no finding exists across every CheckResult.
+      """
+
+      checks: list[CheckResult]
+      green: bool
+
+
+  def build_report(check_ids: list[str], findings: list[Finding]) -> Report:
+      """Build a Report with one CheckResult per check_id, in the given order.
+
+      Args:
+          check_ids: The ordered list of check identifiers to report on. The
+              output has exactly one CheckResult per entry, in this order.
+          findings: All findings produced by the run, in any order.
+
+      Returns:
+          A Report whose checks list has one CheckResult per entry of
+          check_ids (in that order); each CheckResult's findings are the
+          subset of `findings` whose check_id equals that CheckResult's
+          check_id, sorted via sort_findings; passed is True iff that subset
+          is empty; green is True iff `findings` is empty overall.
+
+      Raises:
+          ValueError: If any finding's check_id is not present in check_ids.
+              The error message names the unknown check_id.
+      """
+      known = set(check_ids)
+      for finding in findings:
+          if finding.check_id not in known:
+              raise ValueError(f"unknown check_id: {finding.check_id}")
+      checks: list[CheckResult] = []
+      for check_id in check_ids:
+          matched = sort_findings([f for f in findings if f.check_id == check_id])
+          checks.append(CheckResult(check_id=check_id, passed=len(matched) == 0, findings=matched))
+      return Report(checks=checks, green=len(findings) == 0)
+
+  Change to make: append the following function to the end of the file,
+  separated from the last line of the current content (the `return
+  Report(...)` line) by exactly two blank lines:
+
+  def render_text(report: Report) -> str:
+      """Render a Report as a per-check PASS/FAIL text report.
+
+      Args:
+          report: The Report to render.
+
+      Returns:
+          A string with one line per check: "<check_id>: PASS" if
+          check.passed else "<check_id>: FAIL", immediately followed by one
+          line per finding of that check in the format
+          "  <artifact_path> [<severity>] <message>", all lines joined with
+          "\n" with no trailing newline.
+      """
+      lines: list[str] = []
+      for check in report.checks:
+          status = "PASS" if check.passed else "FAIL"
+          lines.append(f"{check.check_id}: {status}")
+          for finding in check.findings:
+              lines.append(f"  {finding.artifact_path} [{finding.severity}] {finding.message}")
+      return "\n".join(lines)
+
+  Imports required: none beyond what the file already has (`Report` is
+  already defined earlier in the same file).
+
+  Exact signature: `def render_text(report: Report) -> str:`
+
+  Docstring text: use exactly the docstring shown above.
+
+  Constraints:
+  - Iterate `report.checks` in its existing list order (do not re-sort).
+  - For each CheckResult, emit exactly one header line
+    `f"{check.check_id}: {status}"` where `status` is the literal string
+    `"PASS"` when `check.passed` is true and `"FAIL"` otherwise.
+  - Immediately after each header line, for each Finding in that check's
+    `findings` (in its existing list order), emit exactly one line
+    `f"  {finding.artifact_path} [{finding.severity}] {finding.message}"`
+    — two literal leading spaces, then artifact_path, then a space, then
+    severity in square brackets, then a space, then message.
+  - Join all emitted lines with `"\n"`; the returned string has no trailing
+    newline.
+  - Do not add any other function, class, or import in this AS.
+  - Everything above `def render_text` in the file must remain
+    byte-identical to the post-prior-AS state shown above.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.verify.finding.render_text
+  expected: |-
+    For a Report with N checks, render_text returns a string whose
+    lines are, per check in report.checks order, one "<check_id>: PASS" or
+    "<check_id>: FAIL" header line followed by one
+    "  <artifact_path> [<severity>] <message>" line per finding of that
+    check in that check's findings order; all lines joined with a single
+    newline character and no trailing newline at the end of the string.
+status: draft

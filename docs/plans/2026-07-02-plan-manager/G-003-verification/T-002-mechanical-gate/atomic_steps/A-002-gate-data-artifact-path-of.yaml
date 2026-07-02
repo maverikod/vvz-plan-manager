@@ -1,0 +1,91 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Add artifact_path_of to gate_data.py
+target_file: plan_manager/verify/gate_data.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_data.py
+  Operation: modify_file
+
+  MRS excerpt (only the concept relevant to this AS):
+
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  The current full content of plan_manager/verify/gate_data.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Read-only tree loader and scoping helpers for the mechanical gate (C-012)."""
+
+  import uuid
+  from dataclasses import dataclass
+
+  from plan_manager.domain.step import Step
+
+
+  @dataclass
+  class GateTree:
+      steps: dict[uuid.UUID, Step]
+      concept_ids: list[str]
+      relations: list[tuple[str, str, str]]
+      labels: list[str]
+      counts: dict[str, int]
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Add one import line, placed immediately after the existing
+     `from plan_manager.domain.step import Step` line:
+     `from plan_manager.views.dependency_graph import parent_path`
+
+  2. Append the following function at the end of the file, separated from the
+     GateTree dataclass by two blank lines:
+
+  ```python
+  def artifact_path_of(nodes: dict[uuid.UUID, Step], step: Step) -> str:
+      """Return the artifact path of ``step`` within ``nodes``.
+
+      For level 4 and level 5 steps the path is
+      ``parent_path(nodes, step) + "/" + step.step_id``.
+      For level 3 steps the path is ``step.step_id`` (``parent_path`` returns
+      ``""`` for level 3).
+      """
+      if step.level == 3:
+          return step.step_id
+      prefix = parent_path(nodes, step)
+      return f"{prefix}/{step.step_id}"
+  ```
+
+  The imported `parent_path` is an existing sibling function; import it, do
+  not redefine it. Its exact signature, for reference only (module
+  plan_manager/views/dependency_graph.py):
+
+  ```python
+  def parent_path(nodes: dict[uuid.UUID, Step], step: Step) -> str: ...
+  ```
+  It returns "" for a level-3 step, "G-001" for a level-4 step whose parent
+  global step is G-001, and "G-001/T-002" for a level-5 step whose parent
+  tactical step is G-001/T-002.
+
+  Constraints:
+  - Do not change the GateTree dataclass body.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_data.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_data.artifact_path_of
+  expected: >
+    The module imports without error and exposes a callable
+    artifact_path_of(nodes, step) that returns step.step_id unchanged for a
+    level-3 step, and returns parent_path(nodes, step) + "/" + step.step_id
+    for level-4 and level-5 steps.
+status: draft

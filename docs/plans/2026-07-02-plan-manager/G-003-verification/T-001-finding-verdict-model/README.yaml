@@ -1,0 +1,47 @@
+step_id: T-001
+parent_global_step: G-003
+name: finding-verdict-model
+description: >
+  Create the two result entities of the verification mechanism: the Finding
+  (C-017) and the Verdict (C-020). A Finding is the ephemeral result unit of gate
+  and scoring runs carrying a check identifier, a severity, an artifact path, and
+  a message; findings are aggregated into reports with an overall verdict,
+  returned to the caller, and never stored as a plan artifact. The report
+  aggregation sorts findings by the pair (artifact path, check identifier) so
+  that the same finding set always renders identically, and renders both a
+  per-check PASS/FAIL text report with offending items and a machine-checkable
+  JSON form with an overall green flag that is green only when no finding
+  exists. A Verdict binds a gate or score result to the exact tree state it was
+  computed on: it records the plan revision identifier of the measured state
+  (C-018) and the measured scope, and it is fresh if and only if the recorded
+  revision equals the current revision of that state — freshness is decided by
+  revision comparison, never by timestamps. This step defines the two entities,
+  the sorting and rendering rules, and the freshness comparison; it does not
+  perform any gate check or scoring computation itself.
+concepts: [C-017, C-020, C-018]
+inputs:
+- name: finding_items
+  type: result units
+  description: >
+    Findings (C-017) produced by a gate or scoring run, each carrying check
+    identifier, severity, artifact path, and message.
+- name: measured_state_revision
+  type: version-store reference
+  description: >
+    The revision identifier (C-018) of the plan state a verdict is computed on,
+    and the current revision it is compared against for freshness.
+outputs:
+- name: finding_report
+  type: ephemeral aggregate
+  description: >
+    The deterministic aggregation of findings sorted by (artifact path, check
+    identifier), rendered as a per-check PASS/FAIL report and as a JSON form
+    with the overall green flag; returned to the caller, never stored.
+- name: verdict_record
+  type: ephemeral result binding
+  description: >
+    The Verdict (C-020) carrying the result, the recorded revision identifier,
+    and the scope, with the freshness predicate deciding staleness by revision
+    equality only.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009]
+status: draft

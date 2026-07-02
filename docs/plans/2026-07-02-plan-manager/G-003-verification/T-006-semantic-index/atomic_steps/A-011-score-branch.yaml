@@ -1,0 +1,477 @@
+step_id: A-011
+parent_tactical_step: T-006
+name: score-branch
+target_file: plan_manager/scoring/index.py
+operation: modify_file
+priority: 4
+depends_on: [A-010, A-001, A-002, A-003, A-004, A-005, A-007, A-009]
+concepts: [C-013, C-036, C-008, C-012, C-020, C-022, C-014, C-015, C-003]
+prompt: |
+  Modify the existing file plan_manager/scoring/index.py. Do not create,
+  read, or modify any other file.
+
+  The file currently contains exactly this content (state after all
+  lower-priority AS in this TS have been applied):
+
+  ```python
+  """SemanticIndex (C-013) scoring: branch and plan-level ensemble measurement.
+
+  Implements the normative fold and refusal discipline of NormativeAlgorithmSet
+  (C-036). Results are returned to the caller and never stored.
+  """
+
+  from __future__ import annotations
+
+  import dataclasses
+  import uuid
+
+
+  @dataclasses.dataclass
+  class ScoringConfig:
+      """Published-default configuration consumed by the SemanticIndex fold.
+
+      Attributes:
+          threshold: branch/plan index threshold, published default 85.0.
+          aggregation: plan-level aggregation mode, "minimum" or
+              "fraction_above_threshold". Published default "minimum".
+          concept_weight: per-concept weight applied to required concepts in
+              embedding_estimator. Published default 1.0.
+          trust_floor: declared trust floor used when the embedding service
+              is unavailable. Published default 0.2.
+          embedding_url: the embedding service base URL, or None when the
+              embedding service is not configured.
+
+      Raises:
+          ValueError: raised by __post_init__ when aggregation is not
+              "minimum" or "fraction_above_threshold".
+      """
+
+      threshold: float = 85.0
+      aggregation: str = "minimum"
+      concept_weight: float = 1.0
+      trust_floor: float = 0.2
+      embedding_url: str | None = None
+
+      def __post_init__(self) -> None:
+          if self.aggregation not in ("minimum", "fraction_above_threshold"):
+              raise ValueError(
+                  "aggregation must be 'minimum' or 'fraction_above_threshold', "
+                  f"got {self.aggregation!r}"
+              )
+
+
+  class ScoreRefusedError(Exception):
+      """Raised when a branch or plan scope's mechanical gate is not green.
+
+      A scope whose gate is not green at the current revision is never
+      measured (C-012 precedes C-013): score_branch and score_plan raise
+      this error instead of computing an index.
+      """
+
+
+  @dataclasses.dataclass
+  class BranchScore:
+      """The 0..100 completeness index of one branch (C-008) with its color.
+
+      Attributes:
+          branch_path: the branch's path, e.g. "G-001/T-002/A-003".
+          index: the 0..100 ensemble index.
+          color: "green" iff index >= threshold, else "red".
+          estimator_vector: mapping of estimator name to its vote value.
+          trust: the TrustEstimate (C-014) value accompanying this score.
+          revision_uuid: the plan revision the score was computed on.
+          below_threshold: True iff color == "red".
+      """
+
+      branch_path: str
+      index: float
+      color: str
+      estimator_vector: dict[str, float]
+      trust: float
+      revision_uuid: uuid.UUID | None
+      below_threshold: bool
+  ```
+
+  Required change 1: replace the import block
+  ```python
+  from __future__ import annotations
+
+  import dataclasses
+  import uuid
+  ```
+  with exactly:
+  ```python
+  from __future__ import annotations
+
+  import dataclasses
+  import uuid
+
+  from plan_manager.scoring.embedding import EmbeddingUnavailable
+  from plan_manager.scoring.estimators import (
+      coverage_estimator,
+      declared_concepts,
+      embedding_estimator,
+      load_concept_rows,
+      reference_estimator,
+      required_concepts,
+  )
+  from plan_manager.scoring.simulation import simulation_vote
+  from plan_manager.scoring.trust import compute_trust
+  from plan_manager.verify.gate import run_gate
+  from plan_manager.verify.verdict import current_head_revision
+  from plan_manager.views.branch import resolve_branch
+  ```
+  (eight new import statements in one alphabetically-ordered group, added
+  after the stdlib group; the six names imported from
+  plan_manager.scoring.estimators are listed alphabetically inside the
+  parenthesized import).
+
+  Required change 2: append this new function at the end of the file
+  (after BranchScore, separated by exactly two blank lines). Do not change
+  anything above it.
+
+  ```python
+  def score_branch(
+      conn,
+      plan_uuid,
+      gs_step_id: str,
+      ts_step_id: str,
+      as_step_id: str,
+      config: ScoringConfig,
+      model_output: str | None = None,
+  ) -> BranchScore:
+      """Compute the 0..100 SemanticIndex (C-013) score of one branch.
+
+      Runs the mechanical gate for this branch now (so its verdict revision
+      equals the current revision by construction); raises ScoreRefusedError
+      when the gate is not green. Otherwise folds the coverage, references,
+      embedding, and simulation estimators into a 0..100 index with the
+      shared-vote ensemble rule, computes trust, and returns the result
+      bound to the current plan revision.
+
+      Args:
+          conn: an open psycopg 3 database connection.
+          plan_uuid: the plan identity.
+          gs_step_id: the global step id, e.g. "G-001".
+          ts_step_id: the tactical step id, e.g. "T-002".
+          as_step_id: the atomic step id, e.g. "A-003".
+          config: the ScoringConfig published-default configuration.
+          model_output: the raw ExecutorSimulation model output for this
+              branch's atomic prompt, or None to abstain that estimator.
+
+      Returns:
+          The computed BranchScore.
+
+      Raises:
+          ScoreRefusedError: when the branch's mechanical gate is not green
+              at the current revision.
+      """
+      branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
+      branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
+
+      report, _verdict = run_gate(conn, plan_uuid, branch=branch)
+      if not report.green:
+          raise ScoreRefusedError(
+              f"{branch_path} refused: mechanical gate not green "
+              f"({sum(len(c.findings) for c in report.checks)} findings)"
+          )
+
+      concept_rows = load_concept_rows(conn, plan_uuid)
+      required = required_concepts(branch, concept_rows)
+      declared = declared_concepts(branch)
+
+      estimator_vector: dict[str, float] = {}
+      weights: dict[str, float] = {}
+
+      estimator_vector["coverage"] = coverage_estimator(required, declared)
+      weights["coverage"] = 1.0
+      estimator_vector["references"] = reference_estimator(conn, branch, concept_rows)
+      weights["references"] = 1.0
+
+      pair_values: dict[str, float] = {}
+
+      if config.embedding_url is not None:
+          try:
+              pair_values["embedding"] = embedding_estimator(
+                  conn,
+                  config.embedding_url,
+                  branch,
+                  concept_rows,
+                  required,
+                  config.concept_weight,
+              )
+          except EmbeddingUnavailable:
+              pass
+
+      sim_vote = simulation_vote(model_output, branch.atomic.fields.get("prompt", ""))
+      if sim_vote is not None:
+          pair_values["simulation"] = sim_vote
+
+      if pair_values:
+          pair_weight = 1.0 / len(pair_values)
+          for name, value in pair_values.items():
+              estimator_vector[name] = value
+              weights[name] = pair_weight
+
+      index = 100.0 * sum(
+          weights[name] * estimator_vector[name] for name in estimator_vector
+      ) / sum(weights.values())
+
+      color = "green" if index >= config.threshold else "red"
+      below_threshold = color == "red"
+
+      if "embedding" in pair_values:
+          trust_report = compute_trust(
+              conn,
+              config.embedding_url,
+              [definition for _, definition, _source_labels in concept_rows],
+              config.trust_floor,
+          )
+          trust = trust_report.trust
+      else:
+          trust = config.trust_floor
+
+      revision_uuid = current_head_revision(conn, plan_uuid)
+
+      return BranchScore(
+          branch_path=branch_path,
+          index=index,
+          color=color,
+          estimator_vector=estimator_vector,
+          trust=trust,
+          revision_uuid=revision_uuid,
+          below_threshold=below_threshold,
+      )
+  ```
+
+  Constraints (all binding, none optional):
+  - The signature is exactly
+    `def score_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str, as_step_id: str, config: ScoringConfig, model_output: str | None = None) -> BranchScore:`
+    (shown wrapped for readability — wrapping is permitted, names, order,
+    annotations, and the one default value must match exactly; `conn` and
+    `plan_uuid` are intentionally unannotated).
+  - Step 1: `branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)`,
+    using `plan_manager.views.branch.resolve_branch(conn, plan_uuid,
+    gs_step_id: str, ts_step_id: str, as_step_id: str) -> Branch`, where
+    `Branch` is `@dataclass Branch: plan_uuid: uuid.UUID, gs: Step,
+    ts: Step, atomic: Step, hrs_slice: list[Paragraph]`.
+  - `branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"` — an
+    f-string joining the three ids with `/`, e.g. `"G-001/T-002/A-003"`.
+  - Step 2: `report, _verdict = run_gate(conn, plan_uuid, branch=branch)`,
+    using `plan_manager.verify.gate.run_gate(conn, plan_uuid, branch:
+    Branch | None = None, fail_fast: bool = False) -> tuple[Report,
+    Verdict]`, called with the `branch=branch` keyword argument only (do
+    not pass `fail_fast`). `Report` has field `green: bool` and field
+    `findings` (the list of Finding (C-017) aggregated into the report).
+    `Verdict` is `@dataclass(frozen=True)` with `kind: str, scope: str,
+    revision_uuid: uuid.UUID | None, green: bool, payload: dict`. The
+    verdict is bound to `_verdict` (leading underscore: intentionally
+    unused by this function) because running the gate now, against this
+    exact branch, makes its verdict revision equal the current revision
+    by construction — freshness is never checked by a separate call here.
+  - Step 3: `if not report.green:` raise `ScoreRefusedError` with exactly
+    the message
+    `f"{branch_path} refused: mechanical gate not green ({sum(len(c.findings) for c in report.checks)} findings)"`.
+    A scope whose gate is not green at the current revision is never
+    measured.
+  - Step 4: `concept_rows = load_concept_rows(conn, plan_uuid)` (from
+    plan_manager.scoring.estimators, already imported).
+  - Step 5: `required = required_concepts(branch, concept_rows)` and
+    `declared = declared_concepts(branch)` (both from
+    plan_manager.scoring.estimators, already imported).
+  - Step 6 (deterministic estimators, always vote, weight 1.0 each):
+    set `estimator_vector["coverage"] = coverage_estimator(required, declared)`
+    and `weights["coverage"] = 1.0`; set
+    `estimator_vector["references"] = reference_estimator(conn, branch, concept_rows)`
+    and `weights["references"] = 1.0` (both estimator functions from
+    plan_manager.scoring.estimators, already imported).
+  - Step 7 (the two model-based estimators share one down-weighted
+    vote): build a local `pair_values: dict[str, float] = {}`.
+    - Embedding: only when `config.embedding_url is not None`, call
+      `embedding_estimator(conn, config.embedding_url, branch,
+      concept_rows, required, config.concept_weight)` inside a `try`
+      block and store the result at key `"embedding"` in `pair_values`;
+      on `plan_manager.scoring.embedding.EmbeddingUnavailable` (imported
+      as `EmbeddingUnavailable`), catch it with a bare `except
+      EmbeddingUnavailable: pass` and leave `"embedding"` absent from
+      `pair_values`. When `config.embedding_url is None`, do not call
+      `embedding_estimator` at all.
+    - Simulation: `sim_vote = simulation_vote(model_output,
+      branch.atomic.fields.get("prompt", ""))`, using
+      `plan_manager.scoring.simulation.simulation_vote(model_output: str
+      | None, prompt_text: str) -> float | None` (`None` means abstain).
+      When `sim_vote is not None`, store it at key `"simulation"` in
+      `pair_values`.
+    - After both: `if pair_values:` compute
+      `pair_weight = 1.0 / len(pair_values)`; for every `(name, value)`
+      in `pair_values.items()`, set `estimator_vector[name] = value` and
+      `weights[name] = pair_weight`. When `pair_values` is empty (both
+      absent), the pair contributes nothing — no keys are added to
+      `estimator_vector` or `weights`.
+  - Step 8: `index = 100.0 * sum(weights[name] * estimator_vector[name] for name in estimator_vector) / sum(weights.values())`
+    — summed over every key currently in `estimator_vector` (coverage and
+    references are always present; embedding and/or simulation are
+    present only per step 7).
+  - Step 9: `color = "green" if index >= config.threshold else "red"`;
+    `below_threshold = color == "red"`.
+  - Step 10 (trust): `if "embedding" in pair_values:` call
+    `trust_report = compute_trust(conn, config.embedding_url,
+    [definition for _, definition, _source_labels in concept_rows],
+    config.trust_floor)`, using
+    `plan_manager.scoring.trust.compute_trust(conn, base_url,
+    concept_definitions: list[str], trust_floor: float) -> TrustReport`,
+    where `TrustReport` is `@dataclass TrustReport: trust: float,
+    available: bool, pairwise_cosines: list[list[float]],
+    gram_determinant: float, spectrum: list[float]`; then
+    `trust = trust_report.trust`. Otherwise (embedding absent or
+    unavailable) `trust = config.trust_floor`.
+  - Step 11: `revision_uuid = current_head_revision(conn, plan_uuid)`,
+    using `plan_manager.verify.verdict.current_head_revision(conn,
+    plan_uuid) -> uuid.UUID | None`.
+  - Step 12: return `BranchScore(branch_path=branch_path, index=index,
+    color=color, estimator_vector=estimator_vector, trust=trust,
+    revision_uuid=revision_uuid, below_threshold=below_threshold)` using
+    the `BranchScore` class already defined earlier in this same file.
+  - Do not add any other function, class, or import beyond the eight
+    import statements and the one function shown. Do not add a `try`
+    block anywhere except the single one around the `embedding_estimator`
+    call, catching only `EmbeddingUnavailable`.
+
+  MRS excerpt (only the concepts and relations relevant to this AS):
+
+  ```yaml
+  - concept_id: C-013
+    name: SemanticIndex
+    definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
+    properties:
+    - runs only on scopes that passed the mechanical gate at the current revision
+    - ensemble of weak independent estimators; same-physics votes share weight
+    - one number and color for the human; internals surface only on miss
+    - plan aggregation defaults to minimum branch index
+    source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-036
+    name: NormativeAlgorithmSet
+    definition: The binding algorithm specifications that lower levels refine into code without semantic deviation.
+    properties:
+    - deviations escalate to the HRS; open parameters have named defaults and are configuration
+    source_labels: ["{w5e2}"]
+
+  - concept_id: C-008
+    name: Branch
+    definition: Addressable derived view of one path HRS-slice -> GS -> TS -> AS; the unit of verification and prompt assembly.
+    properties:
+    - never materialized as a stored artifact
+    - a mechanically clean branch is measurable while siblings are broken
+    source_labels: ["{c9a6}", "{f1w9}", "{r9f1}"]
+
+  - concept_id: C-012
+    name: MechanicalGate
+    definition: Deterministic binary verification layer catching every mechanical defect before semantics.
+    properties:
+    - fixed check order parse, identity, uniqueness, references, coverage
+    - byte-identical reports for the same tree state; fail-fast only at group boundary
+    - per-branch gating; precondition for any semantic measurement
+    - parser sanity gates make parsing regressions fail loudly instead of passing silently
+    source_labels: ["{m9x4}", "{x8m3}", "{s2z9}", "{j5k7}", "{c6f9}", "{z2b5}", "{f1w9}", "{h7u3}"]
+
+  - concept_id: C-020
+    name: Verdict
+    definition: Gate or score result bound to the exact revision and scope it was computed for.
+    properties:
+    - fresh iff recorded revision equals current revision; comparison never by timestamp
+    source_labels: ["{g3o6}", "{m7w3}"]
+
+  - concept_id: C-022
+    name: EmbeddingService
+    definition: Sole optional external integration providing text embeddings through a configured URL.
+    properties:
+    - unavailability degrades only semantic scoring, with explicit low trust
+    - vectors cached in the database keyed by content hash; no vector files
+    source_labels: ["{q1w8}", "{b8j5}", "{l4u8}"]
+
+  - concept_id: C-014
+    name: TrustEstimate
+    definition: Confidence in the semantic measurement itself derived from concept basis geometry and service liveness.
+    properties:
+    - Gram determinant, pairwise cosines, spectrum; monotone mapping is configuration
+    - drops to a declared floor when embeddings are unavailable
+    - distinguishes weak plan from unmeasurable plan
+    source_labels: ["{o3v8}", "{l2q6}"]
+
+  - concept_id: C-015
+    name: ExecutorSimulation
+    definition: Detector estimator asking a cheap model the closed question of undefined entities in a prompt.
+    properties:
+    - output filtered deterministically against prompt text
+    - can only raise suspicion, never mark green
+    source_labels: ["{i7h2}", "{o7d4}"]
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition, properties, and source labels.
+    properties:
+    - identifier pattern C-NNN, unique within plan
+    - selected to be as orthogonal as possible; basis quality is measured
+    - embedding serialization default is the definition field only
+    source_labels: ["{f6s2}", "{k7r9}", "{j8b2}"]
+
+  relations:
+  - { from_concept: C-013, to_concept: C-008, type: consumes }
+  - { from_concept: C-013, to_concept: C-012, type: depends_on }
+  - { from_concept: C-013, to_concept: C-022, type: uses }
+  - { from_concept: C-013, to_concept: C-014, type: uses }
+  - { from_concept: C-013, to_concept: C-015, type: uses }
+  - { from_concept: C-013, to_concept: C-020, type: produces }
+  - { from_concept: C-013, to_concept: C-036, type: implements }
+  - { from_concept: C-014, to_concept: C-022, type: uses }
+  - { from_concept: C-015, to_concept: C-011, type: consumes }
+  - { from_concept: C-020, to_concept: C-017, type: owns }
+  ```
+
+  Sibling contract quoted verbatim (import and reuse; do not reimplement):
+  `plan_manager/views/branch.py: @dataclass Branch: plan_uuid: uuid.UUID,
+  gs: Step, ts: Step, atomic: Step, hrs_slice: list[Paragraph]; def
+  resolve_branch(conn, plan_uuid, gs_step_id: str, ts_step_id: str,
+  as_step_id: str) -> Branch. Step: uuid, plan_uuid, parent_step_uuid,
+  level, step_id, slug, fields: dict, depends_on: list[str], concepts:
+  list[str], status: str.`
+  `plan_manager/verify/gate.py: def run_gate(conn, plan_uuid, branch:
+  Branch | None = None, fail_fast: bool = False) -> tuple[Report,
+  Verdict] — Report has field green: bool; Verdict is
+  @dataclass(frozen=True) with kind: str, scope: str, revision_uuid:
+  uuid.UUID | None, green: bool, payload: dict.`
+  `plan_manager/verify/verdict.py: def current_head_revision(conn,
+  plan_uuid) -> uuid.UUID | None.`
+  `plan_manager/scoring/embedding.py: class EmbeddingUnavailable(Exception).`
+  `plan_manager/scoring/trust.py: @dataclass TrustReport: trust: float,
+  available: bool, pairwise_cosines: list[list[float]], gram_determinant:
+  float, spectrum: list[float]; def compute_trust(conn, base_url,
+  concept_definitions: list[str], trust_floor: float) -> TrustReport.`
+  `plan_manager/scoring/simulation.py: def simulation_vote(model_output:
+  str | None, prompt_text: str) -> float | None (None = abstain).`
+  Ensemble fold (normative): estimator names "coverage", "references",
+  "embedding", "simulation". Deterministic estimators coverage and
+  references always vote, weight 1.0 each. The two model-based
+  estimators (embedding, simulation) share ONE down-weighted vote: each
+  present member of that pair has weight 1.0/len(present pair members);
+  an abstaining/unavailable member is excluded and the pair weight
+  recomputed over the remaining member; when both absent the pair
+  contributes nothing. index = 100.0 * sum(w_i * v_i) / sum(w_i) over
+  present estimators.
+verification:
+  type: manual
+  target: plan_manager/scoring/index.py::score_branch
+  expected: >
+    Given a branch whose mechanical gate is green, config.embedding_url
+    is None (embedding absent) and model_output is None (simulation
+    abstains), score_branch returns a BranchScore whose
+    estimator_vector has exactly the two keys "coverage" and
+    "references" each weighted 1.0, index equal to
+    100.0 * (coverage + references) / 2, trust equal to
+    config.trust_floor, and revision_uuid equal to the plan's current
+    head revision. Given a branch whose mechanical gate is not green,
+    score_branch raises ScoreRefusedError whose message contains the
+    branch path "G-001/T-002/A-003" and the exact finding count from the
+    gate report.
+status: draft

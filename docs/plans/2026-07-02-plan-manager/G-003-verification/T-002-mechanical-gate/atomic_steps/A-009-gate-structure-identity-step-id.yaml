@@ -1,0 +1,280 @@
+step_id: A-009
+parent_tactical_step: T-002
+name: Add identity.step_id check to gate_structure.py
+target_file: plan_manager/verify/gate_structure.py
+operation: modify_file
+priority: 5
+depends_on: [A-008]
+concepts: [C-012, C-005]
+prompt: |
+  Target file: plan_manager/verify/gate_structure.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-005 Step — Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status. Properties: uniform operations
+    across levels, per-level required fields are declarative schema;
+    scaffolded creation auto-assigns the next free zero-padded id; mutation
+    regime depends on status (draft direct, frozen via cascade); move
+    rewrites every reference to the moved id in one operation.
+
+  The current full content of plan_manager/verify/gate_structure.py
+  (post-prior-AS state; this is the exact content to start from) is:
+
+  ```python
+  """Parse and identity check groups for the mechanical gate (C-012)."""
+
+  from plan_manager.domain.step import Step
+  from plan_manager.verify.finding import Finding
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of
+  from plan_manager.views.branch import Branch
+
+  _REQUIRED_FIELDS_BY_LEVEL: dict[int, list[str]] = {
+      3: ["name", "description", "relations", "source_labels"],
+      4: ["name", "description", "inputs", "outputs"],
+      5: ["name", "target_file", "operation", "priority", "prompt", "verification"],
+  }
+
+
+  def check_parse_required_fields(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "parse.required_fields".
+
+      For every step in ``steps``, look up its required field keys in
+      ``_REQUIRED_FIELDS_BY_LEVEL`` by ``step.level`` (the level-5 optional
+      ``objects`` key is never required and is not in this table; unknown
+      levels have an empty required list). For each required key, the step's
+      ``fields`` dict must contain a non-empty value: not None, not "", not
+      [], not {}. Every violation produces one Finding with check_id
+      "parse.required_fields", severity "error", artifact_path
+      artifact_path_of(tree.steps, step), and a message naming the missing
+      or empty field.
+      """
+      findings: list[Finding] = []
+      for step in steps:
+          required = _REQUIRED_FIELDS_BY_LEVEL.get(step.level, [])
+          path = artifact_path_of(tree.steps, step)
+          for key in required:
+              value = step.fields.get(key)
+              if value in (None, "", [], {}):
+                  findings.append(
+                      Finding(
+                          "parse.required_fields",
+                          "error",
+                          path,
+                          f"required field '{key}' is missing or empty",
+                      )
+                  )
+      return findings
+
+
+  def check_parse_inputs_outputs(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "parse.inputs_outputs".
+
+      Applies only to level-4 steps. For each level-4 step, fields["inputs"]
+      and fields["outputs"] must each be a Python list. Every item of each
+      list must be a dict whose key set is exactly {"name", "type",
+      "description"} (no more, no fewer keys), and every one of those three
+      values must be a non-empty str. Every violation produces one Finding
+      with check_id "parse.inputs_outputs", severity "error", artifact_path
+      artifact_path_of(tree.steps, step), and a message naming the offending
+      key ("inputs" or "outputs"), the item index, and the offending sub-key
+      when applicable.
+      """
+      findings: list[Finding] = []
+      for step in steps:
+          if step.level != 4:
+              continue
+          path = artifact_path_of(tree.steps, step)
+          for key in ("inputs", "outputs"):
+              value = step.fields.get(key)
+              if not isinstance(value, list):
+                  findings.append(
+                      Finding(
+                          "parse.inputs_outputs",
+                          "error",
+                          path,
+                          f"field '{key}' is not a list",
+                      )
+                  )
+                  continue
+              for index, item in enumerate(value):
+                  if not isinstance(item, dict) or set(item.keys()) != {
+                      "name",
+                      "type",
+                      "description",
+                  }:
+                      findings.append(
+                          Finding(
+                              "parse.inputs_outputs",
+                              "error",
+                              path,
+                              f"{key}[{index}] does not have exactly keys name, type, description",
+                          )
+                      )
+                      continue
+                  for field_key in ("name", "type", "description"):
+                      field_value = item.get(field_key)
+                      if not isinstance(field_value, str) or not field_value:
+                          findings.append(
+                              Finding(
+                                  "parse.inputs_outputs",
+                                  "error",
+                                  path,
+                                  f"{key}[{index}].{field_key} is not a non-empty string",
+                              )
+                          )
+      return findings
+
+
+  def check_parse_target_file(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "parse.target_file".
+
+      Applies only to level-5 steps. fields["target_file"] must be a
+      non-empty str that does not start with "/" (project-relative path).
+      Every violation produces one Finding with check_id "parse.target_file",
+      severity "error", artifact_path artifact_path_of(tree.steps, step), and
+      a message stating that target_file is not a non-empty project-relative
+      path.
+      """
+      findings: list[Finding] = []
+      for step in steps:
+          if step.level != 5:
+              continue
+          path = artifact_path_of(tree.steps, step)
+          value = step.fields.get("target_file")
+          if not isinstance(value, str) or not value or value.startswith("/"):
+              findings.append(
+                  Finding(
+                      "parse.target_file",
+                      "error",
+                      path,
+                      "field 'target_file' is not a non-empty project-relative path",
+                  )
+              )
+      return findings
+
+
+  def check_parse_sanity_counts(
+      tree: GateTree, steps: list[Step], branch: Branch | None
+  ) -> list[Finding]:
+      """Check id "parse.sanity_counts": the parser sanity gate.
+
+      Plan scope (``branch`` is None): tree.counts["steps"] must be >= 1,
+      tree.counts["concepts"] must be >= 1, and tree.counts["paragraphs"]
+      must be >= 1. Each violated bound produces one Finding with check_id
+      "parse.sanity_counts", severity "error", artifact_path "plan", and a
+      message naming the zero-count entity kind.
+
+      Branch scope (``branch`` is not None): branch.hrs_slice must be
+      non-empty. If it is empty, produces one Finding with check_id
+      "parse.sanity_counts", severity "error", artifact_path
+      artifact_path_of(tree.steps, branch.gs), and a message stating that the
+      branch hrs_slice is empty.
+      """
+      findings: list[Finding] = []
+      if branch is None:
+          if tree.counts["steps"] < 1:
+              findings.append(
+                  Finding("parse.sanity_counts", "error", "plan", "plan has zero steps")
+              )
+          if tree.counts["concepts"] < 1:
+              findings.append(
+                  Finding("parse.sanity_counts", "error", "plan", "plan has zero concepts")
+              )
+          if tree.counts["paragraphs"] < 1:
+              findings.append(
+                  Finding("parse.sanity_counts", "error", "plan", "plan has zero paragraphs")
+              )
+      else:
+          if not branch.hrs_slice:
+              gs_path = artifact_path_of(tree.steps, branch.gs)
+              findings.append(
+                  Finding(
+                      "parse.sanity_counts",
+                      "error",
+                      gs_path,
+                      "branch hrs_slice is empty",
+                  )
+              )
+      return findings
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Add one import line `import re`, inserted as the first line after the
+     module docstring, followed by a blank line, so the top of the file
+     becomes:
+
+  ```python
+  """Parse and identity check groups for the mechanical gate (C-012)."""
+
+  import re
+
+  from plan_manager.domain.step import Step
+  from plan_manager.verify.finding import Finding
+  from plan_manager.verify.gate_data import GateTree, artifact_path_of
+  from plan_manager.views.branch import Branch
+  ```
+
+  2. Append the following constant and function at the end of the file,
+     separated from check_parse_sanity_counts by two blank lines:
+
+  ```python
+  _STEP_ID_PATTERN_BY_LEVEL: dict[int, re.Pattern[str]] = {
+      3: re.compile(r"^G-\d{3}$"),
+      4: re.compile(r"^T-\d{3}$"),
+      5: re.compile(r"^A-\d{3}$"),
+  }
+
+
+  def check_identity_step_id(tree: GateTree, steps: list[Step]) -> list[Finding]:
+      """Check id "identity.step_id".
+
+      For every step in ``steps``, look up the compiled regex for its level
+      in ``_STEP_ID_PATTERN_BY_LEVEL``. step.step_id must fully match that
+      pattern (zero-padded three-digit number, correct prefix letter per
+      level: G- for level 3, T- for level 4, A- for level 5). If the level has
+      no entry in the table, or the pattern does not match, produces one
+      Finding with check_id "identity.step_id", severity "error",
+      artifact_path artifact_path_of(tree.steps, step), and a message naming
+      the offending step_id.
+      """
+      findings: list[Finding] = []
+      for step in steps:
+          pattern = _STEP_ID_PATTERN_BY_LEVEL.get(step.level)
+          path = artifact_path_of(tree.steps, step)
+          if pattern is None or not pattern.match(step.step_id):
+              findings.append(
+                  Finding(
+                      "identity.step_id",
+                      "error",
+                      path,
+                      f"step_id '{step.step_id}' does not match the level {step.level} pattern",
+                  )
+              )
+      return findings
+  ```
+
+  Constraints:
+  - Do not change _REQUIRED_FIELDS_BY_LEVEL, check_parse_required_fields,
+    check_parse_inputs_outputs, check_parse_target_file, or
+    check_parse_sanity_counts.
+  - Do not add any other function, class, or import.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate_structure.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate_structure.check_identity_step_id
+  expected: >
+    The module imports without error. For a level-4 Step whose step_id is
+    "T-12" (not zero-padded to three digits), check_identity_step_id returns
+    one Finding with check_id "identity.step_id"; for step_id "T-012" on a
+    level-4 step it returns an empty list.
+status: draft

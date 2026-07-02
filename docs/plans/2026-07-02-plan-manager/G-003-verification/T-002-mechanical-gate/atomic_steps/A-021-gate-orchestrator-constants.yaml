@@ -1,0 +1,98 @@
+step_id: A-021
+parent_tactical_step: T-002
+name: Create gate.py with GROUP_ORDER and CHECK_IDS
+target_file: plan_manager/verify/gate.py
+operation: create_file
+priority: 1
+depends_on: [A-004, A-012, A-020]
+concepts: [C-012, C-036]
+prompt: |
+  Target file: plan_manager/verify/gate.py
+  Operation: create_file
+
+  Create a new Python module at the exact path plan_manager/verify/gate.py.
+  The file does not exist yet; write exactly the content specified below and
+  nothing else.
+
+  This module is the MechanicalGate orchestrator. MRS excerpt (only the
+  concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-036 NormativeAlgorithmSet — The binding algorithm specifications that
+    lower levels refine into code without semantic deviation. Properties:
+    deviations escalate to the HRS; open parameters have named defaults and
+    are configuration.
+
+  This AS writes exactly this file content (module docstring, two module-level
+  constants — no imports, no function, nothing else):
+
+  ```python
+  """Mechanical gate orchestrator (C-012): fixed check-group order, byte-identical reports."""
+
+  GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage"]
+
+  CHECK_IDS: dict[str, list[str]] = {
+      "parse": [
+          "parse.required_fields",
+          "parse.inputs_outputs",
+          "parse.target_file",
+          "parse.sanity_counts",
+      ],
+      "identity": [
+          "identity.step_id",
+          "identity.slug",
+          "identity.concept_id",
+          "identity.label",
+      ],
+      "uniqueness": [
+          "uniqueness.step_id",
+          "uniqueness.concept_id",
+          "uniqueness.label",
+          "uniqueness.priority",
+      ],
+      "references": [
+          "references.depends_on",
+          "references.concepts",
+          "references.relations",
+          "references.source_labels",
+      ],
+      "coverage": [
+          "coverage.concepts",
+          "coverage.gs",
+          "coverage.labels",
+          "coverage.relations",
+      ],
+  }
+  ```
+
+  Semantics: GROUP_ORDER is the fixed published check-group execution order
+  (C-012 property: fixed check order parse, identity, uniqueness, references,
+  coverage). CHECK_IDS maps each group name to the exact ordered list of
+  check ids belonging to that group; the concatenation of CHECK_IDS[g] for g
+  in GROUP_ORDER, in order, is the full ordered list of every check id the
+  gate can run. These two names are consumed by a later AS in this same file
+  (not part of this AS); do not add any code that uses them yet.
+
+  Constraints:
+  - The written file must contain nothing beyond the module docstring and the
+    two constants exactly as shown above (exact key order, exact list
+    order — dict literal order is significant for readability but not for
+    correctness; do not reorder any of the values).
+  - Do not add any import.
+  - Do not add any function or class.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate
+  expected: >
+    The module imports without error and exposes GROUP_ORDER equal to
+    ["parse", "identity", "uniqueness", "references", "coverage"] and
+    CHECK_IDS equal to a dict with those five keys each mapping to its
+    four-element list of dotted check ids exactly as shown above.
+status: draft

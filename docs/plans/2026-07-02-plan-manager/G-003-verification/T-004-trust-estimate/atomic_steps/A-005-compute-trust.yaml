@@ -1,0 +1,276 @@
+step_id: A-005
+parent_tactical_step: T-004
+name: Add compute_trust function and its imports
+target_file: plan_manager/scoring/trust.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-014, C-022, C-003]
+prompt: |
+  Modify the existing Python file `plan_manager/scoring/trust.py`
+  (project-relative path from the repository root, package root
+  `plan_manager/`, Python 3.12+).
+
+  The full current content of the file, exactly as it exists before this
+  change, is:
+
+  ```python
+  """Trust estimate: confidence in the semantic measurement itself (C-014).
+
+  Computes the geometry of the concept embedding basis (pairwise cosines, Gram
+  determinant, eigenvalue spectrum) and maps it to a monotone 0..1 trust value,
+  falling back to a declared floor when the embedding service is unavailable.
+  """
+
+  from dataclasses import dataclass
+
+  import numpy as np
+
+
+  @dataclass
+  class TrustReport:
+      """Confidence report for the semantic measurement.
+
+      Attributes:
+          trust: 0..1 confidence value, decreasing monotonically with basis
+              collinearity; equal to the declared floor when available is
+              False.
+          available: True when the embedding service produced vectors for
+              every concept definition; False when embeddings could not be
+              obtained.
+          pairwise_cosines: Pairwise cosine matrix of the normalized concept
+              embeddings as a nested list; empty when available is False.
+          gram_determinant: Determinant of the Gram matrix of the normalized
+              concept embeddings; 0.0 when available is False.
+          spectrum: Eigenvalue spectrum of the Gram matrix, sorted descending;
+              empty when available is False.
+      """
+
+      trust: float
+      available: bool
+      pairwise_cosines: list[list[float]]
+      gram_determinant: float
+      spectrum: list[float]
+
+
+  def normalize_rows(vectors: list[list[float]]) -> np.ndarray:
+      """Row-normalize a list of vectors to unit L2 norm.
+
+      Args:
+          vectors: A list of equal-length numeric vectors.
+
+      Returns:
+          A 2-D numpy array of dtype float64 with the same shape as the
+          input, where each row is divided by its L2 norm. A row whose L2
+          norm is zero is left as all-zero (no division by zero).
+      """
+      array = np.asarray(vectors, dtype=np.float64)
+      norms = np.linalg.norm(array, axis=1, keepdims=True)
+      safe_norms = np.where(norms == 0.0, 1.0, norms)
+      return array / safe_norms
+
+
+  def basis_geometry(
+      vectors: list[list[float]],
+  ) -> tuple[list[list[float]], float, list[float]]:
+      """Compute pairwise cosines, Gram determinant, and eigenvalue spectrum.
+
+      Args:
+          vectors: A list of equal-length numeric vectors (concept
+              embeddings).
+
+      Returns:
+          A 3-tuple (cosines, determinant, spectrum):
+              cosines: The pairwise cosine matrix of the row-normalized
+                  vectors, as a nested list of floats. For unit-norm rows
+                  the Gram matrix IS the pairwise cosine matrix; this is
+                  that Gram matrix converted to a nested list.
+              determinant: The determinant of the Gram matrix, as a float.
+              spectrum: The eigenvalues of the Gram matrix, sorted
+                  descending, as a list of floats.
+
+      Raises:
+          ValueError: If vectors is empty or the rows are not all the same
+              length (ragged rows).
+      """
+      if not vectors:
+          raise ValueError("basis_geometry requires a non-empty vector list")
+      lengths = {len(row) for row in vectors}
+      if len(lengths) != 1:
+          raise ValueError(
+              "basis_geometry requires all rows to have equal length"
+          )
+      normalized = normalize_rows(vectors)
+      gram = normalized @ normalized.T
+      determinant = float(np.linalg.det(gram))
+      spectrum = sorted(np.linalg.eigvalsh(gram).tolist(), reverse=True)
+      cosines = gram.tolist()
+      return cosines, determinant, spectrum
+
+
+  def trust_from_geometry(gram_determinant: float, n: int) -> float:
+      """Map Gram determinant and basis size to a 0..1 trust value.
+
+      Published-default monotone mapping: the n-th root of the non-negative
+      part of the determinant, clamped to [0.0, 1.0]. More collinearity in
+      the concept basis produces a smaller determinant and therefore a
+      lower trust value.
+
+      Args:
+          gram_determinant: The determinant of the Gram matrix of the
+              normalized concept embeddings.
+          n: The number of concept embeddings (basis size).
+
+      Returns:
+          0.0 when n == 0; otherwise
+          clamp(max(gram_determinant, 0.0) ** (1.0 / n), 0.0, 1.0).
+      """
+      if n == 0:
+          return 0.0
+      base = max(gram_determinant, 0.0)
+      value = base ** (1.0 / n)
+      return min(max(value, 0.0), 1.0)
+  ```
+
+  Make two changes to this file:
+
+  1. Insert two new import lines immediately after the existing
+     `import numpy as np` line and before the two blank lines that precede
+     `@dataclass`, so the import block becomes:
+
+     ```python
+     from dataclasses import dataclass
+
+     import numpy as np
+     import psycopg
+
+     from plan_manager.scoring.embedding import EmbeddingUnavailable, embed_text
+     ```
+
+     These two symbols are defined in the sibling module
+     `plan_manager/scoring/embedding.py` with exactly these signatures
+     (quoted verbatim; this AS does not create or modify that module):
+     - `class EmbeddingUnavailable(Exception)`
+     - `def embed_text(conn: psycopg.Connection, base_url: str, text: str) -> list[float]`
+
+  2. Append exactly the following to the end of the file, separated from
+     the `trust_from_geometry` function by two blank lines (the file must
+     end with a single trailing newline after the function body, no extra
+     blank lines beyond that):
+
+     ```python
+     def compute_trust(
+         conn: psycopg.Connection,
+         base_url: str,
+         concept_definitions: list[str],
+         trust_floor: float,
+     ) -> TrustReport:
+         """Compute the TrustEstimate for a set of concept definitions.
+
+         Embeds every definition via embed_text. If any call raises
+         EmbeddingUnavailable, returns a TrustReport with trust equal to
+         trust_floor and available False (pairwise_cosines empty,
+         gram_determinant 0.0, spectrum empty) — the declared floor
+         distinguishing "cannot be measured" from "weak". Otherwise computes
+         the basis geometry of the embedded vectors and maps it to a trust
+         value.
+
+         Args:
+             conn: An open psycopg 3 database connection, passed through to
+                 the embedding client. This function issues no SQL of its
+                 own.
+             base_url: The base URL of the embedding service.
+             concept_definitions: The definition text of each plan concept
+                 (C-003), in the order the vectors are requested. Per the
+                 published default embedding serialization, this is the
+                 concept's definition field only.
+             trust_floor: The declared trust value used when the embedding
+                 service is unavailable.
+
+         Returns:
+             A TrustReport with either the floor trust (available False) or
+             the trust computed from the basis geometry (available True).
+         """
+         vectors: list[list[float]] = []
+         for definition in concept_definitions:
+             try:
+                 vectors.append(embed_text(conn, base_url, definition))
+             except EmbeddingUnavailable:
+                 return TrustReport(
+                     trust=trust_floor,
+                     available=False,
+                     pairwise_cosines=[],
+                     gram_determinant=0.0,
+                     spectrum=[],
+                 )
+         cosines, determinant, spectrum = basis_geometry(vectors)
+         trust = trust_from_geometry(determinant, len(vectors))
+         return TrustReport(
+             trust=trust,
+             available=True,
+             pairwise_cosines=cosines,
+             gram_determinant=determinant,
+             spectrum=spectrum,
+         )
+     ```
+
+  Constraints:
+  - Do not modify the module docstring, the `TrustReport` class,
+    `normalize_rows`, `basis_geometry`, or `trust_from_geometry` in any way
+    other than the import-block insertion described in change 1.
+  - `compute_trust` takes exactly four parameters in this order:
+    `conn: psycopg.Connection`, `base_url: str`,
+    `concept_definitions: list[str]`, `trust_floor: float`; it returns
+    exactly `TrustReport`.
+  - Iterate `concept_definitions` in order, calling
+    `embed_text(conn, base_url, definition)` for each and appending the
+    result to a `vectors: list[list[float]]` accumulator.
+  - The very first `EmbeddingUnavailable` exception raised by any
+    `embed_text` call must short-circuit the function: return immediately
+    `TrustReport(trust=trust_floor, available=False, pairwise_cosines=[],
+    gram_determinant=0.0, spectrum=[])`. Do not catch any other exception
+    type.
+  - If no `EmbeddingUnavailable` is raised, call
+    `basis_geometry(vectors)` to obtain `(cosines, determinant, spectrum)`,
+    then `trust_from_geometry(determinant, len(vectors))` to obtain
+    `trust`, then return
+    `TrustReport(trust=trust, available=True, pairwise_cosines=cosines,
+    gram_determinant=determinant, spectrum=spectrum)`.
+  - This function issues no SQL; `conn` is only passed through to
+    `embed_text`.
+  - Do not add any other function, class, or constant in this change.
+
+  Relevant MRS excerpt (concept definitions relevant to this AS):
+  - C-014 TrustEstimate: "Confidence in the measurement itself derived from
+    concept basis geometry and service liveness." Properties: Gram
+    determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are
+    unavailable; distinguishes weak plan from unmeasurable plan.
+    `compute_trust` is the integration point: it produces the floor-trust
+    report on unavailability and the geometry-derived report otherwise.
+  - C-022 EmbeddingService: "Sole optional external integration providing
+    text embeddings through a configured URL." Properties: unavailability
+    degrades only semantic scoring, with explicit low trust; vectors cached
+    in the database keyed by content hash; no vector files. `compute_trust`
+    is the site where this unavailability is caught and converted to the
+    declared trust floor.
+  - C-003 Concept: "MRS basis axis with canonical name, one-sentence
+    definition, properties, and source labels." Property relevant here:
+    embedding serialization default is the definition field only —
+    `concept_definitions` are exactly these definition-field strings, one
+    per plan concept.
+verification:
+  type: manual
+  target: plan_manager.scoring.trust.compute_trust
+  expected: >
+    Calling compute_trust with a connection, base_url, a list of concept
+    definitions, and a trust_floor: if embed_text raises
+    EmbeddingUnavailable for any definition (regardless of position in the
+    list), compute_trust returns TrustReport(trust=trust_floor,
+    available=False, pairwise_cosines=[], gram_determinant=0.0,
+    spectrum=[]) without calling embed_text on any remaining definitions
+    after the failure; otherwise it returns a TrustReport with
+    available=True whose trust, pairwise_cosines, gram_determinant, and
+    spectrum equal exactly what basis_geometry and trust_from_geometry
+    would produce for the list of embedded vectors, in call order.
+status: draft

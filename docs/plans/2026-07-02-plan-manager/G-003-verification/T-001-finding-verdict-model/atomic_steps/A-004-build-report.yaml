@@ -1,0 +1,168 @@
+step_id: A-004
+parent_tactical_step: T-001
+name: build-report
+target_file: plan_manager/verify/finding.py
+operation: modify_file
+priority: 4
+depends_on: [A-001, A-002, A-003]
+concepts: [C-017]
+prompt: |
+  Modify the existing file plan_manager/verify/finding.py.
+
+  Operation: modify_file at path plan_manager/verify/finding.py.
+
+  The file currently contains exactly this content (post-prior-AS state):
+
+  """Ephemeral result types for gate and scoring runs (C-017 Finding).
+
+  Findings are aggregated into reports and returned to the caller. Nothing in
+  this module is ever persisted as a plan artifact.
+  """
+
+  from __future__ import annotations
+
+  from dataclasses import dataclass
+
+  SEVERITIES = frozenset({"error", "warning"})
+
+
+  @dataclass(frozen=True)
+  class Finding:
+      """A single ephemeral result unit of a gate or scoring run.
+
+      Attributes:
+          check_id: Identifier of the check that produced this finding.
+          severity: One of the values in SEVERITIES ("error" or "warning").
+          artifact_path: Branch artifact path the finding is anchored to.
+          message: Human-readable description of the finding.
+      """
+
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+
+  def sort_findings(findings: list[Finding]) -> list[Finding]:
+      """Return findings sorted into the total deterministic order.
+
+      Sort key is the tuple (artifact_path, check_id, message).
+
+      Args:
+          findings: Findings to sort. Not mutated.
+
+      Returns:
+          A new list of the same Finding objects sorted ascending by
+          (artifact_path, check_id, message).
+      """
+      return sorted(findings, key=lambda f: (f.artifact_path, f.check_id, f.message))
+
+
+  @dataclass
+  class CheckResult:
+      """The outcome of one check within a report.
+
+      Attributes:
+          check_id: Identifier of the check.
+          passed: True iff no finding exists for this check_id.
+          findings: Findings for this check_id, in sort_findings order.
+      """
+
+      check_id: str
+      passed: bool
+      findings: list[Finding]
+
+
+  @dataclass
+  class Report:
+      """The aggregated outcome of a full gate or scoring run.
+
+      Attributes:
+          checks: One CheckResult per check_id, in the order the check_ids
+              were given to build_report.
+          green: True iff no finding exists across every CheckResult.
+      """
+
+      checks: list[CheckResult]
+      green: bool
+
+  Change to make: append the following function to the end of the file,
+  separated from the last line of the current content (`green: bool`) by
+  exactly two blank lines:
+
+  def build_report(check_ids: list[str], findings: list[Finding]) -> Report:
+      """Build a Report with one CheckResult per check_id, in the given order.
+
+      Args:
+          check_ids: The ordered list of check identifiers to report on. The
+              output has exactly one CheckResult per entry, in this order.
+          findings: All findings produced by the run, in any order.
+
+      Returns:
+          A Report whose checks list has one CheckResult per entry of
+          check_ids (in that order); each CheckResult's findings are the
+          subset of `findings` whose check_id equals that CheckResult's
+          check_id, sorted via sort_findings; passed is True iff that subset
+          is empty; green is True iff `findings` is empty overall.
+
+      Raises:
+          ValueError: If any finding's check_id is not present in check_ids.
+              The error message names the unknown check_id.
+      """
+      known = set(check_ids)
+      for finding in findings:
+          if finding.check_id not in known:
+              raise ValueError(f"unknown check_id: {finding.check_id}")
+      checks: list[CheckResult] = []
+      for check_id in check_ids:
+          matched = sort_findings([f for f in findings if f.check_id == check_id])
+          checks.append(CheckResult(check_id=check_id, passed=len(matched) == 0, findings=matched))
+      return Report(checks=checks, green=len(findings) == 0)
+
+  Imports required: none beyond what the file already has (`Finding`,
+  `CheckResult`, `Report`, `sort_findings` are all already defined earlier
+  in the same file).
+
+  Exact signature:
+  `def build_report(check_ids: list[str], findings: list[Finding]) -> Report:`
+
+  Docstring text: use exactly the docstring shown above, including the
+  Args/Returns/Raises sections.
+
+  Constraints:
+  - Validate every finding's check_id against `set(check_ids)` before
+    building any CheckResult; raise `ValueError(f"unknown check_id:
+    {finding.check_id}")` on the first unmatched finding encountered while
+    iterating `findings` in its given order.
+  - Build exactly one CheckResult per entry of `check_ids`, in the order
+    check_ids is given (not sorted, not deduplicated).
+  - Each CheckResult's `findings` is the subset of `findings` whose
+    check_id equals that CheckResult's check_id, passed through
+    `sort_findings` before assignment.
+  - `passed` is `len(matched) == 0` for that CheckResult's matched subset.
+  - `Report.green` is `len(findings) == 0` — computed over the whole input
+    findings list, independent of check_ids.
+  - Do not add any other function, class, or import in this AS.
+  - Everything above `def build_report` in the file must remain
+    byte-identical to the post-prior-AS state shown above.
+
+  MRS excerpt (concept relevant to this AS):
+  - concept_id: C-017
+    name: Finding
+    definition: Ephemeral result unit of gate and scoring runs with check
+      id, severity, artifact path, and message.
+    properties:
+    - aggregated into reports; never stored as a plan artifact
+    source_labels: ["{q9n5}"]
+verification:
+  type: static_analysis
+  target: plan_manager.verify.finding.build_report
+  expected: For a given check_ids list and findings list where every
+    finding's check_id is present in check_ids, build_report returns a
+    Report with exactly one CheckResult per check_ids entry in that order,
+    each CheckResult.findings equal to the sorted (via sort_findings) subset
+    of findings with that check_id, each CheckResult.passed true iff that
+    subset is empty, and Report.green true iff findings is empty overall.
+    When findings contains a check_id absent from check_ids, build_report
+    raises ValueError whose message names that check_id.
+status: draft

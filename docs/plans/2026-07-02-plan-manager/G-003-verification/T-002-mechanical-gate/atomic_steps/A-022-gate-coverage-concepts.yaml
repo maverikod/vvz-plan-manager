@@ -1,0 +1,149 @@
+step_id: A-022
+parent_tactical_step: T-002
+name: Add check_coverage_concepts to gate.py
+target_file: plan_manager/verify/gate.py
+operation: modify_file
+priority: 2
+depends_on: [A-021]
+concepts: [C-012, C-010]
+prompt: |
+  Target file: plan_manager/verify/gate.py
+  Operation: modify_file
+
+  MRS excerpt (only the concepts relevant to this AS):
+
+  - C-012 MechanicalGate — Deterministic binary verification layer catching
+    every mechanical defect before semantics. Properties: fixed check order
+    parse, identity, uniqueness, references, coverage; byte-identical reports
+    for the same tree state; fail-fast only at group boundary; per-branch
+    gating, precondition for any semantic measurement; parser sanity gates
+    make parsing regressions fail loudly instead of passing silently.
+  - C-010 CoverageView — On-demand computed coverage of concepts, labels,
+    relations, and objects replacing stored matrices. Properties: set
+    formulas are normative, reports always list missing and extra elements;
+    object-axis inventory keyed by (module, tactical step path); module
+    derived deterministically from target_file (strip extension, dot the
+    separators) — a classification key, never an identity.
+
+  The current full content of plan_manager/verify/gate.py (post-prior-AS
+  state; this is the exact content to start from) is:
+
+  ```python
+  """Mechanical gate orchestrator (C-012): fixed check-group order, byte-identical reports."""
+
+  GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage"]
+
+  CHECK_IDS: dict[str, list[str]] = {
+      "parse": [
+          "parse.required_fields",
+          "parse.inputs_outputs",
+          "parse.target_file",
+          "parse.sanity_counts",
+      ],
+      "identity": [
+          "identity.step_id",
+          "identity.slug",
+          "identity.concept_id",
+          "identity.label",
+      ],
+      "uniqueness": [
+          "uniqueness.step_id",
+          "uniqueness.concept_id",
+          "uniqueness.label",
+          "uniqueness.priority",
+      ],
+      "references": [
+          "references.depends_on",
+          "references.concepts",
+          "references.relations",
+          "references.source_labels",
+      ],
+      "coverage": [
+          "coverage.concepts",
+          "coverage.gs",
+          "coverage.labels",
+          "coverage.relations",
+      ],
+  }
+  ```
+
+  Apply exactly two changes to this file:
+
+  1. Insert the following import block immediately after the module
+     docstring, followed by a blank line, then followed by the existing
+     GROUP_ORDER line (so the imports come before GROUP_ORDER):
+
+  ```python
+  import uuid
+
+  import psycopg
+
+  from plan_manager.verify.finding import Finding
+  from plan_manager.views.coverage import concept_coverage
+  ```
+
+  2. Append the following function at the end of the file, separated from
+     the CHECK_IDS dict by two blank lines:
+
+  ```python
+  def check_coverage_concepts(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Finding]:
+      """Check id "coverage.concepts": plan-wide concept coverage.
+
+      Calls concept_coverage(conn, plan_uuid) to get a CoverageReport(missing,
+      extra). Every entry of report.missing produces one Finding with
+      check_id "coverage.concepts", severity "error", artifact_path "plan",
+      and a message naming the missing concept and stating it is missing.
+      Every entry of report.extra produces one Finding with the same
+      check_id and artifact_path "plan", naming the extra concept and
+      stating it is extra.
+      """
+      findings: list[Finding] = []
+      report = concept_coverage(conn, plan_uuid)
+      for missing in report.missing:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{missing}' missing")
+          )
+      for extra in report.extra:
+          findings.append(
+              Finding("coverage.concepts", "error", "plan", f"concept '{extra}' extra")
+          )
+      return findings
+  ```
+
+  The imported Finding and concept_coverage are existing sibling entities;
+  import them, do not redefine them. Exact signatures, for reference only:
+
+  ```python
+  # module plan_manager/verify/finding.py
+  @dataclass(frozen=True)
+  class Finding:
+      check_id: str
+      severity: str
+      artifact_path: str
+      message: str
+
+  # module plan_manager/views/coverage.py
+  @dataclass
+  class CoverageReport:
+      missing: list[str]
+      extra: list[str]
+
+  def concept_coverage(conn, plan_uuid) -> CoverageReport: ...
+  ```
+
+  Constraints:
+  - Do not change GROUP_ORDER or CHECK_IDS.
+  - Do not add any other function, class, or import beyond the import block
+    shown above.
+  - Do not read, create, or modify any file other than
+    plan_manager/verify/gate.py.
+verification:
+  type: import
+  target: plan_manager.verify.gate.check_coverage_concepts
+  expected: >
+    The module imports without error. Given a conn/plan_uuid pair for which
+    concept_coverage returns CoverageReport(missing=["C-099"], extra=[]),
+    check_coverage_concepts returns a list with exactly one Finding with
+    check_id "coverage.concepts", severity "error", artifact_path "plan";
+    when both missing and extra are empty it returns an empty list.
+status: draft

@@ -1,0 +1,81 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: Create TrustReport dataclass and module docstring
+target_file: plan_manager/scoring/trust.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-014]
+prompt: |
+  Create the new Python file `plan_manager/scoring/trust.py` (project-relative
+  path from the repository root, package root `plan_manager/`, Python 3.12+).
+  This file does not exist yet: do not assume any pre-existing content.
+
+  Write exactly the following content as the full content of the file:
+
+  ```python
+  """Trust estimate: confidence in the semantic measurement itself (C-014).
+
+  Computes the geometry of the concept embedding basis (pairwise cosines, Gram
+  determinant, eigenvalue spectrum) and maps it to a monotone 0..1 trust value,
+  falling back to a declared floor when the embedding service is unavailable.
+  """
+
+  from dataclasses import dataclass
+
+  import numpy as np
+
+
+  @dataclass
+  class TrustReport:
+      """Confidence report for the semantic measurement.
+
+      Attributes:
+          trust: 0..1 confidence value, decreasing monotonically with basis
+              collinearity; equal to the declared floor when available is
+              False.
+          available: True when the embedding service produced vectors for
+              every concept definition; False when embeddings could not be
+              obtained.
+          pairwise_cosines: Pairwise cosine matrix of the normalized concept
+              embeddings as a nested list; empty when available is False.
+          gram_determinant: Determinant of the Gram matrix of the normalized
+              concept embeddings; 0.0 when available is False.
+          spectrum: Eigenvalue spectrum of the Gram matrix, sorted descending;
+              empty when available is False.
+      """
+
+      trust: float
+      available: bool
+      pairwise_cosines: list[list[float]]
+      gram_determinant: float
+      spectrum: list[float]
+  ```
+
+  Constraints:
+  - Use exactly one blank line between the module docstring and the imports,
+    one blank line between `from dataclasses import dataclass` and
+    `import numpy as np`, and two blank lines between the imports and the
+    `@dataclass` decorator, as shown above.
+  - `TrustReport` has exactly the five fields listed above, in that order,
+    with exactly those type annotations. No other fields, no default values,
+    no methods.
+  - Do not add any other class, function, constant, or import beyond what is
+    shown above.
+  - Do not add an `if __name__ == "__main__"` block or any executable code.
+
+  Relevant MRS excerpt (concept definitions relevant to this AS):
+  - C-014 TrustEstimate: "Confidence in the measurement itself derived from
+    concept basis geometry and service liveness." Properties: Gram
+    determinant, pairwise cosines, spectrum; monotone mapping is
+    configuration; drops to a declared floor when embeddings are unavailable;
+    distinguishes weak plan from unmeasurable plan.
+verification:
+  type: import
+  target: plan_manager.scoring.trust.TrustReport
+  expected: >
+    Importing the module plan_manager.scoring.trust succeeds without error,
+    and TrustReport can be instantiated by keyword with the five fields
+    trust, available, pairwise_cosines, gram_determinant, spectrum, each
+    holding the value passed to it with no coercion or default substitution.
+status: draft

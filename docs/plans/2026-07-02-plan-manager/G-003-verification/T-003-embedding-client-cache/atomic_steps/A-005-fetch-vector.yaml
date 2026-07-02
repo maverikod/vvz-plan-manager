@@ -1,0 +1,270 @@
+step_id: A-005
+parent_tactical_step: T-003
+name: fetch-vector
+target_file: plan_manager/scoring/embedding.py
+operation: modify_file
+priority: 5
+depends_on: [A-004]
+concepts: [C-022]
+prompt: |
+  Modify the file `plan_manager/scoring/embedding.py` (operation:
+  modify_file).
+
+  The file currently contains exactly the following content (this is the
+  full current state of the file):
+
+  ```python
+  """Embedding client and cache for EmbeddingService (C-022) integration.
+
+  Provides text embedding retrieval with a database-backed cache keyed by
+  content hash, and an explicit typed unavailability condition instead of
+  raising on service failure.
+  """
+
+  import json
+  import urllib.error
+  import urllib.request
+  import uuid
+  from datetime import datetime, timezone
+
+  import psycopg
+
+  from plan_manager.storage.canonical import content_hash
+
+
+  class EmbeddingUnavailable(Exception):
+      """Raised when the embedding service cannot be reached or returns a
+      malformed response.
+
+      Carries the reason as its single string argument. Callers catch this
+      exception to degrade semantic scoring only; every other function keeps
+      working when the embedding service is unavailable.
+      """
+
+
+  def text_content_hash(text: str) -> str:
+      """Return the canonical content hash of ``text``.
+
+      Parameters
+      ----------
+      text:
+          The text whose content hash is computed.
+
+      Returns
+      -------
+      str
+          The SHA-256 hex digest of the canonical JSON of ``text``, as
+          produced by ``plan_manager.storage.canonical.content_hash``.
+      """
+      return content_hash(text)
+
+
+  def get_cached_vector(conn: psycopg.Connection, text: str) -> list[float] | None:
+      """Look up a cached embedding vector by the content hash of ``text``.
+
+      Parameters
+      ----------
+      conn:
+          An open psycopg 3 database connection.
+      text:
+          The text whose cached vector is looked up; the lookup key is its
+          content hash via ``text_content_hash``.
+
+      Returns
+      -------
+      list[float] | None
+          The cached vector as a list of floats if a row exists for the
+          content hash, or ``None`` if there is no cached vector.
+      """
+      key = text_content_hash(text)
+      with conn.cursor() as cur:
+          cur.execute(
+              "SELECT vector::text FROM embedding_cache WHERE content_hash = %s",
+              (key,),
+          )
+          row = cur.fetchone()
+      if row is None:
+          return None
+      return json.loads(row[0])
+
+
+  def store_vector(conn: psycopg.Connection, text: str, vector: list[float]) -> None:
+      """Store an embedding vector in the cache keyed by the content hash of ``text``.
+
+      Parameters
+      ----------
+      conn:
+          An open psycopg 3 database connection.
+      text:
+          The text whose vector is being cached; the cache key is its content
+          hash via ``text_content_hash``.
+      vector:
+          The embedding vector to store, as a list of floats.
+
+      Returns
+      -------
+      None
+
+      Behavior
+      --------
+      Inserts one row into ``embedding_cache`` with a freshly generated
+      ``uuid.uuid4()`` as ``uuid``, the content hash of ``text`` as
+      ``content_hash``, ``vector`` (JSON-encoded via ``json.dumps`` and cast
+      to ``::vector``) as ``vector``, and ``datetime.now(timezone.utc)`` as
+      ``created_at``. On a content-hash conflict the insert is a no-op
+      (``ON CONFLICT (content_hash) DO NOTHING``).
+      """
+      key = text_content_hash(text)
+      with conn.cursor() as cur:
+          cur.execute(
+              "INSERT INTO embedding_cache (uuid, content_hash, vector, created_at) "
+              "VALUES (%s, %s, %s::vector, %s) "
+              "ON CONFLICT (content_hash) DO NOTHING",
+              (uuid.uuid4(), key, json.dumps(vector), datetime.now(timezone.utc)),
+          )
+  ```
+
+  Append exactly one new top-level function after `store_vector`,
+  separated from it by exactly two blank lines, with exactly this
+  signature, docstring, and body:
+
+  ```python
+  def fetch_vector(base_url: str, text: str) -> list[float]:
+      """Request the embedding vector for ``text`` from the external embedding service.
+
+      Parameters
+      ----------
+      base_url:
+          The configured URL of the embedding service endpoint.
+      text:
+          The text to embed.
+
+      Returns
+      -------
+      list[float]
+          The embedding vector returned by the service.
+
+      Raises
+      ------
+      EmbeddingUnavailable
+          Raised, carrying the reason as its argument, for every deviation
+          from the normative protocol: a connection error, a timeout, a
+          non-200 HTTP status, a malformed (non-JSON) response body, or a
+          response body whose JSON has no "embedding" key or whose
+          "embedding" value is not a list.
+
+      Behavior
+      --------
+      Sends an HTTP POST request to ``base_url`` with body
+      ``json.dumps({"input": text}).encode("utf-8")``, header
+      ``Content-Type: application/json``, and a timeout of 10.0 seconds,
+      using ``urllib.request`` only. On HTTP 200, parses the response body
+      as JSON and returns the value of its "embedding" key as a list of
+      floats.
+      """
+      payload = json.dumps({"input": text}).encode("utf-8")
+      request = urllib.request.Request(
+          base_url,
+          data=payload,
+          headers={"Content-Type": "application/json"},
+          method="POST",
+      )
+      try:
+          with urllib.request.urlopen(request, timeout=10.0) as response:
+              status = response.status
+              body = response.read()
+      except urllib.error.URLError as exc:
+          raise EmbeddingUnavailable(str(exc)) from exc
+      except OSError as exc:
+          raise EmbeddingUnavailable(str(exc)) from exc
+
+      if status != 200:
+          raise EmbeddingUnavailable(f"unexpected HTTP status {status}")
+
+      try:
+          parsed = json.loads(body)
+      except json.JSONDecodeError as exc:
+          raise EmbeddingUnavailable(f"malformed JSON response: {exc}") from exc
+
+      if not isinstance(parsed, dict) or "embedding" not in parsed:
+          raise EmbeddingUnavailable("response JSON missing 'embedding' key")
+
+      embedding = parsed["embedding"]
+      if not isinstance(embedding, list):
+          raise EmbeddingUnavailable("'embedding' value is not a list")
+
+      return embedding
+  ```
+
+  Exact requirements:
+  - Parameters: `base_url` of type `str`; `text` of type `str`. Return
+    type: `list[float]`.
+  - Build `payload` as `json.dumps({"input": text}).encode("utf-8")` (the
+    `json` module is already imported via `import json`).
+  - Build `request` as `urllib.request.Request(base_url, data=payload,
+    headers={"Content-Type": "application/json"}, method="POST")` (the
+    `urllib.request` module is already imported via
+    `import urllib.request`).
+  - Open the request with `urllib.request.urlopen(request, timeout=10.0)`
+    inside a `with` block bound to name `response`; read `response.status`
+    into `status` and `response.read()` into `body`.
+  - Catch `urllib.error.URLError` (the `urllib.error` module is already
+    imported via `import urllib.error`; note `urllib.error.HTTPError`,
+    raised by `urlopen` for non-2xx HTTP responses, is a subclass of
+    `URLError` and is caught by this clause) and separately catch
+    `OSError`; in both cases raise `EmbeddingUnavailable(str(exc))` with
+    `from exc`.
+  - After a successful read, if `status != 200`, raise
+    `EmbeddingUnavailable(f"unexpected HTTP status {status}")`.
+  - Parse `body` with `json.loads(body)` inside a `try`/`except
+    json.JSONDecodeError as exc` block; on failure raise
+    `EmbeddingUnavailable(f"malformed JSON response: {exc}")` with
+    `from exc`.
+  - If the parsed value is not a `dict` or does not contain the key
+    `"embedding"`, raise
+    `EmbeddingUnavailable("response JSON missing 'embedding' key")`.
+  - If `parsed["embedding"]` is not a `list`, raise
+    `EmbeddingUnavailable("'embedding' value is not a list")`.
+  - Otherwise return `parsed["embedding"]`.
+  - Use no HTTP client other than the standard-library `urllib.request`
+    and `urllib.error` modules.
+  - Do not modify the module docstring, the imports, the
+    `EmbeddingUnavailable` class, `text_content_hash`, `get_cached_vector`,
+    or `store_vector` in any way. Do not add any other function.
+  - The file must end immediately after the `return embedding` line, with
+    a single trailing newline, and nothing else.
+
+  Normative external protocol (already stated above as the exact
+  behavior to implement): POST to the configured URL with body
+  `json.dumps({"input": text})` encoded UTF-8, header
+  `Content-Type: application/json`, timeout 10.0 seconds; success is HTTP
+  200 with JSON body `{"embedding": [<floats>]}`; any deviation
+  (connection error, timeout, non-200, malformed JSON, missing or
+  non-list "embedding") raises `EmbeddingUnavailable` carrying the reason
+  text.
+
+  Concept context (MRS excerpt, concept C-022 only):
+  - concept_id: C-022
+    name: EmbeddingService
+    definition: Sole optional external integration providing text
+      embeddings through a configured URL.
+    properties:
+    - unavailability degrades only semantic scoring, with explicit low
+      trust
+    - vectors cached in the database keyed by content hash; no vector
+      files
+
+  `fetch_vector` is the sole point of contact with the external
+  EmbeddingService (C-022); every failure mode is converted into the
+  `EmbeddingUnavailable` typed condition defined earlier in this file so
+  that callers can degrade semantic scoring instead of crashing.
+verification:
+  type: manual
+  target: plan_manager.scoring.embedding.fetch_vector
+  expected: >
+    Given an embedding service that responds with HTTP 200 and
+    JSON body {"embedding": [...]}, fetch_vector returns that list. Given
+    a connection error, a timeout, a non-200 status, a non-JSON body, or a
+    JSON body missing a list-typed "embedding" key, fetch_vector raises
+    EmbeddingUnavailable carrying the reason as its argument.
+status: draft

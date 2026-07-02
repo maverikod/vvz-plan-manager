@@ -1,0 +1,109 @@
+step_id: A-001
+parent_tactical_step: T-005
+name: Create simulation module with question constant and input builder
+target_file: plan_manager/scoring/simulation.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-015, C-011, C-022]
+prompt: |
+  Create a new Python 3.12+ source file at the exact project-relative path:
+
+  plan_manager/scoring/simulation.py
+
+  Operation: create_file. This file does not exist yet; do not assume any
+  pre-existing content. This module is PURE PYTHON: no database access, no
+  network access, no psycopg. Do not import anything beyond the standard
+  library.
+
+  Write the file with exactly the following three top-level elements, in
+  this order:
+
+  1. A module docstring, verbatim:
+
+  """Executor simulation detector (C-015).
+
+  Deterministically filters a cheap generative model's answer about entities
+  an assembled prompt (C-011) uses but does not define. The raw model output
+  is treated only as suspicion: every survival judgement is a deterministic
+  text computation against the prompt text, never a model opinion.
+  """
+
+  2. One import statement, exact module path:
+
+  import re
+
+  3. A module-level constant, exact name, type, and value (a single string
+  literal, exactly this text, no line breaks inside it):
+
+  SIMULATION_QUESTION = "Name every entity this prompt uses but does not define. Answer with one entity name per line and nothing else."
+
+  4. A function with this exact signature, typing annotations, docstring,
+  and body:
+
+  def build_simulation_input(prompt_text: str) -> str:
+      r"""Build the text sent to the cheap model for executor simulation.
+
+      :param prompt_text: The assembled prompt text (C-011) to inspect.
+      :return: SIMULATION_QUESTION concatenated with prompt_text, separated
+          by a blank line: SIMULATION_QUESTION + "\n\n" + prompt_text.
+      """
+      return SIMULATION_QUESTION + "\n\n" + prompt_text
+
+  Formatting constraints (explicit, no deviation):
+  - Exactly one blank line between the "import re" line and the
+    SIMULATION_QUESTION assignment.
+  - Exactly two blank lines between the SIMULATION_QUESTION assignment and
+    the "def build_simulation_input" line (standard top-level function
+    separation).
+  - The function docstring must be a raw string (prefixed with r, i.e.
+    r"""..."""), because it contains the literal two-character sequence
+    backslash-n twice; a non-raw string would turn those into actual
+    newline characters instead of the visible text "\n\n" — this must be
+    avoided.
+  - No other functions, classes, constants, or imports may be added in this
+    step. No blank line or trailing content after the function's closing
+    return statement beyond a single trailing newline at end of file.
+  - Do not add a `from __future__` import or any typing import: the only
+    typing used here (str) needs no import.
+
+  MRS excerpt (only the concepts relevant to this step):
+
+  concept_id: C-015
+  name: ExecutorSimulation
+  definition: Detector estimator asking a cheap model the closed question of undefined entities in a prompt.
+  properties:
+  - output filtered deterministically against prompt text
+  - can only raise suspicion, never mark green
+
+  concept_id: C-011
+  name: Prompt
+  definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
+  properties (relevant one only):
+  - the server never executes prompts
+
+  concept_id: C-022
+  name: EmbeddingService
+  definition: Sole optional external integration providing text embeddings through a configured URL.
+  properties (relevant one only):
+  - unavailability degrades only semantic scoring, with explicit low trust
+
+  Rationale note grounding the "no network" constraint above: per this
+  plan's normative scope, obtaining the raw model output used elsewhere in
+  this module is not part of this file's responsibility — the raw model
+  output always arrives as a plain string input parameter to the functions
+  that consume it. The server's only external integration is
+  EmbeddingService (C-022); this module performs no generative-model call
+  and no embedding call itself. build_simulation_input only builds text; it
+  does not send it anywhere.
+verification:
+  type: manual
+  target: plan_manager.scoring.simulation.build_simulation_input
+  expected: >
+    Importing plan_manager.scoring.simulation succeeds with no side effects.
+    SIMULATION_QUESTION equals exactly "Name every entity this prompt uses
+    but does not define. Answer with one entity name per line and nothing
+    else." Calling build_simulation_input with a prompt text argument
+    returns SIMULATION_QUESTION followed by two newline characters followed
+    by the argument, with no other transformation applied.
+status: draft
