@@ -1,0 +1,139 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: operator-settings-template
+target_file: packaging/etc/default/planmgr
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-033, C-029]
+prompt: |
+  Target file: packaging/etc/default/planmgr (new file; does not exist yet).
+
+  Operation: create_file. Create the file with exactly the content specified
+  below. Do not create, read, or modify any other file.
+
+  This file is a shell-sourceable environment-file template (KEY=VALUE
+  lines and comment lines starting with '#'; no Python, no other syntax).
+  Write the file content verbatim as given.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  C-033 ServiceUnit (full):
+    definition: systemd unit owning the container lifecycle, running as the
+      dedicated host user.
+    properties:
+    - environment from /etc/default/planmgr; restart on failure; readiness
+      via /health
+    relations: ServiceUnit uses ContainerDeployment (C-029); ServiceUnit
+      uses HostIdentity (C-030).
+
+  C-029 ContainerDeployment (as used here):
+    definition: Single container image hosting the server process and its
+      PostgreSQL instance with host-mounted state.
+    properties:
+    - entrypoint starts PostgreSQL, waits readiness, launches the server
+    - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+    - one exposed port; healthcheck against /health
+
+  Context (not a separate file to create, only background for this
+  prompt): this settings file is loaded as EnvironmentFile by the systemd
+  unit packaging/systemd/planmgr.service, which reads variables
+  PLANMGR_PORT, PLANMGR_IMAGE_REPO, and PLANMGR_IMAGE_VERSION from it to
+  build its docker run command, and polls
+  http://localhost:${PLANMGR_PORT}/health for readiness. That unit file is
+  out of scope for this AS; do not create or modify it here.
+
+  Binding conventions you must use exactly (no alternatives, no
+  substitutions):
+  - Image repository variable name: PLANMGR_IMAGE_REPO, default value
+    vasilyvz/planmgr.
+  - Image version variable name: PLANMGR_IMAGE_VERSION, default value
+    0.1.0.
+  - Published host port variable name: PLANMGR_PORT, default value 8080.
+  - Advertised host variable name: PLANMGR_ADVERTISED_HOST, default empty
+    (no value after the '=').
+  - Registration enabled toggle variable name:
+    PLANMGR_REGISTRATION_ENABLED, default value false.
+  - Registration URL variable name: PLANMGR_REGISTRATION_URL, default
+    empty (no value after the '=').
+  - Heartbeat interval variable name: PLANMGR_HEARTBEAT_INTERVAL, default
+    value 30.
+  - Database name variable name: PLANMGR_DB_NAME, default value planmgr.
+  - Database user variable name: PLANMGR_DB_USER, default value planmgr.
+  - Database port variable name: PLANMGR_DB_PORT, default value 5432.
+
+  Write the file with exactly this content, byte for byte:
+
+  ```
+  # /etc/default/planmgr
+  #
+  # This file is the EnvironmentFile read by the ServiceUnit (C-033)
+  # systemd unit (packaging/systemd/planmgr.service) and is the source of
+  # the rendered server configuration for the ContainerDeployment (C-029)
+  # image. It is edited by the administrator; conffile semantics apply
+  # (package upgrades prompt before overwriting a locally modified copy).
+
+  # Container image repository to pull and run (Docker Hub repository
+  # name).
+  PLANMGR_IMAGE_REPO=vasilyvz/planmgr
+
+  # The image version (tag) to deploy; must exist on Docker Hub.
+  PLANMGR_IMAGE_VERSION=0.1.0
+
+  # Host port published for the container's in-container port 8080; the
+  # platform health endpoint is reachable at
+  # http://localhost:PLANMGR_PORT/health.
+  PLANMGR_PORT=8080
+
+  # Host advertised to the proxy when registration is enabled; must be
+  # reachable from outside the container network namespace. Empty by
+  # default (no advertised host configured).
+  PLANMGR_ADVERTISED_HOST=
+
+  # Enables proxy registration of this deployment; false disables it.
+  PLANMGR_REGISTRATION_ENABLED=false
+
+  # URL of the registration endpoint used when
+  # PLANMGR_REGISTRATION_ENABLED is true. Empty by default.
+  PLANMGR_REGISTRATION_URL=
+
+  # Interval, in seconds, between heartbeat signals sent to the
+  # registration endpoint when registration is enabled.
+  PLANMGR_HEARTBEAT_INTERVAL=30
+
+  # Name of the PostgreSQL database used by the server.
+  PLANMGR_DB_NAME=planmgr
+
+  # PostgreSQL role (user) the server connects as.
+  PLANMGR_DB_USER=planmgr
+
+  # PostgreSQL port inside the container.
+  PLANMGR_DB_PORT=5432
+  ```
+
+  Constraints:
+  - Every variable listed above must appear exactly once, in the order
+    shown, with the exact default value shown.
+  - Every variable must be preceded by a comment naming its effect, as
+    shown.
+  - The header comment block at the top must state that this file is the
+    unit's EnvironmentFile, the source of the rendered server
+    configuration, is edited by the administrator, and that conffile
+    semantics apply.
+  - Do not add any variable not listed above.
+  - Do not quote values; use bare KEY=VALUE (and KEY= for empty defaults).
+verification:
+  type: static_analysis
+  target: packaging/etc/default/planmgr
+  expected: >
+    The file contains a header comment block stating it is the unit's
+    EnvironmentFile, the source of the rendered server configuration, is
+    administrator-edited, and that conffile semantics apply. It defines,
+    in order, each preceded by a comment naming its effect:
+    PLANMGR_IMAGE_REPO=vasilyvz/planmgr, PLANMGR_IMAGE_VERSION=0.1.0,
+    PLANMGR_PORT=8080, PLANMGR_ADVERTISED_HOST= (empty),
+    PLANMGR_REGISTRATION_ENABLED=false, PLANMGR_REGISTRATION_URL= (empty),
+    PLANMGR_HEARTBEAT_INTERVAL=30, PLANMGR_DB_NAME=planmgr,
+    PLANMGR_DB_USER=planmgr, PLANMGR_DB_PORT=5432. No other variables are
+    present, and every documented default matches the values listed here.
+status: draft

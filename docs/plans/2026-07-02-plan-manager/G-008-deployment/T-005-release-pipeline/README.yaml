@@ -1,0 +1,50 @@
+step_id: T-005
+parent_global_step: G-008
+name: release-pipeline
+description: >
+  Create the ReleaseScript (C-031): the single build pipeline and the single
+  operator documentation source. The pipeline reads the version from the
+  package manifest as its only version source, builds the container image
+  and tags it with exactly that version so image tag and package version
+  always agree, pushes the tagged image to Docker Hub, and builds the Ubuntu
+  deb package for the current Ubuntu release from the packaging sources. The
+  same pipeline run renders the operator documentation from the one
+  documentation source into three outputs: the man page, the GNU info
+  document, and the build-time payload embedded into the server package for
+  the API self-description (C-025) — the payload directory receives the
+  build information document carrying exactly the product name, package
+  version, platform adapter version, build date, and image tag, and the
+  operator documentation text copied byte-identically from the source. A
+  build fails loudly when any rendering step fails or when the embedded
+  payload text differs from the documentation source, so the three renderings
+  cannot diverge; every pipeline stage aborts the build on error. The
+  documentation source is the single human-maintained operator document
+  covering installation, configuration, operation, and the command surface
+  overview. This step defines the pipeline program and the documentation
+  source; it defines no image content, no package control data, and no unit.
+concepts: [C-031, C-025, C-029, C-032]
+inputs:
+- name: package_manifest_version
+  type: build datum
+  description: >
+    The single-sourced version read from the package manifest, applied as
+    the image tag and the package version.
+- name: documentation_source
+  type: text document
+  description: >
+    The one human-maintained operator document rendered into man, info,
+    and the embedded payload.
+outputs:
+- name: release_artifacts
+  type: build outcome
+  description: >
+    The tagged and pushed container image and the Ubuntu deb package, with
+    matching versions.
+- name: rendered_documentation
+  type: derived artifact set
+  description: >
+    The man page, the GNU info document, and the embedded payload with the
+    five-key build information document; divergence or any rendering
+    failure aborts the build.
+atomic_steps: [A-001, A-002]
+status: draft

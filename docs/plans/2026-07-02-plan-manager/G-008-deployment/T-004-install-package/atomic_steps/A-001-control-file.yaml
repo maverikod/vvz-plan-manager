@@ -1,0 +1,87 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: control-file
+target_file: packaging/deb/control
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-032]
+prompt: |
+  Target file: packaging/deb/control (new file; the file does not exist yet).
+  Operation: create_file.
+
+  Write a Debian binary package control file (RFC822-style stanza format,
+  one field per line unless folding rules below apply) with exactly these
+  fields, in exactly this order, using exactly these values:
+
+  - Package: planmgr
+  - Version: 0.1.0
+  - Section: admin
+  - Priority: optional
+  - Architecture: all
+  - Depends: docker.io | docker-ce, curl, adduser, systemd
+  - Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
+  - Description: a one-line synopsis followed by an indented extended
+    description body.
+
+  Exact required file content (write it verbatim, including the trailing
+  newline at end of file):
+
+  Package: planmgr
+  Version: 0.1.0
+  Section: admin
+  Priority: optional
+  Architecture: all
+  Depends: docker.io | docker-ce, curl, adduser, systemd
+  Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
+  Description: plan_manager deployment package
+   Installs and configures the plan_manager server as a systemd-managed
+   Docker container. Provisions the dedicated host identity and mounted
+   directories, renders the server configuration from operator settings,
+   verifies and pulls the required container image, and manages the
+   container lifecycle through a systemd service unit.
+
+  Debian control file constraints (binding, not optional):
+  - Each field is "Name: value" on its own line; no blank line between
+    fields within the same stanza.
+  - The Description field's first line is the short synopsis on the same
+    line as "Description:". Every subsequent extended-description line
+    starts with exactly one leading space (this is required syntax for
+    Debian control files, not a formatting preference) and none of these
+    lines may be otherwise indented.
+  - No comment lines are permitted in a Debian control file (the "#"
+    character is not treated as a comment marker there); do not add any
+    explanatory comments to this file.
+  - The Version value 0.1.0 is a placeholder: the release pipeline
+    (ReleaseScript) rewrites this field from the single version source at
+    build time. Because Debian control files support no comment syntax,
+    this fact is recorded here in the authoring prompt rather than in the
+    file itself. Write the literal value 0.1.0; do not add any marker or
+    comment attempting to note this in the file.
+  - Do not add any fields beyond the eight listed above.
+  - End the file with a single trailing newline; no trailing blank lines.
+
+  MRS excerpt (only the concept relevant to this AS):
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+verification:
+  type: static_analysis
+  target: packaging/deb/control
+  expected: >
+    The file parses as a single valid Debian control stanza (a colon-terminated
+    field name at the start of each non-continuation line, continuation lines
+    prefixed with exactly one space). It contains exactly the fields Package,
+    Version, Section, Priority, Architecture, Depends, Maintainer, and
+    Description with the values specified in the prompt: Package planmgr,
+    Version 0.1.0, Section admin, Priority optional, Architecture all, Depends
+    listing docker.io | docker-ce, curl, adduser, systemd, Maintainer Vasiliy
+    Zdanovskiy <vasilyvz@gmail.com>, and a Description whose synopsis line and
+    indented extended-description lines match the prompt text. No comment
+    lines and no extra fields are present.
+status: draft

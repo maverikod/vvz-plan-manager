@@ -1,0 +1,114 @@
+step_id: A-003
+parent_tactical_step: T-004
+name: config-template
+target_file: packaging/etc/planmgr/config.json.template
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-032, C-028]
+prompt: |
+  Target file: packaging/etc/planmgr/config.json.template (new file; the
+  file does not exist yet).
+  Operation: create_file.
+
+  Write a JSON configuration template. Every value of the form
+  ${PLANMGR_*} is a literal placeholder token, written exactly as shown
+  (dollar sign, curly braces, the variable name), left unresolved in this
+  file; it is substituted in place by the envsubst utility when the
+  post-install flow renders /etc/planmgr/config.json from this template,
+  using the operator's environment variables from /etc/default/planmgr.
+  Because every placeholder appears inside a JSON string (double-quoted),
+  the file as written here is already syntactically valid JSON, and it
+  remains syntactically valid JSON after envsubst replaces each
+  ${PLANMGR_*} token with the corresponding environment variable's text
+  value (the substituted text still sits inside the enclosing double
+  quotes).
+
+  Exact required file content (write it verbatim, using two-space
+  indentation, as pretty-printed JSON; the trailing newline at end of file
+  is required):
+
+  {
+    "server": {
+      "host": "0.0.0.0",
+      "port": 8080
+    },
+    "registration": {
+      "enabled": "${PLANMGR_REGISTRATION_ENABLED}",
+      "url": "${PLANMGR_REGISTRATION_URL}",
+      "advertised_host": "${PLANMGR_ADVERTISED_HOST}",
+      "heartbeat_interval": "${PLANMGR_HEARTBEAT_INTERVAL}"
+    },
+    "plan_manager": {
+      "database": {
+        "host": "localhost",
+        "port": "${PLANMGR_DB_PORT}",
+        "dbname": "${PLANMGR_DB_NAME}",
+        "user": "${PLANMGR_DB_USER}"
+      },
+      "export_root": "/var/planmgr/export"
+    }
+  }
+
+  Constraints (binding):
+  - Reproduce the object structure, key names, key order, and literal
+    values exactly as shown above: "server" (with "host" fixed to the
+    string "0.0.0.0" and "port" fixed to the number 8080, unquoted),
+    "registration" (with "enabled", "url", "advertised_host", and
+    "heartbeat_interval" each set to their respective ${PLANMGR_*}
+    placeholder string), and "plan_manager" (with nested "database"
+    containing "host" fixed to the string "localhost" and "port",
+    "dbname", "user" each set to their respective ${PLANMGR_*} placeholder
+    string, plus a sibling "export_root" fixed to the string
+    "/var/planmgr/export").
+  - "server" and "plan_manager" are platform-owned and application-owned
+    sections respectively that pass through as-is at this layer; no
+    additional keys are added to either.
+  - Do not include any password, secret, or credential value anywhere in
+    this file. The database password is never part of the rendered
+    configuration; it is read only from the secrets file
+    /etc/planmgr/secrets/db_password by the code that consumes it.
+  - Do not add any keys, comments, or trailing commas beyond what is shown
+    above. JSON has no comment syntax; do not attempt to add one.
+  - "port" under "server" is the literal JSON number 8080 (not a
+    placeholder and not a string); every other variable value in the file
+    is a placeholder string of the exact form ${PLANMGR_NAME}.
+
+  MRS excerpt (only the concepts relevant to this AS):
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one
+      plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+verification:
+  type: static_analysis
+  target: packaging/etc/planmgr/config.json.template
+  expected: >
+    The file parses as syntactically valid JSON both before substitution
+    (every ${PLANMGR_*} token sits inside a double-quoted string value) and
+    after a textual substitution of each ${PLANMGR_*} token with an
+    arbitrary string. The top-level object contains exactly the keys
+    server, registration, and plan_manager with the nested structure,
+    key names, and literal values described in the prompt: server.host is
+    the string "0.0.0.0", server.port is the JSON number 8080,
+    registration.enabled/url/advertised_host/heartbeat_interval and
+    plan_manager.database.port/dbname/user are each the placeholder string
+    ${PLANMGR_REGISTRATION_ENABLED}, ${PLANMGR_REGISTRATION_URL},
+    ${PLANMGR_ADVERTISED_HOST}, ${PLANMGR_HEARTBEAT_INTERVAL},
+    ${PLANMGR_DB_PORT}, ${PLANMGR_DB_NAME}, ${PLANMGR_DB_USER}
+    respectively, plan_manager.database.host is the string "localhost",
+    and plan_manager.export_root is the string "/var/planmgr/export". No
+    password or secret value appears anywhere in the file.
+status: draft

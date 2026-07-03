@@ -1,0 +1,51 @@
+step_id: T-002
+parent_global_step: G-008
+name: container-image
+description: >
+  Create the ContainerDeployment (C-029) image definition: the single
+  container hosting both the server runtime (C-027) and its PostgreSQL
+  instance with pgvector (C-035). The package manifest single-sources the
+  version and declares the runtime dependencies — the platform adapter at
+  its minimum version, the database driver, the validation library, the
+  numeric library, the YAML library, and the server engine. The image
+  definition uses a slim Python base, installs PostgreSQL with the pgvector
+  extension and the server package with its dependencies, creates the
+  in-container user and group matching the host identity (C-030) so every
+  file created through the mounts is owned by the dedicated host user, runs
+  as that non-root user, exposes exactly one service port, declares the
+  three fixed mount points — configuration and secrets read-only, data
+  read-write, logs read-write — bakes no plan data, configuration, or
+  secrets into the image, and defines the container healthcheck against the
+  platform health endpoint. The entrypoint program starts PostgreSQL over
+  the mounted data directory, invokes the idempotent database
+  initialization, waits until the database answers readiness probes, and
+  then launches the server with the configuration file at its fixed mounted
+  path, propagating the server's exit. This step defines the package
+  manifest, the image definition, and the entrypoint program; it defines no
+  migration content, no host-side unit, and no release pipeline.
+concepts: [C-029, C-027, C-035, C-030, C-034]
+inputs:
+- name: server_package
+  type: build input
+  description: >
+    The server package with its declared runtime dependencies, installed
+    into the image at build time.
+- name: mounted_state
+  type: host filesystem contract
+  description: >
+    The three fixed mounts — configuration and secrets read-only, data
+    read-write, logs read-write — attached at container start.
+outputs:
+- name: container_image_definition
+  type: build artifact source
+  description: >
+    The image definition with slim base, non-root matching identity, one
+    exposed port, three declared mounts, and the health endpoint check.
+- name: entrypoint_sequence
+  type: startup program
+  description: >
+    The fixed start order: PostgreSQL over the mounted data directory,
+    idempotent initialization, readiness wait, then the server with the
+    mounted configuration.
+atomic_steps: [A-001, A-002, A-003]
+status: draft

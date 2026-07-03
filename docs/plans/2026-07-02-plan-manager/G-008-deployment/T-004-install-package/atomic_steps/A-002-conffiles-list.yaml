@@ -1,0 +1,53 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: conffiles-list
+target_file: packaging/deb/conffiles
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-032]
+prompt: |
+  Target file: packaging/deb/conffiles (new file; the file does not exist
+  yet).
+  Operation: create_file.
+
+  Write a Debian package conffiles list file containing exactly the
+  following two lines, in this exact order, each terminated by a newline,
+  with no other lines, no blank lines, and no trailing whitespace:
+
+  /etc/default/planmgr
+  /etc/planmgr/config.json.template
+
+  Constraints (binding):
+  - Each line is an absolute path to a file installed by this package.
+  - No comments are permitted in a conffiles file.
+  - Conffile semantics (informative, for correctness of the two paths
+    listed, not to be written into the file): a conffile is a
+    configuration file that dpkg tracks across upgrades. If the file on
+    disk has been locally modified since installation, upgrading or
+    reinstalling the package triggers the standard dpkg overwrite prompt
+    asking the operator to keep the local version, install the
+    maintainer's version, or view a diff; the file is never silently
+    replaced. If the file was not locally modified, dpkg replaces it with
+    the new version from the package without prompting.
+  - Do not list any file that is not one of these two paths.
+  - End the file with a single trailing newline after the last line; no
+    trailing blank line beyond that.
+
+  MRS excerpt (only the concept relevant to this AS):
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+verification:
+  type: static_analysis
+  target: packaging/deb/conffiles
+  expected: >
+    The file contains exactly two non-empty lines, in order:
+    /etc/default/planmgr and /etc/planmgr/config.json.template. There are
+    no blank lines, no comment lines, and no additional paths.
+status: draft

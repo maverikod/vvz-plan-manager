@@ -1,0 +1,46 @@
+step_id: T-003
+parent_global_step: G-008
+name: service-unit
+description: >
+  Create the ServiceUnit (C-033) and the operator settings template. The
+  systemd unit descriptor owns the container lifecycle — creating, starting,
+  and stopping the container with the three fixed mounts attached, and
+  restarting it on failure — runs as the dedicated host user of the
+  HostIdentity (C-030), reads its environment from the operator settings
+  file, orders itself after the container runtime it depends on, and reports
+  readiness through the platform health endpoint of the running container.
+  The operator settings template is the environment file the administrator
+  edits: it carries the image version to deploy, the published service port,
+  the advertised host for proxy registration, the registration toggles, and
+  the database connection parameters, each with a documented default and a
+  comment naming its effect; the settings file is consumed by the unit as
+  its environment and by the installation flow when rendering the server
+  configuration. This step defines the unit descriptor and the settings
+  template; it does not create the user, install any file, or build any
+  image.
+concepts: [C-033, C-030, C-029]
+inputs:
+- name: operator_settings
+  type: environment file data
+  description: >
+    The administrator-edited settings — image version, published port,
+    advertised host, registration toggles, database parameters — consumed
+    as the unit's environment.
+- name: container_runtime
+  type: host dependency
+  description: >
+    The container runtime the unit orders itself after and drives through
+    its lifecycle commands.
+outputs:
+- name: service_unit_descriptor
+  type: unit definition
+  description: >
+    The systemd unit running as the dedicated user with environment from
+    the settings file, restart on failure, and health-endpoint readiness.
+- name: operator_settings_template
+  type: configuration template
+  description: >
+    The documented environment-file template with defaults for every
+    operator setting.
+atomic_steps: [A-001, A-002]
+status: draft

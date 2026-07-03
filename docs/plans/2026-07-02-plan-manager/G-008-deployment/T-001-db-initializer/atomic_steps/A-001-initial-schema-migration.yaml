@@ -1,0 +1,204 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: initial-schema-migration
+target_file: plan_manager_db/migrations/0001_initial_schema.sql
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-034, C-035]
+prompt: |
+  Target file: plan_manager_db/migrations/0001_initial_schema.sql
+  Operation: create_file (the file does not exist yet; create it with exactly
+  the content below).
+
+  Context (MRS excerpt, concepts C-034 and C-035):
+
+  C-034 DbInitializer: Idempotent database initialization commands shipped
+  with the package. Properties: initdb on empty data directory, role and
+  database creation, schema migrations; sole owner of schema DDL as SQL
+  migrations, runtime code never emits DDL; refuses to damage an existing
+  database.
+
+  C-035 Database: In-container PostgreSQL with pgvector serving as the single
+  source of truth for all plan data. Properties: entities as rows,
+  referential integrity at write time; every stored entity carries an
+  immutable UUID identity, human-readable ids are scoped names mapped to it;
+  hosts the version store, locks, and embedding cache; accessed via psycopg 3
+  with plain SQL, no ORM, runtime code never emits DDL.
+
+  This file is the FIRST and ONLY schema migration for the plan_manager
+  database. It is applied exactly once by the migration runner (a separate
+  script, not part of this file), so it must NOT use "IF NOT EXISTS" on any
+  CREATE TABLE statement. It must use "CREATE EXTENSION IF NOT EXISTS vector;"
+  for the extension line exactly as given below (this one IF NOT EXISTS is
+  required verbatim, it is not a table statement).
+
+  Write the file with EXACTLY this content, verbatim, in this exact order,
+  with no additions, no omissions, no reordering:
+
+  ```sql
+  -- Migration 0001: initial schema for plan_manager.
+  -- Creates the pgvector extension and all ten core tables with their
+  -- per-plan uniqueness rules and the two named unique indexes. Applied
+  -- exactly once by the migration runner. Plain DDL only: no "IF NOT EXISTS"
+  -- on any CREATE TABLE statement.
+
+  CREATE EXTENSION IF NOT EXISTS vector;
+
+  CREATE TABLE plan (
+      uuid uuid PRIMARY KEY,
+      name text NOT NULL UNIQUE,
+      status text NOT NULL,
+      context_budget integer NOT NULL,
+      head_revision_uuid uuid NULL
+  );
+
+  CREATE TABLE revision (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      parent_uuid uuid NULL REFERENCES revision(uuid),
+      author text NOT NULL,
+      message text NOT NULL,
+      created_at timestamptz NOT NULL,
+      node_version_uuids uuid[] NOT NULL
+  );
+
+  ALTER TABLE plan
+      ADD CONSTRAINT plan_head_fk FOREIGN KEY (head_revision_uuid) REFERENCES revision(uuid);
+
+  CREATE TABLE paragraph (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      label text,
+      text text NOT NULL,
+      position integer NOT NULL
+  );
+
+  CREATE TABLE concept (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      concept_id text NOT NULL,
+      name text NOT NULL,
+      definition text NOT NULL,
+      properties text[] NOT NULL,
+      source_labels text[] NOT NULL,
+      UNIQUE (plan_uuid, concept_id)
+  );
+
+  CREATE TABLE relation (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      from_concept text NOT NULL,
+      to_concept text NOT NULL,
+      type text NOT NULL
+  );
+
+  CREATE TABLE step (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      parent_step_uuid uuid NULL,
+      level integer NOT NULL,
+      step_id text NOT NULL,
+      slug text NOT NULL,
+      fields jsonb NOT NULL,
+      depends_on text[] NOT NULL,
+      concepts text[] NOT NULL,
+      status text NOT NULL
+  );
+
+  CREATE UNIQUE INDEX step_scope_id ON step (
+      plan_uuid,
+      COALESCE(parent_step_uuid, '00000000-0000-0000-0000-000000000000'::uuid),
+      level,
+      step_id
+  );
+
+  CREATE TABLE node_version (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      entity_uuid uuid NOT NULL,
+      hash text NOT NULL,
+      content jsonb NOT NULL,
+      UNIQUE (plan_uuid, entity_uuid, hash)
+  );
+
+  CREATE TABLE ref (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      name text NOT NULL,
+      revision_uuid uuid NOT NULL REFERENCES revision(uuid),
+      UNIQUE (plan_uuid, name)
+  );
+
+  CREATE TABLE "cascade" (
+      uuid uuid PRIMARY KEY,
+      plan_uuid uuid NOT NULL REFERENCES plan(uuid) ON DELETE CASCADE,
+      name text NOT NULL,
+      base_revision_uuid uuid NULL REFERENCES revision(uuid),
+      status text NOT NULL CHECK (status IN ('open', 'committed', 'aborted')),
+      created_at timestamptz NOT NULL
+  );
+
+  CREATE UNIQUE INDEX cascade_one_open ON "cascade" (plan_uuid) WHERE status = 'open';
+
+  CREATE TABLE embedding_cache (
+      uuid uuid PRIMARY KEY,
+      content_hash text NOT NULL UNIQUE,
+      vector vector NOT NULL,
+      created_at timestamptz NOT NULL
+  );
+  ```
+
+  Binding constraints (all mandatory, no deviation):
+  - The table "cascade" MUST be double-quoted in every DDL statement that
+    names it (CREATE TABLE and CREATE UNIQUE INDEX), because "cascade" is a
+    reserved-ish word in SQL; all other table names are unquoted lowercase
+    identifiers exactly as written above.
+  - Table creation order is exactly: plan, revision, (ALTER TABLE plan ADD
+    CONSTRAINT plan_head_fk), paragraph, concept, relation, step (plus its
+    CREATE UNIQUE INDEX step_scope_id immediately after), node_version, ref,
+    "cascade" (plus its CREATE UNIQUE INDEX cascade_one_open immediately
+    after), embedding_cache. This order is required because revision must
+    exist before plan.head_revision_uuid can carry its foreign key, and
+    ref/"cascade" reference revision.
+  - Every foreign key in the file is exactly one of: each entity table's
+    plan_uuid REFERENCES plan(uuid) ON DELETE CASCADE (present on paragraph,
+    concept, relation, step, node_version, revision, ref, "cascade" — NOT on
+    embedding_cache, which has no plan_uuid column at all); plan.head_revision_uuid
+    REFERENCES revision(uuid) added via the separate ALTER TABLE statement;
+    revision.parent_uuid REFERENCES revision(uuid); ref.revision_uuid
+    REFERENCES revision(uuid); "cascade".base_revision_uuid REFERENCES
+    revision(uuid). No other foreign keys exist anywhere in the file: in
+    particular step.parent_step_uuid, node_version.entity_uuid, and
+    relation.from_concept / relation.to_concept carry NO foreign key
+    constraint (they stay application-enforced so that snapshot restore can
+    insert and delete rows in any order).
+  - embedding_cache has no plan_uuid column and no foreign key: it is
+    plan-independent, keyed only by its own UNIQUE content_hash.
+  - The two named indexes must use exactly these names: step_scope_id and
+    cascade_one_open.
+  - Do not create the schema_migration bookkeeping table in this file: it is
+    created separately by the migration runner (init.sh), not by a migration
+    file.
+  - Do not add any comments, tables, columns, indexes, or constraints beyond
+    those listed above.
+verification:
+  type: static_analysis
+  target: plan_manager_db/migrations/0001_initial_schema.sql
+  expected: >
+    The file contains exactly one CREATE EXTENSION statement for vector and
+    exactly ten CREATE TABLE statements (plan, revision, paragraph, concept,
+    relation, step, node_version, ref, "cascade", embedding_cache), in that
+    relative order except that the ALTER TABLE plan ADD CONSTRAINT
+    plan_head_fk statement appears between the revision and paragraph table
+    definitions. Exactly two CREATE UNIQUE INDEX statements are present,
+    named step_scope_id and cascade_one_open, each immediately following its
+    owning table's CREATE TABLE statement. The table cascade is written as
+    "cascade" (double-quoted) everywhere it appears. Every plan_uuid column
+    except on embedding_cache carries "REFERENCES plan(uuid) ON DELETE
+    CASCADE". No CREATE TABLE statement uses IF NOT EXISTS. No foreign key
+    exists on step.parent_step_uuid, node_version.entity_uuid, or on
+    relation.from_concept/relation.to_concept. The file parses as valid
+    PostgreSQL DDL (no unbalanced parentheses, no missing semicolons, no
+    unclosed statements).
+status: draft

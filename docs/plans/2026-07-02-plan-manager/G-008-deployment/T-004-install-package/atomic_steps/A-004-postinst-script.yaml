@@ -1,0 +1,215 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: postinst-script
+target_file: packaging/deb/postinst
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-032, C-030, C-028, C-033, C-034]
+prompt: |
+  Target file: packaging/deb/postinst (new file; the file does not exist
+  yet).
+  Operation: create_file.
+
+  Write a Debian package postinst maintainer script: a POSIX sh script
+  (shebang #!/bin/sh) that starts with "set -e" and dispatches on its
+  first positional argument ($1), acting only when $1 is "configure" (the
+  dpkg postinst argument used for a normal install or upgrade
+  configuration step); for any other argument it does nothing and exits
+  successfully.
+
+  Exact required file content (write it verbatim):
+
+  #!/bin/sh
+  set -e
+
+  case "$1" in
+      configure)
+          if ! getent group planmgrgrp >/dev/null; then
+              if getent group 990 >/dev/null; then
+                  echo "planmgr: gid 990 is already in use by another group; cannot create planmgrgrp" >&2
+                  exit 1
+              fi
+              groupadd --system --gid 990 planmgrgrp
+          fi
+          if ! getent passwd planmgruser >/dev/null; then
+              if getent passwd 990 >/dev/null; then
+                  echo "planmgr: uid 990 is already in use by another user; cannot create planmgruser" >&2
+                  exit 1
+              fi
+              useradd --system --uid 990 --gid planmgrgrp --home /var/planmgr --shell /usr/sbin/nologin planmgruser
+          fi
+
+          install -d -o planmgruser -g planmgrgrp -m 750 /etc/planmgr
+          install -d -o planmgruser -g planmgrgrp -m 700 /etc/planmgr/secrets
+          install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr
+          install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr/export
+          install -d -o planmgruser -g planmgrgrp -m 750 /var/log/planmgr
+
+          . /etc/default/planmgr
+
+          if [ -z "$PLANMGR_IMAGE_VERSION" ]; then
+              echo "planmgr: PLANMGR_IMAGE_VERSION is not set in /etc/default/planmgr" >&2
+              exit 1
+          fi
+
+          if ! docker manifest inspect "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION" >/dev/null; then
+              echo "planmgr: image $PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION was not found on the registry" >&2
+              exit 1
+          fi
+          docker pull "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION"
+
+          envsubst < /etc/planmgr/config.json.template > /etc/planmgr/config.json
+          chown planmgruser:planmgrgrp /etc/planmgr/config.json
+          chmod 640 /etc/planmgr/config.json
+
+          if [ ! -f /etc/planmgr/secrets/db_password ]; then
+              # First-run database initialization happens inside the
+              # container entrypoint, idempotently, once the service below
+              # starts the container; it consumes this generated password
+              # itself. This script only seeds the secret, it never runs
+              # database initialization directly.
+              ( umask 077 && head -c 32 /dev/urandom | base64 > /etc/planmgr/secrets/db_password )
+              chown planmgruser:planmgrgrp /etc/planmgr/secrets/db_password
+          fi
+
+          systemctl daemon-reload
+          systemctl enable planmgr.service
+          # Starting the service starts the container; the container
+          # entrypoint runs the idempotent database initialization inside
+          # the container before the server process starts. This script
+          # never invokes database initialization directly.
+          systemctl restart planmgr.service
+          ;;
+  esac
+
+  exit 0
+
+  Constraints (binding):
+  - The script is POSIX sh (no bashisms); it begins with the shebang line
+    "#!/bin/sh" then "set -e" on the next line.
+  - All maintainer-flow logic is inside the "configure)" case arm of a
+    "case "$1" in ... esac" dispatch, exactly as shown; no logic executes
+    for any other value of $1.
+  - Identity creation uses getent to test existence, then groupadd/useradd
+    with exactly the flags shown: groupadd --system --gid 990 planmgrgrp;
+    useradd --system --uid 990 --gid planmgrgrp --home /var/planmgr
+    --shell /usr/sbin/nologin planmgruser. Before creating the group or
+    user, the script checks whether gid/uid 990 is already assigned to a
+    different named group/user (via "getent group 990" / "getent passwd
+    990") and if so, aborts with an explicit message naming which id
+    (gid or uid) is conflicted, exiting with status 1. This fixed-id
+    convention is normative: the script must not silently pick another
+    id.
+  - Directory provisioning uses install -d with the exact owner, group,
+    and mode shown for exactly these five directories: /etc/planmgr
+    (750), /etc/planmgr/secrets (700), /var/planmgr (750),
+    /var/planmgr/export (750), /var/log/planmgr (750). All are owned
+    planmgruser:planmgrgrp.
+  - The script sources (with ". /etc/default/planmgr") the environment
+    file to load operator settings into shell variables; it does not
+    read or write any other file besides the ones named in this prompt:
+    /etc/default/planmgr (read), /etc/planmgr/config.json.template
+    (read), /etc/planmgr/config.json (written), and
+    /etc/planmgr/secrets/db_password (written if absent).
+  - PLANMGR_IMAGE_VERSION must be non-empty after sourcing the
+    environment file; if empty or unset, the script prints an explicit
+    error to stderr and exits with status 1 before attempting any image
+    operation.
+  - The script verifies the image exists on the registry with exactly
+    "docker manifest inspect \"$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION\"
+    >/dev/null" before pulling; a non-zero exit from that command aborts
+    the script with an explicit error message and status 1. Only after
+    that check succeeds does it run "docker pull
+    \"$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION\"".
+  - Configuration rendering uses exactly "envsubst <
+    /etc/planmgr/config.json.template > /etc/planmgr/config.json" and then
+    sets owner planmgruser:planmgrgrp and mode 640 on the rendered file.
+  - Secret seeding only runs when /etc/planmgr/secrets/db_password does
+    not already exist (an existing secret is never overwritten). It sets
+    umask 077 for the duration of the write, generates the value with
+    "head -c 32 /dev/urandom | base64", writes it to
+    /etc/planmgr/secrets/db_password, and sets its owner to
+    planmgruser:planmgrgrp.
+  - Database initialization (DbInitializer) is never invoked directly by
+    this script by name or by any explicit database-init command; it runs
+    idempotently inside the container entrypoint as a side effect of the
+    container starting, which happens when the service is started in the
+    final step. The two comments shown above stating this fact must be
+    present verbatim in their shown positions.
+  - The final maintainer-flow actions are exactly, in order: "systemctl
+    daemon-reload", "systemctl enable planmgr.service", "systemctl restart
+    planmgr.service".
+  - The script ends with "exit 0" after the case statement, so dpkg sees
+    success for arguments other than "configure" too.
+  - Do not reference the systemd unit file's own content, the image
+    build, or the database migration SQL; only the paths
+    planmgr.service (by name, invoked through systemctl) and the files
+    listed above are touched.
+
+  MRS excerpt (only the concepts relevant to this AS):
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+  - concept_id: C-030
+    name: HostIdentity
+    definition: Dedicated host system user and group
+      planmgruser:planmgrgrp owning all mounted state.
+    properties:
+    - container processes run under the matching uid/gid
+  - concept_id: C-028
+    name: Configuration
+    definition: Single JSON configuration with adapter sections plus one
+      plan_manager section validated by a Pydantic model.
+    properties:
+    - fields database, embedding, scoring, schema_overrides, export_root
+    - the per-plan context budget is plan data, not a configuration field
+    - password only from mounted secrets; invalid config aborts startup
+    - no configuration value is ever taken from request parameters
+  - concept_id: C-033
+    name: ServiceUnit
+    definition: systemd unit owning the container lifecycle, running as
+      the dedicated host user.
+    properties:
+    - environment from /etc/default/planmgr; restart on failure;
+      readiness via /health
+  - concept_id: C-034
+    name: DbInitializer
+    definition: Idempotent database initialization commands shipped with
+      the package.
+    properties:
+    - initdb on empty data directory, role and database creation, schema
+      migrations
+    - sole owner of schema DDL as SQL migrations; runtime code never
+      emits DDL
+    - refuses to damage an existing database
+verification:
+  type: static_analysis
+  target: packaging/deb/postinst
+  expected: >
+    "sh -n packaging/deb/postinst" reports no syntax errors. The script
+    starts with "#!/bin/sh" then "set -e", and all provisioning logic runs
+    only inside a "case "$1" in configure) ... ;; esac" arm. It creates
+    group planmgrgrp (gid 990) and user planmgruser (uid 990, group
+    planmgrgrp, home /var/planmgr, shell /usr/sbin/nologin) only when
+    absent, aborting with an explicit conflict message and non-zero exit
+    if gid or uid 990 already belongs to a different account. It creates
+    /etc/planmgr (750), /etc/planmgr/secrets (700), /var/planmgr (750),
+    /var/planmgr/export (750), and /var/log/planmgr (750), all owned
+    planmgruser:planmgrgrp. It sources /etc/default/planmgr, aborts with
+    an explicit message if PLANMGR_IMAGE_VERSION is empty, verifies the
+    image with "docker manifest inspect" before "docker pull", renders
+    /etc/planmgr/config.json from the template via envsubst with owner
+    planmgruser:planmgrgrp and mode 640, seeds
+    /etc/planmgr/secrets/db_password only when absent using umask 077 and
+    head/base64, and ends with systemctl daemon-reload, enable, and
+    restart of planmgr.service. Comments state that database
+    initialization happens idempotently inside the container entrypoint
+    triggered by the service start, and no command in the script invokes
+    database initialization directly.
+status: draft

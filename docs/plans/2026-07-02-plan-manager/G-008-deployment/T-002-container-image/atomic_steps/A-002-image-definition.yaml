@@ -1,0 +1,167 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: image-definition
+target_file: docker/Dockerfile
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-029, C-030, C-027, C-035, C-034]
+prompt: |
+  Target file: docker/Dockerfile (repository path docker/Dockerfile).
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content.
+
+  Write the file with EXACTLY the following content, byte for byte:
+
+  # python:3.12-slim is built on Debian "bookworm", whose default apt
+  # repository ships PostgreSQL 15; the matching pgvector package for that
+  # major version is postgresql-15-pgvector. Pin this comment and the package
+  # name together so a future base-image bump is a deliberate, visible change.
+  FROM python:3.12-slim
+
+  RUN apt-get update \
+      && apt-get install -y --no-install-recommends \
+          postgresql \
+          postgresql-contrib \
+          postgresql-15-pgvector \
+          curl \
+      && rm -rf /var/lib/apt/lists/*
+
+  RUN groupadd --gid 990 planmgr \
+      && useradd --uid 990 --gid 990 --home /var/planmgr --shell /usr/sbin/nologin planmgr
+
+  WORKDIR /build
+  COPY pyproject.toml /build/pyproject.toml
+  COPY plan_manager /build/plan_manager
+  RUN pip install --no-cache-dir .
+
+  COPY plan_manager_db/ /opt/plan_manager_db/
+  COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+  RUN chmod +x /usr/local/bin/entrypoint.sh
+
+  VOLUME ["/etc/planmgr", "/var/planmgr", "/var/log/planmgr"]
+
+  ENV PGDATA=/var/planmgr/postgres
+
+  EXPOSE 8080
+
+  USER 990:990
+
+  HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+      CMD curl -fsS http://localhost:8080/health || exit 1
+
+  ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+  Constraints (all mandatory, no deviation):
+  - Base image is exactly python:3.12-slim.
+  - The apt-get install line installs exactly four packages: postgresql,
+    postgresql-contrib, postgresql-15-pgvector, curl. curl is present only so
+    HEALTHCHECK can call it. The apt lists cache is removed in the same RUN
+    layer via rm -rf /var/lib/apt/lists/* to keep the image slim.
+  - The in-container identity is fixed uid/gid 990:990, group and user both
+    named "planmgr", home directory /var/planmgr, shell /usr/sbin/nologin
+    (a non-interactive login shell, appropriate for a service account). This
+    identity is numerically matched to the host system user and group
+    planmgruser:planmgrgrp (uid/gid 990:990) so files created through the
+    mounted volumes are owned by the host identity; the in-container account
+    name "planmgr" does not need to match the host account name, only the
+    numeric uid/gid must match.
+  - The project is installed by first copying pyproject.toml and the
+    plan_manager/ package directory into /build inside the image, then
+    running pip install --no-cache-dir . from /build. Do not use pip's
+    --editable mode. Do not copy any other project files into /build.
+  - plan_manager_db/ (a directory at the repository root containing
+    init.sh and a migrations/ subdirectory, produced by a sibling tactical
+    step and not created by this AS) is copied verbatim into
+    /opt/plan_manager_db/ in the image. This AS only performs the COPY; it
+    does not create or modify the contents of plan_manager_db/.
+  - docker/entrypoint.sh (created by a separate AS targeting that exact
+    path, not this AS) is copied to /usr/local/bin/entrypoint.sh and made
+    executable via chmod +x in the same layer.
+  - Exactly three volumes are declared, in this order: /etc/planmgr,
+    /var/planmgr, /var/log/planmgr. No plan data, configuration, or secrets
+    are baked into the image; all mutable state lives under these three
+    mount points, supplied by the container operator at run time.
+  - ENV PGDATA=/var/planmgr/postgres fixes the PostgreSQL data directory to
+    a path inside the /var/planmgr read-write mount.
+  - Exactly one port is exposed: 8080 (the fixed server port for this
+    deployment).
+  - The final effective user for the running container is 990:990 (the
+    planmgr identity created above), never root.
+  - The HEALTHCHECK runs every 30 seconds, times out after 5 seconds, and
+    tolerates 3 consecutive failures before marking the container unhealthy;
+    it calls curl -fsS http://localhost:8080/health and exits 1 on any
+    failure of that call, matching the exact health endpoint path /health
+    served by the server on the single exposed port 8080.
+  - ENTRYPOINT is the exec-form array ["/usr/local/bin/entrypoint.sh"], so
+    the entrypoint script (defined in a separate AS targeting
+    docker/entrypoint.sh) becomes PID 1 of the container.
+  - Do not add any instruction, package, layer, or comment beyond what is
+    listed above.
+
+  MRS excerpt (concept definitions and relations relevant to this AS):
+
+  - concept_id: C-029
+    name: ContainerDeployment
+    definition: Single container image hosting the server process and its PostgreSQL instance with host-mounted state.
+    properties:
+    - entrypoint starts PostgreSQL, waits readiness, launches the server
+    - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+    - one exposed port; healthcheck against /health
+
+  - concept_id: C-030
+    name: HostIdentity
+    definition: Dedicated host system user and group planmgruser:planmgrgrp owning all mounted state.
+    properties:
+    - container processes run under the matching uid/gid
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry, transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/ at the repository root, modules as dotted paths beneath it
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  - concept_id: C-034
+    name: DbInitializer
+    definition: Idempotent database initialization commands shipped with the package.
+    properties:
+    - initdb on empty data directory, role and database creation, schema migrations
+    - sole owner of schema DDL as SQL migrations; runtime code never emits DDL
+    - refuses to damage an existing database
+
+  Relevant relations:
+  - { from_concept: C-029, to_concept: C-027, type: owns }
+  - { from_concept: C-029, to_concept: C-035, type: owns }
+  - { from_concept: C-029, to_concept: C-030, type: uses }
+  - { from_concept: C-034, to_concept: C-035, type: uses }
+verification:
+  type: static_analysis
+  target: docker/Dockerfile
+  expected: >
+    Reading the file confirms a single FROM python:3.12-slim base, an
+    apt-get install of exactly postgresql, postgresql-contrib,
+    postgresql-15-pgvector, and curl followed by apt list cleanup, creation
+    of group and user "planmgr" with uid/gid 990, a pip install of the
+    project from a copied pyproject.toml and plan_manager/ tree, a COPY of
+    plan_manager_db/ into /opt/plan_manager_db/ and of docker/entrypoint.sh
+    into /usr/local/bin/entrypoint.sh with an executable bit set, exactly
+    three declared volumes /etc/planmgr, /var/planmgr, /var/log/planmgr, an
+    ENV PGDATA=/var/planmgr/postgres, exactly one EXPOSE 8080, a final USER
+    990:990, a HEALTHCHECK against http://localhost:8080/health with
+    interval 30s, timeout 5s, retries 3, and an exec-form ENTRYPOINT of
+    /usr/local/bin/entrypoint.sh. No plan data, configuration file, or
+    secret value appears anywhere in the file.
+status: draft

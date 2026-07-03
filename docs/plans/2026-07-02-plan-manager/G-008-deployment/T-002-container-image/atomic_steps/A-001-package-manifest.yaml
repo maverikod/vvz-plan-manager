@@ -1,0 +1,110 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: package-manifest
+target_file: pyproject.toml
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-029, C-027, C-035]
+prompt: |
+  Target file: pyproject.toml (repository root).
+  Operation: create_file. The file does not exist yet; do not assume any
+  pre-existing content.
+
+  Write the file with EXACTLY the following content, byte for byte (only the
+  version number field may later change across releases, but for this AS use
+  "0.1.0" verbatim):
+
+  [build-system]
+  requires = ["setuptools"]
+  build-backend = "setuptools.build_meta"
+
+  [project]
+  name = "plan-manager"
+  version = "0.1.0"
+  description = "Plan Manager server: hierarchical development plan storage, verification, and exchange service."
+  requires-python = ">=3.12"
+  dependencies = [
+      "mcp-proxy-adapter>=8.10.15",
+      "psycopg[binary]>=3",
+      "pydantic>=2",
+      "numpy",
+      "PyYAML",
+  ]
+
+  [tool.setuptools.packages.find]
+  include = ["plan_manager*"]
+
+  [tool.setuptools.package-data]
+  plan_manager = ["_build/*"]
+
+  Constraints (all mandatory, no deviation):
+  - The file is TOML, parseable by any conformant TOML parser (e.g. Python's
+    stdlib tomllib.load on a binary-mode file handle).
+  - [build-system] must declare setuptools as the build backend via
+    build-backend = "setuptools.build_meta" and requires = ["setuptools"].
+  - [project].name is exactly "plan-manager".
+  - [project].version is exactly "0.1.0". This field is the single version
+    source for the release: nothing else in the repository defines the
+    package version independently, and any other artifact that needs the
+    release version (image tag, packaging) must read it from this field
+    rather than restating it.
+  - [project].requires-python is exactly ">=3.12".
+  - [project].dependencies is exactly the five entries listed above, in that
+    order, with those exact version constraints. Do not add, remove, or
+    reorder dependencies. Do not add a dependency on hypercorn: the ASGI
+    server engine arrives transitively through the mcp-proxy-adapter
+    dependency and must not be declared separately.
+  - [tool.setuptools.packages.find].include is exactly ["plan_manager*"], so
+    the build discovers the plan_manager package and any of its
+    sub-packages by name prefix.
+  - [tool.setuptools.package-data] declares plan_manager = ["_build/*"], so
+    build-time-generated payload files placed under a plan_manager/_build/
+    directory are included verbatim inside the built wheel.
+  - Do not add any section, key, or comment beyond what is listed above.
+
+  MRS excerpt (concept definitions and relations relevant to this AS):
+
+  - concept_id: C-029
+    name: ContainerDeployment
+    definition: Single container image hosting the server process and its PostgreSQL instance with host-mounted state.
+    properties:
+    - entrypoint starts PostgreSQL, waits readiness, launches the server
+    - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+    - one exposed port; healthcheck against /health
+
+  - concept_id: C-027
+    name: ServerRuntime
+    definition: Adapter-owned runtime hosting the command registry, transport, queue, and bootstrap sequence.
+    properties:
+    - entry point main --config; AppFactory create_app; hypercorn engine
+    - adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface
+    - hook-based registration; auto-import modules for spawned workers
+    - long operations use the adapter queue with job semantics
+    - implemented in Python 3.12+; production package root plan_manager/ at the repository root, modules as dotted paths beneath it
+
+  - concept_id: C-035
+    name: Database
+    definition: In-container PostgreSQL with pgvector serving as the single source of truth for all plan data.
+    properties:
+    - entities as rows; referential integrity at write time
+    - every stored entity carries an immutable UUID identity; human-readable ids are scoped names mapped to it
+    - hosts the version store, locks, and embedding cache
+    - accessed via psycopg 3 with plain SQL; no ORM; runtime code never emits DDL
+
+  Relevant relations:
+  - { from_concept: C-029, to_concept: C-027, type: owns }
+  - { from_concept: C-029, to_concept: C-035, type: owns }
+verification:
+  type: static_analysis
+  target: pyproject.toml
+  expected: >
+    Parsing the file with a standard TOML parser succeeds without error. The
+    parsed structure contains project.name equal to "plan-manager",
+    project.version equal to "0.1.0", project.requires-python equal to
+    ">=3.12", project.dependencies containing exactly the five entries
+    "mcp-proxy-adapter>=8.10.15", "psycopg[binary]>=3", "pydantic>=2",
+    "numpy", and "PyYAML", tool.setuptools.packages.find.include equal to
+    ["plan_manager*"], and tool.setuptools.package-data.plan_manager equal to
+    ["_build/*"].
+status: draft

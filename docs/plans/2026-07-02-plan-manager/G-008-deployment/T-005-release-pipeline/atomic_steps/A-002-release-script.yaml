@@ -1,0 +1,210 @@
+step_id: A-002
+parent_tactical_step: T-005
+name: release-script
+target_file: scripts/release.sh
+operation: create_file
+priority: 1
+depends_on: [A-001]
+concepts: [C-031, C-025, C-029, C-032]
+prompt: |
+  Target file: scripts/release.sh (new file; does not exist yet).
+  Operation: create_file.
+
+  Write a Bash script at exactly the path scripts/release.sh: the single
+  release pipeline that builds the container image, pushes it to Docker
+  Hub, builds the Ubuntu deb package, and renders the operator
+  documentation into three outputs from one source, failing the build
+  loudly on any error or divergence.
+
+  MRS excerpt (concept definitions and relations relevant to this file):
+
+  - concept_id: C-031
+    name: ReleaseScript
+    definition: Single build pipeline producing the container image, Docker
+      Hub push, and the Ubuntu package.
+    properties:
+    - version single-sourced; image tag equals package version
+    - renders operator documentation for man, info, and the info command
+      payload
+
+  - concept_id: C-025
+    name: InfoCommand
+    definition: Self-description API command returning identity, build
+      metadata, runtime summary, and embedded operator documentation.
+    properties:
+    - documentation payload embedded at build time from the single
+      documentation source
+    - same source renders man and info pages; divergence fails the build
+
+  - concept_id: C-029
+    name: ContainerDeployment
+    definition: Single container image hosting the server process and its
+      PostgreSQL instance with host-mounted state.
+    properties:
+    - entrypoint starts PostgreSQL, waits readiness, launches the server
+    - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+    - one exposed port; healthcheck against /health
+
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+
+  Relevant relations:
+  - { from_concept: C-031, to_concept: C-032, type: produces }
+  - { from_concept: C-031, to_concept: C-029, type: produces }
+
+  Fixed build-time payload contract (frozen; do not deviate): the script
+  must create a directory plan_manager/_build/ and write into it exactly
+  two files:
+  - build_info.json: a JSON object with EXACTLY these five string keys and
+    no others: "product" (value "plan_manager"), "package_version" (the
+    version read from pyproject.toml), "adapter_version" (the
+    mcp-proxy-adapter dependency string read from pyproject.toml),
+    "build_date" (UTC timestamp, format %Y-%m-%dT%H:%M:%SZ), "image_tag"
+    (equal to package_version).
+  - operator_doc.md: a byte-identical copy of docs/operator/operator_doc.md
+    (this file already exists at that path; it is not created by this
+    script). A build where this copy diverges from the source must fail.
+
+  Referenced sibling paths (referenced by path only inside the script; their
+  contents are not needed to write this script and are not reproduced
+  here): docs/operator/operator_doc.md (the documentation source, already
+  present, produced by a different atomic step), docker/Dockerfile (the
+  container image build file), packaging/deb/control,
+  packaging/deb/conffiles, packaging/deb/postinst, packaging/deb/prerm,
+  packaging/deb/postrm, packaging/systemd/planmgr.service,
+  packaging/etc/default/planmgr, packaging/etc/planmgr/config.json.template
+  (packaging sources produced by sibling tactical steps).
+
+  Write the target file with EXACTLY the following content, verbatim,
+  starting at the first character shown below and ending at the last
+  character shown below:
+
+  ---BEGIN FILE CONTENT---
+  #!/usr/bin/env bash
+  # scripts/release.sh
+  # ReleaseScript (C-031): the single release pipeline for plan_manager.
+  # One pipeline run produces the tagged container image, the Docker Hub push,
+  # and the Ubuntu deb package, and renders the operator documentation from
+  # the single source (docs/operator/operator_doc.md) into the man page, the
+  # GNU info document, and the build-time payload embedded for the API
+  # self-description command. The package version is the single version
+  # source: the image tag and the deb package version are both derived from
+  # it, so they always agree. Every stage below echoes its own name, and the
+  # whole pipeline aborts the build on the first error (set -euo pipefail);
+  # the documentation divergence gate additionally fails the build explicitly
+  # if the embedded payload copy differs byte-for-byte from the source
+  # document.
+  set -euo pipefail
+
+  echo "== stage: read version =="
+  VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+  REPO="${DOCKERHUB_REPO:-vasilyvz/planmgr}"
+  echo "version=${VERSION} repo=${REPO}"
+
+  echo "== stage: render documentation =="
+  ADAPTER_VERSION="$(python3 -c 'import tomllib;deps=tomllib.load(open("pyproject.toml","rb"))["project"]["dependencies"];print([d for d in deps if d.startswith("mcp-proxy-adapter")][0])')"
+  BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p plan_manager/_build build/doc
+
+  echo "-- writing build_info.json --"
+  python3 -c "import json; json.dump({'product': 'plan_manager', 'package_version': '${VERSION}', 'adapter_version': '${ADAPTER_VERSION}', 'build_date': '${BUILD_DATE}', 'image_tag': '${VERSION}'}, open('plan_manager/_build/build_info.json', 'w'))"
+
+  echo "-- copying operator documentation payload --"
+  cp docs/operator/operator_doc.md plan_manager/_build/operator_doc.md
+
+  echo "-- divergence gate: embedded payload must match the source byte-for-byte --"
+  cmp docs/operator/operator_doc.md plan_manager/_build/operator_doc.md || { echo "payload diverged"; exit 1; }
+
+  echo "-- rendering man page --"
+  pandoc -s -t man docs/operator/operator_doc.md -o build/doc/planmgr.1
+
+  echo "-- rendering info document --"
+  pandoc -s -t texinfo docs/operator/operator_doc.md -o build/doc/planmgr.texi
+  makeinfo build/doc/planmgr.texi -o build/doc/planmgr.info
+
+  echo "== stage: build container image =="
+  docker build -f docker/Dockerfile -t "${REPO}:${VERSION}" .
+
+  echo "== stage: push container image =="
+  docker push "${REPO}:${VERSION}"
+
+  echo "== stage: build deb package =="
+  rm -rf build/deb
+  mkdir -p build/deb/DEBIAN
+  mkdir -p build/deb/lib/systemd/system
+  mkdir -p build/deb/etc/default
+  mkdir -p build/deb/etc/planmgr
+  mkdir -p build/deb/usr/share/man/man1
+  mkdir -p build/deb/usr/share/info
+
+  echo "-- staging control files --"
+  sed "s/^Version:.*/Version: ${VERSION}/" packaging/deb/control > build/deb/DEBIAN/control
+  cp packaging/deb/conffiles build/deb/DEBIAN/conffiles
+  cp packaging/deb/postinst build/deb/DEBIAN/postinst
+  cp packaging/deb/prerm build/deb/DEBIAN/prerm
+  cp packaging/deb/postrm build/deb/DEBIAN/postrm
+  chmod 755 build/deb/DEBIAN/postinst build/deb/DEBIAN/prerm build/deb/DEBIAN/postrm
+
+  echo "-- staging service unit and configuration templates --"
+  cp packaging/systemd/planmgr.service build/deb/lib/systemd/system/planmgr.service
+  cp packaging/etc/default/planmgr build/deb/etc/default/planmgr
+  cp packaging/etc/planmgr/config.json.template build/deb/etc/planmgr/config.json.template
+
+  echo "-- staging rendered documentation --"
+  gzip -9n -c build/doc/planmgr.1 > build/deb/usr/share/man/man1/planmgr.1.gz
+  gzip -9n -c build/doc/planmgr.info > build/deb/usr/share/info/planmgr.info.gz
+
+  echo "-- building .deb --"
+  dpkg-deb --build --root-owner-group build/deb "build/planmgr_${VERSION}_all.deb"
+
+  echo "== release summary =="
+  echo "image: ${REPO}:${VERSION}"
+  echo "deb: build/planmgr_${VERSION}_all.deb"
+  ---END FILE CONTENT---
+
+  Constraints:
+  - Reproduce the content between the ---BEGIN FILE CONTENT--- and
+    ---END FILE CONTENT--- markers exactly, character for character,
+    including the shebang line, comment header, blank lines, and
+    indentation. Do not include the ---BEGIN FILE CONTENT--- /
+    ---END FILE CONTENT--- marker lines themselves in the written file;
+    they exist only to delimit the content in this prompt.
+  - Do not wrap the script in a Markdown fenced code block; write it as a
+    plain executable text file.
+  - Set the file's executable bit (mode 755) after writing it.
+  - The file must be encoded as UTF-8 text, use LF line endings, and must
+    not exceed 400 lines.
+verification:
+  type: static_analysis
+  target: scripts/release.sh
+  expected: >
+    The file exists at scripts/release.sh, is executable, and passes
+    `bash -n scripts/release.sh` with no syntax errors. It begins with
+    `#!/usr/bin/env bash` and contains `set -euo pipefail`. It computes
+    VERSION and REPO before any other stage, computes ADAPTER_VERSION and
+    BUILD_DATE, creates plan_manager/_build and build/doc, writes
+    plan_manager/_build/build_info.json with exactly the five keys
+    product, package_version, adapter_version, build_date, image_tag, and
+    copies docs/operator/operator_doc.md to
+    plan_manager/_build/operator_doc.md followed immediately by a `cmp`
+    call whose failure aborts the build with a "payload diverged" message.
+    It renders build/doc/planmgr.1 via `pandoc -s -t man`, and renders
+    build/doc/planmgr.texi via `pandoc -s -t texinfo` followed by
+    `makeinfo` producing build/doc/planmgr.info. It runs `docker build`
+    and `docker push` tagging exactly "$REPO:$VERSION". It stages a
+    build/deb tree with a DEBIAN control file whose Version line is
+    rewritten to $VERSION via sed, with conffiles and postinst/prerm/postrm
+    files each chmod 755, with the systemd unit, the /etc/default/planmgr
+    file, and the config.json.template staged at their package-relative
+    paths, with the man page and info page gzip -9n compressed under
+    usr/share/man/man1 and usr/share/info, and finishes with
+    `dpkg-deb --build --root-owner-group build/deb` producing
+    build/planmgr_${VERSION}_all.deb. It ends by echoing the image tag and
+    the deb path. No stage can silently continue past a failure.
+status: draft

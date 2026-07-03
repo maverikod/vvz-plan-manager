@@ -1,0 +1,53 @@
+step_id: T-004
+parent_global_step: G-008
+name: install-package
+description: >
+  Create the InstallPackage (C-032): the Ubuntu deb package sources that
+  provision identity, directories, configuration, image, and container on
+  install. The package control data declares the package identity, its
+  dependencies on the container runtime and the system tools it invokes, and
+  marks the configuration templates as conffiles so a locally modified file
+  triggers the standard overwrite prompt and nothing is silently replaced.
+  The post-install flow creates the dedicated user and group of the
+  HostIdentity (C-030) when absent, creates the three mounted directories
+  with their ownership and restrictive modes, reads the operator settings
+  from the environment file, verifies that the required image version exists
+  on Docker Hub and pulls it, renders the server configuration file (C-028)
+  under the configuration mount from the operator settings and the
+  configuration template — including the database section and the platform
+  sections — seeds the secrets file location, invokes the idempotent
+  database initialization (C-034), and enables and starts the service unit
+  (C-033) that creates and starts the container. The pre-removal flow stops
+  and disables the unit and removes the container while preserving all
+  mounted state; the post-removal flow on purge removes what the package
+  created while never deleting the data mount without the explicit purge.
+  This step defines the control data, the conffile declarations, the
+  configuration template, and the three maintainer flows; it does not define
+  the unit descriptor, the image, or the migrations it invokes.
+concepts: [C-032, C-030, C-028, C-034, C-033]
+inputs:
+- name: operator_settings
+  type: environment file data
+  description: >
+    The settings under the environment file consumed by the post-install
+    flow: image version, published port, advertised host, registration
+    toggles, database parameters.
+- name: published_image
+  type: registry artifact
+  description: >
+    The container image version on Docker Hub, verified and pulled by the
+    post-install flow.
+outputs:
+- name: package_sources
+  type: packaging artifact set
+  description: >
+    The control data, conffile declarations, configuration template, and
+    the post-install, pre-removal, and post-removal maintainer flows.
+- name: provisioned_host
+  type: install outcome
+  description: >
+    The created identity, the three owned directories, the rendered server
+    configuration, the pulled image, the initialized database, and the
+    enabled running service.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

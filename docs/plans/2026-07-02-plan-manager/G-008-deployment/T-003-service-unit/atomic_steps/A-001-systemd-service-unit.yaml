@@ -1,0 +1,164 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: systemd-service-unit
+target_file: packaging/systemd/planmgr.service
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-033, C-030, C-029]
+prompt: |
+  Target file: packaging/systemd/planmgr.service (new file; does not exist yet).
+
+  Operation: create_file. Create the file with exactly the content specified
+  below. Do not create, read, or modify any other file.
+
+  This file is a systemd unit descriptor, plain-text INI-style syntax (no
+  Python, no shell script). Write the file content verbatim as given.
+
+  MRS excerpt (concept definitions relevant to this file):
+
+  C-033 ServiceUnit (full):
+    definition: systemd unit owning the container lifecycle, running as the
+      dedicated host user.
+    properties:
+    - environment from /etc/default/planmgr; restart on failure; readiness
+      via /health
+    relations: ServiceUnit uses ContainerDeployment (C-029); ServiceUnit uses
+      HostIdentity (C-030).
+
+  C-030 HostIdentity (as used here):
+    definition: Dedicated host system user and group
+      planmgruser:planmgrgrp owning all mounted state.
+    properties:
+    - container processes run under the matching uid/gid
+
+  C-029 ContainerDeployment (as used here):
+    definition: Single container image hosting the server process and its
+      PostgreSQL instance with host-mounted state.
+    properties:
+    - entrypoint starts PostgreSQL, waits readiness, launches the server
+    - fixed mounts /etc/planmgr, /var/planmgr, /var/log/planmgr
+    - one exposed port; healthcheck against /health
+
+  Binding conventions you must use exactly (no alternatives, no
+  substitutions):
+  - Host identity: dedicated user planmgruser, group planmgrgrp, uid/gid
+    990:990.
+  - Container name: planmgr.
+  - Container runtime: docker (binary path /usr/bin/docker).
+  - Image reference is composed from two environment variables supplied by
+    the unit's EnvironmentFile: PLANMGR_IMAGE_REPO and
+    PLANMGR_IMAGE_VERSION, referenced as ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}.
+  - Published host port comes from environment variable PLANMGR_PORT; the
+    in-container port is fixed at 8080.
+  - Mounts (exactly these three, host:container[:mode]):
+    /etc/planmgr:/etc/planmgr:ro
+    /var/planmgr:/var/planmgr
+    /var/log/planmgr:/var/log/planmgr
+  - Health endpoint: http://localhost:${PLANMGR_PORT}/health (curl binary at
+    /usr/bin/curl; sh binary at /usr/bin/sh).
+  - Environment file path: /etc/default/planmgr.
+
+  Write the file with exactly this content, byte for byte (the leading '#'
+  lines are unit-file comments; blank lines separate sections as shown):
+
+  ```
+  # Plan Manager systemd unit
+  # Realizes ServiceUnit (C-033): owns the container lifecycle (create,
+  # start, stop, restart-on-failure) for the ContainerDeployment (C-029)
+  # image, running as the dedicated HostIdentity (C-030) user
+  # planmgruser:planmgrgrp.
+
+  [Unit]
+  # Lifecycle ownership: this unit is the sole owner of the planmgr
+  # container's lifecycle. It orders itself after the network and the
+  # container runtime it depends on, and requires the container runtime to
+  # be present before it can start.
+  Description=Plan Manager server (containerized application and PostgreSQL)
+  After=network-online.target docker.service
+  Requires=docker.service
+
+  [Service]
+  # Lifecycle ownership: Type=exec means systemd tracks the ExecStart
+  # process directly (the foregrounded `docker run --rm` below), so
+  # systemd's view of the unit's running state matches the container's
+  # actual running state.
+  Type=exec
+
+  # Dedicated user: the unit and everything it starts run as the
+  # HostIdentity (C-030) dedicated host user and group
+  # planmgruser:planmgrgrp (uid/gid 990:990), never as root.
+  User=planmgruser
+  Group=planmgrgrp
+
+  # Environment file: operator settings (image repository/version,
+  # published port, advertised host, registration toggles, database
+  # parameters) are read from /etc/default/planmgr, the ServiceUnit's
+  # (C-033) environment file.
+  EnvironmentFile=/etc/default/planmgr
+
+  # Lifecycle ownership: best-effort cleanup of any leftover container from
+  # a prior unclean stop, before starting a fresh one. The leading '-'
+  # marks this command's exit status as ignored (non-fatal): there may be
+  # nothing to remove.
+  ExecStartPre=-/usr/bin/docker rm -f planmgr
+
+  # Lifecycle ownership: starts the ContainerDeployment (C-029) image under
+  # the dedicated host user's uid/gid, publishing the in-container port
+  # 8080 on the configured host port, and attaching the three fixed host
+  # mounts (/etc/planmgr read-only, /var/planmgr and /var/log/planmgr
+  # read-write) that carry all mutable state across container replacement.
+  ExecStart=/usr/bin/docker run --name planmgr --rm --user 990:990 -p ${PLANMGR_PORT}:8080 -v /etc/planmgr:/etc/planmgr:ro -v /var/planmgr:/var/planmgr -v /var/log/planmgr:/var/log/planmgr ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}
+
+  # Health readiness: polls the platform health endpoint of the
+  # just-started container (http://localhost:${PLANMGR_PORT}/health) every
+  # 2 seconds for up to 30 attempts, and only reports the unit as started
+  # once the endpoint responds successfully; fails the start if it never
+  # becomes healthy.
+  ExecStartPost=/usr/bin/sh -c 'for i in $(seq 1 30); do curl -fsS http://localhost:${PLANMGR_PORT}/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+
+  # Lifecycle ownership: stops the running container cleanly on unit stop.
+  ExecStop=/usr/bin/docker stop planmgr
+
+  # Restart on failure: the unit restarts the container automatically if
+  # the ExecStart process exits unexpectedly, waiting 5 seconds between
+  # attempts.
+  Restart=on-failure
+  RestartSec=5
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+
+  Constraints:
+  - The file must contain exactly the three sections [Unit], [Service],
+    [Install], in that order, with the directives shown above and no
+    others.
+  - Every directive group above must be preceded by the comment shown,
+    naming which GS role it realizes (lifecycle ownership, dedicated user,
+    environment file, restart on failure, health readiness).
+  - Do not add any directive not listed above (no additional ExecStart*,
+    no additional [Unit] or [Service] keys).
+  - Preserve the exact variable names ${PLANMGR_PORT}, ${PLANMGR_IMAGE_REPO},
+    ${PLANMGR_IMAGE_VERSION} and the exact literal paths and values shown.
+verification:
+  type: static_analysis
+  target: packaging/systemd/planmgr.service
+  expected: >
+    The file parses as a valid systemd unit file with sections [Unit],
+    [Service], [Install] in that order. [Unit] contains
+    After=network-online.target docker.service and
+    Requires=docker.service. [Service] contains Type=exec,
+    User=planmgruser, Group=planmgrgrp,
+    EnvironmentFile=/etc/default/planmgr, an ExecStartPre line beginning
+    with a dash that runs "docker rm -f planmgr", an ExecStart line running
+    "docker run" with --name planmgr, --rm, --user 990:990, publishing
+    ${PLANMGR_PORT} to container port 8080, mounting exactly
+    /etc/planmgr:/etc/planmgr:ro, /var/planmgr:/var/planmgr, and
+    /var/log/planmgr:/var/log/planmgr, and running image
+    ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}; an ExecStartPost line
+    that polls http://localhost:${PLANMGR_PORT}/health in a retry loop; an
+    ExecStop line running "docker stop planmgr"; Restart=on-failure and
+    RestartSec=5. [Install] contains WantedBy=multi-user.target. Each
+    directive group is preceded by a comment naming its GS role.
+status: draft

@@ -1,0 +1,207 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: init-shell-script
+target_file: plan_manager_db/init.sh
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-034, C-035]
+prompt: |
+  Target file: plan_manager_db/init.sh
+  Operation: create_file (the file does not exist yet; create it with exactly
+  the content below).
+
+  Context (MRS excerpt, concepts C-034 and C-035):
+
+  C-034 DbInitializer: Idempotent database initialization commands shipped
+  with the package. Properties: initdb on empty data directory, role and
+  database creation, schema migrations; sole owner of schema DDL as SQL
+  migrations, runtime code never emits DDL; refuses to damage an existing
+  database.
+
+  C-035 Database: In-container PostgreSQL with pgvector serving as the single
+  source of truth for all plan data. Properties: entities as rows,
+  referential integrity at write time; every stored entity carries an
+  immutable UUID identity; hosts the version store, locks, and embedding
+  cache; accessed via psycopg 3 with plain SQL, no ORM, runtime code never
+  emits DDL.
+
+  This script is invoked either standalone or from the service wrapper
+  (a separate artifact, not part of this file). It assumes a reachable
+  PostgreSQL server process was already started by its caller; this script
+  never starts or stops the server process itself.
+
+  Write the file with EXACTLY this content, verbatim, in this exact order,
+  with no additions, no omissions, no reordering:
+
+  ```sh
+  #!/bin/sh
+  # plan_manager_db/init.sh
+  # Idempotent database initialization for plan_manager. Invocable standalone
+  # or through the service wrapper. Never damages an existing database:
+  # every step is guarded so a re-run changes nothing once the target state
+  # is reached.
+  set -eu
+
+  PGDATA="${PGDATA:-/var/planmgr/postgres}"
+  PLANMGR_DB="${PLANMGR_DB:-planmgr}"
+  PLANMGR_DB_USER="${PLANMGR_DB_USER:-planmgr}"
+  PLANMGR_SECRETS="${PLANMGR_SECRETS:-/etc/planmgr/secrets/db_password}"
+  MIGRATIONS_DIR="${MIGRATIONS_DIR:-/opt/plan_manager_db/migrations}"
+
+  # (a) Initialize the data directory only when empty; refuse to touch a
+  #     non-empty directory that is not already a PostgreSQL cluster.
+  if [ -f "$PGDATA/PG_VERSION" ]; then
+      echo "init.sh: data directory already initialized, skipping initdb"
+  elif [ -d "$PGDATA" ] && [ -n "$(ls -A "$PGDATA" 2>/dev/null)" ]; then
+      echo "init.sh: data directory not empty and not a PostgreSQL cluster" >&2
+      exit 1
+  else
+      mkdir -p "$PGDATA"
+      initdb -D "$PGDATA"
+  fi
+
+  # (b) The caller starts the server; this script only checks reachability.
+  if ! pg_isready -q; then
+      echo "init.sh: PostgreSQL server is not reachable; start it before running init.sh" >&2
+      exit 1
+  fi
+
+  # (c) Create the role when absent, with password read from the secrets file.
+  if [ ! -s "$PLANMGR_SECRETS" ]; then
+      echo "init.sh: secrets file $PLANMGR_SECRETS is missing or empty" >&2
+      exit 1
+  fi
+  PLANMGR_DB_PASSWORD="$(cat "$PLANMGR_SECRETS")"
+
+  ROLE_EXISTS="$(psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$PLANMGR_DB_USER'")"
+  if [ "$ROLE_EXISTS" = "1" ]; then
+      role_created=0
+  else
+      psql -d postgres -c "CREATE ROLE \"$PLANMGR_DB_USER\" LOGIN PASSWORD '$PLANMGR_DB_PASSWORD';"
+      role_created=1
+  fi
+
+  # (d) Create the database when absent, owned by the role.
+  DB_EXISTS="$(psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$PLANMGR_DB'")"
+  if [ "$DB_EXISTS" = "1" ]; then
+      db_created=0
+  else
+      psql -d postgres -c "CREATE DATABASE \"$PLANMGR_DB\" OWNER \"$PLANMGR_DB_USER\";"
+      db_created=1
+  fi
+
+  # (e) Ensure the schema_migration bookkeeping table exists.
+  psql -d "$PLANMGR_DB" -c "CREATE TABLE IF NOT EXISTS schema_migration (filename text PRIMARY KEY, applied_at timestamptz NOT NULL);"
+
+  # (f) Apply every pending migration in ascending filename order, each in
+  #     one single-transaction psql run, recording it immediately after.
+  applied_count=0
+  skipped_count=0
+  for migration in "$MIGRATIONS_DIR"/*.sql; do
+      [ -e "$migration" ] || continue
+      filename="$(basename "$migration")"
+      ALREADY_APPLIED="$(psql -d "$PLANMGR_DB" -tAc "SELECT 1 FROM schema_migration WHERE filename = '$filename'")"
+      if [ "$ALREADY_APPLIED" = "1" ]; then
+          skipped_count=$((skipped_count + 1))
+          continue
+      fi
+      psql -d "$PLANMGR_DB" -1 -f "$migration"
+      psql -d "$PLANMGR_DB" -c "INSERT INTO schema_migration (filename, applied_at) VALUES ('$filename', now());"
+      applied_count=$((applied_count + 1))
+  done
+
+  # (g) Report and exit successfully.
+  echo "init.sh: done (role_created=$role_created db_created=$db_created migrations_applied=$applied_count migrations_skipped=$skipped_count)"
+  exit 0
+  ```
+
+  Binding constraints (all mandatory, no deviation):
+  - The shebang is exactly "#!/bin/sh" on the first line; "set -eu" is the
+    first executable statement (no "set -o pipefail", which is not POSIX
+    sh).
+  - All five environment variables (PGDATA, PLANMGR_DB, PLANMGR_DB_USER,
+    PLANMGR_SECRETS, MIGRATIONS_DIR) are assigned exactly once, at the top,
+    using the "${VAR:-default}" form with the default values shown above,
+    so each is overridable by the caller's environment and defaults exactly
+    as specified when unset.
+  - Step (a) distinguishes exactly three cases using this precedence: (1) if
+    "$PGDATA/PG_VERSION" exists as a regular file, skip initdb; (2) else if
+    "$PGDATA" exists as a directory AND `ls -A "$PGDATA"` is non-empty,
+    print the exact message "init.sh: data directory not empty and not a
+    PostgreSQL cluster" to stderr and exit 1; (3) else (directory absent or
+    empty), create it with "mkdir -p" and run "initdb -D "$PGDATA"". No
+    other tool besides initdb is used for cluster creation.
+  - Step (b) calls "pg_isready -q" exactly once with no arguments beyond
+    "-q"; on non-zero exit it prints the exact message "init.sh: PostgreSQL
+    server is not reachable; start it before running init.sh" to stderr and
+    exits 1. This script never invokes pg_ctl, pg_ctlcluster, or any command
+    that starts or stops the server.
+  - Step (c): the secrets file check uses "[ ! -s "$PLANMGR_SECRETS" ]" (true
+    when the file is missing OR empty); on that condition print the exact
+    message "init.sh: secrets file $PLANMGR_SECRETS is missing or empty" to
+    stderr and exit 1. The password is read with "$(cat "$PLANMGR_SECRETS")"
+    with no trimming beyond what command substitution already does. Role
+    existence is checked with the exact query "SELECT 1 FROM pg_roles WHERE
+    rolname = '$PLANMGR_DB_USER'" via "psql -d postgres -tAc". When absent,
+    create it with "CREATE ROLE \"$PLANMGR_DB_USER\" LOGIN PASSWORD
+    '$PLANMGR_DB_PASSWORD';" via "psql -d postgres -c". Both administrative
+    queries connect to the "postgres" maintenance database via "-d postgres"
+    (PLANMGR_DB does not exist yet at this point in the script).
+  - Step (d): database existence is checked with the exact query "SELECT 1
+    FROM pg_database WHERE datname = '$PLANMGR_DB'" via "psql -d postgres
+    -tAc". When absent, create it with "CREATE DATABASE \"$PLANMGR_DB\"
+    OWNER \"$PLANMGR_DB_USER\";" via "psql -d postgres -c".
+  - Step (e) runs exactly one "psql -d "$PLANMGR_DB" -c" command creating
+    schema_migration with "CREATE TABLE IF NOT EXISTS schema_migration
+    (filename text PRIMARY KEY, applied_at timestamptz NOT NULL);" — this is
+    the only place in the whole init flow where "IF NOT EXISTS" is used for
+    a table, because this bookkeeping table is not a migration.
+  - Step (f) iterates "$MIGRATIONS_DIR"/*.sql via a "for" loop, which glob-
+    expands in ascending lexicographic (filename) order under POSIX sh; the
+    "[ -e "$migration" ] || continue" guard skips the case where the glob
+    matches nothing. For each migration file: compute "filename" with
+    "basename"; check "schema_migration" for that filename via "psql -d
+    "$PLANMGR_DB" -tAc" with the exact query "SELECT 1 FROM schema_migration
+    WHERE filename = '$filename'"; if already recorded, increment
+    skipped_count and continue; otherwise apply it with exactly one
+    single-transaction run "psql -d "$PLANMGR_DB" -1 -f "$migration"",
+    then record it with "psql -d "$PLANMGR_DB" -c "INSERT INTO
+    schema_migration (filename, applied_at) VALUES ('$filename', now());"",
+    then increment applied_count. The "-1" flag is what makes each
+    migration run inside one single transaction.
+  - Step (g) prints exactly one final line via "echo" in the form
+    "init.sh: done (role_created=$role_created db_created=$db_created
+    migrations_applied=$applied_count migrations_skipped=$skipped_count)"
+    and the script exits with status 0 as its last action.
+  - No functions are defined; the script is a single top-to-bottom sequence
+    of guarded steps as shown. No temporary files are created. No command
+    other than sh builtins, ls, mkdir, cat, basename, initdb, pg_isready,
+    and psql is invoked anywhere in the script.
+verification:
+  type: static_analysis
+  target: plan_manager_db/init.sh
+  expected: >
+    Running "sh -n plan_manager_db/init.sh" reports no syntax errors. The
+    file begins with "#!/bin/sh" followed by "set -eu". All five environment
+    variables (PGDATA, PLANMGR_DB, PLANMGR_DB_USER, PLANMGR_SECRETS,
+    MIGRATIONS_DIR) are assigned with "${VAR:-default}" defaults matching
+    the values specified. Exactly one guarded initdb branch exists that
+    distinguishes an already-initialized data directory (PG_VERSION present,
+    skip), a non-empty non-cluster directory (error exit 1 with the data
+    directory message, no initdb or mkdir call reached), and an empty or
+    absent directory (mkdir -p then initdb). Exactly one "pg_isready -q"
+    check exists guarding a clear stderr error and exit 1 on failure, with
+    no call anywhere in the file to pg_ctl or pg_ctlcluster. The secrets
+    file is checked with "[ ! -s ... ]" before being read, erroring out on a
+    missing or empty file. Role and database creation are each guarded by a
+    SELECT-based existence check against pg_roles / pg_database before the
+    corresponding CREATE statement runs. schema_migration is created with
+    CREATE TABLE IF NOT EXISTS. The migration loop applies each
+    "$MIGRATIONS_DIR"/*.sql file exactly once via "psql -1 -f", skipping
+    filenames already present in schema_migration, and records each newly
+    applied filename in schema_migration immediately after applying it. The
+    script's final statement is "exit 0" following a report line that
+    includes role_created, db_created, migrations_applied, and
+    migrations_skipped counts.
+status: draft

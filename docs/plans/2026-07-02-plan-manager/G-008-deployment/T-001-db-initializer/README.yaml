@@ -1,0 +1,54 @@
+step_id: T-001
+parent_global_step: G-008
+name: db-initializer
+description: >
+  Create the DbInitializer (C-034): the schema migrations and the idempotent
+  initialization commands shipped with the package, the sole owner of every
+  data definition statement — runtime code never emits DDL. The initial
+  schema migration is one ordered SQL document creating the pgvector
+  extension and every table of the database (C-035): the plan aggregate with
+  unique name and nullable head revision reference, the paragraph, concept,
+  and relation tables with their per-plan uniqueness rules, the step table
+  with its scope-unique identifier rule, the append-only version store
+  tables for node versions with content deduplication and revisions with
+  parent linkage, the reference table, the cascade record table with the
+  single-open-cascade partial uniqueness, and the embedding cache keyed by
+  unique content hash — each entity row carrying an immutable UUID identity
+  and plan scoping. Foreign keys are limited to the append-only-safe edges:
+  every entity table references its plan with cascading deletion, and
+  revision-valued columns reference the revision table; parent step linkage,
+  node-version entity references, and relation endpoints stay
+  application-enforced so that snapshot restoration can insert and delete
+  rows in any order. The initialization command sequence is idempotent and
+  refuses to damage existing data: it initializes the mounted data directory
+  only when empty, creates the role and the database only when absent, reads
+  the password from the mounted secrets file, applies the migrations in
+  ascending order recording each applied migration, and exits without change
+  when everything already exists; it is invocable standalone and through the
+  service wrapper. This step defines the migration document and the
+  initialization commands; it builds no image and installs no package.
+concepts: [C-034, C-035]
+inputs:
+- name: mounted_data_directory
+  type: host filesystem state
+  description: >
+    The PostgreSQL data directory under the read-write data mount,
+    initialized only when empty.
+- name: secrets_file
+  type: mounted file datum
+  description: >
+    The mounted database password file consumed when creating the role and
+    setting its password.
+outputs:
+- name: schema_migration
+  type: SQL document
+  description: >
+    The ordered initial schema migration creating the extension, all
+    tables, uniqueness rules, and the append-only-safe foreign keys.
+- name: initialized_database
+  type: idempotent outcome
+  description: >
+    The initialized cluster, role, database, and applied-migration record;
+    a re-run changes nothing and existing data is never damaged.
+atomic_steps: [A-001, A-002]
+status: draft

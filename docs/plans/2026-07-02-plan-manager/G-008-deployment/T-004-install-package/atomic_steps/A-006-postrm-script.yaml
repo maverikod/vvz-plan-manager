@@ -1,0 +1,97 @@
+step_id: A-006
+parent_tactical_step: T-004
+name: postrm-script
+target_file: packaging/deb/postrm
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-032, C-030]
+prompt: |
+  Target file: packaging/deb/postrm (new file; the file does not exist
+  yet).
+  Operation: create_file.
+
+  Write a Debian package postrm maintainer script: a POSIX sh script
+  (shebang #!/bin/sh) that starts with "set -e" and dispatches on its
+  first positional argument ($1). dpkg calls postrm with $1 equal to
+  "remove" after the package's own files have been removed but
+  configuration files (conffiles) are kept, and with $1 equal to "purge"
+  when the operator explicitly requests removal of configuration and data
+  as well (e.g. "dpkg --purge planmgr" or "apt purge planmgr"). For any
+  other argument the script does nothing beyond exiting successfully.
+
+  Exact required file content (write it verbatim):
+
+  #!/bin/sh
+  set -e
+
+  case "$1" in
+      remove)
+          systemctl daemon-reload
+          ;;
+      purge)
+          rm -rf /etc/planmgr /var/log/planmgr /var/planmgr
+          userdel planmgruser || true
+          groupdel planmgrgrp || true
+          systemctl daemon-reload
+          ;;
+  esac
+
+  exit 0
+
+  Constraints (binding):
+  - The script is POSIX sh (no bashisms); it begins with the shebang line
+    "#!/bin/sh" then "set -e" on the next line.
+  - All logic is inside a "case "$1" in ... esac" dispatch with exactly
+    two handled arms, "remove)" and "purge)"; any other argument value
+    falls through to no action.
+  - The "remove)" arm runs exactly one command, "systemctl daemon-reload",
+    and does not delete, move, or modify any file under /etc/planmgr,
+    /var/planmgr, or /var/log/planmgr: on remove, all mounted state
+    (configuration, data, and logs) is preserved.
+  - The "purge)" arm is the only place in this script, and the only
+    maintainer flow across the whole package, that deletes the mounted
+    directories. It runs exactly: "rm -rf /etc/planmgr /var/log/planmgr
+    /var/planmgr", then "userdel planmgruser || true", then "groupdel
+    planmgrgrp || true", then "systemctl daemon-reload", in this order.
+    The userdel and groupdel commands are suffixed with "|| true" so a
+    missing user or group (already removed, or never created) does not
+    abort the script under "set -e".
+  - The data mount(s) are removed only when $1 is exactly "purge"; no
+    other code path in this script deletes /etc/planmgr, /var/planmgr, or
+    /var/log/planmgr.
+  - The script does not reference the systemd unit file's own content,
+    the container image, or any database operation; it only removes host
+    directories, the host identity, and reloads the systemd unit
+    database.
+  - The script ends with "exit 0" after the case statement.
+
+  MRS excerpt (only the concepts relevant to this AS):
+  - concept_id: C-032
+    name: InstallPackage
+    definition: Ubuntu deb package that provisions identity, directories,
+      configuration, image, and container on install.
+    properties:
+    - conffile semantics with standard overwrite prompt
+    - verifies and pulls the required image version from Docker Hub
+    - renders server config from /etc/default/planmgr operator settings
+  - concept_id: C-030
+    name: HostIdentity
+    definition: Dedicated host system user and group
+      planmgruser:planmgrgrp owning all mounted state.
+    properties:
+    - container processes run under the matching uid/gid
+verification:
+  type: static_analysis
+  target: packaging/deb/postrm
+  expected: >
+    "sh -n packaging/deb/postrm" reports no syntax errors. The script
+    starts with "#!/bin/sh" then "set -e", and dispatches on $1 with a
+    case statement having exactly a "remove)" arm that runs only
+    "systemctl daemon-reload" (preserving all of /etc/planmgr,
+    /var/planmgr, /var/log/planmgr), and a "purge)" arm that runs, in
+    order, "rm -rf /etc/planmgr /var/log/planmgr /var/planmgr", "userdel
+    planmgruser || true", "groupdel planmgrgrp || true", and "systemctl
+    daemon-reload". No other argument value triggers directory deletion,
+    and the script ends with "exit 0".
+status: draft
