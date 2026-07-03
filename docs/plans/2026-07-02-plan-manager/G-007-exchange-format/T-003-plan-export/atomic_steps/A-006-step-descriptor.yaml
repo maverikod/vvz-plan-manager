@@ -1,0 +1,313 @@
+step_id: A-006
+parent_tactical_step: T-003
+name: step-descriptor
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 6
+depends_on: [A-005]
+concepts: [C-021, C-006]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this tactical step's priority-1 through priority-5 atomic
+  steps applied on top of the prior tactical step's output). Apply your
+  change on top of exactly this content; do not assume any other prior
+  state.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  Normative rule this step realizes (verbatim from the parent tactical
+  step): The layout follows the exchange naming of the declarative schema
+  (C-006) with its defaults: ... one directory per global step and per
+  tactical step named by identifier and slug with a YAML descriptor each,
+  and one YAML file per atomic step under the tactical step's atomic-step
+  directory.
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.concept_store import list_concepts
+  from plan_manager.domain.paragraph_store import list_paragraphs
+  from plan_manager.domain.relation_store import list_relations
+  from plan_manager.storage.version_ops import checkout_read, state_at
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+
+  HRS_FILENAME = "source_spec.md"
+  MRS_FILENAME = "spec.yaml"
+  STEP_README = "README.yaml"
+  ATOMIC_DIR = "atomic_steps"
+
+
+  def emit_yaml(path, data: dict) -> None:
+      """Serialize data as safe YAML to path, aborting on a round-trip mismatch.
+
+      Dumps data with yaml.safe_dump using default_flow_style=False,
+      allow_unicode=True, and sort_keys=False so that scalars containing a
+      colon-space, a leading dash, quotes, a hash sign, or other YAML
+      metacharacters are quoted or emitted as block scalars (C-021). Then
+      re-parses the dumped text with yaml.safe_load and compares the result
+      against data for exact equality; a mismatch means the dumped text would
+      not restore the original value, so the emission is aborted.
+
+      :param path: The filesystem path to write; parent directories are
+          created if missing.
+      :type path: str | pathlib.Path
+      :param data: The plain-dict value to serialize.
+      :type data: dict
+      :raises ExportError: If the round-trip re-parse does not equal data.
+      :return: None.
+      :rtype: None
+      """
+      text = yaml.safe_dump(
+          data, default_flow_style=False, allow_unicode=True, sort_keys=False
+      )
+      if yaml.safe_load(text) != data:
+          raise ExportError(f"round-trip failed: {path}")
+      target = pathlib.Path(path)
+      target.parent.mkdir(parents=True, exist_ok=True)
+      target.write_text(text, encoding="utf-8")
+
+
+  def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
+      """Assemble the plan's exportable state, live or at a named revision.
+
+      When revision_uuid is None, reads the current stored rows: steps via
+      load_steps converted to dicts with keys uuid, plan_uuid,
+      parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
+      status; concepts via list_concepts; relations via list_relations
+      converted to {"from_concept", "to_concept", "type"} dicts; paragraphs
+      via list_paragraphs converted to dicts with keys uuid, plan_uuid, label,
+      text, position.
+
+      When revision_uuid is given, calls node_map = state_at(conn, plan_uuid,
+      revision_uuid) (a VersionStoreError from an unknown revision
+      propagates), then for every node uuid in node_map calls
+      snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid), skips
+      the node when snap.get("deleted") is True, and otherwise buckets a copy
+      of snap with the "kind" key removed into steps, concepts, relations, or
+      paragraphs according to snap["kind"].
+
+      Every bucket is sorted before being returned: steps by (level, step_id),
+      concepts by concept_id, relations by (from_concept, to_concept, type),
+      paragraphs by position.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan being assembled.
+      :param revision_uuid: The revision to assemble state at, or None to read
+          the current stored rows.
+      :type revision_uuid: uuid.UUID | None
+      :raises plan_manager.storage.version_store.VersionStoreError: If
+          revision_uuid does not identify a known revision.
+      :return: {"steps": [...], "concepts": [...], "relations": [...],
+          "paragraphs": [...]} of plain dicts, each bucket sorted as above.
+      :rtype: dict
+      """
+      if revision_uuid is None:
+          steps = [
+              {
+                  "uuid": s.uuid,
+                  "plan_uuid": s.plan_uuid,
+                  "parent_step_uuid": s.parent_step_uuid,
+                  "level": s.level,
+                  "step_id": s.step_id,
+                  "slug": s.slug,
+                  "fields": s.fields,
+                  "depends_on": s.depends_on,
+                  "concepts": s.concepts,
+                  "status": s.status,
+              }
+              for s in load_steps(conn, plan_uuid).values()
+          ]
+          concepts = [
+              {
+                  "concept_id": c.concept_id,
+                  "name": c.name,
+                  "definition": c.definition,
+                  "properties": c.properties,
+                  "source_labels": c.source_labels,
+              }
+              for c in list_concepts(conn, plan_uuid)
+          ]
+          relations = [
+              {"from_concept": r[0], "to_concept": r[1], "type": r[2]}
+              for r in list_relations(conn, plan_uuid)
+          ]
+          paragraphs = [
+              {
+                  "uuid": p.uuid,
+                  "plan_uuid": p.plan_uuid,
+                  "label": p.label,
+                  "text": p.text,
+                  "position": p.position,
+              }
+              for p in list_paragraphs(conn, plan_uuid)
+          ]
+      else:
+          node_map = state_at(conn, plan_uuid, revision_uuid)
+          steps, concepts, relations, paragraphs = [], [], [], []
+          for node_uuid in node_map:
+              snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid)
+              if snap.get("deleted") is True:
+                  continue
+              body = {k: v for k, v in snap.items() if k != "kind"}
+              kind = snap["kind"]
+              if kind == "step":
+                  steps.append(body)
+              elif kind == "concept":
+                  concepts.append(body)
+              elif kind == "relation":
+                  relations.append(body)
+              elif kind == "paragraph":
+                  paragraphs.append(body)
+
+      steps.sort(key=lambda d: (d["level"], d["step_id"]))
+      concepts.sort(key=lambda d: d["concept_id"])
+      relations.sort(key=lambda d: (d["from_concept"], d["to_concept"], d["type"]))
+      paragraphs.sort(key=lambda d: d["position"])
+      return {
+          "steps": steps,
+          "concepts": concepts,
+          "relations": relations,
+          "paragraphs": paragraphs,
+      }
+
+
+  def render_hrs_text(paragraphs: list[dict]) -> str:
+      """Render the binding HRS Markdown document from assembled paragraph dicts.
+
+      Sorts paragraphs by their "position" key, renders each as its
+      brace-wrapped "label" value, one space, and its "text" value
+      byte-identically, and joins the rendered paragraphs with exactly one
+      blank line, ending the document with a single trailing newline. This is
+      the same rendering rule as export_hrs, applied to assembled dicts
+      instead of stored rows.
+
+      :param paragraphs: Assembled paragraph dicts, each carrying at least the
+          keys "label", "text", and "position".
+      :type paragraphs: list[dict]
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same input.
+      :rtype: str
+      """
+      ordered = sorted(paragraphs, key=lambda p: p["position"])
+      rendered = ["{" + p["label"] + "} " + p["text"] for p in ordered]
+      return "\n\n".join(rendered) + "\n"
+
+  Required change: append exactly the following function to the end of the
+  file, after the render_hrs_text function, separated from it by exactly
+  two blank lines. Do not modify anything above. Do not add any import.
+
+  def step_descriptor(step: dict) -> dict:
+      """Build the exported descriptor dict for one step, in canonical key order.
+
+      Starts from {"step_id": step["step_id"]}, merges in every key of
+      step["fields"] (level-specific fields), then sets "depends_on" from
+      step["depends_on"], "concepts" from step["concepts"], and "status" from
+      step["status"] — exactly these keys, in exactly this order. The step's
+      "slug" is carried by the exported directory or file name and is never
+      included in the descriptor.
+
+      :param step: An assembled step dict as produced by assemble_state,
+          carrying at least the keys step_id, fields, depends_on, concepts,
+          status.
+      :type step: dict
+      :return: The step descriptor dict ready for safe YAML emission.
+      :rtype: dict
+      """
+      descriptor = {"step_id": step["step_id"]}
+      descriptor.update(step["fields"])
+      descriptor["depends_on"] = step["depends_on"]
+      descriptor["concepts"] = step["concepts"]
+      descriptor["status"] = step["status"]
+      return descriptor
+
+  Constraints (all binding, no deviation):
+  - step_descriptor takes exactly one parameter, step: dict, and does not
+    call assemble_state, emit_yaml, or any database or filesystem function.
+  - The construction order is exactly: (1) descriptor = {"step_id":
+    step["step_id"]}; (2) descriptor.update(step["fields"]); (3)
+    descriptor["depends_on"] = step["depends_on"]; (4)
+    descriptor["concepts"] = step["concepts"]; (5) descriptor["status"] =
+    step["status"]; (6) return descriptor. No other keys are set and
+    step["slug"] is never read or written by this function.
+  - If any key inside step["fields"] happens to be named "step_id",
+    "depends_on", "concepts", or "status", dict.update followed by the
+    explicit assignments means the final values of "depends_on",
+    "concepts", and "status" always come from the top-level step dict
+    (the explicit assignments run after the update and win), while
+    "step_id" is set before the update and could be overwritten by a
+    "step_id" key inside fields — this is the exact, intended behavior of
+    the construction order above; no extra guard is added.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 228 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes step_descriptor(step: dict) -> dict. Given
+    {"step_id": "T-003", "slug": "plan-export", "fields":
+    {"name": "plan-export", "description": "desc"}, "depends_on": [],
+    "concepts": ["C-021"], "status": "draft"}, the function returns
+    {"step_id": "T-003", "name": "plan-export", "description": "desc",
+    "depends_on": [], "concepts": ["C-021"], "status": "draft"} with keys
+    in exactly that insertion order (step_id, then the fields keys in their
+    original order, then depends_on, concepts, status), and the returned
+    dict contains no "slug" key. export_hrs, ExportError, the four layout
+    constants, emit_yaml, assemble_state, and render_hrs_text remain
+    unchanged and importable.
+status: draft

@@ -1,0 +1,303 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: import-steps
+target_file: plan_manager/exchange/layout_import.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-021, C-006, C-005]
+prompt: |
+  Target file: plan_manager/exchange/layout_import.py (existing module; modify).
+  Operation: modify_file.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  concept_id: C-005
+  name: Step
+  definition: Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status.
+  properties:
+  - uniform operations across levels; per-level required fields are declarative schema
+  - scaffolded creation auto-assigns the next free zero-padded id
+  - mutation regime depends on status (draft direct, frozen via cascade)
+  - move rewrites every reference to the moved id in one operation
+
+  Exchange layout (C-006, identical to the export side): under the source
+  root, level-3 (global) step directories are named "G-NNN-slug"; each
+  contains "README.yaml" plus zero or more level-4 (tactical) step
+  directories named "T-NNN-slug"; each of those contains "README.yaml" plus
+  an optional "atomic_steps" subdirectory holding zero or more level-5
+  (atomic) step files named "A-NNN-slug.yaml".
+
+  Imported contract (quote verbatim; import, never reimplement):
+  Module plan_manager/cascade/write.py exposes:
+    def step_snapshot(step: Step, status: str) -> dict
+  This builds the full node snapshot with "kind": "step", uuids serialized
+  as str, for the version store (C-018).
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """Filesystem helpers for validating and ingesting a standard-layout plan export tree.
+
+  Supports importer.py's validate_layout and import_plan (ExchangeFormat, C-021):
+  directory- and file-name pattern checks against declared step identifiers
+  (PlanSchema, C-006), and step-tree ingestion through the validating Step
+  (C-005) store during import.
+  """
+
+  import re
+  from pathlib import Path
+
+  import yaml
+
+  from plan_manager.domain.step_store import create_step
+
+  _DIR_PATTERN = re.compile(r"^([GT])-(\d{3})-[a-z0-9-]+$")
+  _AS_FILENAME_PATTERN = re.compile(r"^(A-\d{3})-[a-z0-9-]+\.yaml$")
+
+
+  def validate_descriptor_dir(dir_path: Path, expected_prefix: str) -> list[str]:
+      """Validate one G-* or T-* step directory name and its README.yaml descriptor.
+
+      Checks `dir_path.name` against the pattern ``^{prefix}-\\d{3}-[a-z0-9-]+$``
+      and, when it matches, that ``dir_path / "README.yaml"`` exists, parses as
+      YAML into a dict, and carries a ``"step_id"`` equal to the directory's
+      ``{prefix}-NNN`` portion.
+
+      :param dir_path: The candidate step directory.
+      :type dir_path: pathlib.Path
+      :param expected_prefix: The required directory-name prefix letter, "G" or "T".
+      :type expected_prefix: str
+      :return: A list of human-readable issue descriptions; empty when valid.
+      :rtype: list[str]
+      """
+      match = _DIR_PATTERN.match(dir_path.name)
+      if match is None or match.group(1) != expected_prefix:
+          return [f"invalid directory name: {dir_path}"]
+
+      declared_id = f"{match.group(1)}-{match.group(2)}"
+      readme_path = dir_path / "README.yaml"
+      if not readme_path.is_file():
+          return [f"missing README.yaml: {readme_path}"]
+
+      try:
+          data = yaml.safe_load(readme_path.read_text(encoding="utf-8"))
+      except yaml.YAMLError as exc:
+          return [f"{readme_path}: invalid YAML: {exc}"]
+
+      if not isinstance(data, dict) or "step_id" not in data:
+          return [f"{readme_path}: missing step_id"]
+      if data["step_id"] != declared_id:
+          return [
+              f"{readme_path}: step_id {data['step_id']!r} does not match directory {declared_id!r}"
+          ]
+      return []
+
+
+  def validate_as_file(as_path: Path) -> list[str]:
+      """Validate one atomic-step descriptor file name and content.
+
+      Checks `as_path.name` against the pattern ``^(A-\\d{3})-[a-z0-9-]+\\.yaml$``
+      and, when it matches, that the file parses as YAML into a dict carrying a
+      ``"step_id"`` equal to the filename's ``A-NNN`` portion.
+
+      :param as_path: The candidate atomic-step descriptor file.
+      :type as_path: pathlib.Path
+      :return: A list of human-readable issue descriptions; empty when valid.
+      :rtype: list[str]
+      """
+      match = _AS_FILENAME_PATTERN.match(as_path.name)
+      if match is None:
+          return [f"invalid atomic step filename: {as_path}"]
+
+      declared_id = match.group(1)
+      try:
+          data = yaml.safe_load(as_path.read_text(encoding="utf-8"))
+      except yaml.YAMLError as exc:
+          return [f"{as_path}: invalid YAML: {exc}"]
+
+      if not isinstance(data, dict) or "step_id" not in data:
+          return [f"{as_path}: missing step_id"]
+      if data["step_id"] != declared_id:
+          return [
+              f"{as_path}: step_id {data['step_id']!r} does not match filename {declared_id!r}"
+          ]
+      return []
+
+
+  def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: str, level: int, parent_step_uuid):
+      """Create one Step (C-005) from a parsed descriptor and verify its assigned identifier.
+
+      Reads `descriptor_path` as YAML into a dict, derives the slug as the
+      portion of `name` following ``f"{step_id}-"``, and calls
+      ``create_step(conn, plan_uuid, parent_step_uuid, level, slug, fields,
+      depends_on, concepts)`` where `fields` is the descriptor dict minus the
+      keys "step_id", "depends_on", "concepts", and "status", and `depends_on`
+      / `concepts` are the descriptor's same-named list values, defaulting to
+      ``[]`` when absent.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan the step belongs to.
+      :param descriptor_path: The README.yaml or atomic-step YAML file to read.
+      :type descriptor_path: pathlib.Path
+      :param name: The directory name (for level 3/4) or file stem (for level
+          5) the declared step_id and slug are derived from.
+      :type name: str
+      :param level: The step level: 3, 4, or 5.
+      :type level: int
+      :param parent_step_uuid: The parent step's identity, or None for level 3.
+      :return: The created Step (fields uuid, plan_uuid, parent_step_uuid,
+          level, step_id, slug, fields, depends_on, concepts, status).
+      :raises ValueError: If the step_id assigned by create_step differs from
+          the descriptor's declared step_id; the message is
+          f"identifier mismatch on import: expected {declared} got {assigned}".
+      """
+      data = yaml.safe_load(descriptor_path.read_text(encoding="utf-8"))
+      declared_id = data["step_id"]
+      slug = name[len(declared_id) + 1 :]
+      fields = {k: v for k, v in data.items() if k not in {"step_id", "depends_on", "concepts", "status"}}
+      step = create_step(
+          conn,
+          plan_uuid,
+          parent_step_uuid,
+          level,
+          slug,
+          fields,
+          data.get("depends_on", []),
+          data.get("concepts", []),
+      )
+      if step.step_id != declared_id:
+          raise ValueError(f"identifier mismatch on import: expected {declared_id} got {step.step_id}")
+      return step
+  ```
+
+  Required change: add one new import line and append one new function.
+
+  1. Add exactly one new import line immediately BEFORE
+     `from plan_manager.domain.step_store import create_step` (i.e. as the
+     new first line of that local-import group), keeping the single
+     following blank line before `_DIR_PATTERN` (the import block becomes:
+     `import re`, `from pathlib import Path`, blank line, `import yaml`,
+     blank line, `from plan_manager.cascade.write import step_snapshot`,
+     `from plan_manager.domain.step_store import create_step`, blank line,
+     `_DIR_PATTERN = ...`) — the two `from plan_manager...` lines are in
+     alphabetical module-path order ("cascade" sorts before "domain"):
+     from plan_manager.cascade.write import step_snapshot
+
+  2. Append, after `_create_step_from_descriptor`, separated by exactly two
+     blank lines, exactly one new function:
+
+     def import_steps(conn, plan_uuid, root: Path) -> list[tuple]:
+         """Walk a validated standard-layout tree and create every step it declares.
+
+         Visits every ``G-*`` child directory of `root` in sorted order, then
+         every ``T-*`` child of each in sorted order, then every
+         ``atomic_steps/*.yaml`` file of each in sorted order, creating one Step
+         (C-005) per node via `_create_step_from_descriptor` (level 3 for a G
+         directory, 4 for a T directory, 5 for an atomic-step file; the parent is
+         the immediately enclosing created step, None for level 3).
+
+         :param conn: An open psycopg 3 database connection.
+         :param plan_uuid: The identity of the plan the steps belong to.
+         :param root: The validated standard-layout source root.
+         :type root: pathlib.Path
+         :return: A list of (step.uuid, snapshot) pairs in creation order, where
+             each snapshot is ``step_snapshot(step, step.status)``.
+         :rtype: list[tuple]
+         """
+         changes: list[tuple] = []
+         gs_dirs = sorted(p for p in root.iterdir() if p.is_dir() and p.name.startswith("G-"))
+         for gs_dir in gs_dirs:
+             gs_step = _create_step_from_descriptor(
+                 conn, plan_uuid, gs_dir / "README.yaml", gs_dir.name, 3, None
+             )
+             changes.append((gs_step.uuid, step_snapshot(gs_step, gs_step.status)))
+
+             ts_dirs = sorted(p for p in gs_dir.iterdir() if p.is_dir() and p.name.startswith("T-"))
+             for ts_dir in ts_dirs:
+                 ts_step = _create_step_from_descriptor(
+                     conn, plan_uuid, ts_dir / "README.yaml", ts_dir.name, 4, gs_step.uuid
+                 )
+                 changes.append((ts_step.uuid, step_snapshot(ts_step, ts_step.status)))
+
+                 as_dir = ts_dir / "atomic_steps"
+                 if as_dir.is_dir():
+                     as_files = sorted(as_dir.glob("*.yaml"))
+                     for as_file in as_files:
+                         as_step = _create_step_from_descriptor(
+                             conn, plan_uuid, as_file, as_file.stem, 5, ts_step.uuid
+                         )
+                         changes.append((as_step.uuid, step_snapshot(as_step, as_step.status)))
+         return changes
+
+  Constraints (all binding, no deviation):
+  - `changes` accumulates `(uuid, snapshot)` tuples in strict creation
+    order: for each G directory in sorted order, its own tuple first, then
+    for each T directory in sorted order, its own tuple, then for each
+    atomic-step file in sorted order (by `Path.glob("*.yaml")` sorted by
+    name), its own tuple.
+  - Directory/file selection uses `p.is_dir() and p.name.startswith("G-")`
+    for level-3 candidates and `p.is_dir() and p.name.startswith("T-")` for
+    level-4 candidates within a given G directory; sorting is the default
+    `sorted(...)` over `Path` objects (lexicographic by string form), which
+    orders zero-padded "G-NNN-..."/"T-NNN-..." names correctly.
+  - The `atomic_steps` subdirectory is only descended into when
+    `as_dir.is_dir()` is true; when absent, no atomic-step files are visited
+    for that T directory (no issue is raised — layout validation already
+    ran via `validate_layout` before this function is ever called).
+  - `_create_step_from_descriptor` is called with these exact positional
+    argument sets: level 3 -> `(conn, plan_uuid, gs_dir / "README.yaml",
+    gs_dir.name, 3, None)`; level 4 -> `(conn, plan_uuid, ts_dir /
+    "README.yaml", ts_dir.name, 4, gs_step.uuid)`; level 5 -> `(conn,
+    plan_uuid, as_file, as_file.stem, 5, ts_step.uuid)`.
+  - `step_snapshot(step, step.status)` is called once per created step,
+    immediately after the corresponding `_create_step_from_descriptor` call,
+    to build the tuple appended to `changes`.
+  - Any `ValueError` raised inside `_create_step_from_descriptor` (the
+    identifier-mismatch case) propagates unchanged out of `import_steps`;
+    no try/except is added here.
+  - This function performs no database reads or writes of its own beyond
+    those made by `_create_step_from_descriptor`.
+  - Use Python 3.12+ syntax throughout.
+  - Do not add any other functions, classes, or constants to this file in
+    this step. Do not alter `validate_descriptor_dir`, `validate_as_file`,
+    `_create_step_from_descriptor`, `_DIR_PATTERN`, `_AS_FILENAME_PATTERN`,
+    or the module docstring.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 177 lines total, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.layout_import
+  expected: >
+    The module plan_manager.exchange.layout_import imports without error and
+    exposes a callable import_steps(conn, plan_uuid, root) -> list[tuple],
+    alongside the unchanged validate_descriptor_dir, validate_as_file, and
+    _create_step_from_descriptor. Called against a validated standard-layout
+    tree with one G directory containing one T directory containing two
+    atomic-step files, it creates four steps in the order G, T, then the two
+    atomic steps by sorted filename, and returns a four-item list of
+    (uuid, snapshot) pairs in that same order, each snapshot carrying
+    "kind": "step". A tree whose descriptor declares a step_id that the
+    underlying create_step cannot reproduce causes import_steps to raise
+    ValueError (propagated from _create_step_from_descriptor) without
+    completing the remaining tree.
+status: draft

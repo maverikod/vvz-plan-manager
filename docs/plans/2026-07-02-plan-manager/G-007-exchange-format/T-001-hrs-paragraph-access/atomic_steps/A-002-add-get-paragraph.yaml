@@ -1,0 +1,146 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: add-get-paragraph
+target_file: plan_manager/hrs/paragraphs.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-002]
+prompt: |
+  Target file: plan_manager/hrs/paragraphs.py (existing module; modify).
+  Operation: modify_file.
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """HRS paragraph access and mutation operations.
+
+  Read and mutate stored HRS paragraphs (C-002) through the stored-paragraph
+  primitives in plan_manager.domain.paragraph_store, and record each
+  mutation's revision attribution through plan_manager.storage.version_store
+  (direct mode) or plan_manager.cascade.write (cascade mode).
+
+  Only binding paragraphs are ever stored: paragraph_store never holds a
+  non-binding row. This module defines a function named list_paragraphs that
+  intentionally shadows the module-level function of the same name in
+  plan_manager.domain.paragraph_store. The store module is imported by module
+  name (``from plan_manager.domain import paragraph_store``) and its function
+  is always called qualified as ``paragraph_store.list_paragraphs(...)`` so
+  this module's own list_paragraphs never recurses into itself.
+  """
+
+  import uuid
+
+  from plan_manager.domain import paragraph_store
+
+
+  def list_paragraphs(conn, plan_uuid: uuid.UUID) -> list[dict]:
+      """Return every stored paragraph of a plan in position order.
+
+      Reads all stored binding paragraphs of the plan identified by
+      ``plan_uuid`` through
+      ``plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid)``
+      and projects each row to a dict with keys "label" (str | None),
+      "binding" (bool, always True because only binding paragraphs are ever
+      stored), "position" (int), and "text" (str). The store function already
+      returns rows in position order; this function preserves that order.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :return: list[dict] -- one dict per stored paragraph, in position order.
+      """
+      rows = paragraph_store.list_paragraphs(conn, plan_uuid)
+      return [
+          {
+              "label": row.label,
+              "binding": True,
+              "position": row.position,
+              "text": row.text,
+          }
+          for row in rows
+      ]
+  ```
+
+  Required change: append the following new function to the end of the file,
+  after the existing list_paragraphs function, separated by exactly two
+  blank lines (matching the blank-line style already used between the module
+  docstring, the imports, and list_paragraphs in the current content above).
+  Do not change anything else in the file — the module docstring, the
+  imports, and the existing list_paragraphs function body must remain
+  byte-identical to the current content shown above.
+
+  New function to append:
+
+    def get_paragraph(conn, plan_uuid: uuid.UUID, label: str) -> dict | None:
+
+  Signature and typing: conn is an open psycopg 3 database connection (no
+  type annotation, matching the existing list_paragraphs parameter style);
+  plan_uuid is annotated uuid.UUID (uuid is already imported in this file as
+  `import uuid`); label is annotated str; the return type is dict | None
+  (PEP 604 union; Python 3.12+ supports this syntax natively, no
+  `from __future__ import annotations` needed).
+
+  Behavior (exact, no alternatives): call this module's own
+  list_paragraphs(conn, plan_uuid) — the bare name, unqualified, referring to
+  the function already defined earlier in this same file, which returns
+  list[dict] with each dict carrying keys "label", "binding", "position",
+  "text" as established by that function. Iterate the returned list in
+  order; for the first dict whose "label" key equals the given label
+  argument (compared with ==), return that dict immediately. If no dict in
+  the list has a matching "label", return None after the loop completes.
+
+  Exact function body to produce:
+
+      for paragraph in list_paragraphs(conn, plan_uuid):
+          if paragraph["label"] == label:
+              return paragraph
+      return None
+
+  Docstring (place immediately after the def line, exactly):
+
+      """Resolve one stored paragraph by its bare label.
+
+      Calls this module's own list_paragraphs(conn, plan_uuid) and returns
+      the single dict whose "label" key equals the given bare ``label``
+      string. Returns None when no stored paragraph carries that label.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :param label: str, the bare four-character label to resolve.
+      :return: dict | None -- the matching paragraph dict, or None.
+      """
+
+  No new imports are needed or permitted for this AS: uuid is already
+  imported; no other module is referenced by this function's body.
+
+  Constraints:
+  - Python 3.12+ syntax.
+  - No ORM, no SQL issued directly by this function; it only calls
+    list_paragraphs defined earlier in the same file.
+  - Do not reorder or restate the existing module docstring, imports, or
+    list_paragraphs function; only append the new function as specified.
+
+  MRS excerpt (concept referenced by this AS):
+
+    - concept_id: C-002
+      name: Paragraph
+      definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+      properties:
+      - label is position-independent, unique within one HRS, survives edits
+      - non-binding blocks are excluded from labeling and coverage
+      - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+      - parsing and label-assignment algorithms are normative
+
+  The "label" the function resolves by is the stable four-character base36
+  label described by C-002: position-independent, unique within one HRS,
+  surviving edits. This AS performs no mutation; it is a pure lookup over
+  the paragraph listing produced by the sibling read function in the same
+  file.
+verification:
+  type: import
+  target: plan_manager.hrs.paragraphs.get_paragraph
+  expected: >
+    Importing plan_manager.hrs.paragraphs succeeds and the module exposes a callable named get_paragraph accepting exactly three positional parameters (conn, plan_uuid, label). Calling it with a label that matches a stored paragraph returns that paragraph's dict as produced by list_paragraphs; calling it with an unknown label returns None.
+status: draft

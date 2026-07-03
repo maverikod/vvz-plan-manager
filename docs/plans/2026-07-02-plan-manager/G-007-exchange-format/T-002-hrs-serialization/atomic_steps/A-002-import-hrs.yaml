@@ -1,0 +1,291 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: import-hrs
+target_file: plan_manager/exchange/importer.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-021, C-002, C-018, C-016]
+prompt: |
+  Target file: plan_manager/exchange/importer.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this is the full, current, post-prior-AS state — not the
+  original repository state, the state after the file was created). Modify
+  it by inserting five new import lines and appending one new function, as
+  specified after the current content. Do not change anything else: keep
+  the module docstring, the existing import line, and the existing
+  validate_hrs function byte-identical to what is shown.
+
+  ---- CURRENT FULL FILE CONTENT (verbatim) ----
+  """HRS text serialization: validation and ingestion of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Ingestion revision attribution follows VersionStore (C-018) directly, or CascadeChange
+  (C-016) when an open cascade is supplied. Import is the single path from files to the
+  source of truth; export never round-trips through import.
+  """
+
+  from plan_manager.domain.paragraph import parse
+
+
+  def validate_hrs(text: str) -> list[str]:
+      """Validate a candidate HRS Markdown document without touching the database.
+
+      Parses `text` through the normative paragraph parsing (C-002) and reports
+      structural and semantic issues that would block ingestion.
+
+      :param text: The candidate HRS Markdown source document.
+      :type text: str
+      :return: A list of human-readable issue descriptions. An empty list means
+          the document is ingestible.
+      :rtype: list[str]
+      """
+      try:
+          paragraphs = parse(text)
+      except ValueError as exc:
+          return [str(exc)]
+
+      if not paragraphs:
+          return ["document contains no binding paragraphs"]
+
+      issues: list[str] = []
+      seen_labels: set[str] = set()
+      for paragraph in paragraphs:
+          if paragraph.label is not None:
+              if paragraph.label in seen_labels:
+                  issues.append(f"duplicate label: {paragraph.label}")
+              else:
+                  seen_labels.add(paragraph.label)
+      return issues
+  ---- END CURRENT FULL FILE CONTENT ----
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable
+    four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - parsing and label-assignment algorithms are normative
+
+  concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions, revisions,
+    and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+
+  concept_id: C-016
+  name: CascadeChange
+  definition: Transactional top-down change set anchored at the plan head
+    revision, published atomically on green gate.
+  properties:
+  - begin acquires the per-plan lock; commit advances head only when gate is green
+  - automatic needs_review propagation per invalidation rule
+  - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  Imported contracts (import, never reimplement; these modules already exist
+  elsewhere in the codebase, are out of scope for this AS, and must not be
+  created or modified by this AS):
+
+  Module plan_manager/domain/paragraph.py exposes (already imported in the
+  current file content above; keep using it, do not re-import it):
+    def parse(text: str) -> list[Paragraph]
+  Normative parsing (C-002): returns ONLY binding paragraphs in position
+  order; a "{xxxx} " prefix becomes the label (stripped from stored text);
+  non-binding marker-wrapped blocks are excluded; raises ValueError with a
+  descriptive message on a structurally unparseable document. Paragraph
+  objects have attributes label: str | None, text: str, position: int.
+
+  Module plan_manager/domain/labeling.py exposes:
+    def assign_missing_labels(paragraphs) -> tuple[list, list[str]]
+  Pure function: assigns fresh unique four-character base36 labels to
+  entries whose label is None; returns (fully labeled list, list of newly
+  assigned label strings). Entries that already carry a label are returned
+  unchanged (same label, text, position).
+
+  Module plan_manager/domain/paragraph_store.py exposes:
+    def delete_paragraphs(conn, plan_uuid) -> None
+    def insert_paragraphs(conn, plan_uuid, paragraphs) -> list[uuid.UUID]
+  delete_paragraphs removes all stored paragraphs of the given plan.
+  insert_paragraphs stores the given paragraphs for the plan and returns the
+  new row UUIDs in the same order as the input paragraphs (insertion order).
+
+  Module plan_manager/domain/plan.py exposes:
+    def get_plan(conn, plan_uuid) -> Plan
+  Plan has (at least) the fields: uuid, name, status, context_budget,
+  head_revision_uuid.
+
+  Module plan_manager/storage/version_store.py exposes:
+    def record_revision(conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID, dict]], parent_revision_uuid, ref_name) -> uuid.UUID
+  Records one revision covering all given (row_uuid, snapshot) changes.
+  ref_name=None advances the plan head.
+
+  Module plan_manager/cascade/write.py exposes:
+    def cascade_write(conn, plan_uuid, cascade, node_uuid, node_snapshot, status_updates, author, message) -> uuid.UUID
+  Records one node write under the given open cascade.
+
+  Module plan_manager/cascade/record.py exposes:
+    @dataclass(frozen=True) class CascadeRecord:
+  with fields uuid, plan_uuid, name, base_revision_uuid, status, created_at.
+  A cascade argument in this AS is either such a CascadeRecord instance or
+  None; this AS does not import CascadeRecord itself (it never constructs
+  or type-checks one, only passes the given value through).
+
+  Paragraph snapshot convention (normative, exact keys and values):
+    {"kind": "paragraph", "uuid": str(row_uuid), "plan_uuid": str(plan_uuid),
+     "label": paragraph.label, "text": paragraph.text,
+     "position": paragraph.position}
+  (deletion tombstones add "deleted": true; not applicable to this AS, which
+  only produces insertion snapshots).
+
+  ---- REQUIRED CHANGES ----
+
+  Change 1 — replace the single existing import line
+    from plan_manager.domain.paragraph import parse
+  with these six import lines, in exactly this order (alphabetical by
+  dotted module path):
+    from plan_manager.cascade.write import cascade_write
+    from plan_manager.domain.labeling import assign_missing_labels
+    from plan_manager.domain.paragraph import parse
+    from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
+    from plan_manager.domain.plan import get_plan
+    from plan_manager.storage.version_store import record_revision
+  (the module docstring above these imports is unchanged; keep exactly one
+  blank line between the docstring and the first import line, and exactly
+  two blank lines between the last import line and the validate_hrs
+  function, matching the current file's spacing convention.)
+
+  Change 2 — append, after the existing validate_hrs function, separated by
+  exactly two blank lines, this new function:
+
+  def import_hrs(conn, plan_uuid, text: str, author: str, cascade) -> dict:
+      """Wholly replace a plan's stored paragraphs from an HRS Markdown document.
+
+      Parses `text`, assigns fresh unique labels to binding paragraphs lacking
+      one (C-002), deletes the plan's previously stored paragraphs, inserts the
+      new binding set in position order, and records the revision: under an
+      open cascade (C-016) each inserted paragraph is recorded through one
+      `cascade_write` call carrying its full paragraph snapshot; otherwise a
+      single direct revision (C-018) advances the plan head and carries every
+      paragraph snapshot.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are replaced.
+      :param text: The HRS Markdown source document to ingest.
+      :type text: str
+      :param author: The attributed author of the resulting revision(s).
+      :type author: str
+      :param cascade: The open cascade record (a CascadeRecord instance) to
+          write under, or None for a direct head-advancing revision.
+      :return: A dict with key "paragraphs" mapping to the count of stored
+          paragraphs.
+      :rtype: dict
+      :raises ValueError: If validate_hrs(text) returns any issues; the
+          message is the issues joined by "; ".
+      """
+      issues = validate_hrs(text)
+      if issues:
+          raise ValueError("; ".join(issues))
+
+      paragraphs = parse(text)
+      labeled, _new_labels = assign_missing_labels(paragraphs)
+
+      delete_paragraphs(conn, plan_uuid)
+      row_uuids = insert_paragraphs(conn, plan_uuid, labeled)
+
+      snapshots = [
+          {
+              "kind": "paragraph",
+              "uuid": str(row_uuid),
+              "plan_uuid": str(plan_uuid),
+              "label": paragraph.label,
+              "text": paragraph.text,
+              "position": paragraph.position,
+          }
+          for row_uuid, paragraph in zip(row_uuids, labeled)
+      ]
+
+      if cascade is None:
+          plan = get_plan(conn, plan_uuid)
+          record_revision(
+              conn,
+              plan_uuid,
+              author,
+              "hrs import",
+              changes=list(zip(row_uuids, snapshots)),
+              parent_revision_uuid=plan.head_revision_uuid,
+              ref_name=None,
+          )
+      else:
+          for row_uuid, snapshot in zip(row_uuids, snapshots):
+              cascade_write(
+                  conn,
+                  plan_uuid,
+                  cascade,
+                  row_uuid,
+                  snapshot,
+                  status_updates=[],
+                  author=author,
+                  message="hrs import",
+              )
+
+      return {"paragraphs": len(labeled)}
+
+  Constraints (all binding, no deviation):
+  - import_hrs calls validate_hrs(text) first and raises ValueError before
+    any other statement executes if the issues list is non-empty; the
+    ValueError message is "; ".join(issues) exactly.
+  - No database call (delete_paragraphs, insert_paragraphs, get_plan,
+    record_revision, cascade_write) occurs before the validate_hrs check
+    has passed (issues is empty).
+  - paragraphs = parse(text) and labeled, _new_labels =
+    assign_missing_labels(paragraphs) are computed after the validation
+    check, in that order.
+  - delete_paragraphs is called before insert_paragraphs.
+  - row_uuids from insert_paragraphs are zipped with labeled (same order)
+    to build one snapshot dict per row using exactly the keys and value
+    sources shown in the snapshot convention and in the function body above.
+  - When cascade is None: exactly one record_revision call is made, whose
+    changes argument is the full list of (row_uuid, snapshot) tuples for
+    every inserted paragraph, whose parent_revision_uuid is
+    get_plan(conn, plan_uuid).head_revision_uuid, whose message is the
+    literal string "hrs import", and whose ref_name is None.
+  - When cascade is not None: exactly one cascade_write call is made per
+    (row_uuid, snapshot) pair, each with status_updates=[], author=author,
+    and message="hrs import"; get_plan and record_revision are not called
+    in this branch.
+  - The function returns {"paragraphs": len(labeled)} in all success paths.
+  - Use Python 3.12+ syntax throughout.
+  - Do not add any other functions, classes, constants, or module-level
+    code to this file in this step; do not modify validate_hrs.
+  - The resulting file must not exceed 400 lines; this step brings the file
+    to approximately 95 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.importer
+  expected: >
+    The module plan_manager.exchange.importer imports without error and
+    exposes a callable import_hrs(conn, plan_uuid, text, author, cascade) ->
+    dict. Calling it with a text document for which validate_hrs returns a
+    non-empty issue list (for example an empty document, or a document with
+    a structurally unparseable body) raises ValueError before any database
+    argument is used, with the exception message equal to the issues joined
+    by "; ". The function signature accepts five positional-or-keyword
+    parameters in the given order and its return type on the success path
+    is a dict with a single key "paragraphs" holding an integer count.
+status: draft

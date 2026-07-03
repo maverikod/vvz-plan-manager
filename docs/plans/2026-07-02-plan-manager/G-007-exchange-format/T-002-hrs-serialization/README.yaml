@@ -1,0 +1,56 @@
+step_id: T-002
+parent_global_step: G-007
+name: hrs-serialization
+description: >
+  Create the HRS text serialization of the ExchangeFormat (C-021): the
+  validation, ingestion, and regeneration of the human-authored Markdown
+  source. Validation is a pure text computation without database access: it
+  parses the document through the normative paragraph parsing (C-002) and
+  returns the issue list — an empty list means the document is ingestible.
+  Ingestion replaces the plan's stored paragraphs wholly: it parses the
+  document, classifies non-binding blocks and excludes them from storage,
+  assigns fresh unique labels to binding paragraphs that lack one through the
+  normative label-assignment algorithm, deletes the previously stored
+  paragraphs, inserts the new binding set in position order, and records the
+  revision attribution itself — direct mode advances the plan head (C-018),
+  cascade mode records under the open cascade (C-016) with full paragraph
+  snapshots — returning the stored paragraph count. Regeneration produces the
+  binding document byte-stably from the stored rows alone: each paragraph is
+  rendered as its brace-wrapped label, one space, and its stored text
+  byte-identically, paragraphs joined by one blank line in position order —
+  two regenerations over the same stored state are byte-identical, and
+  non-binding blocks of the original source are absent by construction since
+  they are never stored. This step defines validation, ingestion, and
+  regeneration; it does not export or import the plan tree and defines no
+  paragraph access operation.
+concepts: [C-021, C-002, C-018, C-016]
+inputs:
+- name: hrs_source_text
+  type: text document
+  description: >
+    The human-authored Markdown source specification submitted for
+    validation or ingestion.
+- name: revision_attribution
+  type: mode selector
+  description: >
+    The open cascade record for in-cascade ingestion, or its absence for a
+    direct head-advancing revision.
+outputs:
+- name: hrs_validation_issues
+  type: computed list
+  description: >
+    The issue list of the pure validation; empty when the document parses
+    under the normative rules.
+- name: stored_paragraph_set
+  type: persisted outcome
+  description: >
+    The wholly replaced binding paragraph set with fresh labels where they
+    were missing, its revision, and the stored count.
+- name: regenerated_hrs
+  type: derived text
+  description: >
+    The byte-stable binding Markdown document regenerated from stored rows:
+    brace-wrapped label, space, byte-identical text, blank-line separated,
+    in position order.
+atomic_steps: [A-001, A-002, A-003]
+status: draft

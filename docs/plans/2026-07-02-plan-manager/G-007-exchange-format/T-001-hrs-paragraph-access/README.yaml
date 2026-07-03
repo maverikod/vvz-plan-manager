@@ -1,0 +1,51 @@
+step_id: T-001
+parent_global_step: G-007
+name: hrs-paragraph-access
+description: >
+  Create the paragraph access and mutation operations over the stored HRS
+  (C-002), composed from the stored-paragraph primitives and consumed by the
+  paragraph command surface. Two read operations: the listing returns every
+  stored paragraph of a plan with its label, its binding flag, its position,
+  and its text, in position order — only binding paragraphs are stored, so
+  the flag is true for every stored row; the single-paragraph resolution
+  returns one paragraph by its bare four-character label, or nothing when the
+  label is unknown. Two mutating operations, each recording its revision
+  attribution itself: direct mode records one revision advancing the plan
+  head (C-018), cascade mode records the revision under the open cascade
+  (C-016) with the paragraph node snapshot. Label assignment finds the stored
+  binding paragraphs without a label, generates fresh unique four-character
+  base36 labels through the normative label-assignment algorithm, updates the
+  rows — the only textual edit permitted in the HRS, since prose is
+  human-owned — and returns the new labels. Non-binding marking removes the
+  stored paragraph at the addressed position with a deletion tombstone in the
+  revision, because non-binding blocks are excluded from storage; unmarking
+  addresses no stored block by construction and raises the explicit
+  no-stored-block condition. This step defines the four operations and their
+  revision attribution; it does not parse documents, serialize the HRS, or
+  import or export anything.
+concepts: [C-002, C-018, C-016, C-021]
+inputs:
+- name: stored_paragraphs
+  type: stored entity rows
+  description: >
+    The plan's stored binding paragraphs with label, position, and text,
+    read and mutated through the stored-paragraph primitives.
+- name: revision_attribution
+  type: mode selector
+  description: >
+    The open cascade record when the mutation runs inside a cascade, or its
+    absence for a direct head-advancing revision.
+outputs:
+- name: paragraph_readout
+  type: computed listing
+  description: >
+    The position-ordered paragraph listing with label, binding flag,
+    position, and text; or one paragraph resolved by label.
+- name: paragraph_mutation_result
+  type: persisted outcome
+  description: >
+    The freshly assigned labels, or the removed non-binding paragraph with
+    its tombstone revision; unmarking yields the explicit no-stored-block
+    condition.
+atomic_steps: [A-001, A-002, A-003, A-004]
+status: draft

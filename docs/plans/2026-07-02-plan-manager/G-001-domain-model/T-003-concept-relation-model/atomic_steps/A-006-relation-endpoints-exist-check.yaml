@@ -6,7 +6,7 @@ operation: modify_file
 priority: 3
 depends_on: [A-005]
 concepts: [C-004, C-003]
-prompt: >
+prompt: |
   Modify the existing Python source file at exact project-relative path
   plan_manager/domain/relation.py.
 

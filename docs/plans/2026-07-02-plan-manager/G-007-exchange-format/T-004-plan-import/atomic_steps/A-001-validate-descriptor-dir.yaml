@@ -1,0 +1,151 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: validate-descriptor-dir
+target_file: plan_manager/exchange/layout_import.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-021, C-006]
+prompt: |
+  Target file: plan_manager/exchange/layout_import.py
+  Operation: create_file (the file does not exist yet; create it with exactly
+  the content specified below — do not assume any pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  Exchange layout naming this step realizes checks against (normative,
+  identical to the export side): a level-3 (global) or level-4 (tactical)
+  step directory is named f"{step_id}-{slug}" where step_id is "G-NNN" or
+  "T-NNN" (NNN a zero-padded three-digit number) and contains a
+  "README.yaml" descriptor file; the descriptor is a YAML mapping whose
+  "step_id" key equals the directory's "G-NNN"/"T-NNN" prefix.
+
+  This module has no imported contracts from elsewhere in the codebase; it
+  uses only the Python 3.12+ standard library `re` and `pathlib.Path`, and
+  the third-party package PyYAML via `import yaml` (function used:
+  `yaml.safe_load(stream_or_str) -> object`, which raises `yaml.YAMLError`
+  on malformed YAML and returns the parsed Python value — a dict, list,
+  scalar, or None for an empty document — otherwise).
+
+  Write the file with exactly this content, in this order:
+
+  1. A module docstring, exactly:
+     """Filesystem helpers for validating and ingesting a standard-layout plan export tree.
+
+     Supports importer.py's validate_layout and import_plan (ExchangeFormat, C-021):
+     directory- and file-name pattern checks against declared step identifiers
+     (PlanSchema, C-006), and step-tree ingestion through the validating Step
+     (C-005) store during import.
+     """
+
+  2. Imports, in exactly this order, with exactly one blank line between the
+     standard-library group and the third-party group:
+     import re
+     from pathlib import Path
+
+     import yaml
+
+  3. Exactly one blank line, then exactly one module-level constant:
+     _DIR_PATTERN = re.compile(r"^([GT])-(\d{3})-[a-z0-9-]+$")
+
+  4. Exactly two blank lines, then exactly one function definition:
+
+     def validate_descriptor_dir(dir_path: Path, expected_prefix: str) -> list[str]:
+         """Validate one G-* or T-* step directory name and its README.yaml descriptor.
+
+         Checks `dir_path.name` against the pattern ``^{prefix}-\\d{3}-[a-z0-9-]+$``
+         and, when it matches, that ``dir_path / "README.yaml"`` exists, parses as
+         YAML into a dict, and carries a ``"step_id"`` equal to the directory's
+         ``{prefix}-NNN`` portion.
+
+         :param dir_path: The candidate step directory.
+         :type dir_path: pathlib.Path
+         :param expected_prefix: The required directory-name prefix letter, "G" or "T".
+         :type expected_prefix: str
+         :return: A list of human-readable issue descriptions; empty when valid.
+         :rtype: list[str]
+         """
+         match = _DIR_PATTERN.match(dir_path.name)
+         if match is None or match.group(1) != expected_prefix:
+             return [f"invalid directory name: {dir_path}"]
+
+         declared_id = f"{match.group(1)}-{match.group(2)}"
+         readme_path = dir_path / "README.yaml"
+         if not readme_path.is_file():
+             return [f"missing README.yaml: {readme_path}"]
+
+         try:
+             data = yaml.safe_load(readme_path.read_text(encoding="utf-8"))
+         except yaml.YAMLError as exc:
+             return [f"{readme_path}: invalid YAML: {exc}"]
+
+         if not isinstance(data, dict) or "step_id" not in data:
+             return [f"{readme_path}: missing step_id"]
+         if data["step_id"] != declared_id:
+             return [
+                 f"{readme_path}: step_id {data['step_id']!r} does not match directory {declared_id!r}"
+             ]
+         return []
+
+  Constraints (all binding, no deviation):
+  - The function is PURE: it performs no database access and takes no
+    connection parameter of any kind; it only reads the filesystem.
+  - `_DIR_PATTERN.match` is checked against the bare directory name
+    (`dir_path.name`), not the full path.
+  - When the name does not match the pattern, OR matches but with a
+    different prefix letter than `expected_prefix` (group 1), return exactly
+    one issue: f"invalid directory name: {dir_path}" — using the Path object
+    directly in the f-string (its str() form).
+  - `declared_id` is built only from the two captured regex groups as
+    f"{match.group(1)}-{match.group(2)}", e.g. "G-001" or "T-042".
+  - When "README.yaml" is missing under `dir_path`, return exactly one
+    issue: f"missing README.yaml: {readme_path}".
+  - When `readme_path.read_text(encoding="utf-8")` does not parse via
+    `yaml.safe_load` (raises `yaml.YAMLError`), return exactly one issue:
+    f"{readme_path}: invalid YAML: {exc}" where `exc` is the caught
+    exception object.
+  - When the parsed YAML value is not a `dict`, or is a dict without a
+    "step_id" key, return exactly one issue: f"{readme_path}: missing step_id".
+  - When `data["step_id"] != declared_id`, return exactly one issue:
+    f"{readme_path}: step_id {data['step_id']!r} does not match directory {declared_id!r}"
+    (using `!r` repr formatting on both values).
+  - When none of the above conditions trigger, return an empty list.
+  - No other exception type besides `yaml.YAMLError` is caught.
+  - Use Python 3.12+ syntax throughout (e.g. `list[str]`).
+  - Do not add any other functions, classes, constants, or module-level
+    code to this file in this step.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 60 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.layout_import
+  expected: >
+    The module plan_manager.exchange.layout_import imports without error and
+    exposes a callable validate_descriptor_dir(dir_path: Path, expected_prefix:
+    str) -> list[str]. Calling it on a directory whose name does not match the
+    G-NNN-slug or T-NNN-slug pattern, or whose prefix letter differs from
+    expected_prefix, returns a one-item list starting with "invalid directory
+    name:". Calling it on a correctly named directory lacking a README.yaml
+    file returns a one-item list starting with "missing README.yaml:".
+    Calling it on a correctly named directory whose README.yaml parses to a
+    dict with a step_id differing from the directory's declared G-NNN/T-NNN
+    prefix returns a one-item list containing "does not match directory".
+    Calling it on a correctly named directory whose README.yaml parses to a
+    dict with a matching step_id returns an empty list.
+status: draft

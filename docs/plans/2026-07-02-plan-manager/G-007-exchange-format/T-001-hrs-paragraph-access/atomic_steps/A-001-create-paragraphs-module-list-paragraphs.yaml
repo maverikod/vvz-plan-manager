@@ -1,0 +1,174 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: create-paragraphs-module-list-paragraphs
+target_file: plan_manager/hrs/paragraphs.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-002, C-021]
+prompt: |
+  Target file: plan_manager/hrs/paragraphs.py (new module; does not exist yet).
+  Operation: create_file.
+
+  Create the file with EXACTLY the following content (this is the complete
+  initial file; nothing else):
+
+  ```python
+  """HRS paragraph access and mutation operations.
+
+  Read and mutate stored HRS paragraphs (C-002) through the stored-paragraph
+  primitives in plan_manager.domain.paragraph_store, and record each
+  mutation's revision attribution through plan_manager.storage.version_store
+  (direct mode) or plan_manager.cascade.write (cascade mode).
+
+  Only binding paragraphs are ever stored: paragraph_store never holds a
+  non-binding row. This module defines a function named list_paragraphs that
+  intentionally shadows the module-level function of the same name in
+  plan_manager.domain.paragraph_store. The store module is imported by module
+  name (``from plan_manager.domain import paragraph_store``) and its function
+  is always called qualified as ``paragraph_store.list_paragraphs(...)`` so
+  this module's own list_paragraphs never recurses into itself.
+  """
+
+  import uuid
+
+  from plan_manager.domain import paragraph_store
+
+
+  def list_paragraphs(conn, plan_uuid: uuid.UUID) -> list[dict]:
+      """Return every stored paragraph of a plan in position order.
+
+      Reads all stored binding paragraphs of the plan identified by
+      ``plan_uuid`` through
+      ``plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid)``
+      and projects each row to a dict with keys "label" (str | None),
+      "binding" (bool, always True because only binding paragraphs are ever
+      stored), "position" (int), and "text" (str). The store function already
+      returns rows in position order; this function preserves that order.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :return: list[dict] -- one dict per stored paragraph, in position order.
+      """
+      rows = paragraph_store.list_paragraphs(conn, plan_uuid)
+      return [
+          {
+              "label": row.label,
+              "binding": True,
+              "position": row.position,
+              "text": row.text,
+          }
+          for row in rows
+      ]
+  ```
+
+  Context for the coder model (no other files may be read):
+
+  This module implements HRS paragraph access operations for plan_manager.
+  HRS paragraphs are the addressable binding units of the HRS text (concept
+  C-002, MRS excerpt below). Only binding paragraphs are ever stored; each
+  stored row carries a position-independent four-character base36 label that
+  survives edits.
+
+  The function created by this AS, list_paragraphs(conn, plan_uuid), reads
+  every stored paragraph of a plan through the existing store primitive
+  plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid), whose
+  verified contract is:
+
+    def list_paragraphs(conn, plan_uuid) -> list[StoredParagraph]
+
+    where StoredParagraph has fields:
+      uuid: uuid.UUID
+      plan_uuid: uuid.UUID
+      label: str | None
+      text: str
+      position: int
+
+    and the returned list is already ordered by position. Only binding
+    paragraphs are ever stored.
+
+  The store module is imported by module name, exactly as:
+
+    from plan_manager.domain import paragraph_store
+
+  and its function is always called qualified as
+  paragraph_store.list_paragraphs(conn, plan_uuid) — this is required because
+  the function being created in this file is ALSO named list_paragraphs, and
+  calling the bare name from inside this module would recurse into itself
+  instead of reaching the store. This module intentionally shadows the store
+  module's function name; the module docstring embedded in the file content
+  above documents this explicitly and it must be preserved verbatim.
+
+  The public function created by this AS:
+
+    def list_paragraphs(conn, plan_uuid: uuid.UUID) -> list[dict]:
+
+  Signature and typing: conn is an open psycopg 3 database connection (no
+  type annotation is applied to it, matching the store function's own
+  signature); plan_uuid is annotated uuid.UUID (module uuid is imported as
+  `import uuid`); the return type is list[dict].
+
+  Behavior (exact, no alternatives): call
+  paragraph_store.list_paragraphs(conn, plan_uuid) to get the ordered list of
+  StoredParagraph rows, then build and return a new list of dict, one per
+  row, in the same order, where each dict has exactly these four keys:
+    "label": row.label   (str | None)
+    "binding": True      (bool literal; always True because only binding
+                           paragraphs are ever stored — there is no binding
+                           field on StoredParagraph to read, the literal True
+                           is used directly)
+    "position": row.position   (int)
+    "text": row.text           (str)
+
+  No filtering, no sorting (the store already returns position order), no
+  mutation of the database.
+
+  Docstring: use exactly the docstring text shown in the file content block
+  above for the module and for the list_paragraphs function; do not shorten
+  or paraphrase it.
+
+  Imports required for this file at this stage (exactly these two lines, in
+  this order, each on its own line, with one blank line between them):
+    import uuid
+
+    from plan_manager.domain import paragraph_store
+
+  No other imports. No other functions, classes, or module-level statements
+  are added by this AS.
+
+  Constraints:
+  - Python 3.12+ syntax (PEP 604 union types are used elsewhere in this
+    module by later modifications, but this AS does not need them).
+  - No ORM; this AS issues no SQL directly (it only calls the store
+    primitive).
+  - The file must be byte-identical to the content block shown above.
+
+  MRS excerpt (concept referenced by this AS):
+
+    - concept_id: C-002
+      name: Paragraph
+      definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+      properties:
+      - label is position-independent, unique within one HRS, survives edits
+      - non-binding blocks are excluded from labeling and coverage
+      - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+      - parsing and label-assignment algorithms are normative
+
+    - concept_id: C-021
+      name: ExchangeFormat
+      definition: File import/export representation of a plan in the standard layout; HRS as Markdown, all other artifacts as YAML.
+      properties:
+      - export optionally at a named revision; import is the only file-to-truth path
+      - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  C-021 (ExchangeFormat) is referenced because this module's read primitives
+  are the paragraph data source that the HRS export/serialization path (a
+  separate module, out of scope for this AS) later composes over; this AS
+  implements no import or export logic itself — it only creates the
+  list_paragraphs primitive quoted above.
+verification:
+  type: import
+  target: plan_manager.hrs.paragraphs.list_paragraphs
+  expected: >
+    Importing plan_manager.hrs.paragraphs succeeds without error and the module exposes a callable named list_paragraphs accepting exactly two positional parameters (conn, plan_uuid). Calling it against a plan with stored binding paragraphs returns a list of dict in position order, each dict carrying exactly the keys label, binding, position, text, with binding always True.
+status: draft

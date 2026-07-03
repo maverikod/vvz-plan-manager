@@ -1,0 +1,358 @@
+step_id: A-004
+parent_tactical_step: T-003
+name: assemble-state
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-021, C-018, C-036]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this tactical step's priority-1 through priority-3 atomic
+  steps applied on top of the prior tactical step's output). Apply your
+  change on top of exactly this content; do not assume any other prior
+  state.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions, revisions,
+    and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+
+  concept_id: C-036
+  name: NormativeAlgorithmSet
+  definition: The binding algorithm specifications that lower levels refine
+    into code without semantic deviation.
+  properties:
+  - deviations escalate to the HRS; open parameters have named defaults and are configuration
+
+  Normative rule this step realizes (verbatim from the parent tactical
+  step): The exported state is assembled uniformly: without a revision the
+  current stored rows are read; with a revision the node states come from
+  the version store (C-018) checkout-read at that revision, where a node
+  whose recorded content carries the deletion tombstone is treated as
+  absent, and an unknown revision raises the version-store error.
+
+  Imported contracts (import, never reimplement; these modules already
+  exist elsewhere in the codebase, are out of scope for this AS, and must
+  not be created or modified by this AS):
+
+  Module plan_manager/storage/version_ops.py exposes:
+    def state_at(conn, plan_uuid, revision_uuid) -> dict[uuid.UUID, uuid.UUID]
+      Maps node uuid to node_version uuid for the given revision; raises
+      plan_manager.storage.version_store.VersionStoreError(ValueError) for
+      an unknown revision.
+    def checkout_read(conn, plan_uuid, revision_uuid, entity_uuid) -> dict
+      Returns the node's full content snapshot at that revision. Snapshots
+      carry key "kind" with value one of "step", "concept", "relation",
+      "paragraph", and, for deletions, "deleted": true.
+  Snapshot key sets at a revision (besides "kind"):
+    step -> uuid, plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+      depends_on, concepts, status
+    concept -> uuid, plan_uuid, concept_id, name, definition, properties,
+      source_labels
+    relation -> uuid, plan_uuid, from_concept, to_concept, type
+    paragraph -> uuid, plan_uuid, label, text, position
+
+  Module plan_manager/views/dependency_graph.py exposes:
+    def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]
+      Step fields, in this order: uuid, plan_uuid, parent_step_uuid, level,
+      step_id, slug, fields: dict, depends_on: list[str], concepts:
+      list[str], status: str.
+
+  Module plan_manager/domain/concept_store.py exposes:
+    def list_concepts(conn, plan_uuid) -> list[Concept]
+      Concept dataclass fields, in this order: concept_id, name, definition,
+      properties: List[str], source_labels: List[str].
+
+  Module plan_manager/domain/relation_store.py exposes:
+    def list_relations(conn, plan_uuid) -> list[tuple[str, str, str]]
+      Each tuple is (from_concept, to_concept, type), ordered.
+
+  Module plan_manager/domain/paragraph_store.py exposes (already imported
+  in the current file content below):
+    def list_paragraphs(conn, plan_uuid) -> list[StoredParagraph]
+      StoredParagraph fields: uuid, plan_uuid, label, text, position.
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+
+  HRS_FILENAME = "source_spec.md"
+  MRS_FILENAME = "spec.yaml"
+  STEP_README = "README.yaml"
+  ATOMIC_DIR = "atomic_steps"
+
+
+  def emit_yaml(path, data: dict) -> None:
+      """Serialize data as safe YAML to path, aborting on a round-trip mismatch.
+
+      Dumps data with yaml.safe_dump using default_flow_style=False,
+      allow_unicode=True, and sort_keys=False so that scalars containing a
+      colon-space, a leading dash, quotes, a hash sign, or other YAML
+      metacharacters are quoted or emitted as block scalars (C-021). Then
+      re-parses the dumped text with yaml.safe_load and compares the result
+      against data for exact equality; a mismatch means the dumped text would
+      not restore the original value, so the emission is aborted.
+
+      :param path: The filesystem path to write; parent directories are
+          created if missing.
+      :type path: str | pathlib.Path
+      :param data: The plain-dict value to serialize.
+      :type data: dict
+      :raises ExportError: If the round-trip re-parse does not equal data.
+      :return: None.
+      :rtype: None
+      """
+      text = yaml.safe_dump(
+          data, default_flow_style=False, allow_unicode=True, sort_keys=False
+      )
+      if yaml.safe_load(text) != data:
+          raise ExportError(f"round-trip failed: {path}")
+      target = pathlib.Path(path)
+      target.parent.mkdir(parents=True, exist_ok=True)
+      target.write_text(text, encoding="utf-8")
+
+  Required change, in two parts:
+
+  Part 1 — replace the existing import block
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+  with exactly this expanded block (adds three new "from" lines; keeps
+  "import pathlib" and "import yaml" unchanged):
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.concept_store import list_concepts
+  from plan_manager.domain.paragraph_store import list_paragraphs
+  from plan_manager.domain.relation_store import list_relations
+  from plan_manager.storage.version_ops import checkout_read, state_at
+  from plan_manager.views.dependency_graph import load_steps
+
+  Part 2 — append exactly the following function to the end of the file,
+  after the emit_yaml function, separated from it by exactly two blank
+  lines. Do not modify anything else.
+
+  def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
+      """Assemble the plan's exportable state, live or at a named revision.
+
+      When revision_uuid is None, reads the current stored rows: steps via
+      load_steps converted to dicts with keys uuid, plan_uuid,
+      parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
+      status; concepts via list_concepts; relations via list_relations
+      converted to {"from_concept", "to_concept", "type"} dicts; paragraphs
+      via list_paragraphs converted to dicts with keys uuid, plan_uuid, label,
+      text, position.
+
+      When revision_uuid is given, calls node_map = state_at(conn, plan_uuid,
+      revision_uuid) (a VersionStoreError from an unknown revision
+      propagates), then for every node uuid in node_map calls
+      snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid), skips
+      the node when snap.get("deleted") is True, and otherwise buckets a copy
+      of snap with the "kind" key removed into steps, concepts, relations, or
+      paragraphs according to snap["kind"].
+
+      Every bucket is sorted before being returned: steps by (level, step_id),
+      concepts by concept_id, relations by (from_concept, to_concept, type),
+      paragraphs by position.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan being assembled.
+      :param revision_uuid: The revision to assemble state at, or None to read
+          the current stored rows.
+      :type revision_uuid: uuid.UUID | None
+      :raises plan_manager.storage.version_store.VersionStoreError: If
+          revision_uuid does not identify a known revision.
+      :return: {"steps": [...], "concepts": [...], "relations": [...],
+          "paragraphs": [...]} of plain dicts, each bucket sorted as above.
+      :rtype: dict
+      """
+      if revision_uuid is None:
+          steps = [
+              {
+                  "uuid": s.uuid,
+                  "plan_uuid": s.plan_uuid,
+                  "parent_step_uuid": s.parent_step_uuid,
+                  "level": s.level,
+                  "step_id": s.step_id,
+                  "slug": s.slug,
+                  "fields": s.fields,
+                  "depends_on": s.depends_on,
+                  "concepts": s.concepts,
+                  "status": s.status,
+              }
+              for s in load_steps(conn, plan_uuid).values()
+          ]
+          concepts = [
+              {
+                  "concept_id": c.concept_id,
+                  "name": c.name,
+                  "definition": c.definition,
+                  "properties": c.properties,
+                  "source_labels": c.source_labels,
+              }
+              for c in list_concepts(conn, plan_uuid)
+          ]
+          relations = [
+              {"from_concept": r[0], "to_concept": r[1], "type": r[2]}
+              for r in list_relations(conn, plan_uuid)
+          ]
+          paragraphs = [
+              {
+                  "uuid": p.uuid,
+                  "plan_uuid": p.plan_uuid,
+                  "label": p.label,
+                  "text": p.text,
+                  "position": p.position,
+              }
+              for p in list_paragraphs(conn, plan_uuid)
+          ]
+      else:
+          node_map = state_at(conn, plan_uuid, revision_uuid)
+          steps, concepts, relations, paragraphs = [], [], [], []
+          for node_uuid in node_map:
+              snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid)
+              if snap.get("deleted") is True:
+                  continue
+              body = {k: v for k, v in snap.items() if k != "kind"}
+              kind = snap["kind"]
+              if kind == "step":
+                  steps.append(body)
+              elif kind == "concept":
+                  concepts.append(body)
+              elif kind == "relation":
+                  relations.append(body)
+              elif kind == "paragraph":
+                  paragraphs.append(body)
+
+      steps.sort(key=lambda d: (d["level"], d["step_id"]))
+      concepts.sort(key=lambda d: d["concept_id"])
+      relations.sort(key=lambda d: (d["from_concept"], d["to_concept"], d["type"]))
+      paragraphs.sort(key=lambda d: d["position"])
+      return {
+          "steps": steps,
+          "concepts": concepts,
+          "relations": relations,
+          "paragraphs": paragraphs,
+      }
+
+  Constraints (all binding, no deviation):
+  - The import block change and the function append are the only changes;
+    every other line of the current content is preserved byte-identically.
+  - The five "from plan_manager..." import lines appear in exactly this
+    order: domain.concept_store, domain.paragraph_store,
+    domain.relation_store, storage.version_ops, views.dependency_graph.
+  - In live mode (revision_uuid is None), exactly four data-access calls are
+    made: load_steps(conn, plan_uuid), list_concepts(conn, plan_uuid),
+    list_relations(conn, plan_uuid), list_paragraphs(conn, plan_uuid); no
+    other function is called for data access.
+  - In revision mode (revision_uuid is not None), exactly state_at is
+    called once and checkout_read is called once per uuid key of the dict
+    returned by state_at (i.e. once per node in node_map); a
+    VersionStoreError raised by state_at is not caught and propagates
+    unchanged.
+  - A node snapshot with snap.get("deleted") is True (exactly the boolean
+    True, via .get so a missing key defaults to None and is not treated as
+    deleted) is skipped entirely — not added to any bucket.
+  - Each bucketed body is snap with the "kind" key removed and no other
+    key added or removed; the dict comprehension {k: v for k, v in
+    snap.items() if k != "kind"} is used verbatim.
+  - Bucketing uses an if/elif/elif/elif chain on snap["kind"] comparing
+    against exactly the string literals "step", "concept", "relation",
+    "paragraph"; a kind matching none of these four is silently not
+    bucketed into any list (no error, no default case).
+  - Sorting keys are exactly as shown: steps by the tuple
+    (d["level"], d["step_id"]); concepts by d["concept_id"]; relations by
+    the tuple (d["from_concept"], d["to_concept"], d["type"]); paragraphs
+    by d["position"]. Sorting is applied in both branches (it runs
+    unconditionally after the if/else, on whichever lists were populated).
+  - The returned dict has exactly the four keys "steps", "concepts",
+    "relations", "paragraphs", in this order, each mapped to its sorted
+    list.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 181 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes assemble_state(conn, plan_uuid, revision_uuid) -> dict. With
+    revision_uuid=None and stubbed load_steps/list_concepts/list_relations/
+    list_paragraphs returning two steps (levels 3 and 5), two concepts, two
+    relations, and two paragraphs, assemble_state returns a dict with keys
+    "steps", "concepts", "relations", "paragraphs" whose lists are sorted
+    by (level, step_id), concept_id, (from_concept, to_concept, type), and
+    position respectively, and every step dict carries exactly the ten keys
+    uuid, plan_uuid, parent_step_uuid, level, step_id, slug, fields,
+    depends_on, concepts, status. With a non-None revision_uuid and a
+    stubbed state_at returning a two-entry node map plus a stubbed
+    checkout_read returning one snapshot with "kind": "paragraph" and one
+    with "deleted": True, the returned "paragraphs" list has exactly one
+    entry (the non-deleted one) with no "kind" key. Calling assemble_state
+    with a revision_uuid for which a stubbed state_at raises
+    plan_manager.storage.version_store.VersionStoreError propagates that
+    exception unchanged. export_hrs, ExportError, the four layout
+    constants, and emit_yaml remain unchanged and importable.
+status: draft

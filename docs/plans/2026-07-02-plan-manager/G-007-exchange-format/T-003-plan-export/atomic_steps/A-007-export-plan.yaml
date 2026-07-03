@@ -1,0 +1,537 @@
+step_id: A-007
+parent_tactical_step: T-003
+name: export-plan
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 7
+depends_on: [A-006]
+concepts: [C-021, C-001, C-006, C-018, C-036]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this tactical step's priority-1 through priority-6 atomic
+  steps applied on top of the prior tactical step's output). Apply your
+  change on top of exactly this content; do not assume any other prior
+  state.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-001
+  name: Plan
+  definition: Root aggregate of one development plan with identity, name,
+    status, and head revision.
+  properties:
+  - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+  - multiple plans live in one database, listed by catalog query
+  - head revision advances per revision in draft editing, on publication for cascades
+  - carries a user-set context budget in tokens (default 4000) consumed by prompt assembly
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions, revisions,
+    and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+
+  concept_id: C-036
+  name: NormativeAlgorithmSet
+  definition: The binding algorithm specifications that lower levels refine
+    into code without semantic deviation.
+  properties:
+  - deviations escalate to the HRS; open parameters have named defaults and are configuration
+
+  Normative rule this step realizes (verbatim from the parent tactical
+  step): Create the plan export of the ExchangeFormat (C-021): the
+  materialization of one plan (C-001) into the standard file layout,
+  optionally at a named revision. The layout follows the exchange naming
+  of the declarative schema (C-006) with its defaults: the HRS Markdown as
+  the source specification file, the machine specification as one YAML
+  file with concepts and relations, one directory per global step and per
+  tactical step named by identifier and slug with a YAML descriptor each,
+  and one YAML file per atomic step under the tactical step's atomic-step
+  directory. ... The export writes under the configured export root,
+  returns the layout root and the file count, and reads plan truth only —
+  exported files are derived snapshots never read back as truth.
+
+  Imported contract (import, never reimplement; this module already exists
+  elsewhere in the codebase, is out of scope for this AS, and must not be
+  created or modified by this AS):
+
+  Module plan_manager/domain/plan.py exposes:
+    def get_plan(conn, plan_uuid) -> Plan
+      Plan fields: uuid, name, status, context_budget, head_revision_uuid.
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.concept_store import list_concepts
+  from plan_manager.domain.paragraph_store import list_paragraphs
+  from plan_manager.domain.relation_store import list_relations
+  from plan_manager.storage.version_ops import checkout_read, state_at
+  from plan_manager.views.dependency_graph import load_steps
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+
+  HRS_FILENAME = "source_spec.md"
+  MRS_FILENAME = "spec.yaml"
+  STEP_README = "README.yaml"
+  ATOMIC_DIR = "atomic_steps"
+
+
+  def emit_yaml(path, data: dict) -> None:
+      """Serialize data as safe YAML to path, aborting on a round-trip mismatch.
+
+      Dumps data with yaml.safe_dump using default_flow_style=False,
+      allow_unicode=True, and sort_keys=False so that scalars containing a
+      colon-space, a leading dash, quotes, a hash sign, or other YAML
+      metacharacters are quoted or emitted as block scalars (C-021). Then
+      re-parses the dumped text with yaml.safe_load and compares the result
+      against data for exact equality; a mismatch means the dumped text would
+      not restore the original value, so the emission is aborted.
+
+      :param path: The filesystem path to write; parent directories are
+          created if missing.
+      :type path: str | pathlib.Path
+      :param data: The plain-dict value to serialize.
+      :type data: dict
+      :raises ExportError: If the round-trip re-parse does not equal data.
+      :return: None.
+      :rtype: None
+      """
+      text = yaml.safe_dump(
+          data, default_flow_style=False, allow_unicode=True, sort_keys=False
+      )
+      if yaml.safe_load(text) != data:
+          raise ExportError(f"round-trip failed: {path}")
+      target = pathlib.Path(path)
+      target.parent.mkdir(parents=True, exist_ok=True)
+      target.write_text(text, encoding="utf-8")
+
+
+  def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
+      """Assemble the plan's exportable state, live or at a named revision.
+
+      When revision_uuid is None, reads the current stored rows: steps via
+      load_steps converted to dicts with keys uuid, plan_uuid,
+      parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
+      status; concepts via list_concepts; relations via list_relations
+      converted to {"from_concept", "to_concept", "type"} dicts; paragraphs
+      via list_paragraphs converted to dicts with keys uuid, plan_uuid, label,
+      text, position.
+
+      When revision_uuid is given, calls node_map = state_at(conn, plan_uuid,
+      revision_uuid) (a VersionStoreError from an unknown revision
+      propagates), then for every node uuid in node_map calls
+      snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid), skips
+      the node when snap.get("deleted") is True, and otherwise buckets a copy
+      of snap with the "kind" key removed into steps, concepts, relations, or
+      paragraphs according to snap["kind"].
+
+      Every bucket is sorted before being returned: steps by (level, step_id),
+      concepts by concept_id, relations by (from_concept, to_concept, type),
+      paragraphs by position.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan being assembled.
+      :param revision_uuid: The revision to assemble state at, or None to read
+          the current stored rows.
+      :type revision_uuid: uuid.UUID | None
+      :raises plan_manager.storage.version_store.VersionStoreError: If
+          revision_uuid does not identify a known revision.
+      :return: {"steps": [...], "concepts": [...], "relations": [...],
+          "paragraphs": [...]} of plain dicts, each bucket sorted as above.
+      :rtype: dict
+      """
+      if revision_uuid is None:
+          steps = [
+              {
+                  "uuid": s.uuid,
+                  "plan_uuid": s.plan_uuid,
+                  "parent_step_uuid": s.parent_step_uuid,
+                  "level": s.level,
+                  "step_id": s.step_id,
+                  "slug": s.slug,
+                  "fields": s.fields,
+                  "depends_on": s.depends_on,
+                  "concepts": s.concepts,
+                  "status": s.status,
+              }
+              for s in load_steps(conn, plan_uuid).values()
+          ]
+          concepts = [
+              {
+                  "concept_id": c.concept_id,
+                  "name": c.name,
+                  "definition": c.definition,
+                  "properties": c.properties,
+                  "source_labels": c.source_labels,
+              }
+              for c in list_concepts(conn, plan_uuid)
+          ]
+          relations = [
+              {"from_concept": r[0], "to_concept": r[1], "type": r[2]}
+              for r in list_relations(conn, plan_uuid)
+          ]
+          paragraphs = [
+              {
+                  "uuid": p.uuid,
+                  "plan_uuid": p.plan_uuid,
+                  "label": p.label,
+                  "text": p.text,
+                  "position": p.position,
+              }
+              for p in list_paragraphs(conn, plan_uuid)
+          ]
+      else:
+          node_map = state_at(conn, plan_uuid, revision_uuid)
+          steps, concepts, relations, paragraphs = [], [], [], []
+          for node_uuid in node_map:
+              snap = checkout_read(conn, plan_uuid, revision_uuid, node_uuid)
+              if snap.get("deleted") is True:
+                  continue
+              body = {k: v for k, v in snap.items() if k != "kind"}
+              kind = snap["kind"]
+              if kind == "step":
+                  steps.append(body)
+              elif kind == "concept":
+                  concepts.append(body)
+              elif kind == "relation":
+                  relations.append(body)
+              elif kind == "paragraph":
+                  paragraphs.append(body)
+
+      steps.sort(key=lambda d: (d["level"], d["step_id"]))
+      concepts.sort(key=lambda d: d["concept_id"])
+      relations.sort(key=lambda d: (d["from_concept"], d["to_concept"], d["type"]))
+      paragraphs.sort(key=lambda d: d["position"])
+      return {
+          "steps": steps,
+          "concepts": concepts,
+          "relations": relations,
+          "paragraphs": paragraphs,
+      }
+
+
+  def render_hrs_text(paragraphs: list[dict]) -> str:
+      """Render the binding HRS Markdown document from assembled paragraph dicts.
+
+      Sorts paragraphs by their "position" key, renders each as its
+      brace-wrapped "label" value, one space, and its "text" value
+      byte-identically, and joins the rendered paragraphs with exactly one
+      blank line, ending the document with a single trailing newline. This is
+      the same rendering rule as export_hrs, applied to assembled dicts
+      instead of stored rows.
+
+      :param paragraphs: Assembled paragraph dicts, each carrying at least the
+          keys "label", "text", and "position".
+      :type paragraphs: list[dict]
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same input.
+      :rtype: str
+      """
+      ordered = sorted(paragraphs, key=lambda p: p["position"])
+      rendered = ["{" + p["label"] + "} " + p["text"] for p in ordered]
+      return "\n\n".join(rendered) + "\n"
+
+
+  def step_descriptor(step: dict) -> dict:
+      """Build the exported descriptor dict for one step, in canonical key order.
+
+      Starts from {"step_id": step["step_id"]}, merges in every key of
+      step["fields"] (level-specific fields), then sets "depends_on" from
+      step["depends_on"], "concepts" from step["concepts"], and "status" from
+      step["status"] — exactly these keys, in exactly this order. The step's
+      "slug" is carried by the exported directory or file name and is never
+      included in the descriptor.
+
+      :param step: An assembled step dict as produced by assemble_state,
+          carrying at least the keys step_id, fields, depends_on, concepts,
+          status.
+      :type step: dict
+      :return: The step descriptor dict ready for safe YAML emission.
+      :rtype: dict
+      """
+      descriptor = {"step_id": step["step_id"]}
+      descriptor.update(step["fields"])
+      descriptor["depends_on"] = step["depends_on"]
+      descriptor["concepts"] = step["concepts"]
+      descriptor["status"] = step["status"]
+      return descriptor
+
+  Required change, in two parts:
+
+  Part 1 — replace the existing import block
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.concept_store import list_concepts
+  from plan_manager.domain.paragraph_store import list_paragraphs
+  from plan_manager.domain.relation_store import list_relations
+  from plan_manager.storage.version_ops import checkout_read, state_at
+  from plan_manager.views.dependency_graph import load_steps
+
+  with exactly this expanded block (inserts one new "from" line for
+  plan_manager.domain.plan, alphabetically between the domain.paragraph_store
+  and domain.relation_store lines; every other line unchanged):
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.concept_store import list_concepts
+  from plan_manager.domain.paragraph_store import list_paragraphs
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.domain.relation_store import list_relations
+  from plan_manager.storage.version_ops import checkout_read, state_at
+  from plan_manager.views.dependency_graph import load_steps
+
+  Part 2 — append exactly the following function to the end of the file,
+  after the step_descriptor function, separated from it by exactly two
+  blank lines. Do not modify anything else.
+
+  def export_plan(conn, plan_uuid, export_root, revision_uuid=None) -> dict:
+      """Materialize a plan into the standard exchange-layout file tree.
+
+      Reads plan = get_plan(conn, plan_uuid) and sets
+      root = pathlib.Path(export_root) / plan.name. Assembles
+      state = assemble_state(conn, plan_uuid, revision_uuid) (a
+      VersionStoreError from an unknown revision_uuid propagates).
+
+      Writes the HRS text to root / HRS_FILENAME: export_hrs(conn, plan_uuid)
+      when revision_uuid is None, render_hrs_text(state["paragraphs"])
+      otherwise — both produce the binding document (C-021).
+
+      Writes root / MRS_FILENAME via emit_yaml with a dict of "concepts"
+      (each reduced to the five keys concept_id, name, definition, properties,
+      source_labels) and "relations" (each reduced to the three keys
+      from_concept, to_concept, type), taken from state["concepts"] and
+      state["relations"] in their assembled order.
+
+      For every level-3 step in state["steps"], creates its directory
+      root / f"{step_id}-{slug}" and emits STEP_README via
+      emit_yaml(step_dir / STEP_README, step_descriptor(step)). For every
+      level-4 step, resolves its parent directory via the parent step's uuid
+      (recorded while creating level-3 directories) and nests its own
+      directory f"{step_id}-{slug}" inside it, emitting STEP_README the same
+      way. For every level-5 step, resolves its parent tactical step's
+      directory the same way and emits its descriptor into
+      parent_dir / ATOMIC_DIR as f"{step_id}-{slug}.yaml".
+
+      Counts every file written (the HRS file, the MRS file, and every
+      emitted STEP_README and atomic-step file) and returns
+      {"root": str(root), "files": <count>}. Exported files are derived
+      snapshots and are never read back as truth.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan to export.
+      :param export_root: The configured export root directory under which
+          the plan's named directory is created.
+      :type export_root: str | pathlib.Path
+      :param revision_uuid: The revision to export, or None to export the
+          current stored state.
+      :type revision_uuid: uuid.UUID | None
+      :raises plan_manager.storage.version_store.VersionStoreError: If
+          revision_uuid does not identify a known revision.
+      :raises ExportError: If any emitted YAML file fails its round-trip
+          check.
+      :return: {"root": str(root), "files": <count>}.
+      :rtype: dict
+      """
+      plan = get_plan(conn, plan_uuid)
+      root = pathlib.Path(export_root) / plan.name
+      state = assemble_state(conn, plan_uuid, revision_uuid)
+      files = 0
+
+      hrs_text = (
+          export_hrs(conn, plan_uuid)
+          if revision_uuid is None
+          else render_hrs_text(state["paragraphs"])
+      )
+      root.mkdir(parents=True, exist_ok=True)
+      (root / HRS_FILENAME).write_text(hrs_text, encoding="utf-8")
+      files += 1
+
+      mrs_concepts = [
+          {
+              "concept_id": c["concept_id"],
+              "name": c["name"],
+              "definition": c["definition"],
+              "properties": c["properties"],
+              "source_labels": c["source_labels"],
+          }
+          for c in state["concepts"]
+      ]
+      mrs_relations = [
+          {
+              "from_concept": r["from_concept"],
+              "to_concept": r["to_concept"],
+              "type": r["type"],
+          }
+          for r in state["relations"]
+      ]
+      emit_yaml(
+          root / MRS_FILENAME, {"concepts": mrs_concepts, "relations": mrs_relations}
+      )
+      files += 1
+
+      dir_by_uuid = {}
+      for step in [s for s in state["steps"] if s["level"] == 3]:
+          step_dir = root / f"{step['step_id']}-{step['slug']}"
+          step_dir.mkdir(parents=True, exist_ok=True)
+          emit_yaml(step_dir / STEP_README, step_descriptor(step))
+          files += 1
+          dir_by_uuid[step["uuid"]] = step_dir
+
+      for step in [s for s in state["steps"] if s["level"] == 4]:
+          parent_dir = dir_by_uuid[step["parent_step_uuid"]]
+          step_dir = parent_dir / f"{step['step_id']}-{step['slug']}"
+          step_dir.mkdir(parents=True, exist_ok=True)
+          emit_yaml(step_dir / STEP_README, step_descriptor(step))
+          files += 1
+          dir_by_uuid[step["uuid"]] = step_dir
+
+      for step in [s for s in state["steps"] if s["level"] == 5]:
+          parent_dir = dir_by_uuid[step["parent_step_uuid"]]
+          atomic_dir = parent_dir / ATOMIC_DIR
+          atomic_dir.mkdir(parents=True, exist_ok=True)
+          target = atomic_dir / f"{step['step_id']}-{step['slug']}.yaml"
+          emit_yaml(target, step_descriptor(step))
+          files += 1
+
+      return {"root": str(root), "files": files}
+
+  Constraints (all binding, no deviation):
+  - The import block change and the function append are the only changes;
+    every other line of the current content is preserved byte-identically.
+  - export_plan accepts exactly four parameters: conn, plan_uuid,
+    export_root, and revision_uuid=None (keyword-defaultable, positional
+    or keyword).
+  - files is an int starting at 0, incremented by exactly 1 immediately
+    after each successful write (the HRS write, the MRS write, and each
+    STEP_README or atomic-step file write) — never incremented before the
+    corresponding write and never batch-incremented.
+  - The HRS text source is selected by the conditional expression shown:
+    export_hrs(conn, plan_uuid) when revision_uuid is None, otherwise
+    render_hrs_text(state["paragraphs"]); no other source is used.
+  - root.mkdir(parents=True, exist_ok=True) is called before the HRS file
+    is written; the HRS file is written via
+    (root / HRS_FILENAME).write_text(hrs_text, encoding="utf-8") — not via
+    emit_yaml (the HRS file is Markdown text, not YAML).
+  - mrs_concepts and mrs_relations are built by the exact comprehensions
+    shown, projecting state["concepts"] down to the five keys concept_id,
+    name, definition, properties, source_labels and state["relations"]
+    down to the three keys from_concept, to_concept, type, then passed to
+    emit_yaml(root / MRS_FILENAME, {"concepts": mrs_concepts, "relations":
+    mrs_relations}).
+  - dir_by_uuid is a plain dict populated only while processing level-3 and
+    level-4 steps, mapping each step's "uuid" value to its created
+    pathlib.Path directory; it is never pre-populated and never cleared.
+  - Level-3 steps are filtered as [s for s in state["steps"] if
+    s["level"] == 3] and processed in that (already sorted) order; each
+    gets step_dir = root / f"{step['step_id']}-{step['slug']}",
+    step_dir.mkdir(parents=True, exist_ok=True), then
+    emit_yaml(step_dir / STEP_README, step_descriptor(step)), files += 1,
+    and dir_by_uuid[step["uuid"]] = step_dir — in exactly this order.
+  - Level-4 steps are filtered as [s for s in state["steps"] if
+    s["level"] == 4] and processed the same way, except step_dir's parent
+    is dir_by_uuid[step["parent_step_uuid"]] instead of root; level-4
+    directories are also recorded into dir_by_uuid.
+  - Level-5 steps are filtered as [s for s in state["steps"] if
+    s["level"] == 5]; for each, parent_dir =
+    dir_by_uuid[step["parent_step_uuid"]], atomic_dir = parent_dir /
+    ATOMIC_DIR (created via atomic_dir.mkdir(parents=True,
+    exist_ok=True)), target = atomic_dir /
+    f"{step['step_id']}-{step['slug']}.yaml", then
+    emit_yaml(target, step_descriptor(step)) and files += 1; level-5 steps
+    are not recorded into dir_by_uuid.
+  - Levels 1 and 2 (if present in state["steps"]) are not written by this
+    function; only levels 3, 4, and 5 are processed.
+  - The function returns exactly {"root": str(root), "files": files} as
+    the last statement; no other keys.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 341 lines, within the 400-line limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes export_plan(conn, plan_uuid, export_root, revision_uuid=None)
+    -> dict. With stubbed get_plan returning a plan named "demo-plan",
+    stubbed load_steps returning one level-3 step "T-003"/"plan-export"
+    with an empty depends_on and one level-5 child step "A-001"/
+    "export-error" under it, stubbed list_concepts returning one concept
+    including a value containing "colon: space" (a YAML-hazardous scalar),
+    stubbed list_relations returning one relation, and stubbed
+    list_paragraphs returning one paragraph, calling
+    export_plan(conn, plan_uuid, tmp_path) creates
+    tmp_path/demo-plan/source_spec.md,
+    tmp_path/demo-plan/spec.yaml (whose "colon: space" value round-trips
+    through yaml.safe_load unchanged, i.e. is quoted correctly),
+    tmp_path/demo-plan/T-003-plan-export/README.yaml, and
+    tmp_path/demo-plan/T-003-plan-export/atomic_steps/A-001-export-error.yaml,
+    and returns {"root": str(tmp_path / "demo-plan"), "files": 4}. Passing
+    a revision_uuid for which a stubbed state_at raises
+    plan_manager.storage.version_store.VersionStoreError propagates that
+    exception unchanged and no file is left partially written beyond what
+    was already flushed. export_hrs, ExportError, the four layout
+    constants, emit_yaml, assemble_state, render_hrs_text, and
+    step_descriptor remain unchanged and importable.
+status: draft

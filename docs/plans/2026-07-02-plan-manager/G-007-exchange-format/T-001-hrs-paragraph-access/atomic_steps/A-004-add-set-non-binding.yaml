@@ -1,0 +1,406 @@
+step_id: A-004
+parent_tactical_step: T-001
+name: add-set-non-binding
+target_file: plan_manager/hrs/paragraphs.py
+operation: modify_file
+priority: 4
+depends_on: [A-003]
+concepts: [C-002, C-018, C-016]
+prompt: |
+  Target file: plan_manager/hrs/paragraphs.py (existing module; modify).
+  Operation: modify_file.
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """HRS paragraph access and mutation operations.
+
+  Read and mutate stored HRS paragraphs (C-002) through the stored-paragraph
+  primitives in plan_manager.domain.paragraph_store, and record each
+  mutation's revision attribution through plan_manager.storage.version_store
+  (direct mode) or plan_manager.cascade.write (cascade mode).
+
+  Only binding paragraphs are ever stored: paragraph_store never holds a
+  non-binding row. This module defines a function named list_paragraphs that
+  intentionally shadows the module-level function of the same name in
+  plan_manager.domain.paragraph_store. The store module is imported by module
+  name (``from plan_manager.domain import paragraph_store``) and its function
+  is always called qualified as ``paragraph_store.list_paragraphs(...)`` so
+  this module's own list_paragraphs never recurses into itself.
+  """
+
+  import uuid
+
+  from plan_manager.domain import paragraph_store
+  from plan_manager.domain.labeling import assign_missing_labels
+  from plan_manager.storage.version_store import record_revision
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.cascade.record import CascadeRecord
+  from plan_manager.cascade.write import cascade_write
+
+
+  def list_paragraphs(conn, plan_uuid: uuid.UUID) -> list[dict]:
+      """Return every stored paragraph of a plan in position order.
+
+      Reads all stored binding paragraphs of the plan identified by
+      ``plan_uuid`` through
+      ``plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid)``
+      and projects each row to a dict with keys "label" (str | None),
+      "binding" (bool, always True because only binding paragraphs are ever
+      stored), "position" (int), and "text" (str). The store function already
+      returns rows in position order; this function preserves that order.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :return: list[dict] -- one dict per stored paragraph, in position order.
+      """
+      rows = paragraph_store.list_paragraphs(conn, plan_uuid)
+      return [
+          {
+              "label": row.label,
+              "binding": True,
+              "position": row.position,
+              "text": row.text,
+          }
+          for row in rows
+      ]
+
+
+  def get_paragraph(conn, plan_uuid: uuid.UUID, label: str) -> dict | None:
+      """Resolve one stored paragraph by its bare label.
+
+      Calls this module's own list_paragraphs(conn, plan_uuid) and returns
+      the single dict whose "label" key equals the given bare ``label``
+      string. Returns None when no stored paragraph carries that label.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :param label: str, the bare four-character label to resolve.
+      :return: dict | None -- the matching paragraph dict, or None.
+      """
+      for paragraph in list_paragraphs(conn, plan_uuid):
+          if paragraph["label"] == label:
+              return paragraph
+      return None
+
+
+  def assign_labels(
+      conn, plan_uuid: uuid.UUID, author: str, cascade: CascadeRecord | None
+  ) -> list[str]:
+      """Assign fresh labels to every unlabeled stored binding paragraph.
+
+      Reads every stored paragraph of the plan through
+      ``plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid)``,
+      then calls ``plan_manager.domain.labeling.assign_missing_labels(rows)``
+      which returns ``(labeled, new_labels)``: ``labeled`` is the input list
+      with a fresh unique four-character base36 label written into every
+      entry whose label was None, in the same order as ``rows``; ``new_labels``
+      is the list of newly generated label strings. When ``new_labels`` is
+      empty, nothing was unlabeled: this function returns the empty list
+      immediately and records no revision.
+
+      Otherwise, for every index i where ``rows[i].label is None``, this
+      function issues the plain SQL statement
+      ``UPDATE paragraph SET label = %s WHERE uuid = %s`` with parameters
+      ``(labeled[i].label, rows[i].uuid)`` through a cursor obtained from
+      ``conn.cursor()`` used as a context manager, and builds the paragraph
+      node snapshot dict ``{"kind": "paragraph", "uuid": str(rows[i].uuid),
+      "plan_uuid": str(plan_uuid), "label": labeled[i].label, "text":
+      labeled[i].text, "position": labeled[i].position}`` for that changed
+      row.
+
+      Revision attribution rule (binding): when ``cascade`` is None, call
+      ``plan_manager.storage.version_store.record_revision(conn, plan_uuid,
+      author, message, changes, get_plan(conn, plan_uuid).head_revision_uuid,
+      ref_name=None)`` exactly once, where ``changes`` is the list of
+      ``(row_uuid, snapshot)`` tuples for every changed row and ``message``
+      is the literal string "assign paragraph labels". When ``cascade`` is a
+      ``plan_manager.cascade.record.CascadeRecord``, call
+      ``plan_manager.cascade.write.cascade_write(conn, plan_uuid, cascade,
+      row_uuid, snapshot, [], author, message)`` once per changed row, with
+      ``status_updates=[]`` and the same literal ``message``.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :param author: str, the revision author.
+      :param cascade: plan_manager.cascade.record.CascadeRecord | None -- the
+          open cascade record, or None for direct head-advancing attribution.
+      :return: list[str] -- the freshly generated labels; empty when nothing
+          was unlabeled.
+      """
+      rows = paragraph_store.list_paragraphs(conn, plan_uuid)
+      labeled, new_labels = assign_missing_labels(rows)
+      if not new_labels:
+          return new_labels
+
+      message = "assign paragraph labels"
+      changed = [
+          (rows[i].uuid, labeled[i])
+          for i in range(len(rows))
+          if rows[i].label is None
+      ]
+
+      with conn.cursor() as cur:
+          for row_uuid, new_row in changed:
+              cur.execute(
+                  "UPDATE paragraph SET label = %s WHERE uuid = %s",
+                  (new_row.label, row_uuid),
+              )
+
+      if cascade is None:
+          changes = [
+              (
+                  row_uuid,
+                  {
+                      "kind": "paragraph",
+                      "uuid": str(row_uuid),
+                      "plan_uuid": str(plan_uuid),
+                      "label": new_row.label,
+                      "text": new_row.text,
+                      "position": new_row.position,
+                  },
+              )
+              for row_uuid, new_row in changed
+          ]
+          plan = get_plan(conn, plan_uuid)
+          record_revision(
+              conn,
+              plan_uuid,
+              author,
+              message,
+              changes,
+              plan.head_revision_uuid,
+              ref_name=None,
+          )
+      else:
+          for row_uuid, new_row in changed:
+              snapshot = {
+                  "kind": "paragraph",
+                  "uuid": str(row_uuid),
+                  "plan_uuid": str(plan_uuid),
+                  "label": new_row.label,
+                  "text": new_row.text,
+                  "position": new_row.position,
+              }
+              cascade_write(
+                  conn, plan_uuid, cascade, row_uuid, snapshot, [], author, message
+              )
+
+      return new_labels
+  ```
+
+  Required change: append the following new function to the end of the
+  file, after the existing assign_labels function, separated by exactly two
+  blank lines. Do not change anything else in the file — the module
+  docstring, imports, list_paragraphs, get_paragraph, and assign_labels must
+  remain byte-identical to the current content shown above.
+
+  New function to append:
+
+    def set_non_binding(
+        conn,
+        plan_uuid: uuid.UUID,
+        position: int,
+        non_binding: bool,
+        author: str,
+        cascade: CascadeRecord | None,
+    ) -> None:
+
+  Signature and typing: conn is an open psycopg 3 database connection (no
+  type annotation); plan_uuid is annotated uuid.UUID; position is annotated
+  int; non_binding is annotated bool; author is annotated str; cascade is
+  annotated CascadeRecord | None (CascadeRecord already imported in this
+  file from plan_manager.cascade.record). The return type is None.
+
+  Imported contracts used by this function body (quoted verbatim, imports
+  already present in this file from prior modifications, never reimplement):
+  - `def list_paragraphs(conn, plan_uuid) -> list[StoredParagraph]` on
+    plan_manager.domain.paragraph_store (called qualified as
+    paragraph_store.list_paragraphs(conn, plan_uuid)); StoredParagraph has
+    fields uuid: uuid.UUID, plan_uuid: uuid.UUID, label: str | None,
+    text: str, position: int.
+  - `def get_plan(conn, plan_uuid) -> Plan` on plan_manager.domain.plan;
+    Plan has field head_revision_uuid among others.
+  - `def record_revision(conn, plan_uuid, author, message, changes, parent_revision_uuid, ref_name) -> uuid.UUID`
+    on plan_manager.storage.version_store; changes is
+    list[tuple[uuid.UUID, dict]]; ref_name=None advances the plan head.
+  - `def cascade_write(conn, plan_uuid, cascade, node_uuid, node_snapshot, status_updates, author, message) -> uuid.UUID`
+    on plan_manager.cascade.write; node_uuid: uuid.UUID, node_snapshot: dict,
+    status_updates: list[tuple[uuid.UUID, str]].
+
+  Behavior (exact, no alternatives; write this exact function body):
+
+      if not non_binding:
+          raise ValueError(
+              f"no stored block at position {position}: non-binding blocks "
+              "are not stored"
+          )
+
+      rows = paragraph_store.list_paragraphs(conn, plan_uuid)
+      row = next((p for p in rows if p.position == position), None)
+      if row is None:
+          raise ValueError(f"no block at position {position}")
+
+      with conn.cursor() as cur:
+          cur.execute("DELETE FROM paragraph WHERE uuid = %s", (row.uuid,))
+
+      snapshot = {
+          "kind": "paragraph",
+          "uuid": str(row.uuid),
+          "plan_uuid": str(plan_uuid),
+          "label": row.label,
+          "text": row.text,
+          "position": row.position,
+          "deleted": True,
+      }
+      message = f"remove non-binding paragraph at position {position}"
+
+      if cascade is None:
+          plan = get_plan(conn, plan_uuid)
+          record_revision(
+              conn,
+              plan_uuid,
+              author,
+              message,
+              [(row.uuid, snapshot)],
+              plan.head_revision_uuid,
+              ref_name=None,
+          )
+      else:
+          cascade_write(
+              conn, plan_uuid, cascade, row.uuid, snapshot, [], author, message
+          )
+
+      return None
+
+  Explanation of the exact semantics (binding, not optional): when
+  `non_binding` is False (the "unwrap" direction), the function ALWAYS
+  raises `ValueError(f"no stored block at position {position}: non-binding
+  blocks are not stored")` immediately, without reading or writing anything,
+  because non-binding blocks are excluded from storage by construction
+  (C-002): there is never a stored row to unwrap. This is unconditional —
+  there is no case where non_binding=False succeeds.
+
+  When `non_binding` is True (the "wrap" direction), the function reads all
+  stored paragraphs via paragraph_store.list_paragraphs(conn, plan_uuid) and
+  locates the row whose `position` field equals the given `position`
+  argument using `next((p for p in rows if p.position == position), None)`.
+  If no such row exists, it raises `ValueError(f"no block at position
+  {position}")`. Otherwise it deletes the live row with the plain SQL
+  statement `DELETE FROM paragraph WHERE uuid = %s`, executed through a
+  cursor obtained via `conn.cursor()` used as a context manager (psycopg 3
+  plain SQL; no ORM), builds the tombstone snapshot dict capturing the row's
+  pre-delete content plus `"deleted": True`, and records the revision per
+  the attribution rule below. The row's text stays addressable in the
+  append-only version store even though the live `paragraph` table row is
+  gone.
+
+  Revision attribution rule (binding, shared with the sibling mutating
+  function in this module, wrap branch only): when `cascade` is None, call
+  `record_revision(conn, plan_uuid, author, message, [(row.uuid, snapshot)],
+  get_plan(conn, plan_uuid).head_revision_uuid, ref_name=None)`. When
+  `cascade` is a CascadeRecord, call `cascade_write(conn, plan_uuid, cascade,
+  row.uuid, snapshot, [], author, message)` with `status_updates=[]`.
+  `message` is the literal f-string `f"remove non-binding paragraph at
+  position {position}"` in both branches.
+
+  Docstring (place immediately after the def line, exactly):
+
+      """Toggle the non-binding status of the block at ``position``.
+
+      non_binding=True (wrap a stored block as non-binding): reads every
+      stored paragraph of the plan through
+      ``plan_manager.domain.paragraph_store.list_paragraphs(conn, plan_uuid)``
+      and locates the row whose ``position`` field equals the given
+      ``position``. When no such row exists, raises
+      ``ValueError(f"no block at position {position}")``. Otherwise issues
+      the plain SQL statement ``DELETE FROM paragraph WHERE uuid = %s`` with
+      the row's uuid through a cursor obtained from ``conn.cursor()`` used as
+      a context manager, builds the tombstone snapshot dict ``{"kind":
+      "paragraph", "uuid": str(row.uuid), "plan_uuid": str(plan_uuid),
+      "label": row.label, "text": row.text, "position": row.position,
+      "deleted": True}`` from the row's pre-delete content, and records the
+      revision per the attribution rule below with the literal message
+      ``f"remove non-binding paragraph at position {position}"``. The row's
+      text stays addressable in the append-only version store; only the live
+      ``paragraph`` table row is deleted.
+
+      non_binding=False (unwrap a block back to binding): always raises
+      ``ValueError(f"no stored block at position {position}: non-binding
+      blocks are not stored")`` without reading or writing anything, because
+      non-binding blocks are excluded from storage by construction (C-002):
+      there is never a stored row to unwrap.
+
+      Revision attribution rule (binding, wrap branch only): when ``cascade``
+      is None, call
+      ``plan_manager.storage.version_store.record_revision(conn, plan_uuid,
+      author, message, [(row.uuid, snapshot)],
+      get_plan(conn, plan_uuid).head_revision_uuid, ref_name=None)``. When
+      ``cascade`` is a ``plan_manager.cascade.record.CascadeRecord``, call
+      ``plan_manager.cascade.write.cascade_write(conn, plan_uuid, cascade,
+      row.uuid, snapshot, [], author, message)`` with ``status_updates=[]``.
+
+      :param conn: an open psycopg 3 database connection.
+      :param plan_uuid: uuid.UUID identifying the plan.
+      :param position: int, the position of the block to toggle.
+      :param non_binding: bool -- True wraps the stored block as non-binding
+          (deletes its stored row with a tombstone revision); False always
+          raises because non-binding blocks are never stored.
+      :param author: str, the revision author.
+      :param cascade: plan_manager.cascade.record.CascadeRecord | None -- the
+          open cascade record, or None for direct head-advancing attribution.
+      :return: None.
+      """
+
+  Constraints:
+  - Python 3.12+ syntax; PEP 604 union type CascadeRecord | None.
+  - Plain SQL via psycopg 3 cursor; no ORM; no other SQL statements besides
+    the single DELETE shown.
+  - No new imports (uuid, paragraph_store, get_plan, record_revision,
+    CascadeRecord, cascade_write are all already imported in this file).
+  - Do not alter the module docstring, imports, list_paragraphs,
+    get_paragraph, or assign_labels.
+
+  MRS excerpt (concepts referenced by this AS):
+
+    - concept_id: C-002
+      name: Paragraph
+      definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
+      properties:
+      - label is position-independent, unique within one HRS, survives edits
+      - non-binding blocks are excluded from labeling and coverage
+      - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+      - parsing and label-assignment algorithms are normative
+
+    - concept_id: C-018
+      name: VersionStore
+      definition: Git-like append-only version model of node versions, revisions, and refs inside the database.
+      properties:
+      - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+      - revisions carry parent, author, change set; one mutation produces one revision
+      - any intermediate plan state is addressable by revision id
+      - refs are plan head plus one per open cascade
+      - operations log, diff, checkout-read, revert; history never rewritten
+
+    - concept_id: C-016
+      name: CascadeChange
+      definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
+      properties:
+      - begin acquires the per-plan lock; commit advances head only when gate is green
+      - automatic needs_review propagation per invalidation rule
+      - one open cascade per plan; MRS mutations are cascade-only at any status
+
+  C-002 grounds "non-binding blocks are excluded from labeling and
+  coverage" — the reason the unwrap direction always raises, and the reason
+  only a delete (not an update) is needed for the wrap direction. C-018
+  grounds the tombstone recorded in the append-only version store (the
+  row's text stays addressable by revision id even after the live row is
+  deleted). C-016 grounds the cascade-mode branch via cascade_write.
+verification:
+  type: import
+  target: plan_manager.hrs.paragraphs.set_non_binding
+  expected: >
+    Importing plan_manager.hrs.paragraphs succeeds and the module exposes a callable named set_non_binding accepting exactly six positional parameters (conn, plan_uuid, position, non_binding, author, cascade). Calling it with non_binding=False always raises ValueError with a message stating no stored block at that position because non-binding blocks are not stored, without touching the database. Calling it with non_binding=True and a position that has no stored row raises ValueError stating no block at that position. Calling it with non_binding=True and a position that has a stored row deletes that row and records exactly one revision carrying a tombstone snapshot with deleted true, via record_revision when cascade is None or via cascade_write when cascade is a CascadeRecord.
+status: draft

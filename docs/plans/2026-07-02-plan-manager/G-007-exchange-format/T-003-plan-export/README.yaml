@@ -1,0 +1,53 @@
+step_id: T-003
+parent_global_step: G-007
+name: plan-export
+description: >
+  Create the plan export of the ExchangeFormat (C-021): the materialization
+  of one plan (C-001) into the standard file layout, optionally at a named
+  revision. The layout follows the exchange naming of the declarative schema
+  (C-006) with its defaults: the HRS Markdown as the source specification
+  file, the machine specification as one YAML file with concepts and
+  relations, one directory per global step and per tactical step named by
+  identifier and slug with a YAML descriptor each, and one YAML file per
+  atomic step under the tactical step's atomic-step directory. The exported
+  state is assembled uniformly: without a revision the current stored rows
+  are read; with a revision the node states come from the version store
+  (C-018) checkout-read at that revision, where a node whose recorded content
+  carries the deletion tombstone is treated as absent, and an unknown
+  revision raises the version-store error. The HRS file carries the
+  regenerated binding document for the selected state. Safe YAML emission is
+  normative: every emitted document is serialized by the safe dumper so that
+  scalars containing colon-space, a leading dash, quotes, a hash sign, or
+  other metacharacters are emitted quoted or as block scalars, and every
+  emitted file is round-tripped through the safe parser to an identical value
+  tree before the export completes — a failed round-trip aborts the export as
+  a typed condition. The export writes under the configured export root,
+  returns the layout root and the file count, and reads plan truth only —
+  exported files are derived snapshots never read back as truth. This step
+  defines state assembly, layout rendering, safe emission with the round-trip
+  guard, and the export entry point; it imports nothing.
+concepts: [C-021, C-001, C-006, C-018, C-036]
+inputs:
+- name: export_request
+  type: operation parameters
+  description: >
+    The plan identity, the export root directory, and the optional revision
+    identifier selecting a historical state.
+- name: exported_state
+  type: assembled state
+  description: >
+    The current stored rows, or the checkout-read node states at the named
+    revision with tombstoned nodes treated as absent.
+outputs:
+- name: exported_layout
+  type: derived file tree
+  description: >
+    The standard-layout file tree under the export root with the layout
+    root path and the file count; every YAML file round-trip-verified.
+- name: export_failure
+  type: typed condition
+  description: >
+    The version-store error for an unknown revision, or the abort condition
+    when any emitted file fails the round-trip check.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
+status: draft

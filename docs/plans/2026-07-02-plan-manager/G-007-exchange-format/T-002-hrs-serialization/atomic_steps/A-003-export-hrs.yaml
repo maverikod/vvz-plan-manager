@@ -1,0 +1,110 @@
+step_id: A-003
+parent_tactical_step: T-002
+name: export-hrs
+target_file: plan_manager/exchange/exporter.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-021, C-002]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: create_file (the file does not exist yet; create it with exactly
+  the content specified below — do not assume any pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable
+    four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - parsing and label-assignment algorithms are normative
+
+  Imported contract (import, never reimplement; this module already exists
+  elsewhere in the codebase, is out of scope for this AS, and must not be
+  created or modified by this AS):
+  Module plan_manager/domain/paragraph_store.py exposes:
+    def list_paragraphs(conn, plan_uuid) -> list[StoredParagraph]
+  Returns the plan's stored paragraphs in position order. Each StoredParagraph
+  has (at least) the attributes: uuid, plan_uuid, label, text, position. Every
+  stored row carries a label that is not None (labels are assigned during
+  ingestion; C-002).
+
+  Write the file with exactly this content, in this order:
+
+  1. A module docstring, exactly:
+     """HRS text serialization: regeneration of the human-authored Markdown source.
+
+     Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+     Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+     the binding document; non-binding blocks of the original source are absent by
+     construction and are never reconstructed.
+     """
+
+  2. Exactly one import line:
+     from plan_manager.domain.paragraph_store import list_paragraphs
+
+  3. Exactly one blank line, then exactly one function definition:
+
+     def export_hrs(conn, plan_uuid) -> str:
+         """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+         Reads the plan's stored paragraphs in position order (C-002) and renders
+         each as its brace-wrapped label, one space, and its stored text
+         byte-identically, paragraphs joined by exactly one blank line, with the
+         document ending in a single trailing newline. Two calls over the same
+         stored state return identical strings.
+
+         :param conn: An open psycopg 3 database connection.
+         :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+         :return: The regenerated binding Markdown document, byte-stable across
+             repeated calls over the same stored state.
+         :rtype: str
+         """
+         rows = list_paragraphs(conn, plan_uuid)
+         rendered = ["{" + row.label + "} " + row.text for row in rows]
+         return "\n\n".join(rendered) + "\n"
+
+  Constraints (all binding, no deviation):
+  - rows = list_paragraphs(conn, plan_uuid) is the only data access; no other
+    function or module is called.
+  - Each paragraph is rendered as the three-part concatenation
+    "{" + row.label + "} " + row.text — the label is not re-validated or
+    reformatted, and row.text is emitted byte-identically to the stored
+    value (no stripping, no escaping, no transformation).
+  - Rendered paragraphs are joined with exactly two newline characters
+    ("\n\n") between consecutive paragraphs (one blank line), in the same
+    order as returned by list_paragraphs (position order).
+  - The returned string ends with exactly one trailing "\n" after the last
+    paragraph (achieved by appending "\n" to the joined result).
+  - If rows is empty, "\n\n".join([]) is "" and the function returns "\n"
+    (a single trailing newline and no paragraph content); no special-casing
+    beyond the expression shown is needed or permitted.
+  - The function performs no writes and no database mutation.
+  - Use Python 3.12+ syntax throughout.
+  - Do not add any other functions, classes, constants, or module-level
+    code to this file in this step.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 28 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes a callable export_hrs(conn, plan_uuid) -> str. Given a stored
+    paragraph sequence of two rows with labels "a1b2" and "c3d4" and texts
+    "First." and "Second.", the function returns exactly
+    "{a1b2} First.\n\n{c3d4} Second.\n". Two calls against the same stored
+    rows return identical strings, and no argument beyond conn and plan_uuid
+    is accepted.
+status: draft

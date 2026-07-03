@@ -1,0 +1,173 @@
+step_id: A-003
+parent_tactical_step: T-003
+name: emit-yaml
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 3
+depends_on: [A-002]
+concepts: [C-021]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this tactical step's priority-1 and priority-2 atomic steps
+  applied on top of the prior tactical step's output). Apply your change on
+  top of exactly this content; do not assume any other prior state.
+
+  MRS excerpt (concept definition relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  Normative rule this step realizes (verbatim from the parent tactical
+  step): Safe YAML emission is normative: every emitted document is
+  serialized by the safe dumper so that scalars containing colon-space, a
+  leading dash, quotes, a hash sign, or other metacharacters are emitted
+  quoted or as block scalars, and every emitted file is round-tripped
+  through the safe parser to an identical value tree before the export
+  completes — a failed round-trip aborts the export as a typed condition.
+
+  Library contract (import, never reimplement): the third-party package
+  PyYAML exposes, at module path yaml:
+    yaml.safe_dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False) -> str
+      Serializes a plain Python value (dict/list/str/int/float/bool/None)
+      to a YAML text using the safe representer, quoting or block-scalar
+      wrapping scalars that contain YAML metacharacters.
+    yaml.safe_load(text) -> object
+      Parses YAML text back into a plain Python value using the safe
+      constructor.
+  Standard library contract (import, never reimplement): pathlib exposes,
+  at module path pathlib:
+    class pathlib.Path(*parts)
+      Path.parent.mkdir(parents=True, exist_ok=True) creates all missing
+      parent directories, succeeding silently if they already exist.
+      Path.write_text(text, encoding="utf-8") writes text to the path.
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+
+  HRS_FILENAME = "source_spec.md"
+  MRS_FILENAME = "spec.yaml"
+  STEP_README = "README.yaml"
+  ATOMIC_DIR = "atomic_steps"
+
+  Required change, in two parts:
+
+  Part 1 — replace the single existing import line
+    from plan_manager.domain.paragraph_store import list_paragraphs
+  (the line immediately after the module docstring's closing triple-quote
+  and one blank line) with exactly these four lines:
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+  (that is: "import pathlib", one blank line, "import yaml", one blank
+  line, then the original "from plan_manager.domain.paragraph_store import
+  list_paragraphs" line, unchanged and last).
+
+  Part 2 — append exactly the following function to the end of the file,
+  after the four constant assignments, separated from them by exactly two
+  blank lines. Do not modify anything else.
+
+  def emit_yaml(path, data: dict) -> None:
+      """Serialize data as safe YAML to path, aborting on a round-trip mismatch.
+
+      Dumps data with yaml.safe_dump using default_flow_style=False,
+      allow_unicode=True, and sort_keys=False so that scalars containing a
+      colon-space, a leading dash, quotes, a hash sign, or other YAML
+      metacharacters are quoted or emitted as block scalars (C-021). Then
+      re-parses the dumped text with yaml.safe_load and compares the result
+      against data for exact equality; a mismatch means the dumped text would
+      not restore the original value, so the emission is aborted.
+
+      :param path: The filesystem path to write; parent directories are
+          created if missing.
+      :type path: str | pathlib.Path
+      :param data: The plain-dict value to serialize.
+      :type data: dict
+      :raises ExportError: If the round-trip re-parse does not equal data.
+      :return: None.
+      :rtype: None
+      """
+      text = yaml.safe_dump(
+          data, default_flow_style=False, allow_unicode=True, sort_keys=False
+      )
+      if yaml.safe_load(text) != data:
+          raise ExportError(f"round-trip failed: {path}")
+      target = pathlib.Path(path)
+      target.parent.mkdir(parents=True, exist_ok=True)
+      target.write_text(text, encoding="utf-8")
+
+  Constraints (all binding, no deviation):
+  - The import block change and the function append are the only changes;
+    every other line of the current content is preserved byte-identically.
+  - emit_yaml raises plan_manager.exchange.exporter.ExportError (the class
+    added in the prior step of this same file) — not a bare RuntimeError
+    and not any other exception type — on round-trip mismatch, with message
+    exactly f"round-trip failed: {path}".
+  - path is accepted as either a str or a pathlib.Path; it is converted via
+    pathlib.Path(path) before any filesystem operation.
+  - Parent directories are created before the write via
+    target.parent.mkdir(parents=True, exist_ok=True).
+  - The file is written with target.write_text(text, encoding="utf-8"); no
+    other write mechanism, no binary mode.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 73 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes emit_yaml(path, data: dict) -> None. Calling
+    emit_yaml(tmp_path / "x.yaml", {"a": 1, "b": "v: needs quoting"}) writes
+    a file at that path whose text, re-parsed with yaml.safe_load, equals
+    {"a": 1, "b": "v: needs quoting"}. Passing data that yaml.safe_dump then
+    yaml.safe_load would not reproduce exactly (simulated by monkeypatching
+    yaml.safe_load to return a different value) raises
+    plan_manager.exchange.exporter.ExportError before any file is written.
+    export_hrs, ExportError, and the four layout constants remain
+    unchanged and importable.
+status: draft

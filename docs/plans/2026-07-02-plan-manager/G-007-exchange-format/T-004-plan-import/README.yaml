@@ -1,0 +1,54 @@
+step_id: T-004
+parent_global_step: G-007
+name: plan-import
+description: >
+  Create the plan import of the ExchangeFormat (C-021): the single path from
+  files to the source of truth. Layout validation is a pure filesystem and
+  text computation without database access: it checks that the source root
+  carries the source specification file and the machine specification file,
+  that every YAML descriptor parses, that directory names agree with the
+  declared step identifiers and slugs of the exchange naming (C-006), that
+  identifier patterns and zero-padding conform, and that per-level required
+  fields are present — returning the issue list, empty when the layout is
+  ingestible. Ingestion builds a new plan aggregate (C-001) from the
+  validated tree: it creates the plan named after the source root directory
+  with the default context budget, ingests the HRS source through the HRS
+  serialization so binding paragraphs are stored with labels assigned where
+  missing, inserts every concept (C-003) and relation (C-004) of the machine
+  specification through the validating domain stores, scaffolds every global,
+  tactical, and atomic step (C-005) from its descriptor preserving
+  identifiers, slugs, level fields, dependencies, and concept references, and
+  records the import revisions in the version store (C-018): the paragraph
+  set enters with the revision of its ingestion, and one further revision
+  carries every concept, relation, and step snapshot, leaving the head of the
+  new plan advanced past both. Ingestion
+  verifies itself by re-reading counts of stored paragraphs, concepts,
+  relations, and steps against the source tree before returning the new plan
+  identity; a validating store rejection aborts the import with the offending
+  entity named. This step defines layout validation and plan ingestion; it
+  does not export, does not serialize the HRS itself, and mutates no existing
+  plan.
+concepts: [C-021, C-001, C-006, C-003, C-004, C-005, C-002, C-018]
+inputs:
+- name: source_layout
+  type: file tree
+  description: >
+    The standard-layout source root under the configured export root,
+    validated before any database write.
+- name: import_author
+  type: attribution datum
+  description: >
+    The author recorded on the import revision of the new plan.
+outputs:
+- name: layout_validation_issues
+  type: computed list
+  description: >
+    The pure validation issue list; empty when the layout is ingestible.
+- name: imported_plan
+  type: persisted aggregate
+  description: >
+    The new plan identity with stored paragraphs, concepts, relations, and
+    steps, the single import revision advancing its head, and the re-read
+    count verification.
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
+status: draft

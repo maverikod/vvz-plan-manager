@@ -1,0 +1,82 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: export-error
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts: [C-021]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (produced by a prior tactical step). Apply your change on top
+  of exactly this content; do not assume any other prior state.
+
+  MRS excerpt (concept definition relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+  Required change: append exactly the following to the end of the file,
+  after the export_hrs function, separated from it by exactly two blank
+  lines. Do not modify anything above. Do not add any import.
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+  Constraints (all binding, no deviation):
+  - ExportError subclasses the builtin RuntimeError directly, with no
+    __init__ override and no additional methods or attributes.
+  - The docstring is exactly the one-line text shown above, with no
+    additional lines.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 33 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error, still
+    exposes export_hrs(conn, plan_uuid) -> str unchanged, and additionally
+    exposes a class ExportError that is a subclass of RuntimeError and can
+    be raised and caught as such (e.g. raising ExportError("x") is caught
+    by except RuntimeError).
+status: draft

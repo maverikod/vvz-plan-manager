@@ -1,0 +1,599 @@
+step_id: A-006
+parent_tactical_step: T-004
+name: import-plan
+target_file: plan_manager/exchange/importer.py
+operation: modify_file
+priority: 2
+depends_on: [A-004, A-005]
+concepts: [C-021, C-001, C-003, C-004, C-005, C-002, C-018]
+prompt: |
+  Target file: plan_manager/exchange/importer.py (existing module; modify).
+  Operation: modify_file.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-001
+  name: Plan
+  definition: Root aggregate of one development plan with identity, name,
+    status, and head revision.
+  properties:
+  - hosts the five-level hierarchy HRS -> MRS -> GS -> TS -> AS
+  - multiple plans live in one database, listed by catalog query
+  - head revision advances per revision in draft editing, on publication for cascades
+  - carries a user-set context budget in tokens (default 4000) consumed by prompt assembly
+
+  concept_id: C-003
+  name: Concept
+  definition: MRS basis axis with canonical name, one-sentence definition,
+    properties, and source labels.
+  properties:
+  - identifier pattern C-NNN, unique within plan
+  - selected to be as orthogonal as possible; basis quality is measured
+  - embedding serialization default is the definition field only
+
+  concept_id: C-004
+  name: Relation
+  definition: Typed directed edge between two concepts restricted to seven
+    allowed types.
+  properties:
+  - types are uses, owns, implements, extends, depends_on, produces, consumes
+  - free-form types rejected at write time
+
+  concept_id: C-005
+  name: Step
+  definition: Single stored entity for plan levels 3-5 with level, step id,
+    slug, level-specific fields, and status.
+  properties:
+  - uniform operations across levels; per-level required fields are declarative schema
+  - scaffolded creation auto-assigns the next free zero-padded id
+  - mutation regime depends on status (draft direct, frozen via cascade)
+  - move rewrites every reference to the moved id in one operation
+
+  concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable
+    four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - HRS prose is human-owned; the server only assigns labels and toggles
+    non-binding markup
+  - parsing and label-assignment algorithms are normative
+
+  concept_id: C-018
+  name: VersionStore
+  definition: Git-like append-only version model of node versions, revisions,
+    and refs inside the database.
+  properties:
+  - node versions content-addressed by SHA-256 of canonical JSON (sorted keys, UTF-8)
+  - revisions carry parent, author, change set; one mutation produces one revision
+  - any intermediate plan state is addressable by revision id
+  - refs are plan head plus one per open cascade
+  - operations log, diff, checkout-read, revert; history never rewritten
+
+  Relevant relations: { from_concept: C-021, to_concept: C-001, type: consumes };
+  { from_concept: C-021, to_concept: C-001, type: produces };
+  { from_concept: C-021, to_concept: C-018, type: uses };
+  { from_concept: C-004, to_concept: C-003, type: depends_on };
+  { from_concept: C-001, to_concept: C-018, type: uses }.
+
+  Imported contracts (quote verbatim; import, never reimplement; these
+  modules already exist elsewhere in the codebase, are out of scope for this
+  AS, and must not be created or modified by this AS):
+  - plan_manager/domain/plan.py:
+      def create_plan(conn, name: str, context_budget: int = 4000) -> Plan
+    Initializes the plan aggregate at revision zero with empty HRS and MRS;
+    duplicate name raises psycopg.errors.UniqueViolation. Plan has fields
+    uuid, name, status, context_budget, head_revision_uuid.
+      def get_plan(conn, plan_uuid) -> Plan
+    (Already imported in this file.)
+  - plan_manager/domain/concept_store.py:
+      @dataclass Concept:
+    fields concept_id, name, definition, properties: List[str], source_labels: List[str].
+      def insert_concept(conn, plan_uuid, concept: Concept) -> uuid.UUID
+    Write-time validation; raises ConceptValidationError(ValueError) on any violation.
+      def list_concepts(conn, plan_uuid) -> list[Concept]
+  - plan_manager/domain/relation_store.py:
+      @dataclass Relation:
+    fields from_concept, to_concept, type.
+      def insert_relation(conn, plan_uuid, relation: Relation) -> uuid.UUID
+    Raises RelationValidationError(ValueError) on any violation.
+      def list_relations(conn, plan_uuid) -> list[tuple[str, str, str]]
+  - plan_manager/exchange/layout_import.py:
+      def import_steps(conn, plan_uuid, root: pathlib.Path) -> list[tuple]
+    Walks the validated G-*/T-*/atomic_steps tree under `root`, creating one
+    Step (C-005) per node (level 3 for G, 4 for T, 5 for an atomic-step
+    file) and returning a list of (step.uuid, step_snapshot(step,
+    step.status)) pairs in creation order. Raises ValueError with message
+    f"identifier mismatch on import: expected {declared} got {assigned}"
+    when a created step's assigned step_id differs from its descriptor's
+    declared step_id.
+      def validate_as_file(as_path) -> list[str]
+      def validate_descriptor_dir(dir_path, expected_prefix) -> list[str]
+    (Already imported in this file, used by validate_layout.)
+  - plan_manager/storage/version_store.py:
+      def record_revision(conn, plan_uuid, author, message, changes: list[tuple[uuid.UUID, dict]], parent_revision_uuid, ref_name) -> uuid.UUID
+    ref_name=None advances the head. (Already imported in this file.)
+  - plan_manager/views/dependency_graph.py:
+      def load_steps(conn, plan_uuid) -> dict[uuid.UUID, Step]
+  - Concept node snapshot convention: {"kind": "concept", "uuid": str,
+    "plan_uuid": str, "concept_id", "name", "definition", "properties",
+    "source_labels"}; relation: {"kind": "relation", "uuid": str,
+    "plan_uuid": str, "from_concept", "to_concept", "type"}.
+  - Layout constants (C-006, identical to the export side): HRS file
+    "source_spec.md"; MRS file "spec.yaml" (a mapping with keys "concepts"
+    and "relations", each a list of entry mappings; each concept entry has
+    keys "concept_id", "name", "definition", and optionally "properties"
+    and "source_labels"; each relation entry has keys "from_concept",
+    "to_concept", "type").
+  - This file already imports and defines `validate_layout(source_root) ->
+    list[str]` (PURE, no database access) and `import_hrs(conn, plan_uuid,
+    text, author, cascade) -> dict` (raises ValueError on invalid text;
+    otherwise deletes and re-inserts the plan's paragraphs and records one
+    revision when `cascade` is None).
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """HRS text serialization: validation and ingestion of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Ingestion revision attribution follows VersionStore (C-018) directly, or CascadeChange
+  (C-016) when an open cascade is supplied. Import is the single path from files to the
+  source of truth; export never round-trips through import.
+  """
+
+  import pathlib
+
+  import yaml
+
+  from plan_manager.cascade.write import cascade_write
+  from plan_manager.domain.labeling import assign_missing_labels
+  from plan_manager.domain.paragraph import parse
+  from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.exchange.layout_import import validate_as_file, validate_descriptor_dir
+  from plan_manager.storage.version_store import record_revision
+
+
+  def validate_hrs(text: str) -> list[str]:
+      """Validate a candidate HRS Markdown document without touching the database.
+
+      Parses `text` through the normative paragraph parsing (C-002) and reports
+      structural and semantic issues that would block ingestion.
+
+      :param text: The candidate HRS Markdown source document.
+      :type text: str
+      :return: A list of human-readable issue descriptions. An empty list means
+          the document is ingestible.
+      :rtype: list[str]
+      """
+      try:
+          paragraphs = parse(text)
+      except ValueError as exc:
+          return [str(exc)]
+
+      if not paragraphs:
+          return ["document contains no binding paragraphs"]
+
+      issues: list[str] = []
+      seen_labels: set[str] = set()
+      for paragraph in paragraphs:
+          if paragraph.label is not None:
+              if paragraph.label in seen_labels:
+                  issues.append(f"duplicate label: {paragraph.label}")
+              else:
+                  seen_labels.add(paragraph.label)
+      return issues
+
+
+  def import_hrs(conn, plan_uuid, text: str, author: str, cascade) -> dict:
+      """Wholly replace a plan's stored paragraphs from an HRS Markdown document.
+
+      Parses `text`, assigns fresh unique labels to binding paragraphs lacking
+      one (C-002), deletes the plan's previously stored paragraphs, inserts the
+      new binding set in position order, and records the revision: under an
+      open cascade (C-016) each inserted paragraph is recorded through one
+      `cascade_write` call carrying its full paragraph snapshot; otherwise a
+      single direct revision (C-018) advances the plan head and carries every
+      paragraph snapshot.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are replaced.
+      :param text: The HRS Markdown source document to ingest.
+      :type text: str
+      :param author: The attributed author of the resulting revision(s).
+      :type author: str
+      :param cascade: The open cascade record (a CascadeRecord instance) to
+          write under, or None for a direct head-advancing revision.
+      :return: A dict with key "paragraphs" mapping to the count of stored
+          paragraphs.
+      :rtype: dict
+      :raises ValueError: If validate_hrs(text) returns any issues; the
+          message is the issues joined by "; ".
+      """
+      issues = validate_hrs(text)
+      if issues:
+          raise ValueError("; ".join(issues))
+
+      paragraphs = parse(text)
+      labeled, _new_labels = assign_missing_labels(paragraphs)
+
+      delete_paragraphs(conn, plan_uuid)
+      row_uuids = insert_paragraphs(conn, plan_uuid, labeled)
+
+      snapshots = [
+          {
+              "kind": "paragraph",
+              "uuid": str(row_uuid),
+              "plan_uuid": str(plan_uuid),
+              "label": paragraph.label,
+              "text": paragraph.text,
+              "position": paragraph.position,
+          }
+          for row_uuid, paragraph in zip(row_uuids, labeled)
+      ]
+
+      if cascade is None:
+          plan = get_plan(conn, plan_uuid)
+          record_revision(
+              conn,
+              plan_uuid,
+              author,
+              "hrs import",
+              changes=list(zip(row_uuids, snapshots)),
+              parent_revision_uuid=plan.head_revision_uuid,
+              ref_name=None,
+          )
+      else:
+          for row_uuid, snapshot in zip(row_uuids, snapshots):
+              cascade_write(
+                  conn,
+                  plan_uuid,
+                  cascade,
+                  row_uuid,
+                  snapshot,
+                  status_updates=[],
+                  author=author,
+                  message="hrs import",
+              )
+
+      return {"paragraphs": len(labeled)}
+
+
+  def validate_layout(source_root) -> list[str]:
+      """Validate a candidate standard-layout export tree without touching the database.
+
+      Pure filesystem and text computation; no database access. Checks, in
+      order: `source_root` is a directory (otherwise returns immediately with
+      a single issue); it contains a file "source_spec.md"; it contains a file
+      "spec.yaml" that parses via yaml.safe_load into a dict with list-valued
+      "concepts" and "relations" keys; every "G-*" child directory of the root
+      is validated by `validate_descriptor_dir(dir_path, "G")`; every "T-*"
+      child directory of each such G directory is validated by
+      `validate_descriptor_dir(dir_path, "T")`; every "*.yaml" file under each
+      T directory's "atomic_steps" subdirectory (when present) is validated by
+      `validate_as_file(as_path)`; and finally `validate_hrs` is run on the
+      text of "source_spec.md" (when present), with each of its returned
+      issues prefixed "hrs: ".
+
+      :param source_root: The path to the candidate export root directory.
+      :return: A list of human-readable issue descriptions. An empty list
+          means the tree is ingestible.
+      :rtype: list[str]
+      """
+      root = pathlib.Path(source_root)
+      if not root.is_dir():
+          return [f"source root not found: {source_root}"]
+
+      issues: list[str] = []
+
+      hrs_path = root / "source_spec.md"
+      if not hrs_path.is_file():
+          issues.append("missing source_spec.md")
+          hrs_text = None
+      else:
+          hrs_text = hrs_path.read_text(encoding="utf-8")
+
+      mrs_path = root / "spec.yaml"
+      if not mrs_path.is_file():
+          issues.append("missing spec.yaml")
+      else:
+          try:
+              mrs_data = yaml.safe_load(mrs_path.read_text(encoding="utf-8"))
+          except yaml.YAMLError as exc:
+              issues.append(f"spec.yaml: invalid YAML: {exc}")
+              mrs_data = None
+          if mrs_data is not None and (
+              not isinstance(mrs_data, dict)
+              or not isinstance(mrs_data.get("concepts"), list)
+              or not isinstance(mrs_data.get("relations"), list)
+          ):
+              issues.append(
+                  "spec.yaml: must be a mapping with list-valued 'concepts' and 'relations' keys"
+              )
+
+      gs_dirs = sorted(p for p in root.iterdir() if p.is_dir() and p.name.startswith("G-"))
+      for gs_dir in gs_dirs:
+          issues.extend(validate_descriptor_dir(gs_dir, "G"))
+          ts_dirs = sorted(p for p in gs_dir.iterdir() if p.is_dir() and p.name.startswith("T-"))
+          for ts_dir in ts_dirs:
+              issues.extend(validate_descriptor_dir(ts_dir, "T"))
+              as_dir = ts_dir / "atomic_steps"
+              if as_dir.is_dir():
+                  for as_file in sorted(as_dir.glob("*.yaml")):
+                      issues.extend(validate_as_file(as_file))
+
+      if hrs_text is not None:
+          issues.extend(f"hrs: {issue}" for issue in validate_hrs(hrs_text))
+
+      return issues
+  ```
+
+  Required changes (apply both; do not change anything else — the module
+  docstring, `validate_hrs`, `import_hrs`, and `validate_layout` must remain
+  byte-identical to the current content shown above):
+
+  1. Replace the entire existing import block with exactly this new import
+     block (the `pathlib`/`yaml` groups unchanged; four new local-import
+     lines inserted, each in alphabetical module-path order; the previous
+     "layout_import" line gains a third imported name in alphabetical
+     order):
+
+     import pathlib
+
+     import yaml
+
+     from plan_manager.cascade.write import cascade_write
+     from plan_manager.domain.concept_store import Concept, insert_concept, list_concepts
+     from plan_manager.domain.labeling import assign_missing_labels
+     from plan_manager.domain.paragraph import parse
+     from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
+     from plan_manager.domain.plan import create_plan, get_plan
+     from plan_manager.domain.relation_store import Relation, insert_relation, list_relations
+     from plan_manager.exchange.layout_import import import_steps, validate_as_file, validate_descriptor_dir
+     from plan_manager.storage.version_store import record_revision
+     from plan_manager.views.dependency_graph import load_steps
+
+  2. Append, after `validate_layout`, separated by exactly two blank lines,
+     exactly one new function:
+
+     def import_plan(conn, source_root, author: str):
+         """Ingest a validated standard-layout export tree into a new plan aggregate.
+
+         Runs `validate_layout(source_root)`; a non-empty result raises
+         ValueError("; ".join(issues)). Otherwise: creates a new Plan (C-001)
+         named after `source_root`'s directory name with the default context
+         budget via `create_plan(conn, name=root.name)`; ingests the text of
+         "source_spec.md" through `import_hrs(conn, plan.uuid, hrs_text, author,
+         None)`, storing the plan's paragraphs under a direct revision; parses
+         "spec.yaml" and, for each entry of its "concepts" list in file order,
+         builds a Concept and inserts it via `insert_concept`, collecting
+         (concept_uuid, concept snapshot); for each entry of its "relations" list
+         in file order, builds a Relation and inserts it via `insert_relation`,
+         collecting (relation_uuid, relation snapshot); walks the G-*/T-*/atomic_steps
+         step tree via `import_steps(conn, plan.uuid, root)`, collecting its
+         (step.uuid, step snapshot) pairs (a declared/assigned step_id mismatch
+         inside `import_steps` raises ValueError, aborting the import); records
+         one further revision via `record_revision(conn, plan.uuid, author, "plan
+         import", changes=<all collected concept, relation, and step pairs>,
+         parent_revision_uuid=get_plan(conn, plan.uuid).head_revision_uuid,
+         ref_name=None)`; and finally re-reads and verifies stored counts against
+         the source tree: `len(list_concepts(conn, plan.uuid))` against the
+         source concept count, `len(list_relations(conn, plan.uuid))` against the
+         source relation count, and `len(load_steps(conn, plan.uuid))` against
+         the source step count (the number of collected step pairs) — any
+         mismatch raises ValueError naming the diverging count.
+
+         :param conn: An open psycopg 3 database connection.
+         :param source_root: The path to the validated export root directory.
+         :param author: The attributed author of every revision created.
+         :type author: str
+         :return: The identity of the newly created plan.
+         :rtype: uuid.UUID
+         :raises ValueError: If validate_layout(source_root) returns any issues
+             (message: the issues joined by "; "); if a created step's assigned
+             step_id differs from its descriptor's declared step_id (raised by
+             `import_steps`; message:
+             f"identifier mismatch on import: expected {declared} got {assigned}");
+             or if a post-import re-read count diverges from the source tree
+             count (message names the diverging count: "concept count mismatch
+             on import: expected {expected} got {actual}", "relation count
+             mismatch on import: expected {expected} got {actual}", or "step
+             count mismatch on import: expected {expected} got {actual}").
+         """
+         issues = validate_layout(source_root)
+         if issues:
+             raise ValueError("; ".join(issues))
+
+         root = pathlib.Path(source_root)
+         plan = create_plan(conn, name=root.name)
+
+         hrs_text = (root / "source_spec.md").read_text(encoding="utf-8")
+         import_hrs(conn, plan.uuid, hrs_text, author, None)
+
+         mrs_data = yaml.safe_load((root / "spec.yaml").read_text(encoding="utf-8"))
+
+         changes: list[tuple] = []
+
+         for entry in mrs_data["concepts"]:
+             concept = Concept(
+                 concept_id=entry["concept_id"],
+                 name=entry["name"],
+                 definition=entry["definition"],
+                 properties=list(entry.get("properties", [])),
+                 source_labels=list(entry.get("source_labels", [])),
+             )
+             concept_uuid = insert_concept(conn, plan.uuid, concept)
+             changes.append(
+                 (
+                     concept_uuid,
+                     {
+                         "kind": "concept",
+                         "uuid": str(concept_uuid),
+                         "plan_uuid": str(plan.uuid),
+                         "concept_id": concept.concept_id,
+                         "name": concept.name,
+                         "definition": concept.definition,
+                         "properties": concept.properties,
+                         "source_labels": concept.source_labels,
+                     },
+                 )
+             )
+
+         for entry in mrs_data["relations"]:
+             relation = Relation(
+                 from_concept=entry["from_concept"],
+                 to_concept=entry["to_concept"],
+                 type=entry["type"],
+             )
+             relation_uuid = insert_relation(conn, plan.uuid, relation)
+             changes.append(
+                 (
+                     relation_uuid,
+                     {
+                         "kind": "relation",
+                         "uuid": str(relation_uuid),
+                         "plan_uuid": str(plan.uuid),
+                         "from_concept": relation.from_concept,
+                         "to_concept": relation.to_concept,
+                         "type": relation.type,
+                     },
+                 )
+             )
+
+         step_changes = import_steps(conn, plan.uuid, root)
+         changes.extend(step_changes)
+
+         record_revision(
+             conn,
+             plan.uuid,
+             author,
+             "plan import",
+             changes=changes,
+             parent_revision_uuid=get_plan(conn, plan.uuid).head_revision_uuid,
+             ref_name=None,
+         )
+
+         stored_concepts = list_concepts(conn, plan.uuid)
+         if len(stored_concepts) != len(mrs_data["concepts"]):
+             raise ValueError(
+                 f"concept count mismatch on import: expected {len(mrs_data['concepts'])} got {len(stored_concepts)}"
+             )
+         stored_relations = list_relations(conn, plan.uuid)
+         if len(stored_relations) != len(mrs_data["relations"]):
+             raise ValueError(
+                 f"relation count mismatch on import: expected {len(mrs_data['relations'])} got {len(stored_relations)}"
+             )
+         stored_steps = load_steps(conn, plan.uuid)
+         if len(stored_steps) != len(step_changes):
+             raise ValueError(
+                 f"step count mismatch on import: expected {len(step_changes)} got {len(stored_steps)}"
+             )
+
+         return plan.uuid
+
+  Constraints (all binding, no deviation):
+  - The very first action is `issues = validate_layout(source_root)`; when
+    `issues` is non-empty, raise `ValueError("; ".join(issues))` immediately
+    — no plan is created and no database write of any kind occurs.
+  - `root = pathlib.Path(source_root)` and `plan = create_plan(conn,
+    name=root.name)` — the plan name is exactly the source root directory's
+    base name; `context_budget` is not passed (uses `create_plan`'s default
+    of 4000).
+  - `hrs_text` is read from `root / "source_spec.md"` with
+    `encoding="utf-8"`; `import_hrs(conn, plan.uuid, hrs_text, author,
+    None)` is called with `cascade=None` (a direct revision), and its
+    returned dict is discarded (not needed by this function).
+  - `mrs_data = yaml.safe_load((root / "spec.yaml").read_text(encoding="utf-8"))`
+    is parsed unconditionally, without a try/except — `validate_layout`
+    already guaranteed it parses to a dict with list-valued "concepts" and
+    "relations" keys.
+  - `changes` accumulates `(uuid, snapshot)` tuples in exactly this order:
+    every concept of `mrs_data["concepts"]` in file (list) order, then every
+    relation of `mrs_data["relations"]` in file (list) order, then every
+    `(step.uuid, step_snapshot)` pair returned by `import_steps` in the
+    order `import_steps` returns them.
+  - Each `Concept` is built with keyword arguments `concept_id`, `name`,
+    `definition` taken directly from the entry's same-named keys (no
+    `.get`, these are required), and `properties`/`source_labels` taken via
+    `entry.get("properties", [])` / `entry.get("source_labels", [])`, each
+    wrapped in `list(...)`.
+  - `insert_concept(conn, plan.uuid, concept)` is called once per concept
+    entry; its return value is the concept's uuid, appended to `changes`
+    paired with the concept snapshot dict shown (keys and value sources
+    exactly as shown: "kind": "concept", "uuid": str(concept_uuid),
+    "plan_uuid": str(plan.uuid), then the five Concept fields under their
+    own-named keys).
+  - Each `Relation` is built with keyword arguments `from_concept`,
+    `to_concept`, `type` taken directly from the entry's same-named keys (no
+    `.get`, these are required).
+  - `insert_relation(conn, plan.uuid, relation)` is called once per relation
+    entry; its return value is the relation's uuid, appended to `changes`
+    paired with the relation snapshot dict shown (keys and value sources
+    exactly as shown: "kind": "relation", "uuid": str(relation_uuid),
+    "plan_uuid": str(plan.uuid), then the three Relation fields under their
+    own-named keys).
+  - `step_changes = import_steps(conn, plan.uuid, root)` is called exactly
+    once; its full return value is both extended onto `changes` and kept
+    separately (as `step_changes`) for the later step-count re-read check.
+    Any `ValueError` it raises (the identifier-mismatch case) propagates
+    unchanged out of `import_plan`.
+  - `record_revision` is called exactly once, after all inserts and step
+    creation, with these exact keyword/positional arguments: `conn,
+    plan.uuid, author, "plan import", changes=changes,
+    parent_revision_uuid=get_plan(conn, plan.uuid).head_revision_uuid,
+    ref_name=None`. The `get_plan` call here re-reads the plan fresh (its
+    head_revision_uuid already advanced past the `import_hrs` revision).
+  - After `record_revision`, re-read via `list_concepts(conn, plan.uuid)`,
+    `list_relations(conn, plan.uuid)`, and `load_steps(conn, plan.uuid)`
+    (which returns a `dict[uuid.UUID, Step]`, so `len(...)` counts its
+    entries) and compare each count to, respectively, `len(mrs_data["concepts"])`,
+    `len(mrs_data["relations"])`, and `len(step_changes)`; a mismatch on any
+    one raises `ValueError` with exactly the corresponding message shown (an
+    f-string naming that mismatch's expected and actual counts) — checked in
+    the order concepts, then relations, then steps; each check happens
+    independently (not short-circuited into a single combined message).
+  - When every check passes, return `plan.uuid`.
+  - This function performs writes exactly in this order: `create_plan`,
+    then `import_hrs`'s internal writes, then one `insert_concept` per
+    concept, then one `insert_relation` per relation, then `import_steps`'s
+    internal `create_step` writes, then one `record_revision` call. No other
+    database writes occur.
+  - Use Python 3.12+ syntax throughout.
+  - Do not add any other functions, classes, or constants to this file in
+    this step. Do not alter `validate_hrs`, `import_hrs`, `validate_layout`,
+    or the module docstring.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 332 lines total, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.importer
+  expected: >
+    The module plan_manager.exchange.importer imports without error and
+    exposes a callable import_plan(conn, source_root, author) -> uuid.UUID,
+    alongside the unchanged validate_hrs, import_hrs, and validate_layout.
+    Calling it against a source root that fails validate_layout raises
+    ValueError with the joined issue messages and creates no plan. Calling it
+    against a fully validated standard-layout tree creates exactly one new
+    Plan named after the source root's directory name, ingests its
+    source_spec.md paragraphs, inserts every concept and relation of
+    spec.yaml, creates every step of its G-*/T-*/atomic_steps tree with
+    identifiers matching the source tree, records one further "plan import"
+    revision, and returns the new plan's uuid; a post-import re-read of
+    stored concepts, relations, and steps matches the source tree's counts
+    exactly. A source tree whose declared step identifiers cannot be
+    reproduced by step auto-assignment causes import_plan to raise ValueError
+    naming the expected and assigned identifiers, aborting before the
+    revision is recorded.
+status: draft

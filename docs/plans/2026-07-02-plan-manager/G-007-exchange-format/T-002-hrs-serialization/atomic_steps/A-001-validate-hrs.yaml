@@ -1,0 +1,132 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: validate-hrs
+target_file: plan_manager/exchange/importer.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-021, C-002]
+prompt: |
+  Target file: plan_manager/exchange/importer.py
+  Operation: create_file (the file does not exist yet; create it with exactly
+  the content specified below — do not assume any pre-existing content).
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable
+    four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - HRS prose is human-owned; the server only assigns labels and toggles
+    non-binding markup
+  - parsing and label-assignment algorithms are normative
+
+  Imported contract (import, never reimplement; this module already exists
+  elsewhere in the codebase, is out of scope for this AS, and must not be
+  created or modified by this AS):
+  Module plan_manager/domain/paragraph.py exposes:
+    def parse(text: str) -> list[Paragraph]
+  This is the normative parsing (C-002): it returns ONLY binding paragraphs
+  in position order; a "{xxxx} " prefix on a paragraph becomes its label
+  (stripped from the paragraph's stored text); non-binding marker-wrapped
+  blocks are excluded from the result; it raises ValueError with a
+  descriptive message when the document is structurally unparseable.
+  The returned Paragraph objects each have (at least) the attributes:
+    label: str | None
+    text: str
+    position: int
+
+  Write the file with exactly this content, in this order:
+
+  1. A module docstring, exactly:
+     """HRS text serialization: validation and ingestion of the human-authored Markdown source.
+
+     Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+     Ingestion revision attribution follows VersionStore (C-018) directly, or CascadeChange
+     (C-016) when an open cascade is supplied. Import is the single path from files to the
+     source of truth; export never round-trips through import.
+     """
+
+  2. Exactly one import line:
+     from plan_manager.domain.paragraph import parse
+
+  3. Exactly one blank line, then exactly one function definition:
+
+     def validate_hrs(text: str) -> list[str]:
+         """Validate a candidate HRS Markdown document without touching the database.
+
+         Parses `text` through the normative paragraph parsing (C-002) and reports
+         structural and semantic issues that would block ingestion.
+
+         :param text: The candidate HRS Markdown source document.
+         :type text: str
+         :return: A list of human-readable issue descriptions. An empty list means
+             the document is ingestible.
+         :rtype: list[str]
+         """
+         try:
+             paragraphs = parse(text)
+         except ValueError as exc:
+             return [str(exc)]
+
+         if not paragraphs:
+             return ["document contains no binding paragraphs"]
+
+         issues: list[str] = []
+         seen_labels: set[str] = set()
+         for paragraph in paragraphs:
+             if paragraph.label is not None:
+                 if paragraph.label in seen_labels:
+                     issues.append(f"duplicate label: {paragraph.label}")
+                 else:
+                     seen_labels.add(paragraph.label)
+         return issues
+
+  Constraints (all binding, no deviation):
+  - The function is PURE: it performs no database access and takes no
+    connection parameter of any kind.
+  - Any ValueError raised by parse(text) is caught and its str(...) message
+    is returned as the sole element of a one-item list; no other exception
+    type is caught.
+  - An empty document (parse(text) returns an empty list) yields exactly
+    ["document contains no binding paragraphs"].
+  - Every label that appears more than once among the parsed paragraphs
+    (considering only paragraphs whose label is not None) yields one issue
+    string per duplicate occurrence, formatted exactly as
+    f"duplicate label: {label}" — the first occurrence of a given label does
+    not produce an issue; each subsequent occurrence of that same label does.
+  - Paragraphs whose label is None are never reported as duplicates against
+    each other.
+  - When there are no issues, the function returns an empty list, which
+    signals the document is ingestible.
+  - Use Python 3.12+ syntax throughout (e.g. `list[str]`, `set[str]`).
+  - Do not add any other functions, classes, constants, or module-level
+    code to this file in this step.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 35 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.importer
+  expected: >
+    The module plan_manager.exchange.importer imports without error and
+    exposes a callable validate_hrs(text: str) -> list[str]. Calling it with
+    a document containing zero binding paragraphs returns exactly
+    ["document contains no binding paragraphs"]. Calling it with a document
+    containing two binding paragraphs that share the same explicit label
+    returns a list containing the string "duplicate label: <label>" for that
+    label. Calling it with a well-formed document with no duplicate labels
+    returns an empty list. Calling it with a structurally unparseable
+    document (parse raises ValueError) returns a one-item list containing
+    the exception's string message.
+status: draft

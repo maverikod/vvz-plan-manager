@@ -1,0 +1,176 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: validate-as-file
+target_file: plan_manager/exchange/layout_import.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-021, C-006]
+prompt: |
+  Target file: plan_manager/exchange/layout_import.py (existing module; modify).
+  Operation: modify_file.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  Exchange layout naming this step realizes checks against (normative,
+  identical to the export side): a level-5 (atomic) step is a file named
+  f"{step_id}-{slug}.yaml" under a "atomic_steps" directory, where step_id
+  is "A-NNN" (NNN a zero-padded three-digit number); the file is a YAML
+  mapping whose "step_id" key equals that "A-NNN" prefix.
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """Filesystem helpers for validating and ingesting a standard-layout plan export tree.
+
+  Supports importer.py's validate_layout and import_plan (ExchangeFormat, C-021):
+  directory- and file-name pattern checks against declared step identifiers
+  (PlanSchema, C-006), and step-tree ingestion through the validating Step
+  (C-005) store during import.
+  """
+
+  import re
+  from pathlib import Path
+
+  import yaml
+
+  _DIR_PATTERN = re.compile(r"^([GT])-(\d{3})-[a-z0-9-]+$")
+
+
+  def validate_descriptor_dir(dir_path: Path, expected_prefix: str) -> list[str]:
+      """Validate one G-* or T-* step directory name and its README.yaml descriptor.
+
+      Checks `dir_path.name` against the pattern ``^{prefix}-\\d{3}-[a-z0-9-]+$``
+      and, when it matches, that ``dir_path / "README.yaml"`` exists, parses as
+      YAML into a dict, and carries a ``"step_id"`` equal to the directory's
+      ``{prefix}-NNN`` portion.
+
+      :param dir_path: The candidate step directory.
+      :type dir_path: pathlib.Path
+      :param expected_prefix: The required directory-name prefix letter, "G" or "T".
+      :type expected_prefix: str
+      :return: A list of human-readable issue descriptions; empty when valid.
+      :rtype: list[str]
+      """
+      match = _DIR_PATTERN.match(dir_path.name)
+      if match is None or match.group(1) != expected_prefix:
+          return [f"invalid directory name: {dir_path}"]
+
+      declared_id = f"{match.group(1)}-{match.group(2)}"
+      readme_path = dir_path / "README.yaml"
+      if not readme_path.is_file():
+          return [f"missing README.yaml: {readme_path}"]
+
+      try:
+          data = yaml.safe_load(readme_path.read_text(encoding="utf-8"))
+      except yaml.YAMLError as exc:
+          return [f"{readme_path}: invalid YAML: {exc}"]
+
+      if not isinstance(data, dict) or "step_id" not in data:
+          return [f"{readme_path}: missing step_id"]
+      if data["step_id"] != declared_id:
+          return [
+              f"{readme_path}: step_id {data['step_id']!r} does not match directory {declared_id!r}"
+          ]
+      return []
+  ```
+
+  Required changes (apply both; do not change anything else — the module
+  docstring, imports, `_DIR_PATTERN`, and `validate_descriptor_dir` must
+  remain byte-identical to the current content shown above):
+
+  1. Immediately after the `_DIR_PATTERN` line, add exactly one new
+     module-level constant (no blank line between `_DIR_PATTERN` and this
+     new line):
+     _AS_FILENAME_PATTERN = re.compile(r"^(A-\d{3})-[a-z0-9-]+\.yaml$")
+
+  2. Append, after `validate_descriptor_dir`, separated by exactly two
+     blank lines, exactly one new function:
+
+     def validate_as_file(as_path: Path) -> list[str]:
+         """Validate one atomic-step descriptor file name and content.
+
+         Checks `as_path.name` against the pattern ``^(A-\\d{3})-[a-z0-9-]+\\.yaml$``
+         and, when it matches, that the file parses as YAML into a dict carrying a
+         ``"step_id"`` equal to the filename's ``A-NNN`` portion.
+
+         :param as_path: The candidate atomic-step descriptor file.
+         :type as_path: pathlib.Path
+         :return: A list of human-readable issue descriptions; empty when valid.
+         :rtype: list[str]
+         """
+         match = _AS_FILENAME_PATTERN.match(as_path.name)
+         if match is None:
+             return [f"invalid atomic step filename: {as_path}"]
+
+         declared_id = match.group(1)
+         try:
+             data = yaml.safe_load(as_path.read_text(encoding="utf-8"))
+         except yaml.YAMLError as exc:
+             return [f"{as_path}: invalid YAML: {exc}"]
+
+         if not isinstance(data, dict) or "step_id" not in data:
+             return [f"{as_path}: missing step_id"]
+         if data["step_id"] != declared_id:
+             return [
+                 f"{as_path}: step_id {data['step_id']!r} does not match filename {declared_id!r}"
+             ]
+         return []
+
+  Constraints (all binding, no deviation):
+  - The function is PURE: it performs no database access and takes no
+    connection parameter of any kind; it only reads the filesystem.
+  - `_AS_FILENAME_PATTERN.match` is checked against the bare file name
+    (`as_path.name`), not the full path.
+  - When the name does not match the pattern, return exactly one issue:
+    f"invalid atomic step filename: {as_path}".
+  - `declared_id` is the single captured regex group, e.g. "A-042".
+  - When `as_path.read_text(encoding="utf-8")` does not parse via
+    `yaml.safe_load` (raises `yaml.YAMLError`), return exactly one issue:
+    f"{as_path}: invalid YAML: {exc}" where `exc` is the caught exception object.
+  - When the parsed YAML value is not a `dict`, or is a dict without a
+    "step_id" key, return exactly one issue: f"{as_path}: missing step_id".
+  - When `data["step_id"] != declared_id`, return exactly one issue:
+    f"{as_path}: step_id {data['step_id']!r} does not match filename {declared_id!r}"
+    (using `!r` repr formatting on both values).
+  - When none of the above conditions trigger, return an empty list.
+  - No other exception type besides `yaml.YAMLError` is caught.
+  - Use Python 3.12+ syntax throughout (e.g. `list[str]`).
+  - Do not add any other functions, classes, constants, or module-level
+    code to this file in this step.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 90 lines total, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.layout_import
+  expected: >
+    The module plan_manager.exchange.layout_import imports without error and
+    exposes a callable validate_as_file(as_path: Path) -> list[str], alongside
+    the unchanged validate_descriptor_dir. Calling validate_as_file on a file
+    whose name does not match the "A-NNN-slug.yaml" pattern returns a one-item
+    list starting with "invalid atomic step filename:". Calling it on a
+    correctly named file that fails to parse as YAML returns a one-item list
+    containing "invalid YAML:". Calling it on a correctly named file that
+    parses to a dict whose step_id differs from the filename's declared A-NNN
+    prefix returns a one-item list containing "does not match filename".
+    Calling it on a correctly named file whose parsed step_id matches returns
+    an empty list.
+status: draft

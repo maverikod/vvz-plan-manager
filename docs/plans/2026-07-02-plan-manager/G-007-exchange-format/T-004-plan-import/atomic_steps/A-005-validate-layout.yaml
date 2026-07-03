@@ -1,0 +1,367 @@
+step_id: A-005
+parent_tactical_step: T-004
+name: validate-layout
+target_file: plan_manager/exchange/importer.py
+operation: modify_file
+priority: 1
+depends_on: [A-001, A-002]
+concepts: [C-021, C-006, C-002, C-003, C-004]
+prompt: |
+  Target file: plan_manager/exchange/importer.py (existing module; modify).
+  Operation: modify_file.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  concept_id: C-002
+  name: Paragraph
+  definition: Addressable binding unit of the HRS text carrying a stable
+    four-character base36 label.
+  properties:
+  - label is position-independent, unique within one HRS, survives edits
+  - non-binding blocks are excluded from labeling and coverage
+  - HRS prose is human-owned; the server only assigns labels and toggles
+    non-binding markup
+  - parsing and label-assignment algorithms are normative
+
+  concept_id: C-003
+  name: Concept
+  definition: MRS basis axis with canonical name, one-sentence definition,
+    properties, and source labels.
+  properties:
+  - identifier pattern C-NNN, unique within plan
+  - selected to be as orthogonal as possible; basis quality is measured
+  - embedding serialization default is the definition field only
+
+  concept_id: C-004
+  name: Relation
+  definition: Typed directed edge between two concepts restricted to seven
+    allowed types.
+  properties:
+  - types are uses, owns, implements, extends, depends_on, produces, consumes
+  - free-form types rejected at write time
+
+  Layout constants (C-006 exchange defaults, identical to the export side):
+  HRS file "source_spec.md"; MRS file "spec.yaml" (a mapping with list-valued
+  "concepts" and "relations" keys, one entry per Concept/Relation, C-003/C-004);
+  level-3/4 step directory named f"{step_id}-{slug}" containing "README.yaml";
+  level-5 files "atomic_steps/{step_id}-{slug}.yaml".
+
+  Imported contracts (quote verbatim; import, never reimplement; these
+  modules already exist elsewhere in the codebase, are out of scope for this
+  AS, and must not be created or modified by this AS):
+  - Module plan_manager/exchange/layout_import.py exposes:
+      def validate_descriptor_dir(dir_path: Path, expected_prefix: str) -> list[str]
+      def validate_as_file(as_path: Path) -> list[str]
+    Both are PURE filesystem+text checks (no database access). Each returns
+    a list of human-readable issue strings, empty when the target is valid.
+    `validate_descriptor_dir` checks a G-*/T-* step directory's name pattern
+    and its README.yaml descriptor's "step_id" against the declared
+    directory prefix. `validate_as_file` checks an atomic-step YAML file's
+    name pattern and its own "step_id" against the declared filename prefix.
+  - The third-party package PyYAML, used via `import yaml`
+    (`yaml.safe_load(stream_or_str) -> object`, raising `yaml.YAMLError` on
+    malformed YAML).
+  - The Python 3.12+ standard library `pathlib` (`pathlib.Path`).
+
+  Current full content of the target file, exactly as it exists after all
+  lower-priority atomic steps on this file have been applied (this is the
+  complete current file; treat it as ground truth, not as an excerpt):
+
+  ```python
+  """HRS text serialization: validation and ingestion of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Ingestion revision attribution follows VersionStore (C-018) directly, or CascadeChange
+  (C-016) when an open cascade is supplied. Import is the single path from files to the
+  source of truth; export never round-trips through import.
+  """
+
+  from plan_manager.cascade.write import cascade_write
+  from plan_manager.domain.labeling import assign_missing_labels
+  from plan_manager.domain.paragraph import parse
+  from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
+  from plan_manager.domain.plan import get_plan
+  from plan_manager.storage.version_store import record_revision
+
+
+  def validate_hrs(text: str) -> list[str]:
+      """Validate a candidate HRS Markdown document without touching the database.
+
+      Parses `text` through the normative paragraph parsing (C-002) and reports
+      structural and semantic issues that would block ingestion.
+
+      :param text: The candidate HRS Markdown source document.
+      :type text: str
+      :return: A list of human-readable issue descriptions. An empty list means
+          the document is ingestible.
+      :rtype: list[str]
+      """
+      try:
+          paragraphs = parse(text)
+      except ValueError as exc:
+          return [str(exc)]
+
+      if not paragraphs:
+          return ["document contains no binding paragraphs"]
+
+      issues: list[str] = []
+      seen_labels: set[str] = set()
+      for paragraph in paragraphs:
+          if paragraph.label is not None:
+              if paragraph.label in seen_labels:
+                  issues.append(f"duplicate label: {paragraph.label}")
+              else:
+                  seen_labels.add(paragraph.label)
+      return issues
+
+
+  def import_hrs(conn, plan_uuid, text: str, author: str, cascade) -> dict:
+      """Wholly replace a plan's stored paragraphs from an HRS Markdown document.
+
+      Parses `text`, assigns fresh unique labels to binding paragraphs lacking
+      one (C-002), deletes the plan's previously stored paragraphs, inserts the
+      new binding set in position order, and records the revision: under an
+      open cascade (C-016) each inserted paragraph is recorded through one
+      `cascade_write` call carrying its full paragraph snapshot; otherwise a
+      single direct revision (C-018) advances the plan head and carries every
+      paragraph snapshot.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are replaced.
+      :param text: The HRS Markdown source document to ingest.
+      :type text: str
+      :param author: The attributed author of the resulting revision(s).
+      :type author: str
+      :param cascade: The open cascade record (a CascadeRecord instance) to
+          write under, or None for a direct head-advancing revision.
+      :return: A dict with key "paragraphs" mapping to the count of stored
+          paragraphs.
+      :rtype: dict
+      :raises ValueError: If validate_hrs(text) returns any issues; the
+          message is the issues joined by "; ".
+      """
+      issues = validate_hrs(text)
+      if issues:
+          raise ValueError("; ".join(issues))
+
+      paragraphs = parse(text)
+      labeled, _new_labels = assign_missing_labels(paragraphs)
+
+      delete_paragraphs(conn, plan_uuid)
+      row_uuids = insert_paragraphs(conn, plan_uuid, labeled)
+
+      snapshots = [
+          {
+              "kind": "paragraph",
+              "uuid": str(row_uuid),
+              "plan_uuid": str(plan_uuid),
+              "label": paragraph.label,
+              "text": paragraph.text,
+              "position": paragraph.position,
+          }
+          for row_uuid, paragraph in zip(row_uuids, labeled)
+      ]
+
+      if cascade is None:
+          plan = get_plan(conn, plan_uuid)
+          record_revision(
+              conn,
+              plan_uuid,
+              author,
+              "hrs import",
+              changes=list(zip(row_uuids, snapshots)),
+              parent_revision_uuid=plan.head_revision_uuid,
+              ref_name=None,
+          )
+      else:
+          for row_uuid, snapshot in zip(row_uuids, snapshots):
+              cascade_write(
+                  conn,
+                  plan_uuid,
+                  cascade,
+                  row_uuid,
+                  snapshot,
+                  status_updates=[],
+                  author=author,
+                  message="hrs import",
+              )
+
+      return {"paragraphs": len(labeled)}
+  ```
+
+  Required changes (apply both; do not change anything else — the module
+  docstring, `validate_hrs`, and `import_hrs` must remain byte-identical to
+  the current content shown above):
+
+  1. Replace the entire existing import block (the six `from
+     plan_manager...` lines, with no blank lines between them) with exactly
+     this new import block (a `pathlib` group, then a `yaml` group, then the
+     local-import group each separated by exactly one blank line; the
+     seventh local-import line is inserted in alphabetical module-path
+     order between the "domain.plan" and "storage.version_store" lines
+     because "exchange" sorts between "domain" and "storage"):
+
+     import pathlib
+
+     import yaml
+
+     from plan_manager.cascade.write import cascade_write
+     from plan_manager.domain.labeling import assign_missing_labels
+     from plan_manager.domain.paragraph import parse
+     from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
+     from plan_manager.domain.plan import get_plan
+     from plan_manager.exchange.layout_import import validate_as_file, validate_descriptor_dir
+     from plan_manager.storage.version_store import record_revision
+
+  2. Append, after `import_hrs`, separated by exactly two blank lines,
+     exactly one new function:
+
+     def validate_layout(source_root) -> list[str]:
+         """Validate a candidate standard-layout export tree without touching the database.
+
+         Pure filesystem and text computation; no database access. Checks, in
+         order: `source_root` is a directory (otherwise returns immediately with
+         a single issue); it contains a file "source_spec.md"; it contains a file
+         "spec.yaml" that parses via yaml.safe_load into a dict with list-valued
+         "concepts" and "relations" keys; every "G-*" child directory of the root
+         is validated by `validate_descriptor_dir(dir_path, "G")`; every "T-*"
+         child directory of each such G directory is validated by
+         `validate_descriptor_dir(dir_path, "T")`; every "*.yaml" file under each
+         T directory's "atomic_steps" subdirectory (when present) is validated by
+         `validate_as_file(as_path)`; and finally `validate_hrs` is run on the
+         text of "source_spec.md" (when present), with each of its returned
+         issues prefixed "hrs: ".
+
+         :param source_root: The path to the candidate export root directory.
+         :return: A list of human-readable issue descriptions. An empty list
+             means the tree is ingestible.
+         :rtype: list[str]
+         """
+         root = pathlib.Path(source_root)
+         if not root.is_dir():
+             return [f"source root not found: {source_root}"]
+
+         issues: list[str] = []
+
+         hrs_path = root / "source_spec.md"
+         if not hrs_path.is_file():
+             issues.append("missing source_spec.md")
+             hrs_text = None
+         else:
+             hrs_text = hrs_path.read_text(encoding="utf-8")
+
+         mrs_path = root / "spec.yaml"
+         if not mrs_path.is_file():
+             issues.append("missing spec.yaml")
+         else:
+             try:
+                 mrs_data = yaml.safe_load(mrs_path.read_text(encoding="utf-8"))
+             except yaml.YAMLError as exc:
+                 issues.append(f"spec.yaml: invalid YAML: {exc}")
+                 mrs_data = None
+             if mrs_data is not None and (
+                 not isinstance(mrs_data, dict)
+                 or not isinstance(mrs_data.get("concepts"), list)
+                 or not isinstance(mrs_data.get("relations"), list)
+             ):
+                 issues.append(
+                     "spec.yaml: must be a mapping with list-valued 'concepts' and 'relations' keys"
+                 )
+
+         gs_dirs = sorted(p for p in root.iterdir() if p.is_dir() and p.name.startswith("G-"))
+         for gs_dir in gs_dirs:
+             issues.extend(validate_descriptor_dir(gs_dir, "G"))
+             ts_dirs = sorted(p for p in gs_dir.iterdir() if p.is_dir() and p.name.startswith("T-"))
+             for ts_dir in ts_dirs:
+                 issues.extend(validate_descriptor_dir(ts_dir, "T"))
+                 as_dir = ts_dir / "atomic_steps"
+                 if as_dir.is_dir():
+                     for as_file in sorted(as_dir.glob("*.yaml")):
+                         issues.extend(validate_as_file(as_file))
+
+         if hrs_text is not None:
+             issues.extend(f"hrs: {issue}" for issue in validate_hrs(hrs_text))
+
+         return issues
+
+  Constraints (all binding, no deviation):
+  - The function is PURE: it performs no database access and takes no
+    connection parameter of any kind.
+  - When `root.is_dir()` is false, return immediately with exactly
+    `[f"source root not found: {source_root}"]` — no further checks run.
+  - `hrs_text` is `None` when "source_spec.md" is missing (with the issue
+    "missing source_spec.md" appended); otherwise it is the file's text read
+    with `encoding="utf-8"`.
+  - When "spec.yaml" is missing, append "missing spec.yaml" and do not
+    attempt to load it (no `mrs_data` checks run).
+  - When "spec.yaml" exists but `yaml.safe_load` raises `yaml.YAMLError`,
+    append f"spec.yaml: invalid YAML: {exc}" and set `mrs_data = None`
+    (skipping the structural check below).
+  - When `mrs_data` is not None (i.e. spec.yaml was present and parsed
+    without raising), and it is not a dict, or `mrs_data.get("concepts")` is
+    not a list, or `mrs_data.get("relations")` is not a list, append exactly
+    "spec.yaml: must be a mapping with list-valued 'concepts' and
+    'relations' keys". A `mrs_data` of `None` resulting from a YAML document
+    that is legitimately empty (parses to `None` without raising) is treated
+    identically to any other non-dict value by this same check (the `is not
+    None` guard here refers only to the exception path above having set it
+    to `None` on purpose to skip the check — reuse the same `mrs_data is not
+    None` condition exactly as shown; do not special-case an empty document
+    differently).
+  - G directories are found via `sorted(p for p in root.iterdir() if
+    p.is_dir() and p.name.startswith("G-"))`; each is checked with
+    `validate_descriptor_dir(gs_dir, "G")` and its issues extended onto the
+    running `issues` list, regardless of whether that check found problems.
+  - T directories are found the same way one level down (`gs_dir.iterdir()`,
+    prefix "T-") and checked with `validate_descriptor_dir(ts_dir, "T")`.
+  - Atomic-step files are found via `sorted((ts_dir / "atomic_steps").glob("*.yaml"))`
+    only when `(ts_dir / "atomic_steps").is_dir()` is true; each is checked
+    with `validate_as_file(as_file)`. When the "atomic_steps" subdirectory
+    is absent, no atomic-step files are checked for that T directory (this
+    is not itself an issue).
+  - After the directory walk, when `hrs_text is not None`, extend `issues`
+    with `f"hrs: {issue}"` for every issue returned by `validate_hrs(hrs_text)`,
+    preserving `validate_hrs`'s issue order.
+  - The function always returns the full accumulated `issues` list (never
+    raises); an empty list means the tree is ingestible.
+  - Use Python 3.12+ syntax throughout.
+  - Do not add any other functions, classes, or constants to this file in
+    this step. Do not alter `validate_hrs`, `import_hrs`, or the module
+    docstring.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 205 lines total, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.importer
+  expected: >
+    The module plan_manager.exchange.importer imports without error and
+    exposes a callable validate_layout(source_root) -> list[str], alongside
+    the unchanged validate_hrs and import_hrs. Calling it with a path that is
+    not a directory returns exactly one issue starting with "source root not
+    found:". Calling it with a directory missing source_spec.md and/or
+    spec.yaml reports the corresponding "missing ..." issue(s). Calling it
+    with a spec.yaml that fails to parse, or that parses but lacks list-valued
+    "concepts"/"relations" keys, reports an issue naming spec.yaml. Calling it
+    on a tree with a G-* directory whose README.yaml step_id disagrees with
+    the directory name, or a T-* directory with the same defect one level
+    down, or an atomic_steps/*.yaml file whose step_id disagrees with its
+    filename, reports the corresponding issue from validate_descriptor_dir or
+    validate_as_file. Calling it on a fully well-formed tree whose
+    source_spec.md is also a valid HRS document returns an empty list.
+status: draft

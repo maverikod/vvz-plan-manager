@@ -1,0 +1,109 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: layout-constants
+target_file: plan_manager/exchange/exporter.py
+operation: modify_file
+priority: 2
+depends_on: [A-001]
+concepts: [C-021, C-006]
+prompt: |
+  Target file: plan_manager/exchange/exporter.py
+  Operation: modify_file. The file already exists with the exact content
+  shown below (this tactical step's priority-1 atomic step applied on top
+  of the prior tactical step's output). Apply your change on top of exactly
+  this content; do not assume any other prior state.
+
+  MRS excerpt (concept definitions relevant to this step):
+
+  concept_id: C-021
+  name: ExchangeFormat
+  definition: File import/export representation of a plan in the standard
+    layout; HRS as Markdown, all other artifacts as YAML.
+  properties:
+  - export optionally at a named revision; import is the only file-to-truth path
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+
+  concept_id: C-006
+  name: PlanSchema
+  definition: Declarative configuration object describing identifier
+    patterns, per-level required fields, and exchange-layout naming.
+  properties:
+  - defaults match plan_standard_machine.yaml; overrides only for exotic layouts
+  - nothing project-specific is hard-coded in the engine
+
+  Current file content (exact, byte-for-byte):
+
+  """HRS text serialization: regeneration of the human-authored Markdown source.
+
+  Realizes ExchangeFormat (C-021) together with the normative paragraph parsing (C-002).
+  Only binding paragraphs are ever stored (C-002), so the regenerated document is exactly
+  the binding document; non-binding blocks of the original source are absent by
+  construction and are never reconstructed.
+  """
+
+  from plan_manager.domain.paragraph_store import list_paragraphs
+
+
+  def export_hrs(conn, plan_uuid) -> str:
+      """Regenerate the binding HRS Markdown document byte-stably from stored rows.
+
+      Reads the plan's stored paragraphs in position order (C-002) and renders
+      each as its brace-wrapped label, one space, and its stored text
+      byte-identically, paragraphs joined by exactly one blank line, with the
+      document ending in a single trailing newline. Two calls over the same
+      stored state return identical strings.
+
+      :param conn: An open psycopg 3 database connection.
+      :param plan_uuid: The identity of the plan whose paragraphs are rendered.
+      :return: The regenerated binding Markdown document, byte-stable across
+          repeated calls over the same stored state.
+      :rtype: str
+      """
+      rows = list_paragraphs(conn, plan_uuid)
+      rendered = ["{" + row.label + "} " + row.text for row in rows]
+      return "\n\n".join(rendered) + "\n"
+
+
+  class ExportError(RuntimeError):
+      """Raised when an emitted export file fails the mandatory YAML round-trip check."""
+
+  Required change: append exactly the following four constant assignments
+  to the end of the file, after the ExportError class, separated from it by
+  exactly two blank lines. Do not modify anything above. Do not add any
+  import.
+
+  HRS_FILENAME = "source_spec.md"
+  MRS_FILENAME = "spec.yaml"
+  STEP_README = "README.yaml"
+  ATOMIC_DIR = "atomic_steps"
+
+  Semantics (for context only, not additional code to write): HRS_FILENAME
+  is the plan's binding Markdown source filename at the export root;
+  MRS_FILENAME is the machine specification YAML filename at the export
+  root; STEP_README is the descriptor filename inside every level-3 and
+  level-4 step directory; ATOMIC_DIR is the subdirectory name inside a
+  tactical step's directory holding one YAML file per atomic step. The
+  directory name for a level-3 or level-4 step is the f-string
+  f"{step_id}-{slug}"; the file name for a level-5 atomic step is the
+  f-string f"{step_id}-{slug}.yaml" placed inside the parent tactical
+  step's ATOMIC_DIR.
+
+  Constraints (all binding, no deviation):
+  - Exactly these four module-level assignments, in exactly this order, at
+    exactly this indentation (module level, no indentation).
+  - Each value is exactly the double-quoted string literal shown; no other
+    quoting style, no trailing content.
+  - No other class, function, constant, or import is added in this step.
+  - Use Python 3.12+ syntax throughout.
+  - The resulting file must not exceed 400 lines; this step produces
+    approximately 39 lines, well within the limit.
+verification:
+  type: import
+  target: plan_manager.exchange.exporter
+  expected: >
+    The module plan_manager.exchange.exporter imports without error and
+    exposes the four module-level string constants HRS_FILENAME ==
+    "source_spec.md", MRS_FILENAME == "spec.yaml", STEP_README ==
+    "README.yaml", and ATOMIC_DIR == "atomic_steps", in addition to the
+    unchanged export_hrs function and ExportError class from prior steps.
+status: draft
