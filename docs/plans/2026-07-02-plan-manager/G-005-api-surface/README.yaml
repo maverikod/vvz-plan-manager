@@ -31,8 +31,12 @@ description: >
   branches. Paragraph commands (C-002) list paragraphs with label, binding flag,
   and position, resolve one label to text, insert fresh unique labels into
   unlabeled binding paragraphs (the only textual edit permitted in the HRS), and
-  wrap or unwrap non-binding markers — all line-precise, leaving surrounding
-  prose byte-identical. MRS commands read concepts and relations, and their
+  mark a stored paragraph non-binding — wrap-only, excluding it from the
+  binding set while its text stays addressable through the version store; the
+  reverse is impossible because non-binding blocks are not stored, restoration
+  is by re-importing a corrected HRS document — with all paragraph mutations
+  leaving stored paragraph prose byte-identical. MRS commands read concepts
+  and relations, and their
   mutating forms require an open cascade and enforce required fields, identifier
   discipline, the seven relation types, endpoint existence, and source-label
   resolution at write time, so a mechanically invalid MRS entry cannot be
@@ -111,5 +115,5 @@ relations:
 - { from_concept: C-023, to_concept: C-026, type: uses }
 source_labels: ["{r1c7}", "{z5t4}", "{p8q4}", "{a1z3}", "{k7r9}", "{m4c2}", "{q6d8}", "{r9f1}", "{z2b5}", "{v6t8}", "{v8y2}", "{b3e6}", "{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{g9b1}", "{w6t5}", "{u3x7}", "{n5c2}", "{d7e4}", "{o9f2}", "{v4n6}", "{d8o2}"]
 depends_on: [G-002, G-003, G-004, G-006, G-007]
-tactical_steps: []
+tactical_steps: [T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012]
 status: draft

@@ -22,9 +22,11 @@ description: >
   blast radius computed by the invalidation rule, and the mechanical gate
   (C-012) verdict for the cascade state. Commit atomically advances the plan
   head to include the change set only when that gate run is green — it is
-  refused while the gate is red — and releases the lock; abort discards the
-  cascade's revisions, leaves the plan untouched, and releases the lock.
-  Publication is therefore atomic: a new state becomes visible only after the
+  refused while the gate is red — and releases the lock; abort restores the
+  working state to the base revision, deletes the cascade ref, and releases
+  the lock — the cascade's revisions are never rewritten or deleted and remain
+  addressable by revision id with no ref pointing at them; the plan is left
+  untouched. Publication is therefore atomic: a new state becomes visible only after the
   full cascade has passed its gate.
 
   needs_review propagation is automatic within a cascade, driven through the
@@ -42,5 +44,5 @@ relations:
 - { from_concept: C-016, to_concept: C-007, type: uses }
 source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{i5n7}", "{p6h1}", "{b4x2}"]
 depends_on: [G-001, G-003]
-tactical_steps: []
+tactical_steps: [T-001, T-002, T-003, T-004, T-005]
 status: draft

@@ -47,13 +47,16 @@ description: >
   registration section (registration URL, heartbeat URL and interval, server
   id, instance UUID); registration and heartbeat run automatically on startup
   when enabled, and the server functions identically with registration
-  disabled.
-concepts: [C-027, C-028]
+  disabled. The runtime also includes the reader of the build-time embedded
+  package data — the build information and the operator documentation
+  (C-025) — serving the server self-description; the payloads themselves are
+  produced by the release pipeline.
+concepts: [C-027, C-028, C-025]
 relations:
 - { from_concept: C-027, to_concept: C-024, type: owns }
 - { from_concept: C-027, to_concept: C-028, type: consumes }
 - { from_concept: C-027, to_concept: C-035, type: uses }
 source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{n6a4}", "{c3k8}", "{d8o2}", "{e5m7}", "{y1j5}"]
 depends_on: [G-001]
-tactical_steps: []
+tactical_steps: [T-001, T-002, T-003, T-004]
 status: draft

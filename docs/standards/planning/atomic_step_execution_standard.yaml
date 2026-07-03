@@ -1,0 +1,329 @@
+meta:
+  title: Atomic Step Execution Delegation Standard
+  version: '1.0'
+  locale: en
+  description: >
+    Standard for executing already-authored atomic steps through a strict
+    owner -> mini -> spark delegation chain. This standard controls context
+    boundaries, parallelization, child-agent waiting, escalation, and reusable
+    prompt templates.
+  scope:
+    covers:
+    - execution orchestration after AS artifacts already exist
+    - GS -> TS -> AS branch isolation
+    - common prompt reuse
+    - mini-agent context forming and verification
+    - spark-agent one-AS implementation
+    - parallel execution waves
+    - target-file locking
+    - spawn-unavailable fallback
+    excludes:
+    - HRS/MRS/GS/TS/AS authoring
+    - coverage matrix materialization
+    - source_spec rewriting
+  alias_map:
+    GS: global_step
+    TS: tactical_step
+    AS: atomic_step
+
+core_principle:
+  statement: >
+    Execution is delegated by need-to-know layers. The owner sees the global
+    execution map and assigns one GS/TS branch at a time. A mini receives only
+    that branch and acts as context former plus verifier. Spark receives exactly
+    one AS task and implements exactly one target file change.
+  context_minimization: >
+    No agent receives sibling branches unless the current assignment explicitly
+    depends on them. Extra context is treated as contamination because it can
+    cause an agent to leave its level.
+  completion_rule: >
+    No agent may report completion while its child assignments are still running
+    or unverified.
+
+roles:
+  owner:
+    model: primary_orchestrator
+    responsibilities:
+    - build the stable common prompt once per execution run
+    - read the global parallelization map
+    - choose the next GS/TS branch according to dependency waves
+    - send mini exactly one GS/TS assignment
+    - receive mini reports and decide whether to continue, retry, or escalate
+    - use owner-bridge spawning only when mini cannot spawn spark directly
+    forbidden:
+    - sending the whole plan tree to mini
+    - assigning multiple unrelated TS branches in one mini prompt
+    - treating a spark report as sufficient without mini or owner verification
+  mini:
+    model: gpt-5.4-mini
+    role_type: context_former_and_verifier
+    responsibilities:
+    - work inside exactly one assigned GS/TS branch
+    - read only the required branch context and execution standard
+    - form a reusable per-TS context shared by all AS in that TS
+    - create one spark prompt per AS with only AS-specific nuance added
+    - run independent AS prompts in parallel when allowed by the wave map
+    - wait for all spark children before reporting
+    - verify spark output against AS prompts and target files
+    - report blocked or ambiguous cases to owner
+    forbidden:
+    - editing production code directly
+    - broad plan analysis outside the assigned GS/TS branch
+    - advancing to another TS without owner assignment
+    - finishing while child spark tasks are still active
+  spark:
+    model: gpt-5.3-codex-spark
+    role_type: coder
+    responsibilities:
+    - execute exactly one AS
+    - inspect the target file before editing
+    - modify only the AS target file unless escalation is required
+    - run the AS verification commands available in the environment
+    - return a concise implementation and verification report
+    forbidden:
+    - reading sibling AS files unless the prompt includes their content
+    - changing unrelated files
+    - broad refactoring
+    - declaring success when verification was skipped without explanation
+    - leaving unfinished implementation markers such as NotImplemented,
+      NotImplementedError, placeholder stubs, or bare pass statements
+
+context_contract:
+  owner_common_prompt:
+    include:
+    - repository communication and artifact language policy
+    - dirty-worktree preservation rule
+    - active plan root
+    - current execution standard path
+    - role hierarchy and escalation rule
+    - verification expectations
+    exclude:
+    - full GS/TS/AS artifact bodies
+    - unrelated repository history
+  mini_context:
+    include:
+    - owner_common_prompt
+    - one parent GS README
+    - one TS README
+    - the assigned TS atomic_steps directory listing
+    - content of AS files for the assigned TS only
+    - the matching entry from parallelization_map.yaml
+    - current target-file states required for verification
+    exclude:
+    - sibling TS content
+    - other GS content
+    - entire plan tree dumps
+    - unrelated source files
+  spark_context:
+    include:
+    - owner_common_prompt
+    - mini per-TS common context
+    - exactly one AS prompt
+    - the current target file content or an explicit missing-file marker
+    - allowed edit scope
+    - verification commands and known environment limitations
+    exclude:
+    - sibling AS prompts, unless their effects are summarized by mini
+    - global execution map
+    - unrelated source files
+
+scheduling:
+  source_of_truth: docs/plans/2026-07-02-plan-manager/parallelization_map.yaml
+  owner_wave_rule: >
+    Owner executes GS waves in map order. A later GS wave may start only after
+    all required earlier GS waves have either completed or escalated with an
+    explicit owner decision.
+  mini_wave_rule: >
+    Mini executes AS waves inside one TS. All AS in the same wave may run in
+    parallel if no target-file lock or explicit dependency blocks them.
+  target_file_lock: >
+    AS targeting the same file are serialized by priority, then by AS id.
+    Independent target-file chains may run in parallel.
+  dependency_rule: >
+    Explicit AS dependencies override wave parallelism. A dependent AS starts
+    only after each dependency is implemented and verified.
+  waiting_rule: >
+    Mini waits for every spark child in the current wave before starting the
+    next wave. Owner waits for mini before assigning the next TS to that mini.
+
+fallbacks:
+  mini_cannot_spawn_spark:
+    rule: >
+      If mini has no available subagent-spawn capability, it must not implement
+      the AS itself. It returns SPAWN_UNAVAILABLE with ready spark prompts.
+    owner_action: >
+      Owner may spawn spark workers directly as an owner bridge, then provide
+      their reports back to mini or perform equivalent verification before
+      continuing.
+  verification_dependency_missing:
+    rule: >
+      Missing local tools, broken virtual environments, or absent dependencies
+      are reported as verification blockers only for the affected checks.
+      Syntax checks or other available local checks still run when possible.
+
+quality_gates:
+  unfinished_code_scan:
+    status: mandatory
+    applies_to:
+    - every spark final check
+    - every mini verification check
+    - every owner branch acceptance check
+    patterns:
+    - "\\bNotImplemented\\b"
+    - "\\bNotImplementedError\\b"
+    - "^\\s*pass\\b"
+    - "TODO"
+    - "FIXME"
+    - "stub"
+    - "placeholder"
+    rule: >
+      Before an AS or TS branch is accepted, scan the touched target files
+      for unfinished-code markers. Any hit must be either removed by completing
+      the implementation or escalated with file, line, and reason. Do not
+      accept a branch with unexplained unfinished code.
+
+escalation:
+  escalate_to_owner_when:
+  - AS prompt contradicts the current target file state
+  - AS requires editing more than one target file
+  - target-file priority order is ambiguous
+  - dependency cycles are detected
+  - mini cannot spawn spark
+  - verification cannot distinguish implementation failure from environment failure
+  - requested scope crosses the assigned GS/TS boundary
+  required_escalation_report:
+    status: BLOCKED
+    branch: "<GS_ID>/<TS_ID>"
+    reason: "<short blocker>"
+    evidence: "<files, commands, or prompt lines checked>"
+    proposed_owner_action: "<retry, bridge-spawn, revise AS, or stop>"
+
+status_policy:
+  plan_artifacts: >
+    Execution does not change planning artifact statuses unless a separate
+    assignment explicitly asks for status updates. Runtime reports may record
+    implemented, verified, blocked, or skipped states outside the plan source.
+  coverage_matrices: >
+    Coverage matrices remain computed views only. This standard must not create
+    matrix files.
+
+report_formats:
+  mini_final_report:
+    status: "DONE | PARTIAL | BLOCKED | SPAWN_UNAVAILABLE"
+    branch: "<GS_ID>/<TS_ID>"
+    spark_children: "<count and ids if available>"
+    implemented_as: ["<AS_ID>"]
+    verified_as: ["<AS_ID>"]
+    blocked_as: ["<AS_ID: reason>"]
+    files_changed: ["<repo-relative path>"]
+    verification: ["<command or check: result>"]
+    next_owner_action: "<continue | retry | bridge-spawn | escalate>"
+  spark_final_report:
+    status: "DONE | BLOCKED"
+    atomic_step: "<AS_ID>"
+    target_file: "<repo-relative path>"
+    changes: ["<short change summary>"]
+    verification: ["<command or check: result>"]
+    blockers: ["<reason, or empty>"]
+
+prompt_templates:
+  owner_common_prompt: |
+    You are executing the active plan through the owner -> mini -> spark protocol.
+
+    Repository contract:
+    - Communication with the user is Russian.
+    - Repository artifacts and code are English.
+    - Preserve unrelated dirty worktree changes.
+    - Do not rewrite human-owned source prose.
+    - Do not materialize coverage matrices.
+
+    Execution contract:
+    - Work strictly inside the assigned level and current task.
+    - Ambiguity escalates to the owner.
+    - A parent agent does not finish until all child work is complete and checked.
+    - Target-file locks serialize AS that touch the same file.
+    - Verification blockers must distinguish environment failure from code failure.
+
+    Active plan root: {PLAN_ROOT}
+    Execution standard: {STANDARD_FILE}
+
+  owner_to_mini_prompt: |
+    First read the execution standard in full: {STANDARD_FILE}
+    Then execute this mini assignment.
+
+    Role:
+    You are mini. You are a context former and verifier, not a production coder.
+
+    Assignment:
+    - GS: {GS_ID}
+    - TS: {TS_ID}
+    - Plan root: {PLAN_ROOT}
+    - Parent GS README: {GS_README}
+    - Current TS README: {TS_README}
+    - Atomic steps directory: {ATOMIC_STEPS_DIR}
+    - Parallelization map: {MAP_FILE}
+    - Relevant map entry:
+    {MAP_ENTRY}
+
+    Common owner prompt:
+    {OWNER_COMMON_PROMPT}
+
+    Required procedure:
+    1. Read only the assigned GS README, TS README, AS files in the assigned
+       atomic_steps directory, the relevant map entry, and target files needed
+       for this TS.
+    2. Build one shared per-TS context for all AS in this TS.
+    3. For each AS, build a spark prompt by concatenating the owner common prompt,
+       the per-TS context, and the AS-specific section.
+    4. Run AS tasks in parallel only according to the map waves, target-file locks,
+       and explicit dependencies.
+    5. Do not edit production code yourself.
+    6. Wait for all spark children, verify their results, and report in the
+       mini_final_report format.
+    7. If you cannot spawn spark, return SPAWN_UNAVAILABLE and include every ready
+       spark prompt verbatim.
+
+  mini_to_spark_prompt: |
+    First read the relevant role contract if one is provided in your environment.
+    Then execute this single atomic step.
+
+    Role:
+    You are spark. You are a one-AS coder.
+
+    Common owner prompt:
+    {OWNER_COMMON_PROMPT}
+
+    Per-TS context:
+    {MINI_TS_CONTEXT}
+
+    Atomic step:
+    - AS: {AS_ID}
+    - AS file: {AS_FILE}
+    - Target file: {TARGET_FILE}
+
+    Current target file state:
+    {TARGET_FILE_STATE}
+
+    Worktree note:
+    {WORKTREE_NOTE}
+
+    Required procedure:
+    1. Implement exactly this AS.
+    2. Modify only the target file unless the AS is impossible; escalate instead.
+    3. Preserve unrelated existing changes.
+    4. Scan the target file for unfinished-code markers: NotImplemented,
+       NotImplementedError, bare pass, TODO, FIXME, stub, and placeholder.
+    5. Run these verification commands or explain why each cannot run:
+       {VERIFICATION_COMMANDS}
+    6. Return the spark_final_report format.
+
+  spawn_unavailable_report: |
+    status: SPAWN_UNAVAILABLE
+    branch: {GS_ID}/{TS_ID}
+    reason: "mini cannot spawn spark in this environment"
+    ready_spark_prompts:
+    - as_id: {AS_ID}
+      target_file: {TARGET_FILE}
+      prompt: |
+        {READY_SPARK_PROMPT}
+    next_owner_action: bridge-spawn

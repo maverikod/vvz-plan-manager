@@ -1,0 +1,5816 @@
+meta:
+  plan: 2026-07-02-plan-manager
+  artifact: parallelization_map
+  purpose: Execution scheduler for GS/TS/AS delegation with mini context agents and spark worker agents.
+  source: computed from README.yaml and atomic_steps/A-*.yaml files
+  production_code: not included; this file is a planning/execution-control artifact
+agent_protocol:
+  owner:
+    role: orchestrator
+    model: main
+    scope: select exactly one GS/TS branch and assign it to mini
+    context_allowed:
+    - active plan root
+    - one parent GS README
+    - one TS README
+    - AS list for that TS
+    - phase standard
+  mini:
+    model: gpt-5.4-mini
+    role: context_former_and_verifier
+    must_not:
+    - write production code
+    - edit files directly
+    - finish while spark children are running
+    scope: one concrete GS/TS branch only
+    duties:
+    - form minimal AS context
+    - spawn spark per unblocked independent AS
+    - wait for all spark agents
+    - verify outputs
+    - escalate ambiguity to owner
+  spark:
+    model: gpt-5.3-codex-spark
+    role: atomic_step_worker
+    scope: one AS only
+    write_scope: target_file of that AS only unless the AS explicitly says otherwise
+    must_not:
+    - read unrelated GS/TS branches
+    - start sibling AS work
+    - finish before its verification command/report is complete
+parallelization_rules:
+  gs_order: respect explicit G depends_on; waves can run in parallel only if owner chooses multiple mini agents
+  ts_context: mini receives exactly one GS README and one TS README plus that TS atomic step files
+  as_parallelism: AS can run in the same wave only when explicit dependencies and target_file locks allow it
+  target_file_lock: all AS targeting the same file are serialized by ascending priority, then AS id
+  ambiguity: escalate to owner; do not guess or broaden context
+  dirty_worktree: agents must not revert unrelated changes
+global_waves:
+- - G-001
+- - G-002
+  - G-006
+  - G-007
+- - G-003
+- - G-004
+- - G-005
+- - G-008
+global_unresolved_cycles: []
+global_steps:
+- branch_id: G-001
+  name: domain-model
+  status: draft
+  depends_on: []
+  tactical_steps:
+  - branch_id: G-001/T-001
+    name: database-substrate
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-001-database-substrate/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-001-database-substrate/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 3
+      target_files: 3
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/storage/connection.py
+      sequence:
+      - G-001/T-001/A-003
+    - target_file: plan_manager/storage/errors.py
+      sequence:
+      - G-001/T-001/A-001
+    - target_file: plan_manager/storage/identity.py
+      sequence:
+      - G-001/T-001/A-002
+    parallel_waves:
+    - - G-001/T-001/A-001
+      - G-001/T-001/A-003
+    - - G-001/T-001/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-001/A-001
+      step_id: A-001
+      name: storage-errors
+      status: draft
+      target_file: plan_manager/storage/errors.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-001/A-002
+      step_id: A-002
+      name: storage-identity
+      status: draft
+      target_file: plan_manager/storage/identity.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-001/T-001/A-001
+    - branch_id: G-001/T-001/A-003
+      step_id: A-003
+      name: storage-connection
+      status: draft
+      target_file: plan_manager/storage/connection.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-001/T-002
+    name: plan-aggregate
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-002-plan-aggregate/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-002-plan-aggregate/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 1
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/domain/plan.py
+      sequence:
+      - G-001/T-002/A-001
+      - G-001/T-002/A-002
+      - G-001/T-002/A-003
+      - G-001/T-002/A-004
+      - G-001/T-002/A-005
+      - G-001/T-002/A-006
+    parallel_waves:
+    - - G-001/T-002/A-001
+    - - G-001/T-002/A-002
+    - - G-001/T-002/A-003
+    - - G-001/T-002/A-004
+    - - G-001/T-002/A-005
+    - - G-001/T-002/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-002/A-001
+      step_id: A-001
+      name: plan-dataclass-module-skeleton
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-002/A-002
+      step_id: A-002
+      name: create-plan-function
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-002/A-001
+    - branch_id: G-001/T-002/A-003
+      step_id: A-003
+      name: get-plan-function
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-002/A-001
+      - G-001/T-002/A-002
+    - branch_id: G-001/T-002/A-004
+      step_id: A-004
+      name: list-plans-function
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-002/A-001
+      - G-001/T-002/A-002
+      - G-001/T-002/A-003
+    - branch_id: G-001/T-002/A-005
+      step_id: A-005
+      name: set-context-budget-function
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-001/T-002/A-001
+      - G-001/T-002/A-002
+      - G-001/T-002/A-003
+      - G-001/T-002/A-004
+    - branch_id: G-001/T-002/A-006
+      step_id: A-006
+      name: set-head-revision-function
+      status: draft
+      target_file: plan_manager/domain/plan.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-001/T-002/A-001
+      - G-001/T-002/A-002
+      - G-001/T-002/A-003
+      - G-001/T-002/A-004
+      - G-001/T-002/A-005
+  - branch_id: G-001/T-003
+    name: concept-relation-model
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-003-concept-relation-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-003-concept-relation-model/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 14
+      target_files: 4
+      parallel_waves: 8
+    target_file_sequences:
+    - target_file: plan_manager/domain/concept.py
+      sequence:
+      - G-001/T-003/A-001
+      - G-001/T-003/A-002
+      - G-001/T-003/A-003
+    - target_file: plan_manager/domain/concept_store.py
+      sequence:
+      - G-001/T-003/A-007
+      - G-001/T-003/A-009
+      - G-001/T-003/A-010
+      - G-001/T-003/A-011
+      - G-001/T-003/A-012
+    - target_file: plan_manager/domain/relation.py
+      sequence:
+      - G-001/T-003/A-004
+      - G-001/T-003/A-005
+      - G-001/T-003/A-006
+    - target_file: plan_manager/domain/relation_store.py
+      sequence:
+      - G-001/T-003/A-008
+      - G-001/T-003/A-013
+      - G-001/T-003/A-014
+    parallel_waves:
+    - - G-001/T-003/A-001
+    - - G-001/T-003/A-002
+      - G-001/T-003/A-004
+    - - G-001/T-003/A-003
+      - G-001/T-003/A-005
+    - - G-001/T-003/A-006
+      - G-001/T-003/A-007
+    - - G-001/T-003/A-008
+      - G-001/T-003/A-009
+    - - G-001/T-003/A-010
+      - G-001/T-003/A-013
+    - - G-001/T-003/A-011
+      - G-001/T-003/A-014
+    - - G-001/T-003/A-012
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-003/A-001
+      step_id: A-001
+      name: concept-entity-and-patterns
+      status: draft
+      target_file: plan_manager/domain/concept.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-003/A-002
+      step_id: A-002
+      name: concept-validate-function
+      status: draft
+      target_file: plan_manager/domain/concept.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-003/A-001
+    - branch_id: G-001/T-003/A-003
+      step_id: A-003
+      name: concept-id-uniqueness-check
+      status: draft
+      target_file: plan_manager/domain/concept.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-003/A-002
+    - branch_id: G-001/T-003/A-004
+      step_id: A-004
+      name: relation-entity-and-types
+      status: draft
+      target_file: plan_manager/domain/relation.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-001/T-003/A-001
+    - branch_id: G-001/T-003/A-005
+      step_id: A-005
+      name: relation-validate-function
+      status: draft
+      target_file: plan_manager/domain/relation.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-003/A-004
+    - branch_id: G-001/T-003/A-006
+      step_id: A-006
+      name: relation-endpoints-exist-check
+      status: draft
+      target_file: plan_manager/domain/relation.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-003/A-005
+    - branch_id: G-001/T-003/A-007
+      step_id: A-007
+      name: concept-store
+      status: draft
+      target_file: plan_manager/domain/concept_store.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-001/T-003/A-003
+    - branch_id: G-001/T-003/A-008
+      step_id: A-008
+      name: relation-store
+      status: draft
+      target_file: plan_manager/domain/relation_store.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-001/T-003/A-006
+      - G-001/T-003/A-007
+    - branch_id: G-001/T-003/A-009
+      step_id: A-009
+      name: concept-store-get-concept
+      status: draft
+      target_file: plan_manager/domain/concept_store.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-003/A-007
+    - branch_id: G-001/T-003/A-010
+      step_id: A-010
+      name: concept-store-list-concepts
+      status: draft
+      target_file: plan_manager/domain/concept_store.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-003/A-009
+    - branch_id: G-001/T-003/A-011
+      step_id: A-011
+      name: concept-store-update-concept
+      status: draft
+      target_file: plan_manager/domain/concept_store.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-003/A-010
+    - branch_id: G-001/T-003/A-012
+      step_id: A-012
+      name: concept-store-remove-concept
+      status: draft
+      target_file: plan_manager/domain/concept_store.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-001/T-003/A-011
+    - branch_id: G-001/T-003/A-013
+      step_id: A-013
+      name: relation-store-list-relations
+      status: draft
+      target_file: plan_manager/domain/relation_store.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-003/A-008
+    - branch_id: G-001/T-003/A-014
+      step_id: A-014
+      name: relation-store-remove-relation
+      status: draft
+      target_file: plan_manager/domain/relation_store.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-003/A-013
+  - branch_id: G-001/T-004
+    name: hrs-paragraph-labeling
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-004-hrs-paragraph-labeling/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-004-hrs-paragraph-labeling/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 8
+      target_files: 3
+      parallel_waves: 3
+    target_file_sequences:
+    - target_file: plan_manager/domain/labeling.py
+      sequence:
+      - G-001/T-004/A-003
+      - G-001/T-004/A-004
+      - G-001/T-004/A-005
+    - target_file: plan_manager/domain/paragraph.py
+      sequence:
+      - G-001/T-004/A-001
+      - G-001/T-004/A-002
+    - target_file: plan_manager/domain/paragraph_store.py
+      sequence:
+      - G-001/T-004/A-006
+      - G-001/T-004/A-007
+      - G-001/T-004/A-008
+    parallel_waves:
+    - - G-001/T-004/A-001
+      - G-001/T-004/A-003
+      - G-001/T-004/A-006
+    - - G-001/T-004/A-002
+      - G-001/T-004/A-004
+      - G-001/T-004/A-007
+    - - G-001/T-004/A-005
+      - G-001/T-004/A-008
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-004/A-001
+      step_id: A-001
+      name: paragraph-dataclass
+      status: draft
+      target_file: plan_manager/domain/paragraph.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-004/A-002
+      step_id: A-002
+      name: parse-paragraphs
+      status: draft
+      target_file: plan_manager/domain/paragraph.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-004/A-001
+    - branch_id: G-001/T-004/A-003
+      step_id: A-003
+      name: draw-label
+      status: draft
+      target_file: plan_manager/domain/labeling.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-004/A-004
+      step_id: A-004
+      name: binding-block-start-lines
+      status: draft
+      target_file: plan_manager/domain/labeling.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-004/A-003
+    - branch_id: G-001/T-004/A-005
+      step_id: A-005
+      name: assign-labels
+      status: draft
+      target_file: plan_manager/domain/labeling.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-004/A-004
+    - branch_id: G-001/T-004/A-006
+      step_id: A-006
+      name: delete-paragraphs
+      status: draft
+      target_file: plan_manager/domain/paragraph_store.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-004/A-007
+      step_id: A-007
+      name: insert-paragraphs
+      status: draft
+      target_file: plan_manager/domain/paragraph_store.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-004/A-006
+    - branch_id: G-001/T-004/A-008
+      step_id: A-008
+      name: list-paragraphs
+      status: draft
+      target_file: plan_manager/domain/paragraph_store.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-004/A-007
+  - branch_id: G-001/T-005
+    name: step-entity-model
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-005-step-entity-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-005-step-entity-model/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 11
+      target_files: 3
+      parallel_waves: 9
+    target_file_sequences:
+    - target_file: plan_manager/domain/step.py
+      sequence:
+      - G-001/T-005/A-001
+      - G-001/T-005/A-002
+      - G-001/T-005/A-003
+      - G-001/T-005/A-004
+    - target_file: plan_manager/domain/step_ops.py
+      sequence:
+      - G-001/T-005/A-009
+      - G-001/T-005/A-010
+      - G-001/T-005/A-011
+    - target_file: plan_manager/domain/step_store.py
+      sequence:
+      - G-001/T-005/A-005
+      - G-001/T-005/A-006
+      - G-001/T-005/A-007
+      - G-001/T-005/A-008
+    parallel_waves:
+    - - G-001/T-005/A-001
+      - G-001/T-005/A-005
+    - - G-001/T-005/A-002
+    - - G-001/T-005/A-003
+    - - G-001/T-005/A-004
+    - - G-001/T-005/A-006
+    - - G-001/T-005/A-007
+    - - G-001/T-005/A-008
+      - G-001/T-005/A-009
+    - - G-001/T-005/A-010
+    - - G-001/T-005/A-011
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-005/A-001
+      step_id: A-001
+      name: Step identifier constants, patterns, and StepValidationError
+      status: draft
+      target_file: plan_manager/domain/step.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-005/A-002
+      step_id: A-002
+      name: Step dataclass
+      status: draft
+      target_file: plan_manager/domain/step.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-005/A-001
+    - branch_id: G-001/T-005/A-003
+      step_id: A-003
+      name: validate_step function
+      status: draft
+      target_file: plan_manager/domain/step.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-005/A-001
+      - G-001/T-005/A-002
+    - branch_id: G-001/T-005/A-004
+      step_id: A-004
+      name: next_free_step_id function
+      status: draft
+      target_file: plan_manager/domain/step.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-005/A-001
+      - G-001/T-005/A-003
+    - branch_id: G-001/T-005/A-005
+      step_id: A-005
+      name: list_step_ids function
+      status: draft
+      target_file: plan_manager/domain/step_store.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-005/A-006
+      step_id: A-006
+      name: create_step function
+      status: draft
+      target_file: plan_manager/domain/step_store.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-005/A-001
+      - G-001/T-005/A-002
+      - G-001/T-005/A-003
+      - G-001/T-005/A-004
+      - G-001/T-005/A-005
+    - branch_id: G-001/T-005/A-007
+      step_id: A-007
+      name: get_step function
+      status: draft
+      target_file: plan_manager/domain/step_store.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-005/A-002
+      - G-001/T-005/A-006
+    - branch_id: G-001/T-005/A-008
+      step_id: A-008
+      name: update_step_fields function
+      status: draft
+      target_file: plan_manager/domain/step_store.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-005/A-006
+      - G-001/T-005/A-007
+    - branch_id: G-001/T-005/A-009
+      step_id: A-009
+      name: move_step function
+      status: draft
+      target_file: plan_manager/domain/step_ops.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-001/T-005/A-001
+      - G-001/T-005/A-002
+      - G-001/T-005/A-004
+      - G-001/T-005/A-005
+      - G-001/T-005/A-007
+    - branch_id: G-001/T-005/A-010
+      step_id: A-010
+      name: delete_step function
+      status: draft
+      target_file: plan_manager/domain/step_ops.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-005/A-009
+    - branch_id: G-001/T-005/A-011
+      step_id: A-011
+      name: set_step_status function
+      status: draft
+      target_file: plan_manager/domain/step_ops.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-005/A-009
+      - G-001/T-005/A-010
+  - branch_id: G-001/T-006
+    name: plan-schema-status-model
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-006-plan-schema-status-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-006-plan-schema-status-model/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 4
+      target_files: 2
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/domain/plan_schema.py
+      sequence:
+      - G-001/T-006/A-001
+      - G-001/T-006/A-002
+    - target_file: plan_manager/domain/status_model.py
+      sequence:
+      - G-001/T-006/A-003
+      - G-001/T-006/A-004
+    parallel_waves:
+    - - G-001/T-006/A-001
+      - G-001/T-006/A-003
+    - - G-001/T-006/A-002
+      - G-001/T-006/A-004
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-006/A-001
+      step_id: A-001
+      name: plan-schema-dataclass-and-default-factory
+      status: draft
+      target_file: plan_manager/domain/plan_schema.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-006/A-002
+      step_id: A-002
+      name: plan-schema-apply-overrides
+      status: draft
+      target_file: plan_manager/domain/plan_schema.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-006/A-001
+    - branch_id: G-001/T-006/A-003
+      step_id: A-003
+      name: status-model-constants-and-exception
+      status: draft
+      target_file: plan_manager/domain/status_model.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-006/A-004
+      step_id: A-004
+      name: status-model-validate-transition
+      status: draft
+      target_file: plan_manager/domain/status_model.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-006/A-003
+  - branch_id: G-001/T-007
+    name: version-store
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-007-version-store/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-007-version-store/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 15
+      target_files: 3
+      parallel_waves: 8
+    target_file_sequences:
+    - target_file: plan_manager/storage/canonical.py
+      sequence:
+      - G-001/T-007/A-001
+      - G-001/T-007/A-002
+    - target_file: plan_manager/storage/version_ops.py
+      sequence:
+      - G-001/T-007/A-010
+      - G-001/T-007/A-011
+      - G-001/T-007/A-012
+      - G-001/T-007/A-013
+      - G-001/T-007/A-014
+      - G-001/T-007/A-015
+    - target_file: plan_manager/storage/version_store.py
+      sequence:
+      - G-001/T-007/A-003
+      - G-001/T-007/A-004
+      - G-001/T-007/A-005
+      - G-001/T-007/A-006
+      - G-001/T-007/A-007
+      - G-001/T-007/A-008
+      - G-001/T-007/A-009
+    parallel_waves:
+    - - G-001/T-007/A-001
+      - G-001/T-007/A-003
+      - G-001/T-007/A-010
+    - - G-001/T-007/A-002
+      - G-001/T-007/A-004
+      - G-001/T-007/A-011
+    - - G-001/T-007/A-005
+      - G-001/T-007/A-012
+    - - G-001/T-007/A-006
+      - G-001/T-007/A-013
+    - - G-001/T-007/A-007
+      - G-001/T-007/A-014
+    - - G-001/T-007/A-008
+    - - G-001/T-007/A-009
+    - - G-001/T-007/A-015
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-007/A-001
+      step_id: A-001
+      name: canonical-json
+      status: draft
+      target_file: plan_manager/storage/canonical.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-007/A-002
+      step_id: A-002
+      name: content-hash
+      status: draft
+      target_file: plan_manager/storage/canonical.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-007/A-001
+    - branch_id: G-001/T-007/A-003
+      step_id: A-003
+      name: version-store-error
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-007/A-004
+      step_id: A-004
+      name: insert-node-version
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-007/A-003
+    - branch_id: G-001/T-007/A-005
+      step_id: A-005
+      name: insert-revision
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-007/A-004
+    - branch_id: G-001/T-007/A-006
+      step_id: A-006
+      name: create-ref
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-007/A-005
+    - branch_id: G-001/T-007/A-007
+      step_id: A-007
+      name: delete-ref
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-001/T-007/A-006
+    - branch_id: G-001/T-007/A-008
+      step_id: A-008
+      name: get-ref
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-001/T-007/A-007
+    - branch_id: G-001/T-007/A-009
+      step_id: A-009
+      name: record-revision
+      status: draft
+      target_file: plan_manager/storage/version_store.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-001/T-007/A-004
+      - G-001/T-007/A-005
+      - G-001/T-007/A-008
+    - branch_id: G-001/T-007/A-010
+      step_id: A-010
+      name: state-at
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-007/A-011
+      step_id: A-011
+      name: get-node-version-content
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-007/A-010
+    - branch_id: G-001/T-007/A-012
+      step_id: A-012
+      name: log
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-001/T-007/A-011
+    - branch_id: G-001/T-007/A-013
+      step_id: A-013
+      name: diff
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-001/T-007/A-010
+      - G-001/T-007/A-011
+      - G-001/T-007/A-012
+    - branch_id: G-001/T-007/A-014
+      step_id: A-014
+      name: checkout-read
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-001/T-007/A-010
+      - G-001/T-007/A-011
+      - G-001/T-007/A-013
+    - branch_id: G-001/T-007/A-015
+      step_id: A-015
+      name: revert
+      status: draft
+      target_file: plan_manager/storage/version_ops.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-001/T-007/A-010
+      - G-001/T-007/A-011
+      - G-001/T-007/A-009
+      - G-001/T-007/A-014
+  - branch_id: G-001/T-008
+    name: plan-lock
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-008-plan-lock/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-001-domain-model/T-008-plan-lock/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 2
+      target_files: 1
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/storage/plan_lock.py
+      sequence:
+      - G-001/T-008/A-001
+      - G-001/T-008/A-002
+    parallel_waves:
+    - - G-001/T-008/A-001
+    - - G-001/T-008/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-001/T-008/A-001
+      step_id: A-001
+      name: plan-lock-key-and-error
+      status: draft
+      target_file: plan_manager/storage/plan_lock.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-001/T-008/A-002
+      step_id: A-002
+      name: acquire-and-release-plan-lock
+      status: draft
+      target_file: plan_manager/storage/plan_lock.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-001/T-008/A-001
+- branch_id: G-002
+  name: derived-views
+  status: draft
+  depends_on:
+  - G-001
+  tactical_steps:
+  - branch_id: G-002/T-001
+    name: branch-view
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-001-branch-view/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-001-branch-view/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 4
+      target_files: 1
+      parallel_waves: 4
+    target_file_sequences:
+    - target_file: plan_manager/views/branch.py
+      sequence:
+      - G-002/T-001/A-001
+      - G-002/T-001/A-002
+      - G-002/T-001/A-003
+      - G-002/T-001/A-004
+    parallel_waves:
+    - - G-002/T-001/A-001
+    - - G-002/T-001/A-002
+    - - G-002/T-001/A-003
+    - - G-002/T-001/A-004
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-002/T-001/A-001
+      step_id: A-001
+      name: Define BranchResolutionError exception class
+      status: draft
+      target_file: plan_manager/views/branch.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-002/T-001/A-002
+      step_id: A-002
+      name: Define Branch dataclass
+      status: draft
+      target_file: plan_manager/views/branch.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-002/T-001/A-001
+    - branch_id: G-002/T-001/A-003
+      step_id: A-003
+      name: Define _get_step_row helper function
+      status: draft
+      target_file: plan_manager/views/branch.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-002/T-001/A-002
+    - branch_id: G-002/T-001/A-004
+      step_id: A-004
+      name: Define resolve_branch function
+      status: draft
+      target_file: plan_manager/views/branch.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-002/T-001/A-003
+  - branch_id: G-002/T-002
+    name: dependency-graph
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-002-dependency-graph/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-002-dependency-graph/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 10
+      target_files: 1
+      parallel_waves: 10
+    target_file_sequences:
+    - target_file: plan_manager/views/dependency_graph.py
+      sequence:
+      - G-002/T-002/A-001
+      - G-002/T-002/A-002
+      - G-002/T-002/A-003
+      - G-002/T-002/A-004
+      - G-002/T-002/A-005
+      - G-002/T-002/A-006
+      - G-002/T-002/A-007
+      - G-002/T-002/A-008
+      - G-002/T-002/A-009
+      - G-002/T-002/A-010
+    parallel_waves:
+    - - G-002/T-002/A-001
+    - - G-002/T-002/A-002
+    - - G-002/T-002/A-003
+    - - G-002/T-002/A-004
+    - - G-002/T-002/A-005
+    - - G-002/T-002/A-006
+    - - G-002/T-002/A-007
+    - - G-002/T-002/A-008
+    - - G-002/T-002/A-009
+    - - G-002/T-002/A-010
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-002/T-002/A-001
+      step_id: A-001
+      name: Create dependency_graph.py with load_steps
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-002/T-002/A-002
+      step_id: A-002
+      name: Add parent_path to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-002/T-002/A-001
+    - branch_id: G-002/T-002/A-003
+      step_id: A-003
+      name: Add tie_break_key to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-002/T-002/A-002
+    - branch_id: G-002/T-002/A-004
+      step_id: A-004
+      name: Add build_edges to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-002/T-002/A-003
+    - branch_id: G-002/T-002/A-005
+      step_id: A-005
+      name: Add topological_order to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-002/T-002/A-004
+    - branch_id: G-002/T-002/A-006
+      step_id: A-006
+      name: Add cycle_edges to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-002/T-002/A-005
+    - branch_id: G-002/T-002/A-007
+      step_id: A-007
+      name: Add waves to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-002/T-002/A-006
+    - branch_id: G-002/T-002/A-008
+      step_id: A-008
+      name: Add prerequisites_of to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 8
+      depends_on:
+      - G-002/T-002/A-007
+    - branch_id: G-002/T-002/A-009
+      step_id: A-009
+      name: Add dependents_of to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 9
+      depends_on:
+      - G-002/T-002/A-008
+    - branch_id: G-002/T-002/A-010
+      step_id: A-010
+      name: Add impact_set to dependency_graph.py
+      status: draft
+      target_file: plan_manager/views/dependency_graph.py
+      operation: modify_file
+      priority: 10
+      depends_on:
+      - G-002/T-002/A-009
+  - branch_id: G-002/T-003
+    name: coverage-view
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-003-coverage-view/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-003-coverage-view/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 8
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/views/coverage.py
+      sequence:
+      - G-002/T-003/A-001
+      - G-002/T-003/A-002
+      - G-002/T-003/A-003
+      - G-002/T-003/A-004
+      - G-002/T-003/A-005
+    - target_file: plan_manager/views/objects.py
+      sequence:
+      - G-002/T-003/A-006
+      - G-002/T-003/A-007
+      - G-002/T-003/A-008
+    parallel_waves:
+    - - G-002/T-003/A-001
+      - G-002/T-003/A-006
+    - - G-002/T-003/A-002
+      - G-002/T-003/A-007
+    - - G-002/T-003/A-003
+      - G-002/T-003/A-008
+    - - G-002/T-003/A-004
+    - - G-002/T-003/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-002/T-003/A-001
+      step_id: A-001
+      name: Define CoverageReport dataclass
+      status: draft
+      target_file: plan_manager/views/coverage.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-002/T-003/A-002
+      step_id: A-002
+      name: Define concept_coverage function
+      status: draft
+      target_file: plan_manager/views/coverage.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-002/T-003/A-001
+    - branch_id: G-002/T-003/A-003
+      step_id: A-003
+      name: Define gs_coverage function
+      status: draft
+      target_file: plan_manager/views/coverage.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-002/T-003/A-002
+    - branch_id: G-002/T-003/A-004
+      step_id: A-004
+      name: Define label_coverage function
+      status: draft
+      target_file: plan_manager/views/coverage.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-002/T-003/A-003
+    - branch_id: G-002/T-003/A-005
+      step_id: A-005
+      name: Define relation_coverage function
+      status: draft
+      target_file: plan_manager/views/coverage.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-002/T-003/A-004
+    - branch_id: G-002/T-003/A-006
+      step_id: A-006
+      name: Define module_of function
+      status: draft
+      target_file: plan_manager/views/objects.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-002/T-003/A-007
+      step_id: A-007
+      name: Define object_inventory function
+      status: draft
+      target_file: plan_manager/views/objects.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-002/T-003/A-006
+    - branch_id: G-002/T-003/A-008
+      step_id: A-008
+      name: Define object_findings function
+      status: draft
+      target_file: plan_manager/views/objects.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-002/T-003/A-007
+  - branch_id: G-002/T-004
+    name: prompt-assembly
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-004-prompt-assembly/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-002-derived-views/T-004-prompt-assembly/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 1
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/views/prompt_assembly.py
+      sequence:
+      - G-002/T-004/A-001
+      - G-002/T-004/A-002
+      - G-002/T-004/A-003
+      - G-002/T-004/A-004
+      - G-002/T-004/A-005
+      - G-002/T-004/A-006
+    parallel_waves:
+    - - G-002/T-004/A-001
+    - - G-002/T-004/A-002
+    - - G-002/T-004/A-003
+    - - G-002/T-004/A-004
+    - - G-002/T-004/A-005
+    - - G-002/T-004/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-002/T-004/A-001
+      step_id: A-001
+      name: prompt-assembly-error-and-token-estimate
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-002/T-004/A-002
+      step_id: A-002
+      name: step-content
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-002/T-004/A-001
+    - branch_id: G-002/T-004/A-003
+      step_id: A-003
+      name: mrs-excerpt
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-002/T-004/A-002
+    - branch_id: G-002/T-004/A-004
+      step_id: A-004
+      name: assemble-prompt
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-002/T-004/A-003
+    - branch_id: G-002/T-004/A-005
+      step_id: A-005
+      name: token-report-and-check-budget
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-002/T-004/A-004
+    - branch_id: G-002/T-004/A-006
+      step_id: A-006
+      name: dump-prompts
+      status: draft
+      target_file: plan_manager/views/prompt_assembly.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-002/T-004/A-005
+- branch_id: G-003
+  name: verification
+  status: draft
+  depends_on:
+  - G-001
+  - G-002
+  tactical_steps:
+  - branch_id: G-003/T-001
+    name: finding-verdict-model
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-001-finding-verdict-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-001-finding-verdict-model/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 9
+      target_files: 2
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/verify/finding.py
+      sequence:
+      - G-003/T-001/A-001
+      - G-003/T-001/A-002
+      - G-003/T-001/A-003
+      - G-003/T-001/A-004
+      - G-003/T-001/A-005
+      - G-003/T-001/A-006
+    - target_file: plan_manager/verify/verdict.py
+      sequence:
+      - G-003/T-001/A-007
+      - G-003/T-001/A-008
+      - G-003/T-001/A-009
+    parallel_waves:
+    - - G-003/T-001/A-001
+      - G-003/T-001/A-007
+    - - G-003/T-001/A-002
+      - G-003/T-001/A-008
+    - - G-003/T-001/A-003
+      - G-003/T-001/A-009
+    - - G-003/T-001/A-004
+    - - G-003/T-001/A-005
+    - - G-003/T-001/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-001/A-001
+      step_id: A-001
+      name: finding-severities-and-dataclass
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-001/A-002
+      step_id: A-002
+      name: sort-findings
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-001/A-001
+    - branch_id: G-003/T-001/A-003
+      step_id: A-003
+      name: checkresult-and-report-dataclasses
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-001/A-001
+    - branch_id: G-003/T-001/A-004
+      step_id: A-004
+      name: build-report
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-001/A-001
+      - G-003/T-001/A-002
+      - G-003/T-001/A-003
+    - branch_id: G-003/T-001/A-005
+      step_id: A-005
+      name: render-text
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-001/A-001
+      - G-003/T-001/A-003
+    - branch_id: G-003/T-001/A-006
+      step_id: A-006
+      name: render-json
+      status: draft
+      target_file: plan_manager/verify/finding.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-001/A-001
+      - G-003/T-001/A-003
+    - branch_id: G-003/T-001/A-007
+      step_id: A-007
+      name: verdict-error-and-dataclass
+      status: draft
+      target_file: plan_manager/verify/verdict.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-001/A-008
+      step_id: A-008
+      name: current-head-revision
+      status: draft
+      target_file: plan_manager/verify/verdict.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-001/A-007
+    - branch_id: G-003/T-001/A-009
+      step_id: A-009
+      name: is-fresh
+      status: draft
+      target_file: plan_manager/verify/verdict.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-001/A-007
+  - branch_id: G-003/T-002
+    name: mechanical-gate
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-002-mechanical-gate/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-002-mechanical-gate/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 26
+      target_files: 4
+      parallel_waves: 16
+    target_file_sequences:
+    - target_file: plan_manager/verify/gate.py
+      sequence:
+      - G-003/T-002/A-021
+      - G-003/T-002/A-022
+      - G-003/T-002/A-023
+      - G-003/T-002/A-024
+      - G-003/T-002/A-025
+      - G-003/T-002/A-026
+    - target_file: plan_manager/verify/gate_data.py
+      sequence:
+      - G-003/T-002/A-001
+      - G-003/T-002/A-002
+      - G-003/T-002/A-003
+      - G-003/T-002/A-004
+    - target_file: plan_manager/verify/gate_refs.py
+      sequence:
+      - G-003/T-002/A-013
+      - G-003/T-002/A-014
+      - G-003/T-002/A-015
+      - G-003/T-002/A-016
+      - G-003/T-002/A-017
+      - G-003/T-002/A-018
+      - G-003/T-002/A-019
+      - G-003/T-002/A-020
+    - target_file: plan_manager/verify/gate_structure.py
+      sequence:
+      - G-003/T-002/A-005
+      - G-003/T-002/A-006
+      - G-003/T-002/A-007
+      - G-003/T-002/A-008
+      - G-003/T-002/A-009
+      - G-003/T-002/A-010
+      - G-003/T-002/A-011
+      - G-003/T-002/A-012
+    parallel_waves:
+    - - G-003/T-002/A-001
+    - - G-003/T-002/A-002
+    - - G-003/T-002/A-003
+      - G-003/T-002/A-005
+      - G-003/T-002/A-013
+    - - G-003/T-002/A-004
+      - G-003/T-002/A-006
+      - G-003/T-002/A-014
+    - - G-003/T-002/A-007
+      - G-003/T-002/A-015
+    - - G-003/T-002/A-008
+      - G-003/T-002/A-016
+    - - G-003/T-002/A-009
+      - G-003/T-002/A-017
+    - - G-003/T-002/A-010
+      - G-003/T-002/A-018
+    - - G-003/T-002/A-011
+      - G-003/T-002/A-019
+    - - G-003/T-002/A-012
+      - G-003/T-002/A-020
+    - - G-003/T-002/A-021
+    - - G-003/T-002/A-022
+    - - G-003/T-002/A-023
+    - - G-003/T-002/A-024
+    - - G-003/T-002/A-025
+    - - G-003/T-002/A-026
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-002/A-001
+      step_id: A-001
+      name: Create gate_data.py with GateTree dataclass
+      status: draft
+      target_file: plan_manager/verify/gate_data.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-002/A-002
+      step_id: A-002
+      name: Add artifact_path_of to gate_data.py
+      status: draft
+      target_file: plan_manager/verify/gate_data.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-002/A-001
+    - branch_id: G-003/T-002/A-003
+      step_id: A-003
+      name: Add load_tree to gate_data.py
+      status: draft
+      target_file: plan_manager/verify/gate_data.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-002/A-002
+    - branch_id: G-003/T-002/A-004
+      step_id: A-004
+      name: Add scope_steps to gate_data.py
+      status: draft
+      target_file: plan_manager/verify/gate_data.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-002/A-003
+    - branch_id: G-003/T-002/A-005
+      step_id: A-005
+      name: Create gate_structure.py with parse.required_fields check
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-003/T-002/A-001
+      - G-003/T-002/A-002
+    - branch_id: G-003/T-002/A-006
+      step_id: A-006
+      name: Add parse.inputs_outputs check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-002/A-005
+    - branch_id: G-003/T-002/A-007
+      step_id: A-007
+      name: Add parse.target_file check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-002/A-006
+    - branch_id: G-003/T-002/A-008
+      step_id: A-008
+      name: Add parse.sanity_counts check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-002/A-007
+    - branch_id: G-003/T-002/A-009
+      step_id: A-009
+      name: Add identity.step_id check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-002/A-008
+    - branch_id: G-003/T-002/A-010
+      step_id: A-010
+      name: Add identity.slug check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-002/A-009
+    - branch_id: G-003/T-002/A-011
+      step_id: A-011
+      name: Add identity.concept_id check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-003/T-002/A-010
+    - branch_id: G-003/T-002/A-012
+      step_id: A-012
+      name: Add identity.label check to gate_structure.py
+      status: draft
+      target_file: plan_manager/verify/gate_structure.py
+      operation: modify_file
+      priority: 8
+      depends_on:
+      - G-003/T-002/A-011
+    - branch_id: G-003/T-002/A-013
+      step_id: A-013
+      name: Create gate_refs.py with uniqueness.step_id check
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-003/T-002/A-001
+      - G-003/T-002/A-002
+    - branch_id: G-003/T-002/A-014
+      step_id: A-014
+      name: Add uniqueness.concept_id check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-002/A-013
+    - branch_id: G-003/T-002/A-015
+      step_id: A-015
+      name: Add uniqueness.label check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-002/A-014
+    - branch_id: G-003/T-002/A-016
+      step_id: A-016
+      name: Add uniqueness.priority check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-002/A-015
+    - branch_id: G-003/T-002/A-017
+      step_id: A-017
+      name: Add references.depends_on check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-002/A-016
+    - branch_id: G-003/T-002/A-018
+      step_id: A-018
+      name: Add references.concepts check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-002/A-017
+    - branch_id: G-003/T-002/A-019
+      step_id: A-019
+      name: Add references.relations check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-003/T-002/A-018
+    - branch_id: G-003/T-002/A-020
+      step_id: A-020
+      name: Add references.source_labels check to gate_refs.py
+      status: draft
+      target_file: plan_manager/verify/gate_refs.py
+      operation: modify_file
+      priority: 8
+      depends_on:
+      - G-003/T-002/A-019
+    - branch_id: G-003/T-002/A-021
+      step_id: A-021
+      name: Create gate.py with GROUP_ORDER and CHECK_IDS
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-003/T-002/A-004
+      - G-003/T-002/A-012
+      - G-003/T-002/A-020
+    - branch_id: G-003/T-002/A-022
+      step_id: A-022
+      name: Add check_coverage_concepts to gate.py
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-002/A-021
+    - branch_id: G-003/T-002/A-023
+      step_id: A-023
+      name: Add check_coverage_gs to gate.py
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-002/A-022
+    - branch_id: G-003/T-002/A-024
+      step_id: A-024
+      name: Add check_coverage_labels to gate.py
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-002/A-023
+    - branch_id: G-003/T-002/A-025
+      step_id: A-025
+      name: Add check_coverage_relations to gate.py
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-002/A-024
+    - branch_id: G-003/T-002/A-026
+      step_id: A-026
+      name: Add run_gate orchestrator function to gate.py
+      status: draft
+      target_file: plan_manager/verify/gate.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-002/A-025
+  - branch_id: G-003/T-003
+    name: embedding-client-cache
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-003-embedding-client-cache/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-003-embedding-client-cache/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 1
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/scoring/embedding.py
+      sequence:
+      - G-003/T-003/A-001
+      - G-003/T-003/A-002
+      - G-003/T-003/A-003
+      - G-003/T-003/A-004
+      - G-003/T-003/A-005
+      - G-003/T-003/A-006
+    parallel_waves:
+    - - G-003/T-003/A-001
+    - - G-003/T-003/A-002
+    - - G-003/T-003/A-003
+    - - G-003/T-003/A-004
+    - - G-003/T-003/A-005
+    - - G-003/T-003/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-003/A-001
+      step_id: A-001
+      name: embedding-unavailable-scaffold
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-003/A-002
+      step_id: A-002
+      name: text-content-hash
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-003/A-001
+    - branch_id: G-003/T-003/A-003
+      step_id: A-003
+      name: get-cached-vector
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-003/A-002
+    - branch_id: G-003/T-003/A-004
+      step_id: A-004
+      name: store-vector
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-003/A-003
+    - branch_id: G-003/T-003/A-005
+      step_id: A-005
+      name: fetch-vector
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-003/A-004
+    - branch_id: G-003/T-003/A-006
+      step_id: A-006
+      name: embed-text
+      status: draft
+      target_file: plan_manager/scoring/embedding.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-003/A-005
+  - branch_id: G-003/T-004
+    name: trust-estimate
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-004-trust-estimate/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-004-trust-estimate/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 5
+      target_files: 1
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/scoring/trust.py
+      sequence:
+      - G-003/T-004/A-001
+      - G-003/T-004/A-002
+      - G-003/T-004/A-003
+      - G-003/T-004/A-004
+      - G-003/T-004/A-005
+    parallel_waves:
+    - - G-003/T-004/A-001
+    - - G-003/T-004/A-002
+    - - G-003/T-004/A-003
+    - - G-003/T-004/A-004
+    - - G-003/T-004/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-004/A-001
+      step_id: A-001
+      name: Create TrustReport dataclass and module docstring
+      status: draft
+      target_file: plan_manager/scoring/trust.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-004/A-002
+      step_id: A-002
+      name: Add normalize_rows function
+      status: draft
+      target_file: plan_manager/scoring/trust.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-004/A-001
+    - branch_id: G-003/T-004/A-003
+      step_id: A-003
+      name: Add basis_geometry function
+      status: draft
+      target_file: plan_manager/scoring/trust.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-004/A-002
+    - branch_id: G-003/T-004/A-004
+      step_id: A-004
+      name: Add trust_from_geometry function
+      status: draft
+      target_file: plan_manager/scoring/trust.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-004/A-003
+    - branch_id: G-003/T-004/A-005
+      step_id: A-005
+      name: Add compute_trust function and its imports
+      status: draft
+      target_file: plan_manager/scoring/trust.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-004/A-004
+  - branch_id: G-003/T-005
+    name: executor-simulation
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-005-executor-simulation/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-005-executor-simulation/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 7
+      target_files: 1
+      parallel_waves: 7
+    target_file_sequences:
+    - target_file: plan_manager/scoring/simulation.py
+      sequence:
+      - G-003/T-005/A-001
+      - G-003/T-005/A-002
+      - G-003/T-005/A-003
+      - G-003/T-005/A-004
+      - G-003/T-005/A-005
+      - G-003/T-005/A-006
+      - G-003/T-005/A-007
+    parallel_waves:
+    - - G-003/T-005/A-001
+    - - G-003/T-005/A-002
+    - - G-003/T-005/A-003
+    - - G-003/T-005/A-004
+    - - G-003/T-005/A-005
+    - - G-003/T-005/A-006
+    - - G-003/T-005/A-007
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-005/A-001
+      step_id: A-001
+      name: Create simulation module with question constant and input builder
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-005/A-002
+      step_id: A-002
+      name: Add extract_candidates function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-005/A-001
+    - branch_id: G-003/T-005/A-003
+      step_id: A-003
+      name: Add occurs_in_prompt function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-005/A-002
+    - branch_id: G-003/T-005/A-004
+      step_id: A-004
+      name: Add is_defined_in_prompt function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-005/A-003
+    - branch_id: G-003/T-005/A-005
+      step_id: A-005
+      name: Add surviving_candidates function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-005/A-004
+    - branch_id: G-003/T-005/A-006
+      step_id: A-006
+      name: Add surviving_fraction function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-005/A-005
+    - branch_id: G-003/T-005/A-007
+      step_id: A-007
+      name: Add simulation_vote function
+      status: draft
+      target_file: plan_manager/scoring/simulation.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-003/T-005/A-006
+  - branch_id: G-003/T-006
+    name: semantic-index
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-006-semantic-index/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-003-verification/T-006-semantic-index/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 14
+      target_files: 2
+      parallel_waves: 14
+    target_file_sequences:
+    - target_file: plan_manager/scoring/estimators.py
+      sequence:
+      - G-003/T-006/A-001
+      - G-003/T-006/A-002
+      - G-003/T-006/A-003
+      - G-003/T-006/A-004
+      - G-003/T-006/A-005
+      - G-003/T-006/A-006
+      - G-003/T-006/A-007
+    - target_file: plan_manager/scoring/index.py
+      sequence:
+      - G-003/T-006/A-008
+      - G-003/T-006/A-009
+      - G-003/T-006/A-010
+      - G-003/T-006/A-011
+      - G-003/T-006/A-012
+      - G-003/T-006/A-013
+      - G-003/T-006/A-014
+    parallel_waves:
+    - - G-003/T-006/A-001
+    - - G-003/T-006/A-002
+    - - G-003/T-006/A-003
+    - - G-003/T-006/A-004
+    - - G-003/T-006/A-005
+    - - G-003/T-006/A-006
+    - - G-003/T-006/A-007
+    - - G-003/T-006/A-008
+    - - G-003/T-006/A-009
+    - - G-003/T-006/A-010
+    - - G-003/T-006/A-011
+    - - G-003/T-006/A-012
+    - - G-003/T-006/A-013
+    - - G-003/T-006/A-014
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-003/T-006/A-001
+      step_id: A-001
+      name: load-concept-rows
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-003/T-006/A-002
+      step_id: A-002
+      name: required-concepts
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-006/A-001
+    - branch_id: G-003/T-006/A-003
+      step_id: A-003
+      name: declared-concepts
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-006/A-002
+    - branch_id: G-003/T-006/A-004
+      step_id: A-004
+      name: coverage-estimator
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-006/A-003
+    - branch_id: G-003/T-006/A-005
+      step_id: A-005
+      name: reference-estimator
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-006/A-004
+    - branch_id: G-003/T-006/A-006
+      step_id: A-006
+      name: branch-text
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-006/A-005
+    - branch_id: G-003/T-006/A-007
+      step_id: A-007
+      name: embedding-estimator
+      status: draft
+      target_file: plan_manager/scoring/estimators.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-003/T-006/A-006
+    - branch_id: G-003/T-006/A-008
+      step_id: A-008
+      name: scoring-config
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-003/T-006/A-001
+      - G-003/T-006/A-002
+      - G-003/T-006/A-003
+      - G-003/T-006/A-004
+      - G-003/T-006/A-005
+      - G-003/T-006/A-007
+    - branch_id: G-003/T-006/A-009
+      step_id: A-009
+      name: score-refused-error
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-003/T-006/A-008
+    - branch_id: G-003/T-006/A-010
+      step_id: A-010
+      name: branch-score
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-003/T-006/A-009
+    - branch_id: G-003/T-006/A-011
+      step_id: A-011
+      name: score-branch
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-003/T-006/A-010
+      - G-003/T-006/A-001
+      - G-003/T-006/A-002
+      - G-003/T-006/A-003
+      - G-003/T-006/A-004
+      - G-003/T-006/A-005
+      - G-003/T-006/A-007
+      - G-003/T-006/A-009
+    - branch_id: G-003/T-006/A-012
+      step_id: A-012
+      name: plan-score
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-003/T-006/A-011
+    - branch_id: G-003/T-006/A-013
+      step_id: A-013
+      name: score-plan
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-003/T-006/A-012
+    - branch_id: G-003/T-006/A-014
+      step_id: A-014
+      name: branch-summary
+      status: draft
+      target_file: plan_manager/scoring/index.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-003/T-006/A-013
+- branch_id: G-004
+  name: cascade-lifecycle
+  status: draft
+  depends_on:
+  - G-001
+  - G-003
+  tactical_steps:
+  - branch_id: G-004/T-001
+    name: cascade-record-and-begin
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-001-cascade-record-and-begin/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-001-cascade-record-and-begin/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 2
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/cascade/begin.py
+      sequence:
+      - G-004/T-001/A-006
+    - target_file: plan_manager/cascade/record.py
+      sequence:
+      - G-004/T-001/A-001
+      - G-004/T-001/A-002
+      - G-004/T-001/A-003
+      - G-004/T-001/A-004
+      - G-004/T-001/A-005
+    parallel_waves:
+    - - G-004/T-001/A-001
+    - - G-004/T-001/A-002
+    - - G-004/T-001/A-003
+    - - G-004/T-001/A-004
+    - - G-004/T-001/A-005
+    - - G-004/T-001/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-004/T-001/A-001
+      step_id: A-001
+      name: record-header
+      status: draft
+      target_file: plan_manager/cascade/record.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-001/A-002
+      step_id: A-002
+      name: record-dataclass
+      status: draft
+      target_file: plan_manager/cascade/record.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-001/A-001
+    - branch_id: G-004/T-001/A-003
+      step_id: A-003
+      name: insert-cascade
+      status: draft
+      target_file: plan_manager/cascade/record.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-004/T-001/A-002
+    - branch_id: G-004/T-001/A-004
+      step_id: A-004
+      name: get-open-cascade
+      status: draft
+      target_file: plan_manager/cascade/record.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-004/T-001/A-003
+    - branch_id: G-004/T-001/A-005
+      step_id: A-005
+      name: close-cascade
+      status: draft
+      target_file: plan_manager/cascade/record.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-004/T-001/A-004
+    - branch_id: G-004/T-001/A-006
+      step_id: A-006
+      name: begin-cascade
+      status: draft
+      target_file: plan_manager/cascade/begin.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-004/T-001/A-005
+  - branch_id: G-004/T-002
+    name: mutation-regime-and-cascade-write
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-002-mutation-regime-and-cascade-write/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-002-mutation-regime-and-cascade-write/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 2
+      parallel_waves: 3
+    target_file_sequences:
+    - target_file: plan_manager/cascade/regime.py
+      sequence:
+      - G-004/T-002/A-001
+      - G-004/T-002/A-002
+      - G-004/T-002/A-003
+    - target_file: plan_manager/cascade/write.py
+      sequence:
+      - G-004/T-002/A-004
+      - G-004/T-002/A-005
+      - G-004/T-002/A-006
+    parallel_waves:
+    - - G-004/T-002/A-001
+      - G-004/T-002/A-004
+    - - G-004/T-002/A-002
+      - G-004/T-002/A-005
+    - - G-004/T-002/A-003
+      - G-004/T-002/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-004/T-002/A-001
+      step_id: A-001
+      name: cascade admission module and constants
+      status: draft
+      target_file: plan_manager/cascade/regime.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-002/A-002
+      step_id: A-002
+      name: frozen_at_or_below helper
+      status: draft
+      target_file: plan_manager/cascade/regime.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-002/A-001
+    - branch_id: G-004/T-002/A-003
+      step_id: A-003
+      name: check_admission mutation admission rule
+      status: draft
+      target_file: plan_manager/cascade/regime.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-004/T-002/A-002
+    - branch_id: G-004/T-002/A-004
+      step_id: A-004
+      name: cascade write module and step_snapshot
+      status: draft
+      target_file: plan_manager/cascade/write.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-002/A-005
+      step_id: A-005
+      name: apply_status_updates cascade-driven status writes
+      status: draft
+      target_file: plan_manager/cascade/write.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-002/A-004
+    - branch_id: G-004/T-002/A-006
+      step_id: A-006
+      name: cascade_write revision recording
+      status: draft
+      target_file: plan_manager/cascade/write.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-004/T-002/A-005
+  - branch_id: G-004/T-003
+    name: needs-review-propagation
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-003-needs-review-propagation/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-003-needs-review-propagation/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 2
+      target_files: 1
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/cascade/propagation.py
+      sequence:
+      - G-004/T-003/A-001
+      - G-004/T-003/A-002
+    parallel_waves:
+    - - G-004/T-003/A-001
+    - - G-004/T-003/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-004/T-003/A-001
+      step_id: A-001
+      name: Create propagation module with step_invalidation
+      status: draft
+      target_file: plan_manager/cascade/propagation.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-003/A-002
+      step_id: A-002
+      name: Add mrs_invalidation to propagation module
+      status: draft
+      target_file: plan_manager/cascade/propagation.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-003/A-001
+  - branch_id: G-004/T-004
+    name: cascade-preview
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-004-cascade-preview/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-004-cascade-preview/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 1
+      target_files: 1
+      parallel_waves: 1
+    target_file_sequences:
+    - target_file: plan_manager/cascade/preview.py
+      sequence:
+      - G-004/T-004/A-001
+    parallel_waves:
+    - - G-004/T-004/A-001
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-004/T-004/A-001
+      step_id: A-001
+      name: create preview_cascade function
+      status: draft
+      target_file: plan_manager/cascade/preview.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-004/T-005
+    name: cascade-commit-abort
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-005-cascade-commit-abort/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-004-cascade-lifecycle/T-005-cascade-commit-abort/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 7
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/cascade/close.py
+      sequence:
+      - G-004/T-005/A-005
+      - G-004/T-005/A-006
+      - G-004/T-005/A-007
+    - target_file: plan_manager/cascade/restore.py
+      sequence:
+      - G-004/T-005/A-001
+      - G-004/T-005/A-002
+      - G-004/T-005/A-003
+      - G-004/T-005/A-004
+    parallel_waves:
+    - - G-004/T-005/A-001
+      - G-004/T-005/A-005
+    - - G-004/T-005/A-002
+      - G-004/T-005/A-006
+    - - G-004/T-005/A-003
+    - - G-004/T-005/A-004
+    - - G-004/T-005/A-007
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-004/T-005/A-001
+      step_id: A-001
+      name: node_version_content fetch helper
+      status: draft
+      target_file: plan_manager/cascade/restore.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-005/A-002
+      step_id: A-002
+      name: apply_snapshot row upsert
+      status: draft
+      target_file: plan_manager/cascade/restore.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-005/A-001
+    - branch_id: G-004/T-005/A-003
+      step_id: A-003
+      name: delete_node row deletion
+      status: draft
+      target_file: plan_manager/cascade/restore.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-004/T-005/A-002
+    - branch_id: G-004/T-005/A-004
+      step_id: A-004
+      name: restore_state base-revision restoration
+      status: draft
+      target_file: plan_manager/cascade/restore.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-004/T-005/A-003
+    - branch_id: G-004/T-005/A-005
+      step_id: A-005
+      name: CommitRefusedError exception type
+      status: draft
+      target_file: plan_manager/cascade/close.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-004/T-005/A-006
+      step_id: A-006
+      name: commit_cascade publication
+      status: draft
+      target_file: plan_manager/cascade/close.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-004/T-005/A-005
+    - branch_id: G-004/T-005/A-007
+      step_id: A-007
+      name: abort_cascade discard
+      status: draft
+      target_file: plan_manager/cascade/close.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-004/T-005/A-006
+      - G-004/T-005/A-004
+- branch_id: G-005
+  name: api-surface
+  status: draft
+  depends_on:
+  - G-002
+  - G-003
+  - G-004
+  - G-006
+  - G-007
+  tactical_steps:
+  - branch_id: G-005/T-001
+    name: command-foundation
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-001-command-foundation/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-001-command-foundation/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 5
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/commands/errors.py
+      sequence:
+      - G-005/T-001/A-001
+      - G-005/T-001/A-002
+      - G-005/T-001/A-003
+      - G-005/T-001/A-004
+    - target_file: plan_manager/commands/resolve.py
+      sequence:
+      - G-005/T-001/A-005
+    parallel_waves:
+    - - G-005/T-001/A-001
+    - - G-005/T-001/A-002
+    - - G-005/T-001/A-003
+    - - G-005/T-001/A-004
+    - - G-005/T-001/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-001/A-001
+      step_id: A-001
+      name: domain-codes-registry
+      status: draft
+      target_file: plan_manager/commands/errors.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-001/A-002
+      step_id: A-002
+      name: domain-command-error
+      status: draft
+      target_file: plan_manager/commands/errors.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-001/A-001
+    - branch_id: G-005/T-001/A-003
+      step_id: A-003
+      name: domain-error-builder
+      status: draft
+      target_file: plan_manager/commands/errors.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-001/A-002
+    - branch_id: G-005/T-001/A-004
+      step_id: A-004
+      name: exception-mapping
+      status: draft
+      target_file: plan_manager/commands/errors.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-001/A-003
+    - branch_id: G-005/T-001/A-005
+      step_id: A-005
+      name: resolve-plan
+      status: draft
+      target_file: plan_manager/commands/resolve.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-001/A-004
+  - branch_id: G-005/T-002
+    name: plan-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-002-plan-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-002-plan-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 6
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/commands/plan_create_command.py
+      sequence:
+      - G-005/T-002/A-002
+    - target_file: plan_manager/commands/plan_create_metadata.py
+      sequence:
+      - G-005/T-002/A-001
+    - target_file: plan_manager/commands/plan_list_command.py
+      sequence:
+      - G-005/T-002/A-004
+    - target_file: plan_manager/commands/plan_list_metadata.py
+      sequence:
+      - G-005/T-002/A-003
+    - target_file: plan_manager/commands/plan_status_command.py
+      sequence:
+      - G-005/T-002/A-006
+    - target_file: plan_manager/commands/plan_status_metadata.py
+      sequence:
+      - G-005/T-002/A-005
+    parallel_waves:
+    - - G-005/T-002/A-001
+      - G-005/T-002/A-003
+      - G-005/T-002/A-005
+    - - G-005/T-002/A-002
+      - G-005/T-002/A-004
+      - G-005/T-002/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-002/A-001
+      step_id: A-001
+      name: Write plan_create metadata module
+      status: draft
+      target_file: plan_manager/commands/plan_create_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-002/A-002
+      step_id: A-002
+      name: Write PlanCreateCommand class
+      status: draft
+      target_file: plan_manager/commands/plan_create_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-002/A-001
+    - branch_id: G-005/T-002/A-003
+      step_id: A-003
+      name: Write plan_list metadata module
+      status: draft
+      target_file: plan_manager/commands/plan_list_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-002/A-004
+      step_id: A-004
+      name: Write PlanListCommand class
+      status: draft
+      target_file: plan_manager/commands/plan_list_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-002/A-003
+    - branch_id: G-005/T-002/A-005
+      step_id: A-005
+      name: Write plan_status metadata module
+      status: draft
+      target_file: plan_manager/commands/plan_status_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-002/A-006
+      step_id: A-006
+      name: Write PlanStatusCommand class
+      status: draft
+      target_file: plan_manager/commands/plan_status_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-002/A-005
+  - branch_id: G-005/T-003
+    name: exchange-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-003-exchange-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-003-exchange-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 24
+      target_files: 8
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/commands/hrs_export_command.py
+      sequence:
+      - G-005/T-003/A-008
+      - G-005/T-003/A-009
+      - G-005/T-003/A-010
+      - G-005/T-003/A-011
+      - G-005/T-003/A-012
+    - target_file: plan_manager/commands/hrs_export_metadata.py
+      sequence:
+      - G-005/T-003/A-007
+    - target_file: plan_manager/commands/hrs_import_command.py
+      sequence:
+      - G-005/T-003/A-020
+      - G-005/T-003/A-021
+      - G-005/T-003/A-022
+      - G-005/T-003/A-023
+      - G-005/T-003/A-024
+    - target_file: plan_manager/commands/hrs_import_metadata.py
+      sequence:
+      - G-005/T-003/A-019
+    - target_file: plan_manager/commands/plan_export_command.py
+      sequence:
+      - G-005/T-003/A-002
+      - G-005/T-003/A-003
+      - G-005/T-003/A-004
+      - G-005/T-003/A-005
+      - G-005/T-003/A-006
+    - target_file: plan_manager/commands/plan_export_metadata.py
+      sequence:
+      - G-005/T-003/A-001
+    - target_file: plan_manager/commands/plan_import_command.py
+      sequence:
+      - G-005/T-003/A-014
+      - G-005/T-003/A-015
+      - G-005/T-003/A-016
+      - G-005/T-003/A-017
+      - G-005/T-003/A-018
+    - target_file: plan_manager/commands/plan_import_metadata.py
+      sequence:
+      - G-005/T-003/A-013
+    parallel_waves:
+    - - G-005/T-003/A-001
+      - G-005/T-003/A-007
+      - G-005/T-003/A-013
+      - G-005/T-003/A-019
+    - - G-005/T-003/A-002
+      - G-005/T-003/A-008
+      - G-005/T-003/A-014
+      - G-005/T-003/A-020
+    - - G-005/T-003/A-003
+      - G-005/T-003/A-009
+      - G-005/T-003/A-015
+      - G-005/T-003/A-021
+    - - G-005/T-003/A-004
+      - G-005/T-003/A-010
+      - G-005/T-003/A-016
+      - G-005/T-003/A-022
+    - - G-005/T-003/A-005
+      - G-005/T-003/A-011
+      - G-005/T-003/A-017
+      - G-005/T-003/A-023
+    - - G-005/T-003/A-006
+      - G-005/T-003/A-012
+      - G-005/T-003/A-018
+      - G-005/T-003/A-024
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-003/A-001
+      step_id: A-001
+      name: plan-export-metadata
+      status: draft
+      target_file: plan_manager/commands/plan_export_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-003/A-002
+      step_id: A-002
+      name: plan-export-command-class-shape
+      status: draft
+      target_file: plan_manager/commands/plan_export_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-003/A-001
+    - branch_id: G-005/T-003/A-003
+      step_id: A-003
+      name: plan-export-command-get-schema
+      status: draft
+      target_file: plan_manager/commands/plan_export_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-003/A-002
+    - branch_id: G-005/T-003/A-004
+      step_id: A-004
+      name: plan-export-command-metadata-method
+      status: draft
+      target_file: plan_manager/commands/plan_export_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-003/A-003
+    - branch_id: G-005/T-003/A-005
+      step_id: A-005
+      name: plan-export-command-validate-params
+      status: draft
+      target_file: plan_manager/commands/plan_export_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-003/A-004
+    - branch_id: G-005/T-003/A-006
+      step_id: A-006
+      name: plan-export-command-execute
+      status: draft
+      target_file: plan_manager/commands/plan_export_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-003/A-005
+    - branch_id: G-005/T-003/A-007
+      step_id: A-007
+      name: hrs-export-metadata
+      status: draft
+      target_file: plan_manager/commands/hrs_export_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-003/A-008
+      step_id: A-008
+      name: hrs-export-command-class-shape
+      status: draft
+      target_file: plan_manager/commands/hrs_export_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-003/A-007
+    - branch_id: G-005/T-003/A-009
+      step_id: A-009
+      name: hrs-export-command-get-schema
+      status: draft
+      target_file: plan_manager/commands/hrs_export_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-003/A-008
+    - branch_id: G-005/T-003/A-010
+      step_id: A-010
+      name: hrs-export-command-metadata-method
+      status: draft
+      target_file: plan_manager/commands/hrs_export_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-003/A-009
+    - branch_id: G-005/T-003/A-011
+      step_id: A-011
+      name: hrs-export-command-validate-params
+      status: draft
+      target_file: plan_manager/commands/hrs_export_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-003/A-010
+    - branch_id: G-005/T-003/A-012
+      step_id: A-012
+      name: hrs-export-command-execute
+      status: draft
+      target_file: plan_manager/commands/hrs_export_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-003/A-011
+    - branch_id: G-005/T-003/A-013
+      step_id: A-013
+      name: plan-import-metadata
+      status: draft
+      target_file: plan_manager/commands/plan_import_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-003/A-014
+      step_id: A-014
+      name: plan-import-command-class-shape
+      status: draft
+      target_file: plan_manager/commands/plan_import_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-003/A-013
+    - branch_id: G-005/T-003/A-015
+      step_id: A-015
+      name: plan-import-command-get-schema
+      status: draft
+      target_file: plan_manager/commands/plan_import_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-003/A-014
+    - branch_id: G-005/T-003/A-016
+      step_id: A-016
+      name: plan-import-command-metadata-method
+      status: draft
+      target_file: plan_manager/commands/plan_import_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-003/A-015
+    - branch_id: G-005/T-003/A-017
+      step_id: A-017
+      name: plan-import-command-validate-params
+      status: draft
+      target_file: plan_manager/commands/plan_import_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-003/A-016
+    - branch_id: G-005/T-003/A-018
+      step_id: A-018
+      name: plan-import-command-execute
+      status: draft
+      target_file: plan_manager/commands/plan_import_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-003/A-017
+    - branch_id: G-005/T-003/A-019
+      step_id: A-019
+      name: hrs-import-metadata
+      status: draft
+      target_file: plan_manager/commands/hrs_import_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-003/A-020
+      step_id: A-020
+      name: hrs-import-command-class-shape
+      status: draft
+      target_file: plan_manager/commands/hrs_import_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-003/A-019
+    - branch_id: G-005/T-003/A-021
+      step_id: A-021
+      name: hrs-import-command-get-schema
+      status: draft
+      target_file: plan_manager/commands/hrs_import_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-003/A-020
+    - branch_id: G-005/T-003/A-022
+      step_id: A-022
+      name: hrs-import-command-metadata-method
+      status: draft
+      target_file: plan_manager/commands/hrs_import_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-003/A-021
+    - branch_id: G-005/T-003/A-023
+      step_id: A-023
+      name: hrs-import-command-validate-params
+      status: draft
+      target_file: plan_manager/commands/hrs_import_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-003/A-022
+    - branch_id: G-005/T-003/A-024
+      step_id: A-024
+      name: hrs-import-command-execute
+      status: draft
+      target_file: plan_manager/commands/hrs_import_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-003/A-023
+  - branch_id: G-005/T-004
+    name: paragraph-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-004-paragraph-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-004-paragraph-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 8
+      target_files: 8
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/commands/para_get_command.py
+      sequence:
+      - G-005/T-004/A-004
+    - target_file: plan_manager/commands/para_get_metadata.py
+      sequence:
+      - G-005/T-004/A-003
+    - target_file: plan_manager/commands/para_label_assign_command.py
+      sequence:
+      - G-005/T-004/A-006
+    - target_file: plan_manager/commands/para_label_assign_metadata.py
+      sequence:
+      - G-005/T-004/A-005
+    - target_file: plan_manager/commands/para_list_command.py
+      sequence:
+      - G-005/T-004/A-002
+    - target_file: plan_manager/commands/para_list_metadata.py
+      sequence:
+      - G-005/T-004/A-001
+    - target_file: plan_manager/commands/para_mark_non_binding_command.py
+      sequence:
+      - G-005/T-004/A-008
+    - target_file: plan_manager/commands/para_mark_non_binding_metadata.py
+      sequence:
+      - G-005/T-004/A-007
+    parallel_waves:
+    - - G-005/T-004/A-001
+      - G-005/T-004/A-003
+      - G-005/T-004/A-005
+      - G-005/T-004/A-007
+    - - G-005/T-004/A-002
+      - G-005/T-004/A-004
+      - G-005/T-004/A-006
+      - G-005/T-004/A-008
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-004/A-001
+      step_id: A-001
+      name: para-list-metadata
+      status: draft
+      target_file: plan_manager/commands/para_list_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-004/A-002
+      step_id: A-002
+      name: para-list-command
+      status: draft
+      target_file: plan_manager/commands/para_list_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-004/A-001
+    - branch_id: G-005/T-004/A-003
+      step_id: A-003
+      name: para-get-metadata
+      status: draft
+      target_file: plan_manager/commands/para_get_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-004/A-004
+      step_id: A-004
+      name: para-get-command
+      status: draft
+      target_file: plan_manager/commands/para_get_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-004/A-003
+    - branch_id: G-005/T-004/A-005
+      step_id: A-005
+      name: para-label-assign-metadata
+      status: draft
+      target_file: plan_manager/commands/para_label_assign_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-004/A-006
+      step_id: A-006
+      name: para-label-assign-command
+      status: draft
+      target_file: plan_manager/commands/para_label_assign_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-004/A-005
+    - branch_id: G-005/T-004/A-007
+      step_id: A-007
+      name: para-mark-non-binding-metadata
+      status: draft
+      target_file: plan_manager/commands/para_mark_non_binding_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-004/A-008
+      step_id: A-008
+      name: para-mark-non-binding-command
+      status: draft
+      target_file: plan_manager/commands/para_mark_non_binding_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-004/A-007
+  - branch_id: G-005/T-005
+    name: mrs-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-005-mrs-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-005-mrs-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 23
+      target_files: 18
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/commands/concept_add_command.py
+      sequence:
+      - G-005/T-005/A-005
+      - G-005/T-005/A-006
+    - target_file: plan_manager/commands/concept_add_metadata.py
+      sequence:
+      - G-005/T-005/A-007
+    - target_file: plan_manager/commands/concept_coverage_command.py
+      sequence:
+      - G-005/T-005/A-022
+    - target_file: plan_manager/commands/concept_coverage_metadata.py
+      sequence:
+      - G-005/T-005/A-023
+    - target_file: plan_manager/commands/concept_get_command.py
+      sequence:
+      - G-005/T-005/A-001
+    - target_file: plan_manager/commands/concept_get_metadata.py
+      sequence:
+      - G-005/T-005/A-002
+    - target_file: plan_manager/commands/concept_list_command.py
+      sequence:
+      - G-005/T-005/A-003
+    - target_file: plan_manager/commands/concept_list_metadata.py
+      sequence:
+      - G-005/T-005/A-004
+    - target_file: plan_manager/commands/concept_remove_command.py
+      sequence:
+      - G-005/T-005/A-011
+      - G-005/T-005/A-012
+    - target_file: plan_manager/commands/concept_remove_metadata.py
+      sequence:
+      - G-005/T-005/A-013
+    - target_file: plan_manager/commands/concept_update_command.py
+      sequence:
+      - G-005/T-005/A-008
+      - G-005/T-005/A-009
+    - target_file: plan_manager/commands/concept_update_metadata.py
+      sequence:
+      - G-005/T-005/A-010
+    - target_file: plan_manager/commands/relation_add_command.py
+      sequence:
+      - G-005/T-005/A-016
+      - G-005/T-005/A-017
+    - target_file: plan_manager/commands/relation_add_metadata.py
+      sequence:
+      - G-005/T-005/A-018
+    - target_file: plan_manager/commands/relation_list_command.py
+      sequence:
+      - G-005/T-005/A-014
+    - target_file: plan_manager/commands/relation_list_metadata.py
+      sequence:
+      - G-005/T-005/A-015
+    - target_file: plan_manager/commands/relation_remove_command.py
+      sequence:
+      - G-005/T-005/A-019
+      - G-005/T-005/A-020
+    - target_file: plan_manager/commands/relation_remove_metadata.py
+      sequence:
+      - G-005/T-005/A-021
+    parallel_waves:
+    - - G-005/T-005/A-001
+      - G-005/T-005/A-002
+      - G-005/T-005/A-003
+      - G-005/T-005/A-004
+      - G-005/T-005/A-005
+      - G-005/T-005/A-007
+      - G-005/T-005/A-008
+      - G-005/T-005/A-010
+      - G-005/T-005/A-011
+      - G-005/T-005/A-013
+      - G-005/T-005/A-014
+      - G-005/T-005/A-015
+      - G-005/T-005/A-016
+      - G-005/T-005/A-018
+      - G-005/T-005/A-019
+      - G-005/T-005/A-021
+      - G-005/T-005/A-022
+      - G-005/T-005/A-023
+    - - G-005/T-005/A-006
+      - G-005/T-005/A-009
+      - G-005/T-005/A-012
+      - G-005/T-005/A-017
+      - G-005/T-005/A-020
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-005/A-001
+      step_id: A-001
+      name: Create concept_get command class
+      status: draft
+      target_file: plan_manager/commands/concept_get_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-002
+      step_id: A-002
+      name: Create concept_get metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_get_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-003
+      step_id: A-003
+      name: Create concept_list command class
+      status: draft
+      target_file: plan_manager/commands/concept_list_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-004
+      step_id: A-004
+      name: Create concept_list metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_list_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-005
+      step_id: A-005
+      name: Create concept_add command scaffold (schema and validate_params)
+      status: draft
+      target_file: plan_manager/commands/concept_add_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-006
+      step_id: A-006
+      name: Add cascade-wired execute method to concept_add command
+      status: draft
+      target_file: plan_manager/commands/concept_add_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-005/A-005
+    - branch_id: G-005/T-005/A-007
+      step_id: A-007
+      name: Create concept_add metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_add_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-008
+      step_id: A-008
+      name: Create concept_update command scaffold (schema and validate_params)
+      status: draft
+      target_file: plan_manager/commands/concept_update_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-009
+      step_id: A-009
+      name: Add cascade-wired execute method to concept_update command
+      status: draft
+      target_file: plan_manager/commands/concept_update_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-005/A-008
+    - branch_id: G-005/T-005/A-010
+      step_id: A-010
+      name: Create concept_update metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_update_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-011
+      step_id: A-011
+      name: Create concept_remove command scaffold (schema and validate_params)
+      status: draft
+      target_file: plan_manager/commands/concept_remove_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-012
+      step_id: A-012
+      name: Add cascade-wired execute method to concept_remove command
+      status: draft
+      target_file: plan_manager/commands/concept_remove_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-005/A-011
+    - branch_id: G-005/T-005/A-013
+      step_id: A-013
+      name: Create concept_remove metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_remove_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-014
+      step_id: A-014
+      name: Create relation_list command class
+      status: draft
+      target_file: plan_manager/commands/relation_list_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-015
+      step_id: A-015
+      name: Create relation_list metadata module
+      status: draft
+      target_file: plan_manager/commands/relation_list_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-016
+      step_id: A-016
+      name: Create relation_add command scaffold (schema and validate_params)
+      status: draft
+      target_file: plan_manager/commands/relation_add_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-017
+      step_id: A-017
+      name: Add cascade-wired execute method to relation_add command
+      status: draft
+      target_file: plan_manager/commands/relation_add_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-005/A-016
+    - branch_id: G-005/T-005/A-018
+      step_id: A-018
+      name: Create relation_add metadata module
+      status: draft
+      target_file: plan_manager/commands/relation_add_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-019
+      step_id: A-019
+      name: Create relation_remove command scaffold (schema and validate_params)
+      status: draft
+      target_file: plan_manager/commands/relation_remove_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-020
+      step_id: A-020
+      name: Add cascade-wired execute method to relation_remove command
+      status: draft
+      target_file: plan_manager/commands/relation_remove_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-005/A-019
+    - branch_id: G-005/T-005/A-021
+      step_id: A-021
+      name: Create relation_remove metadata module
+      status: draft
+      target_file: plan_manager/commands/relation_remove_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-022
+      step_id: A-022
+      name: Create concept_coverage command class
+      status: draft
+      target_file: plan_manager/commands/concept_coverage_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-005/A-023
+      step_id: A-023
+      name: Create concept_coverage metadata module
+      status: draft
+      target_file: plan_manager/commands/concept_coverage_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-005/T-006
+    name: step-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-006-step-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-006-step-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 19
+      target_files: 14
+      parallel_waves: 3
+    target_file_sequences:
+    - target_file: plan_manager/commands/step_create_command.py
+      sequence:
+      - G-005/T-006/A-006
+      - G-005/T-006/A-007
+    - target_file: plan_manager/commands/step_create_metadata.py
+      sequence:
+      - G-005/T-006/A-005
+    - target_file: plan_manager/commands/step_delete_command.py
+      sequence:
+      - G-005/T-006/A-015
+      - G-005/T-006/A-016
+    - target_file: plan_manager/commands/step_delete_metadata.py
+      sequence:
+      - G-005/T-006/A-014
+    - target_file: plan_manager/commands/step_get_command.py
+      sequence:
+      - G-005/T-006/A-002
+    - target_file: plan_manager/commands/step_get_metadata.py
+      sequence:
+      - G-005/T-006/A-001
+    - target_file: plan_manager/commands/step_move_command.py
+      sequence:
+      - G-005/T-006/A-012
+      - G-005/T-006/A-013
+    - target_file: plan_manager/commands/step_move_metadata.py
+      sequence:
+      - G-005/T-006/A-011
+    - target_file: plan_manager/commands/step_set_status_command.py
+      sequence:
+      - G-005/T-006/A-018
+      - G-005/T-006/A-019
+    - target_file: plan_manager/commands/step_set_status_metadata.py
+      sequence:
+      - G-005/T-006/A-017
+    - target_file: plan_manager/commands/step_tree_command.py
+      sequence:
+      - G-005/T-006/A-004
+    - target_file: plan_manager/commands/step_tree_metadata.py
+      sequence:
+      - G-005/T-006/A-003
+    - target_file: plan_manager/commands/step_update_command.py
+      sequence:
+      - G-005/T-006/A-009
+      - G-005/T-006/A-010
+    - target_file: plan_manager/commands/step_update_metadata.py
+      sequence:
+      - G-005/T-006/A-008
+    parallel_waves:
+    - - G-005/T-006/A-001
+      - G-005/T-006/A-003
+      - G-005/T-006/A-005
+      - G-005/T-006/A-008
+      - G-005/T-006/A-011
+      - G-005/T-006/A-014
+      - G-005/T-006/A-017
+    - - G-005/T-006/A-002
+      - G-005/T-006/A-004
+      - G-005/T-006/A-006
+      - G-005/T-006/A-009
+      - G-005/T-006/A-012
+      - G-005/T-006/A-015
+      - G-005/T-006/A-018
+    - - G-005/T-006/A-007
+      - G-005/T-006/A-010
+      - G-005/T-006/A-013
+      - G-005/T-006/A-016
+      - G-005/T-006/A-019
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-006/A-001
+      step_id: A-001
+      name: step_get metadata module
+      status: draft
+      target_file: plan_manager/commands/step_get_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-002
+      step_id: A-002
+      name: step_get command class
+      status: draft
+      target_file: plan_manager/commands/step_get_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-001
+    - branch_id: G-005/T-006/A-003
+      step_id: A-003
+      name: step_tree metadata module
+      status: draft
+      target_file: plan_manager/commands/step_tree_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-004
+      step_id: A-004
+      name: step_tree command class
+      status: draft
+      target_file: plan_manager/commands/step_tree_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-003
+    - branch_id: G-005/T-006/A-005
+      step_id: A-005
+      name: step_create metadata module
+      status: draft
+      target_file: plan_manager/commands/step_create_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-006
+      step_id: A-006
+      name: step_create command class skeleton (schema and validation)
+      status: draft
+      target_file: plan_manager/commands/step_create_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-005
+    - branch_id: G-005/T-006/A-007
+      step_id: A-007
+      name: step_create command execute implementation
+      status: draft
+      target_file: plan_manager/commands/step_create_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-006/A-006
+    - branch_id: G-005/T-006/A-008
+      step_id: A-008
+      name: step_update metadata module
+      status: draft
+      target_file: plan_manager/commands/step_update_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-009
+      step_id: A-009
+      name: step_update command class skeleton (schema and validation)
+      status: draft
+      target_file: plan_manager/commands/step_update_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-008
+    - branch_id: G-005/T-006/A-010
+      step_id: A-010
+      name: step_update command execute implementation
+      status: draft
+      target_file: plan_manager/commands/step_update_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-006/A-009
+    - branch_id: G-005/T-006/A-011
+      step_id: A-011
+      name: step_move metadata module
+      status: draft
+      target_file: plan_manager/commands/step_move_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-012
+      step_id: A-012
+      name: step_move command class skeleton (schema and validation)
+      status: draft
+      target_file: plan_manager/commands/step_move_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-011
+    - branch_id: G-005/T-006/A-013
+      step_id: A-013
+      name: step_move command execute implementation
+      status: draft
+      target_file: plan_manager/commands/step_move_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-006/A-012
+    - branch_id: G-005/T-006/A-014
+      step_id: A-014
+      name: step_delete metadata module
+      status: draft
+      target_file: plan_manager/commands/step_delete_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-015
+      step_id: A-015
+      name: step_delete command class skeleton (schema and validation)
+      status: draft
+      target_file: plan_manager/commands/step_delete_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-014
+    - branch_id: G-005/T-006/A-016
+      step_id: A-016
+      name: step_delete command execute implementation
+      status: draft
+      target_file: plan_manager/commands/step_delete_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-006/A-015
+    - branch_id: G-005/T-006/A-017
+      step_id: A-017
+      name: step_set_status metadata module
+      status: draft
+      target_file: plan_manager/commands/step_set_status_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-006/A-018
+      step_id: A-018
+      name: step_set_status command class skeleton (schema and validation)
+      status: draft
+      target_file: plan_manager/commands/step_set_status_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-006/A-017
+    - branch_id: G-005/T-006/A-019
+      step_id: A-019
+      name: step_set_status command execute implementation
+      status: draft
+      target_file: plan_manager/commands/step_set_status_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-006/A-018
+  - branch_id: G-005/T-007
+    name: graph-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-007-graph-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-007-graph-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 24
+      target_files: 8
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/commands/graph_deps_command.py
+      sequence:
+      - G-005/T-007/A-002
+      - G-005/T-007/A-003
+      - G-005/T-007/A-004
+      - G-005/T-007/A-005
+      - G-005/T-007/A-006
+    - target_file: plan_manager/commands/graph_deps_metadata.py
+      sequence:
+      - G-005/T-007/A-001
+    - target_file: plan_manager/commands/graph_impact_command.py
+      sequence:
+      - G-005/T-007/A-020
+      - G-005/T-007/A-021
+      - G-005/T-007/A-022
+      - G-005/T-007/A-023
+      - G-005/T-007/A-024
+    - target_file: plan_manager/commands/graph_impact_metadata.py
+      sequence:
+      - G-005/T-007/A-019
+    - target_file: plan_manager/commands/graph_order_command.py
+      sequence:
+      - G-005/T-007/A-008
+      - G-005/T-007/A-009
+      - G-005/T-007/A-010
+      - G-005/T-007/A-011
+      - G-005/T-007/A-012
+    - target_file: plan_manager/commands/graph_order_metadata.py
+      sequence:
+      - G-005/T-007/A-007
+    - target_file: plan_manager/commands/graph_parallel_map_command.py
+      sequence:
+      - G-005/T-007/A-014
+      - G-005/T-007/A-015
+      - G-005/T-007/A-016
+      - G-005/T-007/A-017
+      - G-005/T-007/A-018
+    - target_file: plan_manager/commands/graph_parallel_map_metadata.py
+      sequence:
+      - G-005/T-007/A-013
+    parallel_waves:
+    - - G-005/T-007/A-001
+      - G-005/T-007/A-002
+      - G-005/T-007/A-007
+      - G-005/T-007/A-008
+      - G-005/T-007/A-013
+      - G-005/T-007/A-014
+      - G-005/T-007/A-019
+      - G-005/T-007/A-020
+    - - G-005/T-007/A-003
+      - G-005/T-007/A-009
+      - G-005/T-007/A-015
+      - G-005/T-007/A-021
+    - - G-005/T-007/A-004
+      - G-005/T-007/A-010
+      - G-005/T-007/A-016
+      - G-005/T-007/A-022
+    - - G-005/T-007/A-005
+      - G-005/T-007/A-011
+      - G-005/T-007/A-017
+      - G-005/T-007/A-023
+    - - G-005/T-007/A-006
+      - G-005/T-007/A-012
+      - G-005/T-007/A-018
+      - G-005/T-007/A-024
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-007/A-001
+      step_id: A-001
+      name: Create graph_deps_metadata.py
+      status: draft
+      target_file: plan_manager/commands/graph_deps_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-002
+      step_id: A-002
+      name: Create graph_deps_command.py class skeleton
+      status: draft
+      target_file: plan_manager/commands/graph_deps_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-003
+      step_id: A-003
+      name: Add get_schema to GraphDepsCommand
+      status: draft
+      target_file: plan_manager/commands/graph_deps_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-007/A-002
+    - branch_id: G-005/T-007/A-004
+      step_id: A-004
+      name: Add metadata to GraphDepsCommand
+      status: draft
+      target_file: plan_manager/commands/graph_deps_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-007/A-003
+      - G-005/T-007/A-001
+    - branch_id: G-005/T-007/A-005
+      step_id: A-005
+      name: Add validate_params to GraphDepsCommand
+      status: draft
+      target_file: plan_manager/commands/graph_deps_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-007/A-004
+    - branch_id: G-005/T-007/A-006
+      step_id: A-006
+      name: Add execute to GraphDepsCommand
+      status: draft
+      target_file: plan_manager/commands/graph_deps_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-007/A-005
+    - branch_id: G-005/T-007/A-007
+      step_id: A-007
+      name: Create graph_order_metadata.py
+      status: draft
+      target_file: plan_manager/commands/graph_order_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-008
+      step_id: A-008
+      name: Create graph_order_command.py class skeleton
+      status: draft
+      target_file: plan_manager/commands/graph_order_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-009
+      step_id: A-009
+      name: Add get_schema to GraphOrderCommand
+      status: draft
+      target_file: plan_manager/commands/graph_order_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-007/A-008
+    - branch_id: G-005/T-007/A-010
+      step_id: A-010
+      name: Add metadata to GraphOrderCommand
+      status: draft
+      target_file: plan_manager/commands/graph_order_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-007/A-009
+      - G-005/T-007/A-007
+    - branch_id: G-005/T-007/A-011
+      step_id: A-011
+      name: Add validate_params to GraphOrderCommand
+      status: draft
+      target_file: plan_manager/commands/graph_order_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-007/A-010
+    - branch_id: G-005/T-007/A-012
+      step_id: A-012
+      name: Add execute to GraphOrderCommand
+      status: draft
+      target_file: plan_manager/commands/graph_order_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-007/A-011
+    - branch_id: G-005/T-007/A-013
+      step_id: A-013
+      name: Create graph_parallel_map_metadata.py
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-014
+      step_id: A-014
+      name: Create graph_parallel_map_command.py class skeleton
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-015
+      step_id: A-015
+      name: Add get_schema to GraphParallelMapCommand
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-007/A-014
+    - branch_id: G-005/T-007/A-016
+      step_id: A-016
+      name: Add metadata to GraphParallelMapCommand
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-007/A-015
+      - G-005/T-007/A-013
+    - branch_id: G-005/T-007/A-017
+      step_id: A-017
+      name: Add validate_params to GraphParallelMapCommand
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-007/A-016
+    - branch_id: G-005/T-007/A-018
+      step_id: A-018
+      name: Add execute to GraphParallelMapCommand
+      status: draft
+      target_file: plan_manager/commands/graph_parallel_map_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-007/A-017
+    - branch_id: G-005/T-007/A-019
+      step_id: A-019
+      name: Create graph_impact_metadata.py
+      status: draft
+      target_file: plan_manager/commands/graph_impact_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-020
+      step_id: A-020
+      name: Create graph_impact_command.py class skeleton
+      status: draft
+      target_file: plan_manager/commands/graph_impact_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-007/A-021
+      step_id: A-021
+      name: Add get_schema to GraphImpactCommand
+      status: draft
+      target_file: plan_manager/commands/graph_impact_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-007/A-020
+    - branch_id: G-005/T-007/A-022
+      step_id: A-022
+      name: Add metadata to GraphImpactCommand
+      status: draft
+      target_file: plan_manager/commands/graph_impact_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-007/A-021
+      - G-005/T-007/A-019
+    - branch_id: G-005/T-007/A-023
+      step_id: A-023
+      name: Add validate_params to GraphImpactCommand
+      status: draft
+      target_file: plan_manager/commands/graph_impact_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-007/A-022
+    - branch_id: G-005/T-007/A-024
+      step_id: A-024
+      name: Add execute to GraphImpactCommand
+      status: draft
+      target_file: plan_manager/commands/graph_impact_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-007/A-023
+  - branch_id: G-005/T-008
+    name: branch-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-008-branch-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-008-branch-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 18
+      target_files: 6
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/commands/branch_dump_command.py
+      sequence:
+      - G-005/T-008/A-008
+      - G-005/T-008/A-009
+      - G-005/T-008/A-010
+      - G-005/T-008/A-011
+      - G-005/T-008/A-012
+    - target_file: plan_manager/commands/branch_dump_metadata.py
+      sequence:
+      - G-005/T-008/A-007
+    - target_file: plan_manager/commands/branch_prompt_command.py
+      sequence:
+      - G-005/T-008/A-002
+      - G-005/T-008/A-003
+      - G-005/T-008/A-004
+      - G-005/T-008/A-005
+      - G-005/T-008/A-006
+    - target_file: plan_manager/commands/branch_prompt_metadata.py
+      sequence:
+      - G-005/T-008/A-001
+    - target_file: plan_manager/commands/branch_weak_command.py
+      sequence:
+      - G-005/T-008/A-014
+      - G-005/T-008/A-015
+      - G-005/T-008/A-016
+      - G-005/T-008/A-017
+      - G-005/T-008/A-018
+    - target_file: plan_manager/commands/branch_weak_metadata.py
+      sequence:
+      - G-005/T-008/A-013
+    parallel_waves:
+    - - G-005/T-008/A-001
+      - G-005/T-008/A-002
+      - G-005/T-008/A-007
+      - G-005/T-008/A-008
+      - G-005/T-008/A-013
+      - G-005/T-008/A-014
+    - - G-005/T-008/A-003
+      - G-005/T-008/A-009
+      - G-005/T-008/A-015
+    - - G-005/T-008/A-004
+      - G-005/T-008/A-010
+      - G-005/T-008/A-016
+    - - G-005/T-008/A-005
+      - G-005/T-008/A-011
+      - G-005/T-008/A-017
+    - - G-005/T-008/A-006
+      - G-005/T-008/A-012
+      - G-005/T-008/A-018
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-008/A-001
+      step_id: A-001
+      name: branch_prompt extended metadata function
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-002
+      step_id: A-002
+      name: BranchPromptCommand class declaration and identity attributes
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-003
+      step_id: A-003
+      name: BranchPromptCommand get_schema classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-008/A-002
+    - branch_id: G-005/T-008/A-004
+      step_id: A-004
+      name: BranchPromptCommand metadata classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-008/A-003
+      - G-005/T-008/A-001
+    - branch_id: G-005/T-008/A-005
+      step_id: A-005
+      name: BranchPromptCommand validate_params method
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-008/A-004
+    - branch_id: G-005/T-008/A-006
+      step_id: A-006
+      name: BranchPromptCommand execute method
+      status: draft
+      target_file: plan_manager/commands/branch_prompt_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-008/A-005
+    - branch_id: G-005/T-008/A-007
+      step_id: A-007
+      name: branch_dump extended metadata function
+      status: draft
+      target_file: plan_manager/commands/branch_dump_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-008
+      step_id: A-008
+      name: BranchDumpCommand class declaration and identity attributes
+      status: draft
+      target_file: plan_manager/commands/branch_dump_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-009
+      step_id: A-009
+      name: BranchDumpCommand get_schema classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_dump_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-008/A-008
+    - branch_id: G-005/T-008/A-010
+      step_id: A-010
+      name: BranchDumpCommand metadata classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_dump_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-008/A-009
+      - G-005/T-008/A-007
+    - branch_id: G-005/T-008/A-011
+      step_id: A-011
+      name: BranchDumpCommand validate_params method
+      status: draft
+      target_file: plan_manager/commands/branch_dump_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-008/A-010
+    - branch_id: G-005/T-008/A-012
+      step_id: A-012
+      name: BranchDumpCommand execute method
+      status: draft
+      target_file: plan_manager/commands/branch_dump_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-008/A-011
+    - branch_id: G-005/T-008/A-013
+      step_id: A-013
+      name: branch_weak extended metadata function
+      status: draft
+      target_file: plan_manager/commands/branch_weak_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-014
+      step_id: A-014
+      name: BranchWeakCommand class declaration and identity attributes
+      status: draft
+      target_file: plan_manager/commands/branch_weak_command.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-008/A-015
+      step_id: A-015
+      name: BranchWeakCommand get_schema classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_weak_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-008/A-014
+    - branch_id: G-005/T-008/A-016
+      step_id: A-016
+      name: BranchWeakCommand metadata classmethod
+      status: draft
+      target_file: plan_manager/commands/branch_weak_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-008/A-015
+      - G-005/T-008/A-013
+    - branch_id: G-005/T-008/A-017
+      step_id: A-017
+      name: BranchWeakCommand validate_params method
+      status: draft
+      target_file: plan_manager/commands/branch_weak_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-008/A-016
+    - branch_id: G-005/T-008/A-018
+      step_id: A-018
+      name: BranchWeakCommand execute method
+      status: draft
+      target_file: plan_manager/commands/branch_weak_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-008/A-017
+  - branch_id: G-005/T-009
+    name: verification-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-009-verification-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-009-verification-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 8
+      target_files: 4
+      parallel_waves: 4
+    target_file_sequences:
+    - target_file: plan_manager/commands/plan_score_command.py
+      sequence:
+      - G-005/T-009/A-006
+      - G-005/T-009/A-007
+      - G-005/T-009/A-008
+    - target_file: plan_manager/commands/plan_score_metadata.py
+      sequence:
+      - G-005/T-009/A-002
+    - target_file: plan_manager/commands/plan_validate_command.py
+      sequence:
+      - G-005/T-009/A-003
+      - G-005/T-009/A-004
+      - G-005/T-009/A-005
+    - target_file: plan_manager/commands/plan_validate_metadata.py
+      sequence:
+      - G-005/T-009/A-001
+    parallel_waves:
+    - - G-005/T-009/A-001
+      - G-005/T-009/A-002
+    - - G-005/T-009/A-003
+      - G-005/T-009/A-006
+    - - G-005/T-009/A-004
+      - G-005/T-009/A-007
+    - - G-005/T-009/A-005
+      - G-005/T-009/A-008
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-009/A-001
+      step_id: A-001
+      name: Create plan_validate command metadata module
+      status: draft
+      target_file: plan_manager/commands/plan_validate_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-009/A-002
+      step_id: A-002
+      name: Create plan_score command metadata module
+      status: draft
+      target_file: plan_manager/commands/plan_score_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-009/A-003
+      step_id: A-003
+      name: Create PlanValidateCommand class skeleton with schema and metadata wiring
+      status: draft
+      target_file: plan_manager/commands/plan_validate_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-009/A-001
+    - branch_id: G-005/T-009/A-004
+      step_id: A-004
+      name: Add validate_params scope-selector semantic validation to PlanValidateCommand
+      status: draft
+      target_file: plan_manager/commands/plan_validate_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-009/A-003
+    - branch_id: G-005/T-009/A-005
+      step_id: A-005
+      name: Add execute method wiring PlanValidateCommand onto resolve_plan/resolve_branch/run_gate
+      status: draft
+      target_file: plan_manager/commands/plan_validate_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-009/A-004
+    - branch_id: G-005/T-009/A-006
+      step_id: A-006
+      name: Create PlanScoreCommand class skeleton with schema and metadata wiring
+      status: draft
+      target_file: plan_manager/commands/plan_score_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-009/A-002
+    - branch_id: G-005/T-009/A-007
+      step_id: A-007
+      name: Add validate_params scope-selector and expected_revision UUID validation to PlanScoreCommand
+      status: draft
+      target_file: plan_manager/commands/plan_score_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-009/A-006
+    - branch_id: G-005/T-009/A-008
+      step_id: A-008
+      name: Add execute method wiring PlanScoreCommand onto the freshness guard and score_plan/score_branch
+      status: draft
+      target_file: plan_manager/commands/plan_score_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-009/A-007
+  - branch_id: G-005/T-010
+    name: cascade-commands
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-010-cascade-commands/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-010-cascade-commands/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 24
+      target_files: 8
+      parallel_waves: 6
+    target_file_sequences:
+    - target_file: plan_manager/commands/cascade_abort_command.py
+      sequence:
+      - G-005/T-010/A-020
+      - G-005/T-010/A-021
+      - G-005/T-010/A-022
+      - G-005/T-010/A-023
+      - G-005/T-010/A-024
+    - target_file: plan_manager/commands/cascade_abort_metadata.py
+      sequence:
+      - G-005/T-010/A-004
+    - target_file: plan_manager/commands/cascade_begin_command.py
+      sequence:
+      - G-005/T-010/A-005
+      - G-005/T-010/A-006
+      - G-005/T-010/A-007
+      - G-005/T-010/A-008
+      - G-005/T-010/A-009
+    - target_file: plan_manager/commands/cascade_begin_metadata.py
+      sequence:
+      - G-005/T-010/A-001
+    - target_file: plan_manager/commands/cascade_commit_command.py
+      sequence:
+      - G-005/T-010/A-015
+      - G-005/T-010/A-016
+      - G-005/T-010/A-017
+      - G-005/T-010/A-018
+      - G-005/T-010/A-019
+    - target_file: plan_manager/commands/cascade_commit_metadata.py
+      sequence:
+      - G-005/T-010/A-003
+    - target_file: plan_manager/commands/cascade_preview_command.py
+      sequence:
+      - G-005/T-010/A-010
+      - G-005/T-010/A-011
+      - G-005/T-010/A-012
+      - G-005/T-010/A-013
+      - G-005/T-010/A-014
+    - target_file: plan_manager/commands/cascade_preview_metadata.py
+      sequence:
+      - G-005/T-010/A-002
+    parallel_waves:
+    - - G-005/T-010/A-001
+      - G-005/T-010/A-002
+      - G-005/T-010/A-003
+      - G-005/T-010/A-004
+    - - G-005/T-010/A-005
+      - G-005/T-010/A-010
+      - G-005/T-010/A-015
+      - G-005/T-010/A-020
+    - - G-005/T-010/A-006
+      - G-005/T-010/A-011
+      - G-005/T-010/A-016
+      - G-005/T-010/A-021
+    - - G-005/T-010/A-007
+      - G-005/T-010/A-012
+      - G-005/T-010/A-017
+      - G-005/T-010/A-022
+    - - G-005/T-010/A-008
+      - G-005/T-010/A-013
+      - G-005/T-010/A-018
+      - G-005/T-010/A-023
+    - - G-005/T-010/A-009
+      - G-005/T-010/A-014
+      - G-005/T-010/A-019
+      - G-005/T-010/A-024
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-010/A-001
+      step_id: A-001
+      name: cascade_begin metadata module
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-010/A-002
+      step_id: A-002
+      name: cascade_preview metadata module
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-010/A-003
+      step_id: A-003
+      name: cascade_commit metadata module
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-010/A-004
+      step_id: A-004
+      name: cascade_abort metadata module
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-010/A-005
+      step_id: A-005
+      name: CascadeBeginCommand class shape and identity attributes
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-010/A-001
+    - branch_id: G-005/T-010/A-006
+      step_id: A-006
+      name: CascadeBeginCommand.get_schema
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-010/A-005
+    - branch_id: G-005/T-010/A-007
+      step_id: A-007
+      name: CascadeBeginCommand.metadata
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-010/A-006
+    - branch_id: G-005/T-010/A-008
+      step_id: A-008
+      name: CascadeBeginCommand.validate_params
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-010/A-007
+    - branch_id: G-005/T-010/A-009
+      step_id: A-009
+      name: CascadeBeginCommand.execute
+      status: draft
+      target_file: plan_manager/commands/cascade_begin_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-010/A-008
+    - branch_id: G-005/T-010/A-010
+      step_id: A-010
+      name: CascadePreviewCommand class shape and identity attributes
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-010/A-002
+    - branch_id: G-005/T-010/A-011
+      step_id: A-011
+      name: CascadePreviewCommand.get_schema
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-010/A-010
+    - branch_id: G-005/T-010/A-012
+      step_id: A-012
+      name: CascadePreviewCommand.metadata
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-010/A-011
+    - branch_id: G-005/T-010/A-013
+      step_id: A-013
+      name: CascadePreviewCommand.validate_params
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-010/A-012
+    - branch_id: G-005/T-010/A-014
+      step_id: A-014
+      name: CascadePreviewCommand.execute
+      status: draft
+      target_file: plan_manager/commands/cascade_preview_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-010/A-013
+    - branch_id: G-005/T-010/A-015
+      step_id: A-015
+      name: CascadeCommitCommand class shape and identity attributes
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-010/A-003
+    - branch_id: G-005/T-010/A-016
+      step_id: A-016
+      name: CascadeCommitCommand.get_schema
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-010/A-015
+    - branch_id: G-005/T-010/A-017
+      step_id: A-017
+      name: CascadeCommitCommand.metadata
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-010/A-016
+    - branch_id: G-005/T-010/A-018
+      step_id: A-018
+      name: CascadeCommitCommand.validate_params
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-010/A-017
+    - branch_id: G-005/T-010/A-019
+      step_id: A-019
+      name: CascadeCommitCommand.execute
+      status: draft
+      target_file: plan_manager/commands/cascade_commit_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-010/A-018
+    - branch_id: G-005/T-010/A-020
+      step_id: A-020
+      name: CascadeAbortCommand class shape and identity attributes
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-010/A-004
+    - branch_id: G-005/T-010/A-021
+      step_id: A-021
+      name: CascadeAbortCommand.get_schema
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-010/A-020
+    - branch_id: G-005/T-010/A-022
+      step_id: A-022
+      name: CascadeAbortCommand.metadata
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-010/A-021
+    - branch_id: G-005/T-010/A-023
+      step_id: A-023
+      name: CascadeAbortCommand.validate_params
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-010/A-022
+    - branch_id: G-005/T-010/A-024
+      step_id: A-024
+      name: CascadeAbortCommand.execute
+      status: draft
+      target_file: plan_manager/commands/cascade_abort_command.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-005/T-010/A-023
+  - branch_id: G-005/T-011
+    name: info-command
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-011-info-command/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-011-info-command/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 5
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/commands/info_command.py
+      sequence:
+      - G-005/T-011/A-002
+      - G-005/T-011/A-003
+      - G-005/T-011/A-004
+      - G-005/T-011/A-005
+    - target_file: plan_manager/commands/info_metadata.py
+      sequence:
+      - G-005/T-011/A-001
+    parallel_waves:
+    - - G-005/T-011/A-001
+    - - G-005/T-011/A-002
+    - - G-005/T-011/A-003
+    - - G-005/T-011/A-004
+    - - G-005/T-011/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-011/A-001
+      step_id: A-001
+      name: info-metadata-function
+      status: draft
+      target_file: plan_manager/commands/info_metadata.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-011/A-002
+      step_id: A-002
+      name: info-command-schema
+      status: draft
+      target_file: plan_manager/commands/info_command.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-011/A-001
+    - branch_id: G-005/T-011/A-003
+      step_id: A-003
+      name: info-command-validate-params
+      status: draft
+      target_file: plan_manager/commands/info_command.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-011/A-002
+    - branch_id: G-005/T-011/A-004
+      step_id: A-004
+      name: info-command-execute
+      status: draft
+      target_file: plan_manager/commands/info_command.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-011/A-003
+    - branch_id: G-005/T-011/A-005
+      step_id: A-005
+      name: info-command-metadata-method
+      status: draft
+      target_file: plan_manager/commands/info_command.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-005/T-011/A-004
+  - branch_id: G-005/T-012
+    name: registration-guard
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-012-registration-guard/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-005-api-surface/T-012-registration-guard/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 5
+      target_files: 3
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/commands/inventory.py
+      sequence:
+      - G-005/T-012/A-001
+    - target_file: plan_manager/commands/registration.py
+      sequence:
+      - G-005/T-012/A-002
+      - G-005/T-012/A-003
+      - G-005/T-012/A-004
+    - target_file: plan_manager/hooks.py
+      sequence:
+      - G-005/T-012/A-005
+    parallel_waves:
+    - - G-005/T-012/A-001
+    - - G-005/T-012/A-002
+    - - G-005/T-012/A-003
+    - - G-005/T-012/A-004
+    - - G-005/T-012/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-005/T-012/A-001
+      step_id: A-001
+      name: inventory-constant
+      status: draft
+      target_file: plan_manager/commands/inventory.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-005/T-012/A-002
+      step_id: A-002
+      name: registration-imports-register-all
+      status: draft
+      target_file: plan_manager/commands/registration.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-012/A-001
+    - branch_id: G-005/T-012/A-003
+      step_id: A-003
+      name: registration-check-inventory
+      status: draft
+      target_file: plan_manager/commands/registration.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-005/T-012/A-002
+    - branch_id: G-005/T-012/A-004
+      step_id: A-004
+      name: registration-probe-commands
+      status: draft
+      target_file: plan_manager/commands/registration.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-005/T-012/A-003
+    - branch_id: G-005/T-012/A-005
+      step_id: A-005
+      name: startup-hook
+      status: draft
+      target_file: plan_manager/hooks.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-005/T-012/A-004
+- branch_id: G-006
+  name: runtime-config
+  status: draft
+  depends_on:
+  - G-001
+  tactical_steps:
+  - branch_id: G-006/T-001
+    name: config-model
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-001-config-model/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-001-config-model/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 7
+      target_files: 1
+      parallel_waves: 7
+    target_file_sequences:
+    - target_file: plan_manager/runtime/config.py
+      sequence:
+      - G-006/T-001/A-001
+      - G-006/T-001/A-002
+      - G-006/T-001/A-003
+      - G-006/T-001/A-004
+      - G-006/T-001/A-005
+      - G-006/T-001/A-006
+      - G-006/T-001/A-007
+    parallel_waves:
+    - - G-006/T-001/A-001
+    - - G-006/T-001/A-002
+    - - G-006/T-001/A-003
+    - - G-006/T-001/A-004
+    - - G-006/T-001/A-005
+    - - G-006/T-001/A-006
+    - - G-006/T-001/A-007
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-006/T-001/A-001
+      step_id: A-001
+      name: module-header-and-config-error
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-006/T-001/A-002
+      step_id: A-002
+      name: database-section
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-006/T-001/A-001
+    - branch_id: G-006/T-001/A-003
+      step_id: A-003
+      name: embedding-section
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-006/T-001/A-002
+    - branch_id: G-006/T-001/A-004
+      step_id: A-004
+      name: scoring-section
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-006/T-001/A-003
+    - branch_id: G-006/T-001/A-005
+      step_id: A-005
+      name: plan-manager-section
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-006/T-001/A-004
+    - branch_id: G-006/T-001/A-006
+      step_id: A-006
+      name: load-raw
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-006/T-001/A-005
+    - branch_id: G-006/T-001/A-007
+      step_id: A-007
+      name: load-config
+      status: draft
+      target_file: plan_manager/runtime/config.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-006/T-001/A-006
+  - branch_id: G-006/T-002
+    name: runtime-accessors
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-002-runtime-accessors/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-002-runtime-accessors/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 7
+      target_files: 1
+      parallel_waves: 7
+    target_file_sequences:
+    - target_file: plan_manager/runtime/context.py
+      sequence:
+      - G-006/T-002/A-001
+      - G-006/T-002/A-002
+      - G-006/T-002/A-003
+      - G-006/T-002/A-004
+      - G-006/T-002/A-005
+      - G-006/T-002/A-006
+      - G-006/T-002/A-007
+    parallel_waves:
+    - - G-006/T-002/A-001
+    - - G-006/T-002/A-002
+    - - G-006/T-002/A-003
+    - - G-006/T-002/A-004
+    - - G-006/T-002/A-005
+    - - G-006/T-002/A-006
+    - - G-006/T-002/A-007
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-006/T-002/A-001
+      step_id: A-001
+      name: context-module-skeleton
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-006/T-002/A-002
+      step_id: A-002
+      name: init-runtime
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-006/T-002/A-001
+    - branch_id: G-006/T-002/A-003
+      step_id: A-003
+      name: require-section
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-006/T-002/A-002
+    - branch_id: G-006/T-002/A-004
+      step_id: A-004
+      name: conninfo
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-006/T-002/A-003
+    - branch_id: G-006/T-002/A-005
+      step_id: A-005
+      name: db-connection
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-006/T-002/A-004
+    - branch_id: G-006/T-002/A-006
+      step_id: A-006
+      name: app-config-dataclass
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-006/T-002/A-005
+    - branch_id: G-006/T-002/A-007
+      step_id: A-007
+      name: app-config-projection
+      status: draft
+      target_file: plan_manager/runtime/context.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-006/T-002/A-006
+  - branch_id: G-006/T-003
+    name: build-info-reader
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-003-build-info-reader/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-003-build-info-reader/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 5
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/_build/__init__.py
+      sequence:
+      - G-006/T-003/A-001
+    - target_file: plan_manager/runtime/build_info.py
+      sequence:
+      - G-006/T-003/A-002
+      - G-006/T-003/A-003
+      - G-006/T-003/A-004
+      - G-006/T-003/A-005
+    parallel_waves:
+    - - G-006/T-003/A-001
+    - - G-006/T-003/A-002
+    - - G-006/T-003/A-003
+    - - G-006/T-003/A-004
+    - - G-006/T-003/A-005
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-006/T-003/A-001
+      step_id: A-001
+      name: build-payload-package-marker
+      status: draft
+      target_file: plan_manager/_build/__init__.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-006/T-003/A-002
+      step_id: A-002
+      name: build-info-module-constants
+      status: draft
+      target_file: plan_manager/runtime/build_info.py
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-006/T-003/A-001
+    - branch_id: G-006/T-003/A-003
+      step_id: A-003
+      name: read-resource-helper
+      status: draft
+      target_file: plan_manager/runtime/build_info.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-006/T-003/A-002
+    - branch_id: G-006/T-003/A-004
+      step_id: A-004
+      name: build-info-function
+      status: draft
+      target_file: plan_manager/runtime/build_info.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-006/T-003/A-003
+    - branch_id: G-006/T-003/A-005
+      step_id: A-005
+      name: operator-doc-function
+      status: draft
+      target_file: plan_manager/runtime/build_info.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-006/T-003/A-004
+  - branch_id: G-006/T-004
+    name: bootstrap
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-004-bootstrap/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-006-runtime-config/T-004-bootstrap/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 4
+      target_files: 1
+      parallel_waves: 4
+    target_file_sequences:
+    - target_file: plan_manager/main.py
+      sequence:
+      - G-006/T-004/A-001
+      - G-006/T-004/A-002
+      - G-006/T-004/A-003
+      - G-006/T-004/A-004
+    parallel_waves:
+    - - G-006/T-004/A-001
+    - - G-006/T-004/A-002
+    - - G-006/T-004/A-003
+    - - G-006/T-004/A-004
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-006/T-004/A-001
+      step_id: A-001
+      name: module-preamble
+      status: draft
+      target_file: plan_manager/main.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-006/T-004/A-002
+      step_id: A-002
+      name: build-app
+      status: draft
+      target_file: plan_manager/main.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-006/T-004/A-001
+    - branch_id: G-006/T-004/A-003
+      step_id: A-003
+      name: main-entrypoint
+      status: draft
+      target_file: plan_manager/main.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-006/T-004/A-002
+    - branch_id: G-006/T-004/A-004
+      step_id: A-004
+      name: main-guard
+      status: draft
+      target_file: plan_manager/main.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-006/T-004/A-003
+- branch_id: G-007
+  name: exchange-format
+  status: draft
+  depends_on:
+  - G-001
+  tactical_steps:
+  - branch_id: G-007/T-001
+    name: hrs-paragraph-access
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-001-hrs-paragraph-access/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-001-hrs-paragraph-access/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 4
+      target_files: 1
+      parallel_waves: 4
+    target_file_sequences:
+    - target_file: plan_manager/hrs/paragraphs.py
+      sequence:
+      - G-007/T-001/A-001
+      - G-007/T-001/A-002
+      - G-007/T-001/A-003
+      - G-007/T-001/A-004
+    parallel_waves:
+    - - G-007/T-001/A-001
+    - - G-007/T-001/A-002
+    - - G-007/T-001/A-003
+    - - G-007/T-001/A-004
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-007/T-001/A-001
+      step_id: A-001
+      name: create-paragraphs-module-list-paragraphs
+      status: draft
+      target_file: plan_manager/hrs/paragraphs.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-007/T-001/A-002
+      step_id: A-002
+      name: add-get-paragraph
+      status: draft
+      target_file: plan_manager/hrs/paragraphs.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-007/T-001/A-001
+    - branch_id: G-007/T-001/A-003
+      step_id: A-003
+      name: add-assign-labels
+      status: draft
+      target_file: plan_manager/hrs/paragraphs.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-007/T-001/A-002
+    - branch_id: G-007/T-001/A-004
+      step_id: A-004
+      name: add-set-non-binding
+      status: draft
+      target_file: plan_manager/hrs/paragraphs.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-007/T-001/A-003
+  - branch_id: G-007/T-002
+    name: hrs-serialization
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-002-hrs-serialization/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-002-hrs-serialization/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 3
+      target_files: 2
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: plan_manager/exchange/exporter.py
+      sequence:
+      - G-007/T-002/A-003
+    - target_file: plan_manager/exchange/importer.py
+      sequence:
+      - G-007/T-002/A-001
+      - G-007/T-002/A-002
+    parallel_waves:
+    - - G-007/T-002/A-001
+      - G-007/T-002/A-003
+    - - G-007/T-002/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-007/T-002/A-001
+      step_id: A-001
+      name: validate-hrs
+      status: draft
+      target_file: plan_manager/exchange/importer.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-007/T-002/A-002
+      step_id: A-002
+      name: import-hrs
+      status: draft
+      target_file: plan_manager/exchange/importer.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-007/T-002/A-001
+    - branch_id: G-007/T-002/A-003
+      step_id: A-003
+      name: export-hrs
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-007/T-003
+    name: plan-export
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-003-plan-export/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-003-plan-export/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 7
+      target_files: 1
+      parallel_waves: 7
+    target_file_sequences:
+    - target_file: plan_manager/exchange/exporter.py
+      sequence:
+      - G-007/T-003/A-001
+      - G-007/T-003/A-002
+      - G-007/T-003/A-003
+      - G-007/T-003/A-004
+      - G-007/T-003/A-005
+      - G-007/T-003/A-006
+      - G-007/T-003/A-007
+    parallel_waves:
+    - - G-007/T-003/A-001
+    - - G-007/T-003/A-002
+    - - G-007/T-003/A-003
+    - - G-007/T-003/A-004
+    - - G-007/T-003/A-005
+    - - G-007/T-003/A-006
+    - - G-007/T-003/A-007
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-007/T-003/A-001
+      step_id: A-001
+      name: export-error
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-007/T-003/A-002
+      step_id: A-002
+      name: layout-constants
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-007/T-003/A-001
+    - branch_id: G-007/T-003/A-003
+      step_id: A-003
+      name: emit-yaml
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-007/T-003/A-002
+    - branch_id: G-007/T-003/A-004
+      step_id: A-004
+      name: assemble-state
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-007/T-003/A-003
+    - branch_id: G-007/T-003/A-005
+      step_id: A-005
+      name: render-hrs-text
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 5
+      depends_on:
+      - G-007/T-003/A-004
+    - branch_id: G-007/T-003/A-006
+      step_id: A-006
+      name: step-descriptor
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 6
+      depends_on:
+      - G-007/T-003/A-005
+    - branch_id: G-007/T-003/A-007
+      step_id: A-007
+      name: export-plan
+      status: draft
+      target_file: plan_manager/exchange/exporter.py
+      operation: modify_file
+      priority: 7
+      depends_on:
+      - G-007/T-003/A-006
+  - branch_id: G-007/T-004
+    name: plan-import
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-004-plan-import/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-007-exchange-format/T-004-plan-import/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 2
+      parallel_waves: 5
+    target_file_sequences:
+    - target_file: plan_manager/exchange/importer.py
+      sequence:
+      - G-007/T-004/A-005
+      - G-007/T-004/A-006
+    - target_file: plan_manager/exchange/layout_import.py
+      sequence:
+      - G-007/T-004/A-001
+      - G-007/T-004/A-002
+      - G-007/T-004/A-003
+      - G-007/T-004/A-004
+    parallel_waves:
+    - - G-007/T-004/A-001
+    - - G-007/T-004/A-002
+    - - G-007/T-004/A-003
+      - G-007/T-004/A-005
+    - - G-007/T-004/A-004
+    - - G-007/T-004/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-007/T-004/A-001
+      step_id: A-001
+      name: validate-descriptor-dir
+      status: draft
+      target_file: plan_manager/exchange/layout_import.py
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-007/T-004/A-002
+      step_id: A-002
+      name: validate-as-file
+      status: draft
+      target_file: plan_manager/exchange/layout_import.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-007/T-004/A-001
+    - branch_id: G-007/T-004/A-003
+      step_id: A-003
+      name: create-step-from-descriptor
+      status: draft
+      target_file: plan_manager/exchange/layout_import.py
+      operation: modify_file
+      priority: 3
+      depends_on:
+      - G-007/T-004/A-002
+    - branch_id: G-007/T-004/A-004
+      step_id: A-004
+      name: import-steps
+      status: draft
+      target_file: plan_manager/exchange/layout_import.py
+      operation: modify_file
+      priority: 4
+      depends_on:
+      - G-007/T-004/A-003
+    - branch_id: G-007/T-004/A-005
+      step_id: A-005
+      name: validate-layout
+      status: draft
+      target_file: plan_manager/exchange/importer.py
+      operation: modify_file
+      priority: 1
+      depends_on:
+      - G-007/T-004/A-001
+      - G-007/T-004/A-002
+    - branch_id: G-007/T-004/A-006
+      step_id: A-006
+      name: import-plan
+      status: draft
+      target_file: plan_manager/exchange/importer.py
+      operation: modify_file
+      priority: 2
+      depends_on:
+      - G-007/T-004/A-004
+      - G-007/T-004/A-005
+- branch_id: G-008
+  name: deployment
+  status: draft
+  depends_on:
+  - G-005
+  - G-006
+  tactical_steps:
+  - branch_id: G-008/T-001
+    name: db-initializer
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-001-db-initializer/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-001-db-initializer/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 2
+      target_files: 2
+      parallel_waves: 1
+    target_file_sequences:
+    - target_file: plan_manager_db/init.sh
+      sequence:
+      - G-008/T-001/A-002
+    - target_file: plan_manager_db/migrations/0001_initial_schema.sql
+      sequence:
+      - G-008/T-001/A-001
+    parallel_waves:
+    - - G-008/T-001/A-001
+      - G-008/T-001/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-008/T-001/A-001
+      step_id: A-001
+      name: initial-schema-migration
+      status: draft
+      target_file: plan_manager_db/migrations/0001_initial_schema.sql
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-001/A-002
+      step_id: A-002
+      name: init-shell-script
+      status: draft
+      target_file: plan_manager_db/init.sh
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-008/T-002
+    name: container-image
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-002-container-image/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-002-container-image/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 3
+      target_files: 3
+      parallel_waves: 1
+    target_file_sequences:
+    - target_file: docker/Dockerfile
+      sequence:
+      - G-008/T-002/A-002
+    - target_file: docker/entrypoint.sh
+      sequence:
+      - G-008/T-002/A-003
+    - target_file: pyproject.toml
+      sequence:
+      - G-008/T-002/A-001
+    parallel_waves:
+    - - G-008/T-002/A-001
+      - G-008/T-002/A-002
+      - G-008/T-002/A-003
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-008/T-002/A-001
+      step_id: A-001
+      name: package-manifest
+      status: draft
+      target_file: pyproject.toml
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-002/A-002
+      step_id: A-002
+      name: image-definition
+      status: draft
+      target_file: docker/Dockerfile
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-002/A-003
+      step_id: A-003
+      name: entrypoint-script
+      status: draft
+      target_file: docker/entrypoint.sh
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-008/T-003
+    name: service-unit
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-003-service-unit/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-003-service-unit/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 2
+      target_files: 2
+      parallel_waves: 1
+    target_file_sequences:
+    - target_file: packaging/etc/default/planmgr
+      sequence:
+      - G-008/T-003/A-002
+    - target_file: packaging/systemd/planmgr.service
+      sequence:
+      - G-008/T-003/A-001
+    parallel_waves:
+    - - G-008/T-003/A-001
+      - G-008/T-003/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-008/T-003/A-001
+      step_id: A-001
+      name: systemd-service-unit
+      status: draft
+      target_file: packaging/systemd/planmgr.service
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-003/A-002
+      step_id: A-002
+      name: operator-settings-template
+      status: draft
+      target_file: packaging/etc/default/planmgr
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-008/T-004
+    name: install-package
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-004-install-package/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-004-install-package/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 6
+      target_files: 6
+      parallel_waves: 1
+    target_file_sequences:
+    - target_file: packaging/deb/conffiles
+      sequence:
+      - G-008/T-004/A-002
+    - target_file: packaging/deb/control
+      sequence:
+      - G-008/T-004/A-001
+    - target_file: packaging/deb/postinst
+      sequence:
+      - G-008/T-004/A-004
+    - target_file: packaging/deb/postrm
+      sequence:
+      - G-008/T-004/A-006
+    - target_file: packaging/deb/prerm
+      sequence:
+      - G-008/T-004/A-005
+    - target_file: packaging/etc/planmgr/config.json.template
+      sequence:
+      - G-008/T-004/A-003
+    parallel_waves:
+    - - G-008/T-004/A-001
+      - G-008/T-004/A-002
+      - G-008/T-004/A-003
+      - G-008/T-004/A-004
+      - G-008/T-004/A-005
+      - G-008/T-004/A-006
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-008/T-004/A-001
+      step_id: A-001
+      name: control-file
+      status: draft
+      target_file: packaging/deb/control
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-004/A-002
+      step_id: A-002
+      name: conffiles-list
+      status: draft
+      target_file: packaging/deb/conffiles
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-004/A-003
+      step_id: A-003
+      name: config-template
+      status: draft
+      target_file: packaging/etc/planmgr/config.json.template
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-004/A-004
+      step_id: A-004
+      name: postinst-script
+      status: draft
+      target_file: packaging/deb/postinst
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-004/A-005
+      step_id: A-005
+      name: prerm-script
+      status: draft
+      target_file: packaging/deb/prerm
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-004/A-006
+      step_id: A-006
+      name: postrm-script
+      status: draft
+      target_file: packaging/deb/postrm
+      operation: create_file
+      priority: 1
+      depends_on: []
+  - branch_id: G-008/T-005
+    name: release-pipeline
+    status: draft
+    mini_assignment:
+      model: gpt-5.4-mini
+      context:
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-005-release-pipeline/README.yaml
+      - docs/plans/2026-07-02-plan-manager/G-008-deployment/T-005-release-pipeline/atomic_steps
+      forbidden_context:
+      - sibling TS directories
+      - other GS directories unless owner escalates
+    counts:
+      atomic_steps: 2
+      target_files: 2
+      parallel_waves: 2
+    target_file_sequences:
+    - target_file: docs/operator/operator_doc.md
+      sequence:
+      - G-008/T-005/A-001
+    - target_file: scripts/release.sh
+      sequence:
+      - G-008/T-005/A-002
+    parallel_waves:
+    - - G-008/T-005/A-001
+    - - G-008/T-005/A-002
+    unresolved_cycles: []
+    atomic_steps:
+    - branch_id: G-008/T-005/A-001
+      step_id: A-001
+      name: operator-doc
+      status: draft
+      target_file: docs/operator/operator_doc.md
+      operation: create_file
+      priority: 1
+      depends_on: []
+    - branch_id: G-008/T-005/A-002
+      step_id: A-002
+      name: release-script
+      status: draft
+      target_file: scripts/release.sh
+      operation: create_file
+      priority: 1
+      depends_on:
+      - G-008/T-005/A-001
+summary:
+  global_steps: 8
+  tactical_steps: 48
+  atomic_steps: 407
+  global_waves: 6
+  unresolved_global_cycles: 0

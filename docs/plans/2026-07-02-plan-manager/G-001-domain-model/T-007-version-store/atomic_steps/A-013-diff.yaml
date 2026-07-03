@@ -4,7 +4,7 @@ name: diff
 target_file: plan_manager/storage/version_ops.py
 operation: modify_file
 priority: 4
-depends_on: [A-010, A-011]
+depends_on: [A-010, A-011, A-012]
 concepts: [C-018]
 prompt: |
   Modify the existing file `plan_manager/storage/version_ops.py` to add one new

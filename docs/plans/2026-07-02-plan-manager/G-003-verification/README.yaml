@@ -48,9 +48,10 @@ description: >
   is treated as suspicion and filtered deterministically against the prompt text;
   the surviving fraction is the estimator value, and the detector can only raise
   suspicion, never mark a branch green. Estimator votes combine through a
-  transparent weighted fold with published default weights; estimators sharing
-  the same physics (the two embedding-based ones) share one down-weighted vote.
-  Plan-level aggregation is conservative, defaulting to the minimum branch index
+  transparent weighted fold with published default weights; estimators of the
+  same physics — the model-based pair of the embedding cosine and the executor
+  simulation — share one down-weighted vote, renormalized when a member
+  abstains. Plan-level aggregation is conservative, defaulting to the minimum branch index
   with fraction-above-threshold as the configurable alternative. Output
   discipline: normally one number and a color per plan with the few weakest
   branches ranked; the internal estimator vector and the trust value surface only
@@ -102,5 +103,5 @@ relations:
 - { from_concept: C-013, to_concept: C-036, type: implements }
 source_labels: ["{m9x4}", "{q1w8}", "{x8m3}", "{s2z9}", "{j5k7}", "{h7u3}", "{f1w9}", "{g3o6}", "{l9b4}", "{o3v8}", "{i7h2}", "{p4g6}", "{q9n5}", "{c6f9}", "{j8b2}", "{l2q6}", "{o7d4}", "{i3g8}", "{m7w3}", "{b8j5}", "{l4u8}"]
 depends_on: [G-001, G-002]
-tactical_steps: []
+tactical_steps: [T-001, T-002, T-003, T-004, T-005, T-006]
 status: draft

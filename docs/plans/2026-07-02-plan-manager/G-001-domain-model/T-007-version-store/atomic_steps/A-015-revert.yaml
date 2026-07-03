@@ -4,7 +4,7 @@ name: revert
 target_file: plan_manager/storage/version_ops.py
 operation: modify_file
 priority: 6
-depends_on: [A-010, A-011, A-009]
+depends_on: [A-010, A-011, A-009, A-014]
 concepts: [C-018]
 prompt: |
   Modify the existing file `plan_manager/storage/version_ops.py` to widen one

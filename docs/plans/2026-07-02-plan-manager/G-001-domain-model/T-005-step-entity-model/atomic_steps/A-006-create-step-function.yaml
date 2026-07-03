@@ -201,6 +201,11 @@ prompt: |
   - The function signature must be exactly the nine-line signature shown
     above, ending in `-> Step:`.
   - The docstring text must match exactly what is shown above.
+  - The `fields` parameter holds the level-specific required fields
+    declared by PlanSchema (C-006) for the step's `level`; `create_step`
+    stores whatever dict is passed as `fields` without itself validating
+    it against the schema (schema validation against PlanSchema is out
+    of scope for this AS).
   - `acquire_plan_lock(conn, plan_uuid)` is called before the `try`
     block; `release_plan_lock(conn, plan_uuid)` is called in a `finally`
     block so it always runs.

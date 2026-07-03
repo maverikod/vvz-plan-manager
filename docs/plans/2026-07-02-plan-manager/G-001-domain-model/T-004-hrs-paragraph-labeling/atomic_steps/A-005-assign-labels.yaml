@@ -313,6 +313,13 @@ prompt: |
             to its newly assigned four-character label; paragraphs that
             already had a label are included unchanged. Existing labels
             are never rewritten, reused, or reordered.
+
+      The document is first parsed into paragraphs, in document order,
+      via parse_paragraphs; paragraphs that already carry a label are
+      left unchanged. For each remaining unlabeled paragraph, a new
+      unique label is drawn with _draw_label and inserted immediately
+      before the first non-whitespace character of that paragraph's
+      first line, preserving the line's existing indentation.
       """
       paragraphs = parse_paragraphs(document_text)
       start_lines = _binding_block_start_lines(document_text)

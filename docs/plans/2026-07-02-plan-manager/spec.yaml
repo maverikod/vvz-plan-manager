@@ -21,8 +21,8 @@ concepts:
   definition: Addressable binding unit of the HRS text carrying a stable four-character base36 label.
   properties:
   - label is position-independent, unique within one HRS, survives edits
-  - non-binding blocks are excluded from labeling and coverage
-  - HRS prose is human-owned; the server only assigns labels and toggles non-binding markup
+  - non-binding blocks are excluded from labeling, coverage, and storage
+  - HRS prose is human-owned; the server only assigns labels and marks paragraphs non-binding (wrap-only; restoration via HRS re-import)
   - parsing and label-assignment algorithms are normative
   source_labels: ["{b7d1}", "{h3j9}", "{a1z3}", "{u8s4}", "{n2j7}", "{s7g3}"]
 
@@ -91,7 +91,7 @@ concepts:
   definition: On-demand computed coverage of concepts, labels, relations, and objects replacing stored matrices.
   properties:
   - set formulas are normative; reports always list missing and extra elements
-  - object-axis inventory keyed by (module, tactical step path)
+  - object-axis inventory keyed by (module, tactical step path); objects declared via an optional key on atomic steps with entries {name, concepts}
   - module derived deterministically from target_file (strip extension, dot the separators); a classification key, never an identity
   source_labels: ["{r5t2}", "{e7i2}", "{d1t3}", "{e8p5}", "{t6s8}"]
 
@@ -99,8 +99,8 @@ concepts:
   name: Prompt
   definition: Ephemeral assembled executor input for one atomic step built deterministically from the tree.
   properties:
-  - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta
-  - byte-identical for the same tree state; token estimate against the plan's user-set context budget
+  - fixed concatenation order MRS excerpt, HRS slice, GS, TS, AS delta, rendered under fixed headers with canonical-JSON step content
+  - byte-identical for the same tree state; token estimate against the plan's user-set context budget (published default (len+3)//4)
   - dump snapshots are derived artifacts never read back
   - the server never executes prompts
   source_labels: ["{t3u5}", "{y6q1}", "{s5m8}", "{r9f1}", "{j1w5}"]
@@ -120,7 +120,7 @@ concepts:
   definition: Normalized 0..100 completeness measure of a branch computed as cosine between required and actual concept vectors.
   properties:
   - runs only on scopes that passed the mechanical gate at the current revision
-  - ensemble of weak independent estimators; same-physics votes share weight
+  - ensemble of weak independent estimators; the model-based pair (embedding cosine, executor simulation) shares one renormalized vote
   - one number and color for the human; internals surface only on miss
   - plan aggregation defaults to minimum branch index
   source_labels: ["{l9b4}", "{p4g6}", "{v6t8}", "{i3g8}", "{i7h2}", "{f1w9}", "{h7u3}"]
@@ -147,6 +147,7 @@ concepts:
   definition: Transactional top-down change set anchored at the plan head revision, published atomically on green gate.
   properties:
   - begin acquires the per-plan lock; commit advances head only when gate is green
+  - abort restores working rows to the base state and deletes the ref; cascade revisions remain addressable, never deleted
   - automatic needs_review propagation per invalidation rule
   - one open cascade per plan; MRS mutations are cascade-only at any status
   source_labels: ["{a8w1}", "{k6f3}", "{m2d9}", "{p6h1}", "{b4x2}", "{i5n7}"]
@@ -188,7 +189,8 @@ concepts:
   definition: File import/export representation of a plan in the standard layout; HRS as Markdown, all other artifacts as YAML.
   properties:
   - export optionally at a named revision; import is the only file-to-truth path
-  - safe YAML emission with mandatory round-trip; hrs_export byte-identical
+  - safe YAML emission with mandatory round-trip; hrs_export byte-identical to stored text
+  - the regenerated HRS is the binding document; non-binding blocks are not stored and not reproduced
   source_labels: ["{v1c8}", "{k4u7}", "{p8q4}"]
 
 - concept_id: C-022
@@ -196,7 +198,7 @@ concepts:
   definition: Sole optional external integration providing text embeddings through a configured URL.
   properties:
   - unavailability degrades only semantic scoring, with explicit low trust
-  - vectors cached in the database keyed by content hash; no vector files
+  - vectors cached in a dedicated database cache table keyed by content hash; no vector files
   source_labels: ["{q1w8}", "{b8j5}", "{l4u8}"]
 
 - concept_id: C-023
@@ -244,6 +246,7 @@ concepts:
   - hook-based registration; auto-import modules for spawned workers
   - long operations use the adapter queue with job semantics
   - implemented in Python 3.12+; production package root plan_manager/ at the repository root, modules as dotted paths beneath it
+  - numpy approved for scoring mathematics; other runtime deps limited to the adapter, psycopg, pydantic, PyYAML
   source_labels: ["{h9s1}", "{f2x7}", "{g5j8}", "{w7l3}", "{u1p9}", "{y1j5}"]
 
 - concept_id: C-028
