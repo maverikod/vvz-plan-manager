@@ -4,18 +4,21 @@ set -e
 case "$1" in
     configure)
         if ! getent group planmgrgrp >/dev/null; then
-            if getent group 990 >/dev/null; then
-                echo "planmgr: gid 990 is already in use by another group; cannot create planmgrgrp" >&2
+            if getent group 1002 >/dev/null; then
+                echo "planmgr: gid 1002 is already in use by another group; cannot create planmgrgrp" >&2
                 exit 1
             fi
-            groupadd --system --gid 990 planmgrgrp
+            groupadd --system --gid 1002 planmgrgrp
         fi
         if ! getent passwd planmgruser >/dev/null; then
-            if getent passwd 990 >/dev/null; then
-                echo "planmgr: uid 990 is already in use by another user; cannot create planmgruser" >&2
+            if getent passwd 1002 >/dev/null; then
+                echo "planmgr: uid 1002 is already in use by another user; cannot create planmgruser" >&2
                 exit 1
             fi
-            useradd --system --uid 990 --gid planmgrgrp --home /var/planmgr --shell /usr/sbin/nologin planmgruser
+            useradd --system --uid 1002 --gid planmgrgrp --home /var/planmgr --shell /usr/sbin/nologin planmgruser
+        fi
+        if getent group docker >/dev/null; then
+            usermod -aG docker planmgruser
         fi
 
         install -d -o planmgruser -g planmgrgrp -m 750 /etc/planmgr
@@ -24,12 +27,30 @@ case "$1" in
         install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr/export
         install -d -o planmgruser -g planmgrgrp -m 750 /var/log/planmgr
 
+        set -a
         . /etc/default/planmgr
+        set +a
 
         if [ -z "$PLANMGR_IMAGE_VERSION" ]; then
             echo "planmgr: PLANMGR_IMAGE_VERSION is not set in /etc/default/planmgr" >&2
             exit 1
         fi
+
+        if [ -z "${PLANMGR_INSTANCE_UUID:-}" ]; then
+            if [ ! -s /etc/planmgr/instance_uuid ]; then
+                python3 -c 'import uuid; print(uuid.uuid4())' > /etc/planmgr/instance_uuid
+                chown planmgruser:planmgrgrp /etc/planmgr/instance_uuid
+                chmod 640 /etc/planmgr/instance_uuid
+            fi
+            PLANMGR_INSTANCE_UUID="$(cat /etc/planmgr/instance_uuid)"
+            export PLANMGR_INSTANCE_UUID
+        fi
+
+        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/ca.crt /etc/planmgr/secrets/ca.crt
+        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/server.crt /etc/planmgr/secrets/server.crt
+        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/server.key /etc/planmgr/secrets/server.key
+        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/client.crt /etc/planmgr/secrets/client.crt
+        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/client.key /etc/planmgr/secrets/client.key
 
         if ! docker manifest inspect "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION" >/dev/null; then
             echo "planmgr: image $PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION was not found on the registry" >&2

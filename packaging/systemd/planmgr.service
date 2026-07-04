@@ -22,9 +22,10 @@ Type=exec
 
 # Dedicated user: the unit and everything it starts run as the
 # HostIdentity (C-030) dedicated host user and group
-# planmgruser:planmgrgrp (uid/gid 990:990), never as root.
+# planmgruser:planmgrgrp (uid/gid 1002:1002), never as root.
 User=planmgruser
 Group=planmgrgrp
+SupplementaryGroups=docker
 
 # Environment file: operator settings (image repository/version,
 # published port, advertised host, registration toggles, database
@@ -43,7 +44,7 @@ ExecStartPre=-/usr/bin/docker rm -f planmgr
 # 8080 on the configured host port, and attaching the three fixed host
 # mounts (/etc/planmgr read-only, /var/planmgr and /var/log/planmgr
 # read-write) that carry all mutable state across container replacement.
-ExecStart=/usr/bin/docker run --name planmgr --rm --user 990:990 -p ${PLANMGR_PORT}:8080 -v /etc/planmgr:/etc/planmgr:ro -v /var/planmgr:/var/planmgr -v /var/log/planmgr:/var/log/planmgr ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}
+ExecStart=/usr/bin/docker run --name planmgr --rm --user 1002:1002 --network smart-assistant -w /var/planmgr -p ${PLANMGR_PORT}:8080 -v /etc/planmgr:/etc/planmgr:ro -v /var/planmgr:/var/planmgr -v /var/log/planmgr:/var/log/planmgr ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}
 
 # Health readiness: polls the platform health endpoint of the
 # just-started container (http://localhost:${PLANMGR_PORT}/health) every

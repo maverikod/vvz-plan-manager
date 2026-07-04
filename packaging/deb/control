@@ -3,7 +3,7 @@ Version: 0.1.0
 Section: admin
 Priority: optional
 Architecture: all
-Depends: docker.io | docker-ce, curl, adduser, systemd
+Depends: docker.io | docker-ce, curl, adduser, systemd, openssl, python3
 Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
 Description: plan_manager deployment package
  Installs and configures the plan_manager server as a systemd-managed

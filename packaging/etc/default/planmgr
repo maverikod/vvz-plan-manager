@@ -18,6 +18,14 @@ PLANMGR_IMAGE_VERSION=0.1.0
 # http://localhost:PLANMGR_PORT/health.
 PLANMGR_PORT=8080
 
+# Adapter server protocol. HTTPS requires the generated server certificate
+# under /etc/planmgr/secrets.
+PLANMGR_SERVER_PROTOCOL=https
+
+# Adapter server name used for TLS certificate generation and server
+# metadata.
+PLANMGR_SERVER_NAME=planmgr
+
 # Host advertised to the proxy when registration is enabled; must be
 # reachable from outside the container network namespace. Empty by
 # default (no advertised host configured).
@@ -26,9 +34,15 @@ PLANMGR_ADVERTISED_HOST=
 # Enables proxy registration of this deployment; false disables it.
 PLANMGR_REGISTRATION_ENABLED=false
 
-# URL of the registration endpoint used when
+# Adapter protocol used to connect to the proxy registration endpoints.
+PLANMGR_REGISTRATION_PROTOCOL=https
+
+# Base URL of the proxy registration service used when
 # PLANMGR_REGISTRATION_ENABLED is true. Empty by default.
 PLANMGR_REGISTRATION_URL=
+
+# Stable logical server identifier used for proxy registration.
+PLANMGR_REGISTRATION_SERVER_ID=planmgr
 
 # Interval, in seconds, between heartbeat signals sent to the
 # registration endpoint when registration is enabled.

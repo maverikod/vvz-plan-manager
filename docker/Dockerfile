@@ -24,8 +24,8 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --gid 990 planmgr \
-    && useradd --uid 990 --gid 990 --home /var/planmgr --shell /usr/sbin/nologin planmgr
+RUN groupadd --gid 1002 planmgr \
+    && useradd --uid 1002 --gid 1002 --home /var/planmgr --shell /usr/sbin/nologin planmgr
 
 WORKDIR /build
 COPY pyproject.toml /build/pyproject.toml
@@ -39,10 +39,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 VOLUME ["/etc/planmgr", "/var/planmgr", "/var/log/planmgr"]
 
 ENV PGDATA=/var/planmgr/postgres
+ENV PATH=/usr/lib/postgresql/15/bin:$PATH
+
+WORKDIR /var/planmgr
 
 EXPOSE 8080
 
-USER 990:990
+USER 1002:1002
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://localhost:8080/health || exit 1

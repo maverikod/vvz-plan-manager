@@ -1,13 +1,41 @@
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 8080
+    "port": 8080,
+    "protocol": "${PLANMGR_SERVER_PROTOCOL}",
+    "servername": "${PLANMGR_SERVER_NAME}",
+    "advertised_host": "${PLANMGR_ADVERTISED_HOST}",
+    "ssl": {
+      "cert": "/etc/planmgr/secrets/server.crt",
+      "key": "/etc/planmgr/secrets/server.key",
+      "ca": "/etc/planmgr/secrets/ca.crt",
+      "dnscheck": false
+    }
   },
   "registration": {
-    "enabled": "${PLANMGR_REGISTRATION_ENABLED}",
-    "url": "${PLANMGR_REGISTRATION_URL}",
-    "advertised_host": "${PLANMGR_ADVERTISED_HOST}",
-    "heartbeat_interval": "${PLANMGR_HEARTBEAT_INTERVAL}"
+    "enabled": ${PLANMGR_REGISTRATION_ENABLED},
+    "protocol": "${PLANMGR_REGISTRATION_PROTOCOL}",
+    "register_url": "${PLANMGR_REGISTRATION_URL}/register",
+    "unregister_url": "${PLANMGR_REGISTRATION_URL}/unregister",
+    "heartbeat_interval": ${PLANMGR_HEARTBEAT_INTERVAL},
+    "ssl": {
+      "cert": "/etc/planmgr/secrets/client.crt",
+      "key": "/etc/planmgr/secrets/client.key",
+      "ca": "/etc/planmgr/secrets/ca.crt",
+      "dnscheck": false
+    },
+    "heartbeat": {
+      "url": "${PLANMGR_REGISTRATION_URL}/proxy/heartbeat",
+      "interval": ${PLANMGR_HEARTBEAT_INTERVAL}
+    },
+    "server_id": "${PLANMGR_REGISTRATION_SERVER_ID}",
+    "server_name": "${PLANMGR_SERVER_NAME}",
+    "instance_uuid": "${PLANMGR_INSTANCE_UUID}",
+    "metadata": {
+      "advertised_host": "${PLANMGR_ADVERTISED_HOST}",
+      "protocol": "${PLANMGR_SERVER_PROTOCOL}",
+      "port": ${PLANMGR_PORT}
+    }
   },
   "plan_manager": {
     "database": {

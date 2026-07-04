@@ -11,6 +11,9 @@
 #                         propagates to the container unchanged.
 set -eu
 
+export PGHOST="${PGHOST:-127.0.0.1}"
+export PGPORT="${PGPORT:-5432}"
+
 # 1. PostgreSQL: initialize the data directory on first run (PG_VERSION is
 # absent from an empty or not-yet-initialized $PGDATA), then start the
 # PostgreSQL server in the background against the mounted $PGDATA,
@@ -18,7 +21,9 @@ set -eu
 if [ ! -f "$PGDATA/PG_VERSION" ]; then
     initdb -D "$PGDATA"
 fi
-pg_ctl -D "$PGDATA" -l /var/log/planmgr/postgres.log start
+pg_ctl -D "$PGDATA" -l /var/log/planmgr/postgres.log \
+    -o "-c listen_addresses=127.0.0.1 -c unix_socket_directories=/var/planmgr" \
+    start
 
 # 2. Readiness: poll pg_isready once per second, up to 30 attempts. Fail
 # loudly and stop the container if PostgreSQL never becomes ready.
