@@ -46,11 +46,27 @@ case "$1" in
             export PLANMGR_INSTANCE_UUID
         fi
 
-        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/ca.crt /etc/planmgr/secrets/ca.crt
-        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/server.crt /etc/planmgr/secrets/server.crt
-        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/server.key /etc/planmgr/secrets/server.key
-        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/client.crt /etc/planmgr/secrets/client.crt
-        install -o planmgruser -g planmgrgrp -m 640 /usr/share/planmgr/mtls/client.key /etc/planmgr/secrets/client.key
+        # TLS material is a secret and is NOT shipped in this package. The
+        # operator must provision the following files into /etc/planmgr/secrets
+        # out-of-band (e.g. via scp or a secrets manager) before the service
+        # can start under the https/mtls protocols:
+        #   ca.crt, server.crt, server.key, client.crt, client.key
+        # Verify their presence and abort the configure step with an explicit
+        # message if any is missing, rather than starting a server that would
+        # crash-loop on a missing certificate.
+        missing_secret=0
+        for f in ca.crt server.crt server.key client.crt client.key; do
+            if [ ! -s "/etc/planmgr/secrets/$f" ]; then
+                echo "planmgr: required TLS file /etc/planmgr/secrets/$f is missing;" \
+                     "provision it out-of-band before starting the service" >&2
+                missing_secret=1
+            fi
+        done
+        if [ "$missing_secret" -ne 0 ]; then
+            echo "planmgr: TLS material incomplete — rendering config and enabling" \
+                 "the service, but NOT starting it. Place the certificates in" \
+                 "/etc/planmgr/secrets and run: systemctl start planmgr.service" >&2
+        fi
 
         if ! docker manifest inspect "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION" >/dev/null; then
             echo "planmgr: image $PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION was not found on the registry" >&2
@@ -77,8 +93,13 @@ case "$1" in
         # Starting the service starts the container; the container
         # entrypoint runs the idempotent database initialization inside
         # the container before the server process starts. This script
-        # never invokes database initialization directly.
-        systemctl restart planmgr.service
+        # never invokes database initialization directly. The service is
+        # only started when the out-of-band TLS material is present; when
+        # it is missing the unit is left enabled but stopped so the
+        # operator can provision the secrets and start it explicitly.
+        if [ "$missing_secret" -eq 0 ]; then
+            systemctl restart planmgr.service
+        fi
         ;;
 esac
 

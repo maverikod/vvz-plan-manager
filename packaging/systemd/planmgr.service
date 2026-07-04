@@ -51,7 +51,7 @@ ExecStart=/usr/bin/docker run --name planmgr --rm --user 1002:1002 --network sma
 # 2 seconds for up to 30 attempts, and only reports the unit as started
 # once the endpoint responds successfully; fails the start if it never
 # becomes healthy.
-ExecStartPost=/usr/bin/sh -c 'for i in $(seq 1 30); do curl -fsS http://localhost:${PLANMGR_PORT}/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+ExecStartPost=/usr/bin/sh -c 'scheme=http; certopt=""; case "$PLANMGR_SERVER_PROTOCOL" in https) scheme=https;; mtls) scheme=https; certopt="--cert /etc/planmgr/secrets/client.crt --key /etc/planmgr/secrets/client.key";; esac; for i in $(seq 1 30); do curl -fsSk $certopt $scheme://localhost:${PLANMGR_PORT}/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
 
 # Lifecycle ownership: stops the running container cleanly on unit stop.
 ExecStop=/usr/bin/docker stop planmgr

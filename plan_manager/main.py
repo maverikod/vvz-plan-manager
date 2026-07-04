@@ -22,11 +22,7 @@ and the registration hook are available in worker process memory.
 """
 
 import argparse
-import asyncio
 import sys
-
-import hypercorn.asyncio
-import hypercorn.config
 
 from plan_manager.runtime.context import init_runtime
 from plan_manager.runtime.config import ConfigError
@@ -75,6 +71,44 @@ def build_app(config_path: str):
     )
 
 
+def run_app(app, config_path: str) -> None:
+    """Serve the platform application on the configured socket.
+
+    The platform owns the transport: the listening host and port and the
+    TLS material (server certificate, key, CA, and mTLS client-certificate
+    verification) come from the ``server`` section of the same
+    configuration file the application was built from. Serving is delegated
+    to the platform's own server engine so that host, port, protocol
+    (http, https, mtls) and SSL are applied exactly as the platform
+    prescribes — the entry point never constructs a transport of its own.
+
+    Args:
+        app: The ASGI application created by :func:`build_app`.
+        config_path: Path to the same JSON configuration file, read here
+            only for the platform-owned ``server`` transport section.
+    """
+    from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
+    from mcp_proxy_adapter.core.app_factory.ssl_config import build_server_ssl_config
+    from plan_manager.runtime.config import load_raw
+
+    config = load_raw(config_path)
+    server_cfg = config.get("server", {}) or {}
+    server_config: dict = {
+        "host": server_cfg.get("host", "0.0.0.0"),
+        "port": int(server_cfg.get("port", 8080)),
+        "log_level": "info",
+        "reload": False,
+    }
+    ssl_engine_config = build_server_ssl_config(config)
+    if ssl_engine_config:
+        server_config.update(ssl_engine_config)
+
+    engine = ServerEngineFactory.get_engine("hypercorn")
+    if engine is None:
+        raise RuntimeError("hypercorn server engine is not available")
+    engine.run_server(app, server_config)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the plan_manager server bootstrap sequence.
 
@@ -111,8 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     app = build_app(args.config)
-    config = hypercorn.config.Config()
-    asyncio.run(hypercorn.asyncio.serve(app, config))
+    run_app(app, args.config)
     return 0
 
 

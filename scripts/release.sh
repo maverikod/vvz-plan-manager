@@ -54,7 +54,6 @@ mkdir -p build/deb/etc/default
 mkdir -p build/deb/etc/planmgr
 mkdir -p build/deb/usr/share/man/man1
 mkdir -p build/deb/usr/share/info
-mkdir -p build/deb/usr/share/planmgr/mtls
 
 echo "-- staging control files --"
 sed "s/^Version:.*/Version: ${VERSION}/" packaging/deb/control > build/deb/DEBIAN/control
@@ -65,14 +64,13 @@ cp packaging/deb/postrm build/deb/DEBIAN/postrm
 chmod 755 build/deb/DEBIAN/postinst build/deb/DEBIAN/prerm build/deb/DEBIAN/postrm
 
 echo "-- staging service unit and configuration templates --"
+# NOTE: TLS material (mtls-certs) is deliberately NOT bundled into the deb.
+# Certificates and keys are secrets provisioned out-of-band by the operator
+# directly into /etc/planmgr/secrets on the target host; the installer never
+# carries them. See packaging/deb/postinst, which only verifies their presence.
 cp packaging/systemd/planmgr.service build/deb/lib/systemd/system/planmgr.service
 cp packaging/etc/default/planmgr build/deb/etc/default/planmgr
 cp packaging/etc/planmgr/config.json.template build/deb/etc/planmgr/config.json.template
-cp mtls-certs/mtls_certificates/ca/ca.crt build/deb/usr/share/planmgr/mtls/ca.crt
-cp mtls-certs/mtls_certificates/server/planmgr.crt build/deb/usr/share/planmgr/mtls/server.crt
-cp mtls-certs/mtls_certificates/server/planmgr.key build/deb/usr/share/planmgr/mtls/server.key
-cp mtls-certs/mtls_certificates/client/planmgr.crt build/deb/usr/share/planmgr/mtls/client.crt
-cp mtls-certs/mtls_certificates/client/planmgr.key build/deb/usr/share/planmgr/mtls/client.key
 
 echo "-- staging rendered documentation --"
 gzip -9n -c build/doc/planmgr.1 > build/deb/usr/share/man/man1/planmgr.1.gz

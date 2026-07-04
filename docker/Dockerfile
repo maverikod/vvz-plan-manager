@@ -34,7 +34,8 @@ RUN pip install --no-cache-dir .
 
 COPY plan_manager_db/ /opt/plan_manager_db/
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh
 
 VOLUME ["/etc/planmgr", "/var/planmgr", "/var/log/planmgr"]
 
@@ -47,7 +48,10 @@ EXPOSE 8080
 
 USER 1002:1002
 
+# The health probe speaks whatever protocol server.protocol selects; the
+# logic lives in /usr/local/bin/healthcheck.sh (http, https with -k, or
+# mtls presenting the mounted client certificate).
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -fsS http://localhost:8080/health || exit 1
+    CMD ["/usr/local/bin/healthcheck.sh"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
