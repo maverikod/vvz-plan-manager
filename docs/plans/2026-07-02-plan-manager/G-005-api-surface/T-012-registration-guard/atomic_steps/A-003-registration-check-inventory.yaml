@@ -176,8 +176,11 @@ prompt: >
 
   2. Otherwise (no duplicates), compute `registered =
   set(registry.get_all_commands().keys())`, `expected = set(INVENTORY)`,
-  `missing = sorted(expected - registered)`, `extra = sorted(registered -
-  expected)`.
+  and `missing = sorted(expected - registered)`. The mcp-proxy-adapter may
+  pre-register platform builtin commands in the same registry; those are not
+  plan_manager inventory drift. If the registry exposes `_command_types` as a
+  dict, compute `extra` only from names whose command type is `"custom"`;
+  otherwise fall back to `extra = sorted(registered - expected)`.
 
   3. `if missing or extra:` raise
   `RuntimeError(f"command inventory mismatch: missing={missing}
@@ -195,10 +198,11 @@ verification:
   target: plan_manager/commands/registration.py::check_inventory
   expected: >
     Constructing a stub registry object whose get_all_commands() returns
-    a dict with keys exactly equal to the set of INVENTORY causes
+    a dict with custom command keys exactly equal to the set of INVENTORY causes
     check_inventory to return None without raising. Removing one key from
     the stub's returned dict causes check_inventory to raise RuntimeError
     whose message lists that key under missing=. Adding one extra key
-    causes check_inventory to raise RuntimeError whose message lists that
-    key under extra=.
+    with command type "custom" causes check_inventory to raise RuntimeError
+    whose message lists that key under extra=. Adding adapter builtin keys
+    whose command type is not "custom" does not fail the inventory check.
 status: draft

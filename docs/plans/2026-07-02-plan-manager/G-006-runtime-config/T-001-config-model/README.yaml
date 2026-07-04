@@ -45,11 +45,11 @@ outputs:
     The explicit startup-abort report naming every unknown key, missing
     required key, and type violation of the custom section.
 atomic_steps:
-- A-001-module-header-and-config-error
-- A-002-database-section
-- A-003-embedding-section
-- A-004-scoring-section
-- A-005-plan-manager-section
-- A-006-load-raw
-- A-007-load-config
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
 status: draft

@@ -236,9 +236,11 @@ prompt: |
   state at ``revision_uuid``. For every entity whose current-head node
   version differs from (or is absent versus) its node version at
   ``revision_uuid``, a change entry is added with the content at
-  ``revision_uuid``. The change set is recorded via ``record_revision``
-  with ``ref_name=None`` (direct draft editing) and message
-  ``f"revert to {revision_uuid}"``. History is never rewritten: this
+  ``revision_uuid``. For every entity present at the current head but absent
+  from ``revision_uuid``, a tombstone change is added by copying the current
+  head content and setting ``"deleted": True``. The change set is recorded
+  via ``record_revision`` with ``ref_name=None`` (direct draft editing) and
+  message ``f"revert to {revision_uuid}"``. History is never rewritten: this
   appends a new revision rather than modifying any existing one.
 
   :param conn: open database connection.
@@ -267,6 +269,11 @@ prompt: |
           if head_state.get(entity_uuid) != node_version_uuid:
               content = get_node_version_content(conn, node_version_uuid)
               changes.append((entity_uuid, content))
+      for entity_uuid, node_version_uuid in head_state.items():
+          if entity_uuid not in target_state:
+              content = dict(get_node_version_content(conn, node_version_uuid))
+              content["deleted"] = True
+              changes.append((entity_uuid, content))
       return record_revision(
           conn,
           plan_uuid,
@@ -289,9 +296,16 @@ prompt: |
   - Use `conn.execute(sql, params)` directly; do not call `conn.cursor()`
     separately.
   - Row lookup uses positional indexing (`row[0]`), not column names.
-  - `changes` preserves the iteration order of `target_state.items()`; entities
-    whose node_version at `revision_uuid` equals their node_version at the current
-    head are excluded from `changes` (no-op entities are not re-recorded).
+  - `changes` first preserves the iteration order of `target_state.items()`;
+    entities whose node_version at `revision_uuid` equals their node_version at
+    the current head are excluded from this first phase (no-op entities are not
+    re-recorded). Then `changes` appends one tombstone for every
+    `head_state.items()` entity absent from `target_state`, preserving
+    `head_state.items()` iteration order for that deletion phase.
+  - A tombstone is a JSON content dict copied from the current head content for
+    that entity with `content["deleted"] = True`. `state_at` treats such
+    content as a deletion marker and must not resurrect older node versions for
+    that entity while walking parent revisions.
   - `parent_revision_uuid` passed to `record_revision` is `head_revision_uuid` (the
     revert appends onto the current head), and `ref_name` is `None` (direct draft
     editing).
@@ -324,5 +338,7 @@ verification:
     The module imports without error and exposes a callable `revert(conn,
     plan_uuid, revision_uuid, author)` with the exact parameter and return types
     shown in the signature above, raising `VersionStoreError` if the plan has no
-    head revision.
+    head revision. Reverting from a head state that contains an entity absent
+    from the target revision records a tombstone change for that entity, so the
+    new head state omits it.
 status: draft

@@ -192,7 +192,8 @@ prompt: |
   - The function must be named get_relation_add_metadata and accept exactly
     one positional parameter named cls.
   - error_cases must contain exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT,
-    CONCEPT_NOT_FOUND, each with description, message, solution.
+    CONCEPT_NOT_FOUND, IMPORT_INVALID, each with description, message,
+    solution.
   - The returned dict must contain all of: name, version, description, category,
     author, email, detailed_description, parameters, return_value, usage_examples,
     error_cases, best_practices.
@@ -204,7 +205,7 @@ verification:
     a stub object exposing name/version/descr/category/author/email attributes
     returns a dict containing all required top-level keys; error_cases has
     exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT, CONCEPT_NOT_FOUND,
-    each with description, message, and solution; parameters
+    IMPORT_INVALID, each with description, message, and solution; parameters
     has entries for plan, cascade_uuid, from_concept, to_concept, type, all
     required True, with type carrying the seven-entry enum.
 status: draft

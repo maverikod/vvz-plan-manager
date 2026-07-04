@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove)
+        systemctl daemon-reload
+        ;;
+    purge)
+        rm -rf /etc/planmgr /var/log/planmgr /var/planmgr
+        userdel planmgruser || true
+        groupdel planmgrgrp || true
+        systemctl daemon-reload
+        ;;
+esac
+
+exit 0

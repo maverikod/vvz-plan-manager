@@ -54,9 +54,9 @@ def validate_relation(relation: Relation) -> None:
                 {"uses", "owns", "implements", "extends", "depends_on",
                 "produces", "consumes"}).
             - relation.from_concept does not match CONCEPT_ID_PATTERN
-                (pattern "^C-\d{3}$", e.g. "C-003").
+                (pattern "^C-\\d{3}$", e.g. "C-003").
             - relation.to_concept does not match CONCEPT_ID_PATTERN
-                (pattern "^C-\d{3}$", e.g. "C-003").
+                (pattern "^C-\\d{3}$", e.g. "C-003").
     """
     if relation.type not in RELATION_TYPES:
         raise RelationValidationError(

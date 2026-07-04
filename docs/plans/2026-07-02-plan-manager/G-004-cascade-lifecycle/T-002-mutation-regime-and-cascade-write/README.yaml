@@ -61,5 +61,5 @@ outputs:
     cascade under the cascade reference, carrying the changed node snapshot
     and the applied status-update snapshots; the head reference is not
     moved.
-atomic_steps: [A-001-admission-constants, A-002-frozen-at-or-below, A-003-check-admission, A-004-step-snapshot, A-005-apply-status-updates, A-006-cascade-write]
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
 status: draft

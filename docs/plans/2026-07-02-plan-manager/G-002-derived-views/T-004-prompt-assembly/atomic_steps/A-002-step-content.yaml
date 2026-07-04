@@ -68,12 +68,20 @@ prompt: |
   Sibling contract for canonical_json (exact signature, quoted from
   plan_manager/storage/canonical.py — read no other file):
 
-  def canonical_json(value) -> str
+  def canonical_json(value: object) -> bytes
   # Implemented as json.dumps(value, sort_keys=True, ensure_ascii=False,
-  # separators=(",", ":")). Accepts any JSON-serializable value (dict, list,
-  # str, int, bool, None) and returns the canonical JSON string.
+  # separators=(",", ":")).encode("utf-8"). Accepts any JSON-serializable
+  # value (dict, list, str, int, bool, None) and returns canonical JSON bytes.
+  # Prompt assembly needs text, so this step introduces a local
+  # _canonical_json_text helper that decodes those bytes as UTF-8 without
+  # changing the storage/content-addressing contract.
 
-  New function to append, exact signature and body:
+  New helper and function to append, exact signatures and bodies:
+
+  def _canonical_json_text(value: object) -> str:
+      """Return canonical JSON as UTF-8 text for prompt rendering."""
+      return canonical_json(value).decode("utf-8")
+
 
   def step_content(step: Step) -> str:
       """Canonical JSON content of one step, used as a fixed part of prompt assembly.
@@ -82,11 +90,11 @@ prompt: |
           step: The step to serialize.
 
       Returns:
-          canonical_json of a dict with keys step_id, slug, level, depends_on,
-          concepts, status, fields (in that order), taken from the step's
-          matching attributes.
+          Canonical JSON text of a dict with keys step_id, slug, level,
+          depends_on, concepts, status, fields (in that order), taken from
+          the step's matching attributes.
       """
-      return canonical_json(
+      return _canonical_json_text(
           {
               "step_id": step.step_id,
               "slug": step.slug,
@@ -99,15 +107,20 @@ prompt: |
       )
 
   Exact requirements:
+  - `_canonical_json_text` is a local helper for prompt rendering only. It
+    must call `canonical_json(value).decode("utf-8")` exactly; do not alter
+    `plan_manager.storage.canonical.canonical_json`, whose return type is
+    bytes for content-addressed storage.
   - The dict literal key order inside step_content must be exactly step_id,
     slug, level, depends_on, concepts, status, fields — this is the normative
-    step_content format: step_content(step) = canonical_json({"step_id":
-    step.step_id, "slug": step.slug, "level": step.level, "depends_on":
-    step.depends_on, "concepts": step.concepts, "status": step.status,
-    "fields": step.fields}). canonical_json sorts keys internally
-    (sort_keys=True) so the literal source order does not affect the output,
-    but the source dict must be written in this order for readability and
-    must contain exactly these seven keys, no more, no fewer.
+    step_content format: step_content(step) =
+    _canonical_json_text({"step_id": step.step_id, "slug": step.slug,
+    "level": step.level, "depends_on": step.depends_on, "concepts":
+    step.concepts, "status": step.status, "fields": step.fields}).
+    canonical_json sorts keys internally (sort_keys=True) so the literal
+    source order does not affect the output, but the source dict must be
+    written in this order for readability and must contain exactly these
+    seven keys, no more, no fewer.
   - Do not rename, remove, or reorder anything from the prior file content
     (the PromptAssemblyError class and the token_estimate function must be
     byte-identical to the prior state, verbatim).
@@ -141,7 +154,7 @@ verification:
     The module plan_manager.views.prompt_assembly imports without error and
     exposes step_content as a callable taking one Step and returning a str.
     Calling step_content on a representative step returns the canonical JSON
-    string of a seven-key object built from exactly that step's step_id,
-    slug, level, depends_on, concepts, status, and fields attribute values,
-    in that key order.
+    text of a seven-key object built from exactly that step's step_id, slug,
+    level, depends_on, concepts, status, and fields attribute values, in that
+    key order.
 status: draft

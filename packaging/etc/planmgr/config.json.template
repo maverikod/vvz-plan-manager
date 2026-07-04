@@ -1,0 +1,21 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "registration": {
+    "enabled": "${PLANMGR_REGISTRATION_ENABLED}",
+    "url": "${PLANMGR_REGISTRATION_URL}",
+    "advertised_host": "${PLANMGR_ADVERTISED_HOST}",
+    "heartbeat_interval": "${PLANMGR_HEARTBEAT_INTERVAL}"
+  },
+  "plan_manager": {
+    "database": {
+      "host": "localhost",
+      "port": "${PLANMGR_DB_PORT}",
+      "dbname": "${PLANMGR_DB_NAME}",
+      "user": "${PLANMGR_DB_USER}"
+    },
+    "export_root": "/var/planmgr/export"
+  }
+}

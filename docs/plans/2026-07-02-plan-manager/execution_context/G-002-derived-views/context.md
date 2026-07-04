@@ -1,0 +1,113 @@
+# G-002 Derived Views Execution Context
+
+Inherited base context: `docs/plans/2026-07-02-plan-manager/execution_context/base.md`
+
+Execution standard read in full before acting:
+`docs/standards/planning/atomic_step_execution_standard.yaml`
+
+Agent assignment:
+- G-agent: GPT-5.5.
+- T-agent model required by protocol: gpt-5.4-mini.
+- A-agent model required by protocol: gpt-5.3-codex-spark / cheapest available coding worker.
+
+Environment limitation:
+- No callable subagent spawn tool is available in this session (`tool_search` for spawn/delegate returned no tools).
+- Execution therefore uses the standard owner-bridge fallback: this G-agent creates branch contexts, performs equivalent per-AS target-file work, verifies locally, and reports the spawn limitation as an execution constraint.
+
+G-level constraints:
+- Scope is exactly G-002-derived-views.
+- Do not edit sibling G steps.
+- HRS prose is human-owned and must not be rewritten.
+- Coverage matrices are computed views only and must not be materialized.
+- Preserve unrelated dirty worktree changes.
+- Every AS may edit only its target file unless escalated.
+- Verification is zero-trust: re-read artifacts from disk before checks.
+
+Full G-002 README content:
+
+```yaml
+step_id: G-002
+name: derived-views
+description: >
+  This step defines every derived, computed-never-stored view of the plan tree.
+  Coverage matrices are not stored: every coverage, inventory, and graph view is
+  recomputed on demand from the plan tree in the database, which remains the
+  single source of truth, and no derived artifact may ever be read back as input
+  for verification. Branch (C-008) is the unit of verification and prompt
+  assembly: one path HRS-slice -> GS -> TS -> AS, where the HRS slice is the set
+  of binding paragraphs claimed via source labels; branches are addressable but
+  never materialized as files.
+
+  DependencyGraph (C-009) is the set of projections computed from the tree:
+  execution order, a parallelism map of units that may proceed concurrently,
+  cycle detection, and impact analysis answering which nodes become needs_review
+  if a node changes. Its normative algorithms are fixed: graph nodes are steps;
+  edges are every depends_on at every level plus an edge between each consecutive
+  priority pair within one (target file, tactical step) pair; topological order
+  is Kahn's algorithm with the deterministic tie-break of ascending (level,
+  parent path, step id) among ready nodes, and when the ready queue empties early
+  the residual subgraph is reported as the cycle set. Parallel waves are defined
+  inductively -- wave 0 holds nodes with no prerequisites, wave N+1 holds nodes
+  whose prerequisites all lie in earlier waves -- listed in order with the same
+  tie-break inside each wave. The dependency neighborhood of one node is
+  queryable in both directions, and impact analysis changes nothing.
+
+  CoverageView (C-010) replaces the former matrix files with on-demand set
+  computations whose formulas are normative: plan concept coverage compares the
+  union of concepts of all global steps against MRS concept ids for set equality;
+  per-GS coverage requires the union of concepts of its tactical steps to be a
+  superset of the GS concepts; label coverage compares the union of source labels
+  of all global steps against the binding labels of the HRS; relation coverage
+  compares the union of relations implemented by global steps against MRS
+  relations. Every comparison reports missing and extra elements explicitly,
+  never a bare boolean. The object/work-axis inventory is derived from the object
+  declarations of atomic steps: the owner key of an object is the pair (module
+  derived from target file, tactical step path). The module of an object is
+  derived deterministically from its target file -- the extension is stripped and
+  path separators are replaced with dots, so a target file a/b/c.py yields module
+  a.b.c; the module is a classification key, never an identity, and receives no
+  UUID. Findings are an object name
+  with more than one owner key, an object name spanning more than one module, or
+  an object concept set not a subset of the union of its atomic-step concept
+  sets -- always classified by full artifact path, never by bare step number.
+
+  Prompt (C-011) is the ephemeral assembled executor input for one atomic step:
+  the atomic-step delta plus its inherited path up. Assembly is a pure
+  deterministic function of the tree -- concatenation by reference in a fixed
+  order: (1) the MRS excerpt with definitions and relations of exactly the
+  concepts the atomic step declares, ascending by concept id; (2) the HRS slice
+  of binding paragraphs whose labels appear in the parent GS source labels, in
+  document order; (3) the parent GS content; (4) the parent TS content; (5) the
+  atomic-step delta. The engine resolves declared references only; it never adds,
+  drops, or reorders content by judgement, and the same tree state yields a
+  byte-identical prompt. Prompts are ephemeral: an optional dump may materialize
+  all prompts as a derived snapshot for human reading or handoff, but a snapshot
+  is never read back as input to any check, and the server never executes
+  prompts, orchestrates coder models, or tracks code implementation.
+
+  NormativeAlgorithmSet (C-036) is the binding contract for all of the above:
+  the algorithms are normative, lower plan levels refine them into code without
+  altering their semantics, any deviation or gap discovered during implementation
+  escalates back to the source specification and is never resolved by executor
+  improvisation, and where a parameter is genuinely open the specification names
+  its default and declares the alternatives configuration -- an executor picks
+  neither.
+concepts: [C-008, C-009, C-010, C-011, C-036]
+relations:
+- { from_concept: C-008, to_concept: C-005, type: uses }
+- { from_concept: C-008, to_concept: C-002, type: uses }
+- { from_concept: C-008, to_concept: C-003, type: uses }
+- { from_concept: C-009, to_concept: C-005, type: consumes }
+- { from_concept: C-010, to_concept: C-005, type: consumes }
+- { from_concept: C-010, to_concept: C-003, type: uses }
+- { from_concept: C-010, to_concept: C-002, type: uses }
+- { from_concept: C-011, to_concept: C-008, type: consumes }
+- { from_concept: C-011, to_concept: C-003, type: uses }
+- { from_concept: C-011, to_concept: C-036, type: implements }
+- { from_concept: C-009, to_concept: C-036, type: implements }
+source_labels: ["{r5t2}", "{c9a6}", "{d4r8}", "{e7i2}", "{t3u5}", "{y6q1}", "{w5e2}", "{d1t3}", "{e8p5}", "{t2a7}", "{y9k4}", "{x4v1}", "{s5m8}", "{j1w5}", "{q6d8}", "{t6s8}"]
+depends_on: [G-001]
+tactical_steps: [T-001, T-002, T-003, T-004]
+status: draft
+```
+

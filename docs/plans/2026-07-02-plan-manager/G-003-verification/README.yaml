@@ -22,7 +22,7 @@ description: >
   source labels into binding HRS paragraphs), and the on-the-fly set-theoretic
   coverage checks over C-010 views. Checks run in a fixed published order —
   parse, identity, uniqueness, reference resolution, coverage — each check sees
-  the whole tree and emits findings sorted by (artifact path, check id); with
+  the whole tree and emits findings sorted by (artifact path, check id, message); with
   fail-fast the run stops only at a check-group boundary so partial output stays
   deterministic, and two runs over the same tree state produce byte-identical
   reports. Output is machine-checkable: a per-check PASS/FAIL report with

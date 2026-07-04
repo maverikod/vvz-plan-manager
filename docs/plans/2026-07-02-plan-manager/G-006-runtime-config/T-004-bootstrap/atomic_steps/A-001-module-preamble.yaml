@@ -22,7 +22,7 @@ prompt: |
 
   - C-027 ServerRuntime: "Adapter-owned runtime hosting the command
     registry, transport, queue, and bootstrap sequence." Properties:
-    entry point `main --config`; AppFactory create_app; hypercorn engine.
+    entry point `main --config`; create_app; hypercorn engine.
     Adapter owns JSON-RPC, health, commands, heartbeat, OpenAPI surface.
     Hook-based registration; auto-import modules for spawned workers.
     Long operations use the adapter queue with job semantics. Implemented

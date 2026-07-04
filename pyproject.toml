@@ -1,13 +1,27 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "plan_manager"
+name = "plan-manager"
 version = "0.1.0"
-description = "MCP server for managing project plans as a structured tree."
-authors = [{name = "Vasiliy Zdanovskiy", email = "vasilyvz@gmail.com"}]
-requires-python = ">=3.11"
-dependencies = []
+description = "Plan Manager server: hierarchical development plan storage, verification, and exchange service."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp-proxy-adapter>=8.10.15",
+    "psycopg[binary]>=3",
+    "pydantic>=2",
+    "numpy",
+    "PyYAML",
+]
 
-[tool.black]
-line-length = 88
+[project.optional-dependencies]
+dev = [
+    "pytest>=9",
+]
 
-[tool.mypy]
-strict = true
+[tool.setuptools.packages.find]
+include = ["plan_manager*"]
+
+[tool.setuptools.package-data]
+plan_manager = ["_build/*"]

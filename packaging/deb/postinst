@@ -1,0 +1,64 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group planmgrgrp >/dev/null; then
+            if getent group 990 >/dev/null; then
+                echo "planmgr: gid 990 is already in use by another group; cannot create planmgrgrp" >&2
+                exit 1
+            fi
+            groupadd --system --gid 990 planmgrgrp
+        fi
+        if ! getent passwd planmgruser >/dev/null; then
+            if getent passwd 990 >/dev/null; then
+                echo "planmgr: uid 990 is already in use by another user; cannot create planmgruser" >&2
+                exit 1
+            fi
+            useradd --system --uid 990 --gid planmgrgrp --home /var/planmgr --shell /usr/sbin/nologin planmgruser
+        fi
+
+        install -d -o planmgruser -g planmgrgrp -m 750 /etc/planmgr
+        install -d -o planmgruser -g planmgrgrp -m 700 /etc/planmgr/secrets
+        install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr
+        install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr/export
+        install -d -o planmgruser -g planmgrgrp -m 750 /var/log/planmgr
+
+        . /etc/default/planmgr
+
+        if [ -z "$PLANMGR_IMAGE_VERSION" ]; then
+            echo "planmgr: PLANMGR_IMAGE_VERSION is not set in /etc/default/planmgr" >&2
+            exit 1
+        fi
+
+        if ! docker manifest inspect "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION" >/dev/null; then
+            echo "planmgr: image $PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION was not found on the registry" >&2
+            exit 1
+        fi
+        docker pull "$PLANMGR_IMAGE_REPO:$PLANMGR_IMAGE_VERSION"
+
+        envsubst < /etc/planmgr/config.json.template > /etc/planmgr/config.json
+        chown planmgruser:planmgrgrp /etc/planmgr/config.json
+        chmod 640 /etc/planmgr/config.json
+
+        if [ ! -f /etc/planmgr/secrets/db_password ]; then
+            # First-run database initialization happens inside the
+            # container entrypoint, idempotently, once the service below
+            # starts the container; it consumes this generated password
+            # itself. This script only seeds the secret, it never runs
+            # database initialization directly.
+            ( umask 077 && head -c 32 /dev/urandom | base64 > /etc/planmgr/secrets/db_password )
+            chown planmgruser:planmgrgrp /etc/planmgr/secrets/db_password
+        fi
+
+        systemctl daemon-reload
+        systemctl enable planmgr.service
+        # Starting the service starts the container; the container
+        # entrypoint runs the idempotent database initialization inside
+        # the container before the server process starts. This script
+        # never invokes database initialization directly.
+        systemctl restart planmgr.service
+        ;;
+esac
+
+exit 0

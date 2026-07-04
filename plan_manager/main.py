@@ -1,0 +1,120 @@
+"""Server entry point and platform bootstrap for plan_manager.
+
+Realises ServerRuntime (C-027): the entry point receives a configuration
+file path, initializes the runtime (validating the custom configuration
+section, C-028, and aborting startup with an explicit report on invalid
+configuration or unreadable secrets), then creates the application through
+the platform application factory and runs it with the platform's server
+engine. The platform (mcp-proxy-adapter) owns the entire external surface:
+the JSON-RPC endpoint with single and batch calls, the asynchronous
+endpoint, health, command listing, heartbeat, WebSocket job push, and
+OpenAPI and help output. Supported protocols (http, https, mtls) follow
+the platform configuration unchanged. The server registers command classes
+only through the platform hook mechanism; it adds no custom route and
+patches no platform internal. The queue-manager section and the platform
+registration section (proxy registration URL, heartbeat, server id,
+instance UUID) are platform-owned and pass through untouched — the server
+functions identically with registration disabled.
+
+AUTO_IMPORT_MODULES declares, for the platform auto-import facility, the
+modules that spawned worker processes must import so that command classes
+and the registration hook are available in worker process memory.
+"""
+
+import argparse
+import asyncio
+import sys
+
+import hypercorn.asyncio
+import hypercorn.config
+
+from plan_manager.runtime.context import init_runtime
+from plan_manager.runtime.config import ConfigError
+
+AUTO_IMPORT_MODULES: tuple[str, ...] = (
+    "plan_manager.hooks",
+    "plan_manager.commands.registration",
+)
+
+
+def build_app(config_path: str):
+    """Create the platform ASGI application for the given configuration file.
+
+    This is the only function that touches the platform API surface
+    (mcp_proxy_adapter.api.app.create_app); the imports are placed inside
+    the function body so that a mismatch against the platform contract
+    stays localized to this one function. The platform owns the entire
+    external surface: JSON-RPC with single and batch calls, the
+    asynchronous endpoint, health, command listing, heartbeat, WebSocket
+    job push, and OpenAPI and help output. Supported protocols (http,
+    https, mtls) follow the platform configuration unchanged. The server
+    registers command classes only; it adds no route and patches no
+    platform internal. The queue-manager section and the platform
+    registration section (registration URL, heartbeat URL and interval,
+    server id, instance UUID) are read by the platform from the same
+    configuration file and passed through untouched — the server functions
+    identically with registration disabled.
+
+    Args:
+        config_path: Path to the JSON configuration file containing the
+            platform-owned sections (server, registration, auth, queue
+            manager, and optional ssl/transport/security) plus the
+            plan_manager custom section.
+
+    Returns:
+        The ASGI application created by the platform application factory.
+    """
+    from plan_manager import hooks as _plan_manager_hooks
+    from mcp_proxy_adapter.api.app import create_app
+    from plan_manager.runtime.config import load_raw
+
+    del _plan_manager_hooks
+    return create_app(
+        app_config=load_raw(config_path),
+        config_path=config_path,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the plan_manager server bootstrap sequence.
+
+    Parses the single required ``--config`` command-line option, then
+    initializes the runtime by validating the custom configuration section
+    (C-028) before any platform component starts. On invalid configuration
+    or unreadable secrets, ``init_runtime`` raises ``ConfigError``; the
+    explicit report from that error is printed to stderr and the function
+    returns 1 without creating the platform application. On successful
+    initialization, the platform application is created through
+    ``build_app`` and served with the platform's hypercorn engine under
+    ``asyncio.run``.
+
+    Args:
+        argv: Command-line arguments excluding the program name; when
+            ``None``, arguments are read from ``sys.argv[1:]``.
+
+    Returns:
+        0 on clean shutdown after successful startup; 1 when configuration
+        validation aborts startup before any platform component starts.
+    """
+    parser = argparse.ArgumentParser(prog="plan_manager")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to the JSON configuration file.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        init_runtime(args.config)
+    except ConfigError as exc:
+        print(f"configuration error: {exc}", file=sys.stderr)
+        return 1
+
+    app = build_app(args.config)
+    config = hypercorn.config.Config()
+    asyncio.run(hypercorn.asyncio.serve(app, config))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -57,19 +57,19 @@ prompt: |
       """Create the platform ASGI application for the given configuration file.
 
       This is the only function that touches the platform API surface
-      (mcp_proxy_adapter.core.app_factory.AppFactory); the import is placed
-      inside the function body so that a mismatch against the assumed
-      platform contract stays localized to this one function. The platform
-      owns the entire external surface: JSON-RPC with single and batch
-      calls, the asynchronous endpoint, health, command listing, heartbeat,
-      WebSocket job push, and OpenAPI and help output. Supported protocols
-      (http, https, mtls) follow the platform configuration unchanged. The
-      server registers command classes only; it adds no route and patches
-      no platform internal. The queue-manager section and the platform
+      (mcp_proxy_adapter.api.app.create_app); the imports are placed inside
+      the function body so that a mismatch against the platform contract
+      stays localized to this one function. The platform owns the entire
+      external surface: JSON-RPC with single and batch calls, the
+      asynchronous endpoint, health, command listing, heartbeat, WebSocket
+      job push, and OpenAPI and help output. Supported protocols (http,
+      https, mtls) follow the platform configuration unchanged. The server
+      registers command classes only; it adds no route and patches no
+      platform internal. The queue-manager section and the platform
       registration section (registration URL, heartbeat URL and interval,
       server id, instance UUID) are read by the platform from the same
-      configuration file and passed through untouched — the server
-      functions identically with registration disabled.
+      configuration file and passed through untouched — the server functions
+      identically with registration disabled.
 
       Args:
           config_path: Path to the JSON configuration file containing the
@@ -80,13 +80,14 @@ prompt: |
       Returns:
           The ASGI application created by the platform application factory.
       """
-      from mcp_proxy_adapter.core.app_factory import AppFactory
-      from plan_manager.hooks import register_custom_commands_hook
+      from plan_manager import hooks as _plan_manager_hooks
+      from mcp_proxy_adapter.api.app import create_app
+      from plan_manager.runtime.config import load_raw
 
-      factory = AppFactory()
-      return factory.create_app(
+      del _plan_manager_hooks
+      return create_app(
+          app_config=load_raw(config_path),
           config_path=config_path,
-          custom_commands_hook=register_custom_commands_hook,
       )
 
   Append exactly two blank lines after the content above, then the new
@@ -100,7 +101,7 @@ prompt: |
 
   - C-027 ServerRuntime: "Adapter-owned runtime hosting the command
     registry, transport, queue, and bootstrap sequence." Property used
-    here: entry point `main --config`; AppFactory create_app; hypercorn
+    here: entry point `main --config`; create_app; hypercorn
     engine.
   - C-028 Configuration: "Single JSON configuration with adapter sections
     plus one plan_manager section validated by a Pydantic model."

@@ -45,22 +45,22 @@ outputs:
     The non-authoritative dump snapshot summary, or the ascending ranking
     of branches by semantic index with refusal and degradation signals.
 atomic_steps:
-- A-001-branch-prompt-metadata
-- A-002-branch-prompt-command-class-shape
-- A-003-branch-prompt-command-get-schema
-- A-004-branch-prompt-command-metadata-method
-- A-005-branch-prompt-command-validate-params
-- A-006-branch-prompt-command-execute
-- A-007-branch-dump-metadata
-- A-008-branch-dump-command-class-shape
-- A-009-branch-dump-command-get-schema
-- A-010-branch-dump-command-metadata-method
-- A-011-branch-dump-command-validate-params
-- A-012-branch-dump-command-execute
-- A-013-branch-weak-metadata
-- A-014-branch-weak-command-class-shape
-- A-015-branch-weak-command-get-schema
-- A-016-branch-weak-command-metadata-method
-- A-017-branch-weak-command-validate-params
-- A-018-branch-weak-command-execute
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+- A-013
+- A-014
+- A-015
+- A-016
+- A-017
+- A-018
 status: draft

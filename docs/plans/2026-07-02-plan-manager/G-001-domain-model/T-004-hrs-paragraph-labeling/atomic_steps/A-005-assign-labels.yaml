@@ -193,8 +193,13 @@ prompt: |
     - Do not alter _draw_label, _binding_block_start_lines, the module
       docstring, the "import random" line, or the BASE36_ALPHABET
       constant.
-    - Do not add any other function, class, or constant to this file in
-      this operation.
+    - Do not add any other class or constant to this file in this operation.
+    - One additional public compatibility helper is required for downstream
+      HRS storage and exchange code:
+      `def assign_missing_labels(paragraphs):`. It accepts Paragraph-like
+      stored objects with `label`, `text`, and `position` attributes, preserves
+      `uuid` and `plan_uuid` when present by reconstructing through the input
+      object's class, and returns `(labeled, new_labels)`.
     - The final file must not exceed 400 lines.
 
   After this change, the file's full content must be exactly:
@@ -355,5 +360,8 @@ verification:
     of the document is unchanged, together with a paragraphs list of two
     Paragraph objects: the first with label "ab12" and text "First
     paragraph.", position 0; the second with the newly drawn label and
-    text "Second paragraph.", position 1.
+    text "Second paragraph.", position 1. Calling assign_missing_labels on
+    Paragraph-like objects assigns missing labels in order, preserves existing
+    labels, and returns both the labeled objects and the list of newly assigned
+    labels.
 status: draft

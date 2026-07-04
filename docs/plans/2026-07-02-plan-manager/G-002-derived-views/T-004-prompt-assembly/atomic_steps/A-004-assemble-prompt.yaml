@@ -44,18 +44,23 @@ prompt: |
       return (len(text) + 3) // 4
 
 
+  def _canonical_json_text(value: object) -> str:
+      """Return canonical JSON as UTF-8 text for prompt rendering."""
+      return canonical_json(value).decode("utf-8")
+
+
   def step_content(step: Step) -> str:
-      """Canonical JSON content of one step, used as a fixed part of prompt assembly.
+      """Canonical JSON text content of one step, used as a fixed part of prompt assembly.
 
       Args:
           step: The step to serialize.
 
       Returns:
-          canonical_json of a dict with keys step_id, slug, level, depends_on,
+          Canonical JSON text of a dict with keys step_id, slug, level, depends_on,
           concepts, status, fields (in that order), taken from the step's
           matching attributes.
       """
-      return canonical_json(
+      return _canonical_json_text(
           {
               "step_id": step.step_id,
               "slug": step.slug,
@@ -72,12 +77,12 @@ prompt: |
       """Part 1 (MRS excerpt) body of a prompt: concept and relation lines for concept_ids.
 
       For each id in concept_ids sorted ascending, looks up the concept row of the
-      plan by concept_id and appends one canonical_json line with keys concept_id,
+      plan by concept_id and appends one canonical JSON text line with keys concept_id,
       name, definition, properties, source_labels (properties and source_labels as
       lists). If a concept_id has no row, raises PromptAssemblyError naming the
       missing concept_id. After all concept lines, looks up every relation of the
       plan whose from_concept and to_concept are both in concept_ids, sorted by
-      (from_concept, to_concept, type), and appends one canonical_json line per
+      (from_concept, to_concept, type), and appends one canonical JSON text line per
       relation with keys from_concept, to_concept, type. All lines are joined with
       the newline character.
 
@@ -109,7 +114,7 @@ prompt: |
                   )
               name, definition, properties, source_labels = row
               lines.append(
-                  canonical_json(
+                  _canonical_json_text(
                       {
                           "concept_id": concept_id,
                           "name": name,
@@ -127,7 +132,7 @@ prompt: |
           )
           for from_concept, to_concept, rel_type in cur.fetchall():
               lines.append(
-                  canonical_json(
+                  _canonical_json_text(
                       {
                           "from_concept": from_concept,
                           "to_concept": to_concept,

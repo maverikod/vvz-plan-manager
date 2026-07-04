@@ -59,23 +59,13 @@ prompt: |
 
 
   def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult:
-      """Build an ErrorResult for a stable domain error code (C-026).
-
-      Args:
-          code: A domain error code; must be a member of DOMAIN_CODES.
-          message: Human-readable error message.
-          details: Optional diagnostic details; None is treated as no details.
-
-      Returns:
-          An ErrorResult constructed with keyword arguments code, message,
-          and details (empty dict when details is None or falsy).
-
-      Raises:
-          ValueError: if code is not a member of DOMAIN_CODES.
-      """
+      """Build an adapter-compatible ErrorResult for a stable domain error code."""
       if code not in DOMAIN_CODES:
           raise ValueError(f"unknown domain error code: {code}")
-      return ErrorResult(code=code, message=message, details=details or {})
+      payload = {"domain_code": code}
+      if details:
+          payload.update(details)
+      return ErrorResult(message=message, code=-32000, details=payload)
   ```
 
   Apply two changes:
@@ -156,23 +146,13 @@ prompt: |
 
 
   def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult:
-      """Build an ErrorResult for a stable domain error code (C-026).
-
-      Args:
-          code: A domain error code; must be a member of DOMAIN_CODES.
-          message: Human-readable error message.
-          details: Optional diagnostic details; None is treated as no details.
-
-      Returns:
-          An ErrorResult constructed with keyword arguments code, message,
-          and details (empty dict when details is None or falsy).
-
-      Raises:
-          ValueError: if code is not a member of DOMAIN_CODES.
-      """
+      """Build an adapter-compatible ErrorResult for a stable domain error code."""
       if code not in DOMAIN_CODES:
           raise ValueError(f"unknown domain error code: {code}")
-      return ErrorResult(code=code, message=message, details=details or {})
+      payload = {"domain_code": code}
+      if details:
+          payload.update(details)
+      return ErrorResult(message=message, code=-32000, details=payload)
 
 
   def map_exception(exc: Exception) -> ErrorResult:
@@ -273,14 +253,17 @@ verification:
   expected: >
     Importing plan_manager.commands.errors succeeds. For each of
     CommitRefusedError and ScoreRefusedError instances, map_exception
-    returns an ErrorResult with code "GATE_RED". For a StatusTransitionError
-    instance, code is "INVALID_TRANSITION". For a VersionStoreError
-    instance, code is "REVISION_NOT_FOUND". For a CascadeError instance,
-    code is "CASCADE_CONFLICT". For an EmbeddingUnavailable instance, code
-    is "EMBEDDINGS_UNAVAILABLE". For a psycopg.errors.UniqueViolation
-    instance, code is "DUPLICATE_ID". For a DomainCommandError("STEP_NOT_FOUND", "m", {"k": 1})
-    instance, the returned ErrorResult has code "STEP_NOT_FOUND", message
-    "m", details {"k": 1}. For a plain RuntimeError instance not matching
+    returns an ErrorResult with JSON-RPC code -32000 and details.domain_code
+    "GATE_RED". For a StatusTransitionError instance, details.domain_code is
+    "INVALID_TRANSITION". For a VersionStoreError instance, details.domain_code
+    is "REVISION_NOT_FOUND". For a CascadeError instance, details.domain_code
+    is "CASCADE_CONFLICT". For an EmbeddingUnavailable instance,
+    details.domain_code is "EMBEDDINGS_UNAVAILABLE". For a
+    psycopg.errors.UniqueViolation instance, details.domain_code is
+    "DUPLICATE_ID". For a DomainCommandError("STEP_NOT_FOUND", "m", {"k": 1})
+    instance, the returned ErrorResult has JSON-RPC code -32000, message "m",
+    details.domain_code "STEP_NOT_FOUND", and details.k == 1. For a plain
+    RuntimeError instance not matching
     any listed type, map_exception re-raises the same exception instance
     instead of returning a value.
 status: draft

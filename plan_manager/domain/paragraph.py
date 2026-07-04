@@ -120,3 +120,8 @@ def parse_paragraphs(document_text: str) -> list[Paragraph]:
             text = block_text
         result.append(Paragraph(label=label, text=text, position=position))
     return result
+
+
+def parse(text: str) -> list[Paragraph]:
+    """Compatibility alias for the normative HRS paragraph parser."""
+    return parse_paragraphs(text)

@@ -129,3 +129,44 @@ def assign_labels(document_text: str) -> tuple[str, list[Paragraph]]:
         result.append(Paragraph(label=new_label, text=para.text, position=para.position))
 
     return "\n".join(lines), result
+
+
+def assign_missing_labels(paragraphs):
+    """Assign labels to unlabeled paragraph-like objects, preserving order.
+
+    Accepts Paragraph or StoredParagraph-like values with label, text, and
+    position attributes. If uuid and plan_uuid attributes are present they are
+    preserved on the returned objects by reconstructing through the input
+    object's class.
+    """
+    existing_labels = {
+        label for para in paragraphs if (label := para.label) is not None
+    }
+    labeled = []
+    new_labels: list[str] = []
+    for para in paragraphs:
+        if para.label is not None:
+            labeled.append(para)
+            continue
+        new_label = _draw_label(existing_labels)
+        existing_labels.add(new_label)
+        new_labels.append(new_label)
+        if hasattr(para, "uuid") and hasattr(para, "plan_uuid"):
+            labeled.append(
+                para.__class__(
+                    uuid=para.uuid,
+                    plan_uuid=para.plan_uuid,
+                    label=new_label,
+                    text=para.text,
+                    position=para.position,
+                )
+            )
+        else:
+            labeled.append(
+                para.__class__(
+                    label=new_label,
+                    text=para.text,
+                    position=para.position,
+                )
+            )
+    return labeled, new_labels

@@ -77,7 +77,8 @@ description: >
   operations are log, diff (two revisions to added/removed/changed nodes with
   field-level detail), checkout-read (any reading command accepts an optional
   revision and reads that snapshot), and revert (a new revision restoring a prior
-  state — history is only ever appended, never rewritten). A per-plan advisory
+  state, including deletions represented by tombstone node versions with
+  `"deleted": true` — history is only ever appended, never rewritten). A per-plan advisory
   lock (C-019) in the database serializes cascades and identifier assignment; all
   concurrency control lives in the database with no lock files and no in-process
   lock state that a restart could lose.

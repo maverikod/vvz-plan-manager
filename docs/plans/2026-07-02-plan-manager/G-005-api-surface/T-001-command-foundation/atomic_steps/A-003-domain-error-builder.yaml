@@ -134,19 +134,23 @@ prompt: |
       return ErrorResult(code=code, message=message, details=details or {})
   ```
 
-  Imported contract quoted verbatim (module `mcp_proxy_adapter.commands.result`,
-  platform module, import only, never reimplement):
-  `class ErrorResult(code: str | int, message: str, details: dict | None = None)`
-  — construct ErrorResult with keyword arguments code, message, details.
+  Imported platform contract (module `mcp_proxy_adapter.commands.result`,
+  platform module, import only, never reimplement): ErrorResult serializes
+  `code` as the JSON-RPC integer error code, `message` as the JSON-RPC error
+  message, and `details` as JSON-RPC `error.data`. Stable plan_manager domain
+  codes are carried inside `details["domain_code"]`.
 
   Constraints (all binding, no deviation):
   - Do not change the module docstring, `DOMAIN_CODES`, or `DomainCommandError`
     in any way other than the single import line inserted above.
   - `def domain_error(code: str, message: str, details: dict | None = None) -> ErrorResult:`
     is the exact signature.
-  - The docstring text is exactly as shown above.
+  - The docstring must state that the returned ErrorResult is
+    adapter-compatible and carries the stable domain code in details.
   - Behavior, in this exact order: if `code` is not a member of `DOMAIN_CODES`,
-    raise `ValueError`; otherwise `return ErrorResult(code=code, message=message, details=details or {})`.
+    raise `ValueError`; otherwise build `payload = {"domain_code": code}`,
+    merge any truthy `details` into that payload, and return
+    `ErrorResult(message=message, code=-32000, details=payload)`.
   - `ErrorResult` is constructed with keyword arguments only.
   - No other class, function, or import is added in this step.
   - Do not read, create, or modify any file other than
@@ -163,16 +167,18 @@ prompt: |
   ```
 
   `domain_error` is the uniform builder producing the platform `ErrorResult`
-  carrying the stable domain string code half of this two-layer error
-  contract, so every command returns error results in the same shape.
+  carrying the JSON-RPC domain-error integer code plus the stable domain string
+  code in `error.data.domain_code`, so every command returns error results in
+  the same adapter-compatible shape.
 verification:
   type: import
   target: plan_manager.commands.errors.domain_error
   expected: >
     Importing plan_manager.commands.errors succeeds.
     domain_error("PLAN_NOT_FOUND", "not found") returns an ErrorResult
-    constructed with code="PLAN_NOT_FOUND", message="not found",
-    details={}. domain_error("PLAN_NOT_FOUND", "x", {"a": 1}) returns an
-    ErrorResult with details={"a": 1}. domain_error("NOT_A_CODE", "x")
-    raises ValueError.
+    constructed with code=-32000, message="not found", and details containing
+    {"domain_code": "PLAN_NOT_FOUND"}. domain_error("PLAN_NOT_FOUND", "x",
+    {"a": 1}) returns an ErrorResult whose details include both
+    {"domain_code": "PLAN_NOT_FOUND"} and {"a": 1}. domain_error("NOT_A_CODE",
+    "x") raises ValueError.
 status: draft

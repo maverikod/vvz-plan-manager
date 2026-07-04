@@ -1,0 +1,44 @@
+# /etc/default/planmgr
+#
+# This file is the EnvironmentFile read by the ServiceUnit (C-033)
+# systemd unit (packaging/systemd/planmgr.service) and is the source of
+# the rendered server configuration for the ContainerDeployment (C-029)
+# image. It is edited by the administrator; conffile semantics apply
+# (package upgrades prompt before overwriting a locally modified copy).
+
+# Container image repository to pull and run (Docker Hub repository
+# name).
+PLANMGR_IMAGE_REPO=vasilyvz/planmgr
+
+# The image version (tag) to deploy; must exist on Docker Hub.
+PLANMGR_IMAGE_VERSION=0.1.0
+
+# Host port published for the container's in-container port 8080; the
+# platform health endpoint is reachable at
+# http://localhost:PLANMGR_PORT/health.
+PLANMGR_PORT=8080
+
+# Host advertised to the proxy when registration is enabled; must be
+# reachable from outside the container network namespace. Empty by
+# default (no advertised host configured).
+PLANMGR_ADVERTISED_HOST=
+
+# Enables proxy registration of this deployment; false disables it.
+PLANMGR_REGISTRATION_ENABLED=false
+
+# URL of the registration endpoint used when
+# PLANMGR_REGISTRATION_ENABLED is true. Empty by default.
+PLANMGR_REGISTRATION_URL=
+
+# Interval, in seconds, between heartbeat signals sent to the
+# registration endpoint when registration is enabled.
+PLANMGR_HEARTBEAT_INTERVAL=30
+
+# Name of the PostgreSQL database used by the server.
+PLANMGR_DB_NAME=planmgr
+
+# PostgreSQL role (user) the server connects as.
+PLANMGR_DB_USER=planmgr
+
+# PostgreSQL port inside the container.
+PLANMGR_DB_PORT=5432

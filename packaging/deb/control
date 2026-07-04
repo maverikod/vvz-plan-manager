@@ -1,0 +1,13 @@
+Package: planmgr
+Version: 0.1.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: docker.io | docker-ce, curl, adduser, systemd
+Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
+Description: plan_manager deployment package
+ Installs and configures the plan_manager server as a systemd-managed
+ Docker container. Provisions the dedicated host identity and mounted
+ directories, renders the server configuration from operator settings,
+ verifies and pulls the required container image, and manages the
+ container lifecycle through a systemd service unit.

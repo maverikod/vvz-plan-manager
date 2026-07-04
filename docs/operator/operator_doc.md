@@ -1,0 +1,181 @@
+# NAME
+
+planmgr — plan_manager deployment
+
+# SYNOPSIS
+
+    systemctl start planmgr
+    systemctl stop planmgr
+    systemctl restart planmgr
+    systemctl status planmgr
+
+Configuration paths:
+
+    /etc/default/planmgr           operator environment variables (conffile)
+    /etc/planmgr/config.json       rendered server configuration
+    /etc/planmgr/config.json.template   configuration template (conffile)
+    /etc/planmgr/secrets/           mounted secrets, including the database password
+
+# DESCRIPTION
+
+planmgr is the plan_manager server: a single container process that stores
+development plans as a five-level hierarchy — source specification, machine
+specification, global steps, tactical steps, and atomic steps — inside an
+embedded PostgreSQL database, and exposes that hierarchy through a JSON-RPC
+command surface.
+
+Plan storage. Every plan artifact is a versioned row in the database; no
+plan data is ever written into the container image or to a flat file outside
+the three fixed host mounts. Each mutation produces a new append-only
+revision, so any past state of a plan remains addressable by revision id.
+
+Verification gate. Before any semantic measurement runs, a deterministic
+mechanical gate checks parsing, identifier uniqueness, cross-references, and
+coverage for the affected branch of the plan tree. The gate produces
+byte-identical findings for the same tree state and blocks semantic scoring
+until unresolved mechanical defects are fixed.
+
+Semantic scoring. Once a branch passes the mechanical gate, a semantic
+completeness index in the 0-100 range is computed from an ensemble of
+independent estimators and reported together with a trust estimate that
+reflects how reliable the measurement itself is, given the state of the
+concept basis and the embedding service.
+
+Cascade transactions. Machine-specification-level changes are proposed as a
+single transactional cascade anchored at the plan head revision. The cascade
+holds the per-plan lock while open, and the head revision advances only when
+the verification gate is green for the whole change set, with automatic
+invalidation propagation to every affected step.
+
+Exchange format. A plan can be exported to, and imported from, a directory
+tree that mirrors the plan hierarchy — the source specification as Markdown
+and every other level as YAML. Import is the only path from files back into
+the stored truth; export may target a named revision.
+
+# INSTALLATION
+
+planmgr installs from the Ubuntu package produced by the release pipeline:
+
+    apt install ./planmgr_<version>_all.deb
+
+The package's postinst script provisions the deployment on install:
+
+  1. creates the planmgruser system user and the planmgrgrp system group if
+     they do not already exist;
+  2. creates /etc/planmgr, /var/planmgr, and /var/log/planmgr with ownership
+     planmgruser:planmgrgrp and restrictive modes;
+  3. installs /etc/default/planmgr and /etc/planmgr/config.json.template as
+     conffiles — an existing, locally modified file triggers the standard
+     dpkg overwrite prompt instead of being silently replaced;
+  4. reads the operator settings from /etc/default/planmgr, verifies that
+     the configured image version is present on Docker Hub and pulls it if
+     it is not present locally, and renders /etc/planmgr/config.json from
+     those settings;
+  5. registers and starts the planmgr systemd service.
+
+# CONFIGURATION
+
+/etc/default/planmgr is a systemd EnvironmentFile (shell-style KEY=value
+lines) with these operator variables:
+
+| Variable | Meaning |
+| --- | --- |
+| PLANMGR_IMAGE_REPO | Docker Hub repository, e.g. vasilyvz/planmgr |
+| PLANMGR_IMAGE_VERSION | Image tag to run; equals the package version at install time |
+| PLANMGR_PORT | Published host port for the service |
+| PLANMGR_ADVERTISED_HOST | Host name or address advertised to the platform proxy |
+| PLANMGR_REGISTRATION_ENABLED | true/false — whether the service registers with the proxy |
+| PLANMGR_DB_NAME | PostgreSQL database name |
+| PLANMGR_DB_USER | PostgreSQL role name |
+| PLANMGR_DB_PASSWORD_FILE | Path under /etc/planmgr/secrets to the mounted database password file |
+
+/etc/planmgr/config.json is rendered from config.json.template at install
+time and holds the adapter sections plus one plan_manager section validated
+by a Pydantic model:
+
+  - adapter sections carry the transport, logging, and other adapter-owned
+    runtime settings consumed directly by the server process;
+  - plan_manager.database holds the connection parameters for the
+    in-container PostgreSQL instance;
+  - plan_manager.embedding holds the URL of the optional embedding service
+    used for semantic scoring;
+  - plan_manager.scoring carries the published defaults: threshold 85,
+    aggregation minimum (a plan's score is the minimum of its branch
+    scores), uniform concept weights, definition-only concept serialization
+    for embeddings, a shared embedding vote, and a trust floor of 0.2 when
+    the embedding service is unavailable;
+  - plan_manager.schema_overrides holds per-plan identifier-pattern and
+    required-field overrides; empty unless a plan uses a non-default
+    layout;
+  - plan_manager.export_root names the host directory under which
+    exchange-format exports and imports are read and written.
+
+The database password is never written into config.json; it is read only
+from the mounted secrets file named by PLANMGR_DB_PASSWORD_FILE. An invalid
+configuration aborts server startup before any command is served.
+
+# OPERATION
+
+Start, stop, and restart are systemd operations:
+
+    systemctl start planmgr
+    systemctl stop planmgr
+    systemctl restart planmgr
+
+Readiness and liveness are both reported by the /health endpoint, polled by
+both the container healthcheck and the systemd service supervision.
+
+Logs are written under /var/log/planmgr, mounted read-write from the host;
+the service wrapper's own output is additionally visible through
+journalctl -u planmgr.
+
+Data — the PostgreSQL data directory, the plan tables, the version store,
+and the embedding cache — lives entirely under /var/planmgr, mounted
+read-write. No plan data is ever stored inside the container image or on a
+non-mounted path.
+
+Upgrade: edit PLANMGR_IMAGE_VERSION in /etc/default/planmgr to the new
+version, then run apt upgrade to install the new package; the service
+restarts on the new image with the same three host mounts, so plan data
+survives the upgrade unchanged.
+
+Backup: back up the /var/planmgr mount (which includes the PostgreSQL data
+directory) while the service is stopped, or with a PostgreSQL-consistent
+snapshot mechanism if the service must stay up; back up /etc/planmgr
+alongside it for configuration continuity.
+
+# COMMAND SURFACE
+
+The server exposes 41 commands over JSON-RPC, grouped into eleven families.
+The mutating subset within each family requires either an explicit open
+cascade (for machine-specification-level changes) or draft status on the
+target artifact (for global-step, tactical-step, and atomic-step-level
+changes); no mutation bypasses both.
+
+  plan                — catalog, create, get, update metadata, delete, set head, set context budget (7 commands).
+  exchange            — export a plan at a revision, import a plan from files as the sole file-to-truth path (2 commands).
+  paragraph           — list, get, assign a label, toggle non-binding markup (4 commands).
+  mrs                 — list concepts, get concept, list relations, add concept, update concept, delete concept; every mutation runs inside a cascade (6 commands).
+  concept coverage    — concept coverage report, label coverage report (2 commands).
+  step                — create, get, update, delete, move, list, uniform across levels 3-5 (6 commands).
+  graph               — dependency order, parallel execution waves, cycle report, impact report (4 commands).
+  branch              — branch view, branch verify (2 commands).
+  validation/scoring  — mechanical gate run, semantic index run, trust estimate (3 commands).
+  cascade             — begin, commit, abort, status (4 commands).
+  info                — self-description: identity, build metadata, runtime summary, embedded operator documentation (1 command).
+
+# FILES
+
+  /etc/planmgr/config.json             rendered server configuration (read-only mount)
+  /etc/planmgr/config.json.template    conffile template installed by the package
+  /etc/planmgr/secrets/                mounted secrets, including the database password file
+  /etc/default/planmgr                 operator environment variables, conffile
+  /var/planmgr/                        data, including the PostgreSQL data directory (read-write mount)
+  /var/log/planmgr/                    logs (read-write mount)
+  /lib/systemd/system/planmgr.service  systemd unit
+  /usr/share/man/man1/planmgr.1.gz     man page, rendered from this document
+  /usr/share/info/planmgr.info.gz      GNU info document, rendered from this document
+
+# SEE ALSO
+
+systemctl(1), journalctl(1), docker(1), dpkg(1)

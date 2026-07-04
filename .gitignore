@@ -231,4 +231,8 @@ build/
 *.egg-info/
 old_code/
 .trees/
+.tree/
+.cst/
+**/.tree/
+**/.cst/
 *.tree

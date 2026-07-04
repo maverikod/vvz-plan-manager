@@ -1,0 +1,65 @@
+# Plan Manager systemd unit
+# Realizes ServiceUnit (C-033): owns the container lifecycle (create,
+# start, stop, restart-on-failure) for the ContainerDeployment (C-029)
+# image, running as the dedicated HostIdentity (C-030) user
+# planmgruser:planmgrgrp.
+
+[Unit]
+# Lifecycle ownership: this unit is the sole owner of the planmgr
+# container's lifecycle. It orders itself after the network and the
+# container runtime it depends on, and requires the container runtime to
+# be present before it can start.
+Description=Plan Manager server (containerized application and PostgreSQL)
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+# Lifecycle ownership: Type=exec means systemd tracks the ExecStart
+# process directly (the foregrounded `docker run --rm` below), so
+# systemd's view of the unit's running state matches the container's
+# actual running state.
+Type=exec
+
+# Dedicated user: the unit and everything it starts run as the
+# HostIdentity (C-030) dedicated host user and group
+# planmgruser:planmgrgrp (uid/gid 990:990), never as root.
+User=planmgruser
+Group=planmgrgrp
+
+# Environment file: operator settings (image repository/version,
+# published port, advertised host, registration toggles, database
+# parameters) are read from /etc/default/planmgr, the ServiceUnit's
+# (C-033) environment file.
+EnvironmentFile=/etc/default/planmgr
+
+# Lifecycle ownership: best-effort cleanup of any leftover container from
+# a prior unclean stop, before starting a fresh one. The leading '-'
+# marks this command's exit status as ignored (non-fatal): there may be
+# nothing to remove.
+ExecStartPre=-/usr/bin/docker rm -f planmgr
+
+# Lifecycle ownership: starts the ContainerDeployment (C-029) image under
+# the dedicated host user's uid/gid, publishing the in-container port
+# 8080 on the configured host port, and attaching the three fixed host
+# mounts (/etc/planmgr read-only, /var/planmgr and /var/log/planmgr
+# read-write) that carry all mutable state across container replacement.
+ExecStart=/usr/bin/docker run --name planmgr --rm --user 990:990 -p ${PLANMGR_PORT}:8080 -v /etc/planmgr:/etc/planmgr:ro -v /var/planmgr:/var/planmgr -v /var/log/planmgr:/var/log/planmgr ${PLANMGR_IMAGE_REPO}:${PLANMGR_IMAGE_VERSION}
+
+# Health readiness: polls the platform health endpoint of the
+# just-started container (http://localhost:${PLANMGR_PORT}/health) every
+# 2 seconds for up to 30 attempts, and only reports the unit as started
+# once the endpoint responds successfully; fails the start if it never
+# becomes healthy.
+ExecStartPost=/usr/bin/sh -c 'for i in $(seq 1 30); do curl -fsS http://localhost:${PLANMGR_PORT}/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+
+# Lifecycle ownership: stops the running container cleanly on unit stop.
+ExecStop=/usr/bin/docker stop planmgr
+
+# Restart on failure: the unit restarts the container automatically if
+# the ExecStart process exits unexpectedly, waiting 5 seconds between
+# attempts.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -7,7 +7,7 @@ description: >
   and scoring runs carrying a check identifier, a severity, an artifact path, and
   a message; findings are aggregated into reports with an overall verdict,
   returned to the caller, and never stored as a plan artifact. The report
-  aggregation sorts findings by the pair (artifact path, check identifier) so
+  aggregation sorts findings by the tuple (artifact path, check identifier, message) so
   that the same finding set always renders identically, and renders both a
   per-check PASS/FAIL text report with offending items and a machine-checkable
   JSON form with an overall green flag that is green only when no finding
@@ -35,7 +35,7 @@ outputs:
   type: ephemeral aggregate
   description: >
     The deterministic aggregation of findings sorted by (artifact path, check
-    identifier), rendered as a per-check PASS/FAIL report and as a JSON form
+    identifier, message), rendered as a per-check PASS/FAIL report and as a JSON form
     with the overall green flag; returned to the caller, never stored.
 - name: verdict_record
   type: ephemeral result binding

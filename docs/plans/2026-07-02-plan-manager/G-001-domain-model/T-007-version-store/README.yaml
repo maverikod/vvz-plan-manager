@@ -16,7 +16,8 @@ description: >
   the head only on publication — a cascade ref is merged into head on commit and
   deleted on abort. Version operations are log, diff of two revisions into
   added/removed/changed nodes with field-level detail, checkout-read of any snapshot
-  at an optional revision, and revert as a new revision restoring a prior state;
+  at an optional revision, and revert as a new revision restoring a prior state,
+  including deletions represented by tombstone node versions with `"deleted": true`;
   history is only ever appended, never rewritten.
 concepts: [C-018]
 inputs:

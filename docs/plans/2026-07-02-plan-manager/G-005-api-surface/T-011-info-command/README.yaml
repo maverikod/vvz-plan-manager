@@ -36,9 +36,9 @@ outputs:
     probes and open cascade count, and the embedded operator documentation
     payload.
 atomic_steps:
-- A-001-info-metadata-function
-- A-002-info-command-schema
-- A-003-info-command-validate-params
-- A-004-info-command-execute
-- A-005-info-command-metadata-method
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
 status: draft

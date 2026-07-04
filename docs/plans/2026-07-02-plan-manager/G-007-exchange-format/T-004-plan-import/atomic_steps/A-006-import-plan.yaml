@@ -95,15 +95,17 @@ prompt: |
     uuid, name, status, context_budget, head_revision_uuid.
       def get_plan(conn, plan_uuid) -> Plan
     (Already imported in this file.)
-  - plan_manager/domain/concept_store.py:
+  - plan_manager/domain/concept.py:
       @dataclass Concept:
     fields concept_id, name, definition, properties: List[str], source_labels: List[str].
+  - plan_manager/domain/concept_store.py:
       def insert_concept(conn, plan_uuid, concept: Concept) -> uuid.UUID
     Write-time validation; raises ConceptValidationError(ValueError) on any violation.
       def list_concepts(conn, plan_uuid) -> list[Concept]
-  - plan_manager/domain/relation_store.py:
+  - plan_manager/domain/relation.py:
       @dataclass Relation:
     fields from_concept, to_concept, type.
+  - plan_manager/domain/relation_store.py:
       def insert_relation(conn, plan_uuid, relation: Relation) -> uuid.UUID
     Raises RelationValidationError(ValueError) on any violation.
       def list_relations(conn, plan_uuid) -> list[tuple[str, str, str]]
@@ -355,12 +357,14 @@ prompt: |
      import yaml
 
      from plan_manager.cascade.write import cascade_write
-     from plan_manager.domain.concept_store import Concept, insert_concept, list_concepts
+     from plan_manager.domain.concept import Concept
+     from plan_manager.domain.concept_store import insert_concept, list_concepts
      from plan_manager.domain.labeling import assign_missing_labels
      from plan_manager.domain.paragraph import parse
      from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
      from plan_manager.domain.plan import create_plan, get_plan
-     from plan_manager.domain.relation_store import Relation, insert_relation, list_relations
+     from plan_manager.domain.relation import Relation
+     from plan_manager.domain.relation_store import insert_relation, list_relations
      from plan_manager.exchange.layout_import import import_steps, validate_as_file, validate_descriptor_dir
      from plan_manager.storage.version_store import record_revision
      from plan_manager.views.dependency_graph import load_steps

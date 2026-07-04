@@ -135,7 +135,12 @@ prompt: |
       _LABEL_PATTERN), "dataclasses", and "typing", all of which are
       already present or added by this change.
     - Do not alter the existing Paragraph class or its docstring.
-    - Do not add any other function, class, or constant to this file.
+    - Do not add any other class or constant to this file.
+    - One additional public compatibility alias is required for downstream
+      exchange and HRS access code: `def parse(text: str) -> list[Paragraph]:`
+      with body `return parse_paragraphs(text)`. This alias is not a second
+      parser; it is the same normative parser exposed under the short name used
+      by G-007 import and HRS modules.
     - The final file must not exceed 400 lines.
 
   After this change, the file's full content must be exactly:
@@ -278,5 +283,6 @@ verification:
     fenced code block, and one paragraph wrapped in
     "<!-- non-binding -->" / "<!-- /non-binding -->" markers yields exactly
     one Paragraph (for the plain paragraph only), confirming headings,
-    fenced code, and non-binding content are excluded.
+    fenced code, and non-binding content are excluded. Calling parse(text)
+    returns the same list as parse_paragraphs(text).
 status: draft

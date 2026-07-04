@@ -21,7 +21,7 @@ description: >
   paragraphs. The coverage group runs the on-the-fly set-theoretic coverage
   computations of the CoverageView (C-010) and turns missing and extra elements
   into findings. Each check sees the whole checked scope and emits findings
-  (C-017) sorted by (artifact path, check identifier); occurrences are always
+  (C-017) sorted by (artifact path, check identifier, message); occurrences are always
   classified by artifact path, never by bare step number. With fail-fast enabled
   the run stops only at a check-group boundary so partial output stays
   deterministic, and two runs over the same tree state produce byte-identical
@@ -48,7 +48,7 @@ outputs:
   type: ephemeral aggregate
   description: >
     The deterministic per-check PASS/FAIL report with findings (C-017) sorted by
-    (artifact path, check identifier), plus the machine-checkable JSON form with
+    (artifact path, check identifier, message), plus the machine-checkable JSON form with
     the overall green flag; byte-identical for the same tree state.
 - name: gate_verdict
   type: ephemeral result binding

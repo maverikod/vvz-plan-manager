@@ -218,9 +218,12 @@ prompt: |
       """Restore working rows to the state recorded at a base revision.
 
       Computes the base and tip node-uuid -> node_version-uuid maps via
-      ``state_at``, and the base-to-tip diff via ``diff``. For every node
-      uuid in ``diff(...)["changed"]`` and ``diff(...)["removed"]``, writes
-      back the base-revision snapshot with ``apply_snapshot``. For every node
+      ``state_at``, and the base-to-tip diff via ``diff``. The current
+      version-store diff contract returns ``diff(...)["changed"]`` as dict
+      entries with keys ``entity_uuid`` and ``fields``; the entity uuid is the
+      node to restore. For every changed entity and every node uuid in
+      ``diff(...)["removed"]``, writes back the base-revision snapshot with
+      ``apply_snapshot``. For every node
       uuid in ``diff(...)["added"]``, deletes the working row with
       ``delete_node`` using the kind recorded in its tip-revision snapshot.
       Recorded revisions are never deleted or rewritten by this function;
@@ -236,7 +239,8 @@ prompt: |
       base_map = state_at(conn, plan_uuid, base_revision_uuid)
       tip_map = state_at(conn, plan_uuid, tip_revision_uuid)
       d = diff(conn, plan_uuid, base_revision_uuid, tip_revision_uuid)
-      for node in d["changed"] + d["removed"]:
+      changed = [entry["entity_uuid"] for entry in d["changed"]]
+      for node in changed + d["removed"]:
           apply_snapshot(conn, node, node_version_content(conn, base_map[node]))
       for node in d["added"]:
           snap = node_version_content(conn, tip_map[node])
@@ -249,8 +253,9 @@ prompt: |
     there as: `def state_at(conn, plan_uuid, revision_uuid) -> dict[uuid.UUID,
     uuid.UUID]` (returns a mapping from node uuid to node_version uuid at
     that revision) and `def diff(conn, plan_uuid, revision_a, revision_b) ->
-    dict` (returns `{"added": [...], "removed": [...], "changed": [...]}`,
-    lists of node uuids, added/removed/changed from `revision_a` to
+    dict` (returns `{"added": [...], "removed": [...], "changed": [...]}`:
+    `added` and `removed` are lists of node uuids, while `changed` is a list
+    of dicts with `entity_uuid` and `fields`, from `revision_a` to
     `revision_b`). Import and call them exactly as shown; do not redefine
     them in this file.
   - `base_map = state_at(conn, plan_uuid, base_revision_uuid)` and
@@ -259,10 +264,11 @@ prompt: |
   - `d = diff(conn, plan_uuid, base_revision_uuid, tip_revision_uuid)` must
     be called with `base_revision_uuid` as `revision_a` and
     `tip_revision_uuid` as `revision_b`, exactly as shown.
-  - For every node uuid in `d["changed"] + d["removed"]` (list
-    concatenation, iterated together in one loop), call `apply_snapshot(conn,
-    node, node_version_content(conn, base_map[node]))` — i.e. fetch the
-    snapshot content of the base-revision node_version for that node via
+  - Build `changed = [entry["entity_uuid"] for entry in d["changed"]]`.
+    For every node uuid in `changed + d["removed"]` (list concatenation,
+    iterated together in one loop), call `apply_snapshot(conn, node,
+    node_version_content(conn, base_map[node]))` — i.e. fetch the snapshot
+    content of the base-revision node_version for that node via
     `node_version_content`, then upsert it via `apply_snapshot`.
   - For every node uuid in `d["added"]` (a second, separate loop), fetch
     `snap = node_version_content(conn, tip_map[node])`, then call
@@ -271,9 +277,10 @@ prompt: |
     this function; only `apply_snapshot` and `delete_node` (which touch
     only the four working-row tables `step`, `concept`, `relation`,
     `paragraph`) are called.
-  - The resulting file must contain exactly these four functions in this
-    order: `node_version_content`, `apply_snapshot`, `delete_node`,
-    `restore_state`, and no other top-level definitions.
+  - The resulting file must contain these four public functions in this order:
+    `node_version_content`, `apply_snapshot`, `delete_node`, `restore_state`.
+    A private helper for extracting `entity_uuid` from changed diff entries is
+    allowed if used only by `restore_state`.
 
   MRS excerpt (only the concepts referenced by this AS; quoted verbatim
   from `spec.yaml`):

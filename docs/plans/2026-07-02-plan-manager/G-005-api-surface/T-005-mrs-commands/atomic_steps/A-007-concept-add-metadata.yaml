@@ -212,7 +212,8 @@ prompt: |
   - The function must be named get_concept_add_metadata and accept exactly one
     positional parameter named cls.
   - error_cases must contain exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT,
-    DUPLICATE_ID, PARAGRAPH_NOT_FOUND, each with description, message, solution.
+    DUPLICATE_ID, PARAGRAPH_NOT_FOUND, IMPORT_INVALID, each with description,
+    message, solution.
   - The returned dict must contain all of: name, version, description, category,
     author, email, detailed_description, parameters, return_value, usage_examples,
     error_cases, best_practices.
@@ -224,7 +225,8 @@ verification:
     stub object exposing name/version/descr/category/author/email attributes
     returns a dict containing all required top-level keys; error_cases has
     exactly the keys PLAN_NOT_FOUND, CASCADE_CONFLICT, DUPLICATE_ID,
-    PARAGRAPH_NOT_FOUND, each with description, message, and solution;
+    PARAGRAPH_NOT_FOUND, IMPORT_INVALID, each with description, message, and
+    solution;
     parameters has entries for plan, cascade_uuid, concept_id, name,
     definition (required True) and properties, source_labels (required
     False, default []).

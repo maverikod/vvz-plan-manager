@@ -96,11 +96,11 @@ prompt: |
     value `True`).
   - `return_value` has exactly the keys `success` and `error`, structured as
     shown.
-  - `error_cases` has exactly one key, `PLAN_NOT_FOUND`, with exactly
-    `description`, `message`, `solution` — this is the only error code the
-    graph_parallel_map command can return: it is raised when the `plan`
-    parameter cannot be resolved. There is no step_id parameter and no
-    cycle handling in this command.
+  - `error_cases` has exactly two keys, `PLAN_NOT_FOUND` and
+    `CYCLE_DETECTED`, each with exactly `description`, `message`, `solution`.
+    `PLAN_NOT_FOUND` is returned when the `plan` parameter cannot be
+    resolved. `CYCLE_DETECTED` is returned when the wave partition cannot be
+    computed because the dependency graph contains a cycle.
   - No imports beyond `from __future__ import annotations` are needed or
     permitted; the function only reads attributes off `cls` and returns a
     literal dict.

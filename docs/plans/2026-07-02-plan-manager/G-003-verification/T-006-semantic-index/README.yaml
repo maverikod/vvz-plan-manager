@@ -66,18 +66,18 @@ outputs:
     The explicit refusal returned when the scope's gate verdict is stale or not
     green at the current revision.
 atomic_steps:
-- A-001-load-concept-rows
-- A-002-required-concepts
-- A-003-declared-concepts
-- A-004-coverage-estimator
-- A-005-reference-estimator
-- A-006-branch-text
-- A-007-embedding-estimator
-- A-008-scoring-config
-- A-009-score-refused-error
-- A-010-branch-score
-- A-011-score-branch
-- A-012-plan-score
-- A-013-score-plan
-- A-014-branch-summary
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+- A-013
+- A-014
 status: draft

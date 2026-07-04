@@ -45,8 +45,10 @@ prompt: |
   None) via each revision's ``parent_uuid``. For each entity_uuid touched
   by any revision on the walk, the node_version from the FIRST revision
   encountered during the walk is kept (i.e. the most recent revision on
-  the walk that touched that entity); node versions from revisions
-  encountered later in the walk for the same entity_uuid are ignored.
+  the walk that touched that entity). If that first node_version content
+  carries ``"deleted": True``, the entity is treated as absent at the
+  reconstructed revision and older node versions for the same entity_uuid are
+  ignored. Otherwise the first non-deleted node_version is kept.
 
   :param conn: open database connection.
   :param plan_uuid: uuid of the plan to reconstruct state for.
@@ -64,6 +66,7 @@ prompt: |
 
   ```python
       state: dict[uuid.UUID, uuid.UUID] = {}
+      seen: set[uuid.UUID] = set()
       current_uuid: uuid.UUID | None = revision_uuid
       while current_uuid is not None:
           cur = conn.execute(
@@ -78,11 +81,14 @@ prompt: |
           parent_uuid, node_version_uuids = row
           if node_version_uuids:
               nv_cur = conn.execute(
-                  "SELECT uuid, entity_uuid FROM node_version WHERE uuid = ANY(%s)",
+                  "SELECT uuid, entity_uuid, content FROM node_version WHERE uuid = ANY(%s)",
                   (list(node_version_uuids),),
               )
-              for node_version_uuid, entity_uuid in nv_cur.fetchall():
-                  if entity_uuid not in state:
+              for node_version_uuid, entity_uuid, content in nv_cur.fetchall():
+                  if entity_uuid in seen:
+                      continue
+                  seen.add(entity_uuid)
+                  if not content.get("deleted"):
                       state[entity_uuid] = node_version_uuid
           current_uuid = parent_uuid
       return state
@@ -106,6 +112,10 @@ prompt: |
   - The `if node_version_uuids:` guard skips the node_version lookup entirely when
     a revision's `node_version_uuids` is empty or None (there is nothing to merge
     into `state` for that revision).
+  - `seen` records every entity_uuid whose most recent node_version has already
+    been encountered during the parent walk, including tombstones. If content has
+    `"deleted": True`, do not add that entity to `state` and do not allow an older
+    parent revision to re-add it.
   - The walk terminates when `parent_uuid` is `None` (the root revision).
   - Resulting file must be valid, importable Python 3.12+ source.
 
@@ -133,5 +143,7 @@ verification:
   expected: >
     The module imports without error and exposes a callable `state_at(conn,
     plan_uuid, revision_uuid)` with the exact parameter and return types shown in
-    the signature above.
+    the signature above. A latest node_version whose content contains
+    `"deleted": True` is omitted from the returned state and masks older
+    node_versions for the same entity.
 status: draft

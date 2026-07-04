@@ -13,8 +13,8 @@ description: >
   asynchronous endpoint, health, command listing, heartbeat, WebSocket job
   push, OpenAPI and help — and the supported protocols follow the platform
   configuration unchanged; the bootstrap registers command classes only
-  through the platform hook mechanism, handing the registration callback of
-  the command inventory (C-024) to the factory, adds no custom route, and
+  through the platform hook mechanism by importing the command inventory
+  hook module before application creation, adds no custom route, and
   patches no platform internal. The modules needed by spawned worker
   processes are declared through the platform auto-import facility.
   Long-running commands opt into the platform queue manager through their
@@ -32,11 +32,12 @@ inputs:
   description: >
     The single required argument naming the configuration file consumed by
     runtime initialization and the platform factory.
-- name: registration_callback
-  type: hook reference
+- name: registration_hook_module
+  type: module import side effect
   description: >
-    The command-registration callback of the inventory (C-024), handed to
-    the platform factory for hook-based registration.
+    The command-registration module of the inventory (C-024), imported
+    before application creation so it registers its callback through the
+    adapter's hook registry.
 outputs:
 - name: running_server
   type: runtime state
