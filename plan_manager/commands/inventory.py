@@ -33,6 +33,7 @@ INVENTORY: tuple[str, ...] = (
     "graph_parallel_map",
     "graph_impact",
     "branch_prompt",
+    "plan_prompt_chain",
     "branch_dump",
     "branch_weak",
     "plan_validate",
