@@ -11,7 +11,7 @@
 PLANMGR_IMAGE_REPO=vasilyvz/planmgr
 
 # The image version (tag) to deploy; must exist on Docker Hub.
-PLANMGR_IMAGE_VERSION=0.1.0
+PLANMGR_IMAGE_VERSION=0.1.3
 
 # Host port published for the container's in-container port 8080; the
 # platform health endpoint is reachable at
