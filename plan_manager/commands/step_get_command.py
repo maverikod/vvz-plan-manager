@@ -5,8 +5,14 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.step_ref import (
+    canonical_step_path,
+    parent_canonical_path,
+    parent_uuid,
+    resolve_step_ref,
+)
 from plan_manager.commands.step_get_metadata import get_step_get_metadata
 from plan_manager.domain.step_runtime import get_runtime_record
 from plan_manager.runtime.context import db_connection
@@ -90,25 +96,20 @@ class StepGetCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
-                target = next((s for s in nodes.values() if s.step_id == step_id), None)
-                if target is None:
-                    raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")
-                parent_path = None
-                if target.parent_step_uuid is not None:
-                    parent = nodes.get(target.parent_step_uuid)
-                    if parent is not None:
-                        parent_path = artifact_path_of(nodes, parent)
+                target = resolve_step_ref(nodes, step_id)
                 data = {
                     "uuid": str(target.uuid),
                     "step_id": target.step_id,
                     "slug": target.slug,
                     "level": target.level,
                     "status": target.status,
-                    "parent_path": parent_path,
+                    "parent_path": parent_canonical_path(nodes, target),
+                    "parent_uuid": parent_uuid(nodes, target),
                     "fields": target.fields,
                     "depends_on": target.depends_on,
                     "concepts": target.concepts,
-                    "path": artifact_path_of(nodes, target),
+                    "path": canonical_step_path(nodes, target),
+                    "artifact_path": artifact_path_of(nodes, target),
                 }
                 if include_runtime:
                     data["runtime"] = get_runtime_record(conn, p.uuid, target.uuid)

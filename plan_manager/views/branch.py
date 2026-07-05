@@ -12,6 +12,7 @@ import psycopg
 from plan_manager.domain.step import Step
 from plan_manager.domain.paragraph import Paragraph
 from plan_manager.domain.paragraph_store import list_paragraphs
+from plan_manager.views.dependency_graph import load_steps
 
 
 class BranchResolutionError(ValueError):
@@ -156,14 +157,40 @@ def resolve_branch(
         if atomic.parent_step_uuid does not equal ts.uuid (message names
         as_step_id as the child and ts_step_id as the addressed parent).
     """
-    gs = _get_step_row(conn, plan_uuid, 3, gs_step_id)
-    ts = _get_step_row(conn, plan_uuid, 4, ts_step_id)
-    atomic = _get_step_row(conn, plan_uuid, 5, as_step_id)
-    if ts.parent_step_uuid != gs.uuid:
+    nodes = load_steps(conn, plan_uuid)
+    gs = next(
+        (step for step in nodes.values() if step.level == 3 and step.step_id == gs_step_id),
+        None,
+    )
+    if gs is None:
+        raise BranchResolutionError(
+            f"no step found at level 3 with step_id {gs_step_id!r}"
+        )
+    ts = next(
+        (
+            step
+            for step in nodes.values()
+            if step.level == 4
+            and step.step_id == ts_step_id
+            and step.parent_step_uuid == gs.uuid
+        ),
+        None,
+    )
+    if ts is None:
         raise BranchResolutionError(
             f"step {ts_step_id!r} does not belong to addressed parent {gs_step_id!r}"
         )
-    if atomic.parent_step_uuid != ts.uuid:
+    atomic = next(
+        (
+            step
+            for step in nodes.values()
+            if step.level == 5
+            and step.step_id == as_step_id
+            and step.parent_step_uuid == ts.uuid
+        ),
+        None,
+    )
+    if atomic is None:
         raise BranchResolutionError(
             f"step {as_step_id!r} does not belong to addressed parent {ts_step_id!r}"
         )
@@ -177,4 +204,3 @@ def resolve_branch(
     return Branch(
         plan_uuid=plan_uuid, gs=gs, ts=ts, atomic=atomic, hrs_slice=hrs_slice
     )
-

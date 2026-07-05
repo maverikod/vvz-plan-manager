@@ -13,6 +13,7 @@ from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_create_metadata import get_step_create_metadata
+from plan_manager.commands.step_ref import resolve_step_ref
 from plan_manager.domain.step_store import create_step, get_step
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.version_store import record_revision
@@ -148,9 +149,11 @@ class StepCreateCommand(Command):
                 parent = None
                 parent_uuid = None
                 if parent_step_id is not None:
-                    parent = next((s for s in nodes.values() if s.step_id == parent_step_id), None)
-                    if parent is None:
-                        raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {parent_step_id}")
+                    parent = resolve_step_ref(
+                        nodes,
+                        parent_step_id,
+                        ambiguous_code="AMBIGUOUS_PARENT_STEP_ID",
+                    )
                     parent_uuid = parent.uuid
                 parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
                 target_kind = "paragraph" if parent_uuid is None else "step"

@@ -282,10 +282,22 @@ def assemble_prompt_chain(
         block_id: blocks[block_id]
         for block_id in sorted(blocks)
     }
+    diagnostics = []
+    if not steps:
+        diagnostics.append(
+            {
+                "code": "NO_ATOMIC_STEPS",
+                "message": (
+                    "No atomic steps exist in the requested scope; "
+                    "prompt-chain has no executable rows."
+                ),
+            }
+        )
     return {
         "plan": plan_name,
         "revision": str(revision_uuid) if revision_uuid is not None else None,
         "scope": scope.label,
         "blocks": ordered_blocks,
         "steps": steps,
+        "diagnostics": diagnostics,
     }

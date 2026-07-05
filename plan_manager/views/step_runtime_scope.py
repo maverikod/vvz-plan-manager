@@ -6,6 +6,7 @@ import re
 import uuid
 
 from plan_manager.domain.step import Step
+from plan_manager.commands.step_ref import resolve_step_ref
 from plan_manager.views.dependency_graph import parent_path
 
 
@@ -14,8 +15,8 @@ _TACTICAL_SCOPE_RE = re.compile(r"^(G-\d{3})/(T-\d{3})$")
 
 
 def resolve_step_by_id(nodes: dict[uuid.UUID, Step], step_id: str) -> Step | None:
-    """Resolve one step_id using the same first-match behavior as step_get."""
-    return next((step for step in nodes.values() if step.step_id == step_id), None)
+    """Resolve one step ref using the command step-reference contract."""
+    return resolve_step_ref(nodes, step_id)
 
 
 def scoped_steps(nodes: dict[uuid.UUID, Step], scope: str | None) -> list[Step]:

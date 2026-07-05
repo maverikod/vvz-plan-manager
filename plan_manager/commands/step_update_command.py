@@ -10,8 +10,9 @@ from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission, frozen_at_or_below
 from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.cascade.propagation import step_invalidation
-from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
+from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.step_ref import resolve_step_ref
 from plan_manager.commands.step_update_metadata import get_step_update_metadata
 from plan_manager.domain.step_store import get_step, update_step_fields
 from plan_manager.runtime.context import db_connection
@@ -113,9 +114,7 @@ class StepUpdateCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
-                target = next((s for s in nodes.values() if s.step_id == step_id), None)
-                if target is None:
-                    raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")
+                target = resolve_step_ref(nodes, step_id)
                 parsed_cascade_uuid = uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
                 try:
                     rec = check_admission(conn, p.uuid, "step", target.uuid, parsed_cascade_uuid)

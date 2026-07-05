@@ -7,6 +7,11 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.step_ref import (
+    canonical_step_path,
+    parent_canonical_path,
+    parent_uuid,
+)
 from plan_manager.commands.step_tree_metadata import get_step_tree_metadata
 from plan_manager.domain.step_runtime import get_runtime_record
 from plan_manager.runtime.context import db_connection
@@ -89,11 +94,15 @@ class StepTreeCommand(Command):
                 tree = []
                 for s in nodes.values():
                     entry = {
-                        "path": artifact_path_of(nodes, s),
+                        "uuid": str(s.uuid),
+                        "path": canonical_step_path(nodes, s),
                         "step_id": s.step_id,
                         "slug": s.slug,
                         "level": s.level,
                         "status": s.status,
+                        "parent_path": parent_canonical_path(nodes, s),
+                        "parent_uuid": parent_uuid(nodes, s),
+                        "artifact_path": artifact_path_of(nodes, s),
                     }
                     if include_runtime:
                         entry["runtime"] = get_runtime_record(conn, p.uuid, s.uuid)

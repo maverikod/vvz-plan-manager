@@ -55,7 +55,7 @@ def get_plan_status_metadata(cls: Any) -> dict:
                     "plan": "Resolved plan identity: uuid, name, status.",
                     "counts_by_level": "Artifact counts keyed by level 3, 4, 5.",
                     "status_distribution": "Count of steps per status value across all levels.",
-                    "gate": "Gate verdict: green (bool), scope, revision_uuid.",
+                    "gate": "Gate verdict: green (bool), scope, revision_uuid. When red, also includes findings_count and top_findings.",
                     "scoring": (
                         "When gate is green: index, color, weakest "
                         "(list of branch summaries). When gate is not "

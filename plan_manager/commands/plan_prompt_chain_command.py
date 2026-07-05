@@ -146,11 +146,6 @@ class PlanPromptChainCommand(Command):
                         scoped_atomic = scope_atomic_steps(nodes, normalized_scope)
                     except ValueError as exc:
                         return domain_error("STEP_NOT_FOUND", str(exc))
-                    if not scoped_atomic:
-                        return domain_error(
-                            "STEP_NOT_FOUND",
-                            f"no atomic steps found for scope {normalized_scope.label!r}",
-                        )
                     for atomic in scoped_atomic:
                         branch = branch_for_atomic(nodes, paragraphs, p.uuid, atomic)
                         report, _verdict = run_gate(conn, p.uuid, branch=branch)

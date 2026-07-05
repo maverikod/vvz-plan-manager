@@ -14,6 +14,8 @@ from plan_manager.storage.version_store import VersionStoreError
 DOMAIN_CODES: frozenset[str] = frozenset({
     "PLAN_NOT_FOUND",
     "STEP_NOT_FOUND",
+    "AMBIGUOUS_STEP_ID",
+    "AMBIGUOUS_PARENT_STEP_ID",
     "CONCEPT_NOT_FOUND",
     "RELATION_NOT_FOUND",
     "PARAGRAPH_NOT_FOUND",

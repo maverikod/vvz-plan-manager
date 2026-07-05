@@ -12,8 +12,8 @@ from plan_manager.cascade.regime import check_admission
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.hrs_import_metadata import get_hrs_import_metadata
-from plan_manager.exchange.exporter import export_hrs
 from plan_manager.exchange.importer import import_hrs, validate_hrs
+from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.views.dependency_graph import load_steps
 
@@ -191,8 +191,18 @@ class HrsImportCommand(Command):
                         return domain_error("FROZEN_ARTIFACT", str(exc))
                     return domain_error("CASCADE_REQUIRED", str(exc))
                 summary = import_hrs(conn, p.uuid, text, "api", rec)
-                reread = export_hrs(conn, p.uuid)
-                assert reread == text, "hrs_import verification mismatch: re-read text differs from imported text"
+                reread = [
+                    {
+                        "label": paragraph.label,
+                        "text": paragraph.text,
+                        "position": paragraph.position,
+                    }
+                    for paragraph in list_paragraphs(conn, p.uuid)
+                ]
+                if reread != summary["written"]:
+                    raise RuntimeError(
+                        "hrs_import verification mismatch: stored paragraphs differ from written paragraphs"
+                    )
                 return SuccessResult(data={"dry_run": False, "paragraphs": summary["paragraphs"]})
         except Exception as exc:
             return map_exception(exc)

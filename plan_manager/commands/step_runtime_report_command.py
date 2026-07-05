@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_runtime_report_metadata import (
     get_step_runtime_report_metadata,
@@ -62,8 +62,6 @@ class StepRuntimeReportCommand(Command):
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
                 step = resolve_step_by_id(nodes, step_id)
-                if step is None:
-                    raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")
                 runtime = report_runtime_record(conn, p.uuid, step.uuid, payload)
                 return SuccessResult(data={"step_id": step.step_id, "runtime": runtime})
         except Exception as exc:

@@ -124,6 +124,20 @@ class PlanStatusCommand(Command):
                         "weakest": [branch_summary(b) for b in score.weakest],
                     }
                 else:
+                    findings = [
+                        finding
+                        for check in report.checks
+                        for finding in check.findings
+                    ]
+                    gate_part["findings_count"] = len(findings)
+                    gate_part["top_findings"] = [
+                        {
+                            "code": finding.check_id,
+                            "path": finding.artifact_path,
+                            "message": finding.message,
+                        }
+                        for finding in findings[:5]
+                    ]
                     scoring_part = {"refused": "GATE_RED"}
                 return SuccessResult(
                     data={

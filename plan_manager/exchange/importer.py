@@ -98,7 +98,17 @@ def import_hrs(conn, plan_uuid, text: str, author: str, cascade) -> dict:
         for row_uuid, snapshot in zip(row_uuids, snapshots):
             cascade_write(conn, plan_uuid, cascade, row_uuid, snapshot, [], author, "hrs import")
 
-    return {"paragraphs": len(labeled)}
+    return {
+        "paragraphs": len(labeled),
+        "written": [
+            {
+                "label": paragraph.label,
+                "text": paragraph.text,
+                "position": paragraph.position,
+            }
+            for paragraph in labeled
+        ],
+    }
 
 
 def validate_layout(source_root) -> list[str]:

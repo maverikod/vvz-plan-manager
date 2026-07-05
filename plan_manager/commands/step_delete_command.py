@@ -13,6 +13,7 @@ from plan_manager.cascade.propagation import step_invalidation
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_delete_metadata import get_step_delete_metadata
+from plan_manager.commands.step_ref import resolve_step_ref
 from plan_manager.domain.step_ops import delete_step
 from plan_manager.domain.step_store import get_step
 from plan_manager.runtime.context import db_connection
@@ -112,9 +113,7 @@ class StepDeleteCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
-                target = next((s for s in nodes.values() if s.step_id == step_id), None)
-                if target is None:
-                    raise DomainCommandError("STEP_NOT_FOUND", f"step not found: {step_id}")
+                target = resolve_step_ref(nodes, step_id)
                 if dry_run:
                     status_updates = step_invalidation(nodes, target.uuid)
                     impact = []
