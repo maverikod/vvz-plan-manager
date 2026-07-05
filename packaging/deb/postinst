@@ -31,6 +31,15 @@ case "$1" in
         . /etc/default/planmgr
         set +a
 
+        : "${PLANMGR_EMBEDDING_URL:=}"
+        : "${PLANMGR_EMBEDDING_TIMEOUT:=60.0}"
+        if [ -n "$PLANMGR_EMBEDDING_URL" ]; then
+            PLANMGR_EMBEDDING_URL_JSON="$(PLANMGR_EMBEDDING_URL="$PLANMGR_EMBEDDING_URL" python3 -c 'import json, os; print(json.dumps(os.environ["PLANMGR_EMBEDDING_URL"]))')"
+        else
+            PLANMGR_EMBEDDING_URL_JSON="null"
+        fi
+        export PLANMGR_EMBEDDING_URL_JSON PLANMGR_EMBEDDING_TIMEOUT
+
         if [ -z "$PLANMGR_IMAGE_VERSION" ]; then
             echo "planmgr: PLANMGR_IMAGE_VERSION is not set in /etc/default/planmgr" >&2
             exit 1

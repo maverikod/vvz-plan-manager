@@ -147,4 +147,4 @@ verification:
     equals the three-level (3, 4, 5) field lists specified in the prompt,
     and whose exchange_layout equals the six-key mapping specified in the
     prompt.
-status: draft
+status: done

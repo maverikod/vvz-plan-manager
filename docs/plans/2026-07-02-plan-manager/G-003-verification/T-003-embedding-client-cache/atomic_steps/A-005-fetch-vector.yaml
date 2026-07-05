@@ -267,4 +267,4 @@ verification:
     a connection error, a timeout, a non-200 status, a non-JSON body, or a
     JSON body missing a list-typed "embedding" key, fetch_vector raises
     EmbeddingUnavailable carrying the reason as its argument.
-status: draft
+status: done

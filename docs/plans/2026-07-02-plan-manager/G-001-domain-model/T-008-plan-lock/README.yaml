@@ -26,4 +26,4 @@ outputs:
     assignment, held entirely in the database with no lock files and no in-process
     lock state a restart could lose.
 atomic_steps: [A-001, A-002]
-status: draft
+status: frozen

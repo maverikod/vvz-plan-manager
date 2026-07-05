@@ -193,4 +193,4 @@ verification:
     calling it again with the same text is a no-op that does not raise
     and does not create a duplicate row, per ON CONFLICT (content_hash) DO
     NOTHING.
-status: draft
+status: done

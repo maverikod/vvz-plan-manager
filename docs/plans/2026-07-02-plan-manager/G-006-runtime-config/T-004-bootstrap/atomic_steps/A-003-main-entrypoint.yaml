@@ -6,7 +6,7 @@ operation: modify_file
 priority: 3
 depends_on: [A-002]
 concepts: [C-027, C-028]
-status: draft
+status: done
 prompt: |
   Modify the file `plan_manager/main.py` (operation: modify_file). The
   file currently contains exactly the content shown below (this is the

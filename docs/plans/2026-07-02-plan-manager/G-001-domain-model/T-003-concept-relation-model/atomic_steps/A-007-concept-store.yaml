@@ -229,4 +229,4 @@ verification:
     plan_uuid, concept_id, name, definition, properties, source_labels in
     that order, returning the generated uuid. Validation and psycopg
     exceptions are not caught by this module.
-status: draft
+status: done

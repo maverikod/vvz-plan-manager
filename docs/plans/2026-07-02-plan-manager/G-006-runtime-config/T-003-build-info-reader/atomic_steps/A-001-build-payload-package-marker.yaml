@@ -87,4 +87,4 @@ verification:
     defines no attributes other than the standard module dunder
     attributes: dir(plan_manager._build) contains no names besides those
     Python assigns automatically to every module.
-status: draft
+status: done

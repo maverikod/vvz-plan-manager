@@ -149,4 +149,4 @@ verification:
     instantiable with the ten documented keyword fields (uuid, plan_uuid,
     parent_step_uuid, level, step_id, slug, fields, depends_on, concepts,
     status) and exposes them as attributes after construction.
-status: draft
+status: done

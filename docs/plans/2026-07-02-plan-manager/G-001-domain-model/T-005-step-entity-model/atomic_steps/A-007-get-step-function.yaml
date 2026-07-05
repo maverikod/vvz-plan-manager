@@ -232,4 +232,4 @@ verification:
     uuid, raises ValueError with a message naming the missing uuid when
     no row is found, and otherwise returns a Step built from the row's
     ten columns in the documented order.
-status: draft
+status: done

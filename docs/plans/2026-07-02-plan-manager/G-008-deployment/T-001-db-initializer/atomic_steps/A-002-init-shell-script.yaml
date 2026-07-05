@@ -204,4 +204,4 @@ verification:
     script's final statement is "exit 0" following a report line that
     includes role_created, db_created, migrations_applied, and
     migrations_skipped counts.
-status: draft
+status: done

@@ -271,4 +271,4 @@ verification:
     SuccessResult(data={"branches": count, "root", "dry_run": True,
     "non_authoritative": True}); it returns map_exception(exc) for any
     exception including plan resolution failure (PLAN_NOT_FOUND).
-status: draft
+status: done

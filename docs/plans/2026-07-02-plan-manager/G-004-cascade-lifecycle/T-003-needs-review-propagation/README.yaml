@@ -44,4 +44,4 @@ outputs:
     (C-007) as a cascade-driven transition; empty when nothing beneath the
     origin requires invalidation.
 atomic_steps: [A-001, A-002]
-status: draft
+status: frozen

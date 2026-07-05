@@ -154,4 +154,4 @@ verification:
     raising; inspection of acquire_plan_lock confirms it issues a single
     advisory-lock statement keyed by the value plan_lock_key derives from the
     given plan UUID, and returns without producing a value.
-status: draft
+status: done

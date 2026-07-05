@@ -305,4 +305,4 @@ verification:
     context budget is one hundred tokens and a prompt text forty-one
     characters long, check_budget returns a token report whose estimate is
     eleven, whose budget is one hundred, and whose exceeds flag is false.
-status: draft
+status: done

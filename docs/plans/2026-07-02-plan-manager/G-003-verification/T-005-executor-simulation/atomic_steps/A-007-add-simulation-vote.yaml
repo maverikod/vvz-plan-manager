@@ -222,4 +222,4 @@ verification:
     other case it returns 1.0 minus the surviving fraction, a value greater
     than or equal to 0.0 and strictly less than 1.0, so the detector's vote
     can only push the ensemble down and never signals a fully green result.
-status: draft
+status: done

@@ -6,7 +6,7 @@ operation: modify_file
 priority: 2
 depends_on: [A-001]
 concepts: [C-028, C-035]
-status: draft
+status: done
 prompt: |
   Modify the existing Python file at the exact project-relative path
   `plan_manager/runtime/config.py`.

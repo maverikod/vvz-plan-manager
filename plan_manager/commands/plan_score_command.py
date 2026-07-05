@@ -129,7 +129,7 @@ class PlanScoreCommand(Command):
                 ) from exc
         return params
 
-    def execute(self, **kwargs: Any):
+    async def execute(self, **kwargs: Any):
         """Run the semantic scoring layer over the requested scope.
 
         Applies the revision freshness guard first (C-020: a verdict is

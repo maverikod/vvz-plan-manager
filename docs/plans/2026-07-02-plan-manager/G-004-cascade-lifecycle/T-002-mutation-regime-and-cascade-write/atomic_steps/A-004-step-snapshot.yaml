@@ -127,4 +127,4 @@ verification:
     strings, "parent_step_uuid" as a string or None matching
     step.parent_step_uuid, and "status" equal to the status argument
     rather than step.status.
-status: draft
+status: done

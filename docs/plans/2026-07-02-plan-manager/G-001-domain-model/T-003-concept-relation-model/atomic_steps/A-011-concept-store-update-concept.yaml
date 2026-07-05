@@ -244,4 +244,4 @@ verification:
   target: plan_manager.domain.concept_store.update_concept
   expected: >
     The function update_concept accepts a psycopg connection, a plan_uuid, a concept_id, and a fields dict, and returns a Concept. It raises ValueError naming the offending key when fields contains a key other than name, definition, properties, or source_labels. It raises ValueError with message 'concept not found: <concept_id>' when no row with that concept_id exists for the plan. It merges the touched fields onto the existing row and calls validate_concept on the merged Concept, propagating ConceptValidationError unmodified on failure. On success it executes an UPDATE against table concept for the four mutable columns and returns the row re-read from the database via get_concept.
-status: draft
+status: done

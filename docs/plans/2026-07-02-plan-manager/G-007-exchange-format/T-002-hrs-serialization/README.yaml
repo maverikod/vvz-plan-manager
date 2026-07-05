@@ -53,4 +53,4 @@ outputs:
     brace-wrapped label, space, byte-identical text, blank-line separated,
     in position order.
 atomic_steps: [A-001, A-002, A-003]
-status: draft
+status: frozen

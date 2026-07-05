@@ -112,4 +112,4 @@ verification:
     one of them, querying the table shows zero remaining rows for that
     plan_uuid while every row belonging to the other plan_uuid is still
     present unchanged.
-status: draft
+status: done

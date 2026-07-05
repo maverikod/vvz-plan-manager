@@ -6,7 +6,7 @@ operation: create_file
 priority: 1
 depends_on: [A-005]
 concepts: [C-016, C-019, C-018, C-035]
-status: draft
+status: done
 prompt: |
   Create the file plan_manager/cascade/begin.py with EXACTLY the following
   content (this is the complete, final content of this creation step; do not

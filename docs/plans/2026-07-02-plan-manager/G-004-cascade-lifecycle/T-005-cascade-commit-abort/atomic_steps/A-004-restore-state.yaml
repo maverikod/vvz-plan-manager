@@ -322,4 +322,4 @@ verification:
     its base-revision snapshot via apply_snapshot and deletes every added
     node via delete_node, without deleting or rewriting any node_version
     or revision row.
-status: draft
+status: done

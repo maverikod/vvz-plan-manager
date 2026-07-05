@@ -204,4 +204,4 @@ verification:
     corresponding INVENTORY entry. register_all calls
     registry.register(cls, "custom") exactly once per imported class, in
     INVENTORY order, and takes no action beyond these 41 calls.
-status: draft
+status: done

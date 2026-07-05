@@ -82,4 +82,4 @@ verification:
     strings in the exact order listed in the prompt, and MUTATING as a
     frozenset of exactly 18 unique strings, every one of which is also an
     element of INVENTORY.
-status: draft
+status: done

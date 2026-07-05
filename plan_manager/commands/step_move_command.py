@@ -90,6 +90,7 @@ class StepMoveCommand(Command):
         step_id: str,
         new_parent_step_id: str,
         cascade_uuid: str | None = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Move a step to a new parent and record the move as a revision.
 

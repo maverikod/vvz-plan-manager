@@ -93,4 +93,4 @@ verification:
     that returns a 64-character lowercase hexadecimal string, equal to the SHA-256
     digest of that same value's canonical JSON bytes computed independently, and
     stable (same input always yields the same digest).
-status: draft
+status: done

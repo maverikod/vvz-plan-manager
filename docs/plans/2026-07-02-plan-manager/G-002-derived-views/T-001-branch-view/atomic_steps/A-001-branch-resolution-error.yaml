@@ -66,4 +66,4 @@ verification:
     The module plan_manager.views.branch imports without error, and
     BranchResolutionError is defined as a subclass of the built-in
     ValueError with no additional attributes or overridden methods.
-status: draft
+status: done

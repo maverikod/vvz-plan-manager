@@ -126,4 +126,4 @@ verification:
     category="exchange", author="Vasiliy Zdanovskiy",
     email="vasilyvz@gmail.com", result_class is SuccessResult, and
     use_queue is True. No method is yet defined on the class.
-status: draft
+status: done

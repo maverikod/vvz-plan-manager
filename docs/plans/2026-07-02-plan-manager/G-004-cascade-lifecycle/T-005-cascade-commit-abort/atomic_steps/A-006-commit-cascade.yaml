@@ -216,4 +216,4 @@ verification:
     message when a fresh gate run is not green, advances the plan head
     and closes the cascade as committed and deletes its ref when the gate
     is green, and releases the plan lock in all cases.
-status: draft
+status: done

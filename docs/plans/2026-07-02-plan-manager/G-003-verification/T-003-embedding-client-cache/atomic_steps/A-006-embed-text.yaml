@@ -296,4 +296,4 @@ verification:
     calls fetch_vector, stores the returned vector via store_vector, and
     returns it. An EmbeddingUnavailable raised by fetch_vector propagates
     unchanged to the caller of embed_text.
-status: draft
+status: done

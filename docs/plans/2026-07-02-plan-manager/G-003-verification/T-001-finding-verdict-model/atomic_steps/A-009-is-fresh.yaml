@@ -145,4 +145,4 @@ verification:
     equal to current_revision_uuid under Python == comparison (including
     both being None), and False otherwise; no code path in is_fresh
     inspects any timestamp, clock, or duration value.
-status: draft
+status: done

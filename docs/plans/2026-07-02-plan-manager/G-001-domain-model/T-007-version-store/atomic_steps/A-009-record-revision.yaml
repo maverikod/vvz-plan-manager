@@ -299,4 +299,4 @@ verification:
     The module imports without error and exposes a callable `record_revision(conn,
     plan_uuid, author, message, changes, parent_revision_uuid, ref_name)` with the
     exact parameter and return types shown in the signature above.
-status: draft
+status: done

@@ -111,4 +111,4 @@ verification:
     respectively, plan_manager.database.host is the string "localhost",
     and plan_manager.export_root is the string "/var/planmgr/export". No
     password or secret value appears anywhere in the file.
-status: draft
+status: done

@@ -249,4 +249,4 @@ verification:
     table named by the fixed literal mapping for "step", "concept",
     "relation", or "paragraph", and raises CascadeError for any other
     kind value.
-status: draft
+status: done

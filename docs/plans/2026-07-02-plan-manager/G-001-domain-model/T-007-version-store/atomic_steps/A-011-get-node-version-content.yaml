@@ -142,4 +142,4 @@ verification:
     `get_node_version_content(conn, node_version_uuid)` with the exact parameter and
     return types shown in the signature above, raising `VersionStoreError` on a
     missing node_version.
-status: draft
+status: done

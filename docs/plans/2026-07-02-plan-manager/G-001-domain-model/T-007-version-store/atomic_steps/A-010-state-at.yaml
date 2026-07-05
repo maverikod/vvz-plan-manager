@@ -146,4 +146,4 @@ verification:
     the signature above. A latest node_version whose content contains
     `"deleted": True` is omitted from the returned state and masks older
     node_versions for the same entity.
-status: draft
+status: done

@@ -241,4 +241,4 @@ verification:
     situation where the underlying create_step assigns a different step_id
     than the descriptor declares raises ValueError with a message of the form
     "identifier mismatch on import: expected <declared> got <assigned>".
-status: draft
+status: done

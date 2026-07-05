@@ -152,4 +152,4 @@ verification:
     validate_params with {"source": "../etc"} raises ValueError. Calling
     validate_params with {"source": "a/b"} raises ValueError. Calling
     validate_params with {"source": ""} raises ValueError.
-status: draft
+status: done

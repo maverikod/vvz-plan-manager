@@ -245,4 +245,4 @@ verification:
     shape and error codes documented in the command's detailed_description and error_cases: PLAN_NOT_FOUND,
     CASCADE_REQUIRED, GATE_RED. A mutating call whose post-operation database state does not match the
     re-read assertion never reaches the success branch.
-status: draft
+status: done

@@ -193,4 +193,4 @@ verification:
     (descendant_uuid, "needs_review") tuples in impact_set's order, empty
     when no descendant requires invalidation. No database or file I/O
     occurs anywhere in the module.
-status: draft
+status: done

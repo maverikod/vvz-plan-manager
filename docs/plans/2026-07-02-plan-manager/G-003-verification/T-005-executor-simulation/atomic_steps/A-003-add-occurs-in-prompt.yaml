@@ -118,4 +118,4 @@ verification:
     as a whole word (word-boundary delimited) anywhere in prompt_text, and
     False otherwise, including when the candidate only appears as a
     substring of a larger word.
-status: draft
+status: done

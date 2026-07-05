@@ -250,4 +250,4 @@ verification:
     statement setting the fields column (wrapped in Jsonb) for the row
     matching step_uuid, with no return value and no merge of the prior
     fields content.
-status: draft
+status: done

@@ -95,4 +95,4 @@ verification:
     (artifact_path, check_id, message); the input list is left unmodified;
     calling sort_findings twice on differently-ordered inputs containing the
     same Finding objects yields identical output order.
-status: draft
+status: done

@@ -111,6 +111,7 @@ class HrsImportCommand(Command):
         source: str,
         dry_run: bool = True,
         cascade_uuid: Optional[str] = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Replace the HRS text of the resolved plan from a Markdown source.
 

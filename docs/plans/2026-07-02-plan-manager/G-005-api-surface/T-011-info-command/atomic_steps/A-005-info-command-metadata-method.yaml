@@ -273,4 +273,4 @@ verification:
     version, description, category, author, email, detailed_description,
     parameters, return_value, usage_examples, error_cases,
     best_practices, with name == "info" and error_cases == {}.
-status: draft
+status: done

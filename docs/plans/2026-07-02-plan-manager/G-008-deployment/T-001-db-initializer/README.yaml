@@ -51,4 +51,4 @@ outputs:
     The initialized cluster, role, database, and applied-migration record;
     a re-run changes nothing and existing data is never damaged.
 atomic_steps: [A-001, A-002]
-status: draft
+status: frozen

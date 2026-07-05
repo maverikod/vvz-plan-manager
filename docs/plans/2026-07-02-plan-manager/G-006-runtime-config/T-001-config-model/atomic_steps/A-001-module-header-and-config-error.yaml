@@ -6,7 +6,7 @@ operation: create_file
 priority: 1
 depends_on: []
 concepts: [C-028]
-status: draft
+status: done
 prompt: |
   Create the new Python file at the exact project-relative path
   `plan_manager/runtime/config.py`.

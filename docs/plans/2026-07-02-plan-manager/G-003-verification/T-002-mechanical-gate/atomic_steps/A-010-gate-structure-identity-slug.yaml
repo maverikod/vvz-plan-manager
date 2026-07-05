@@ -288,4 +288,4 @@ verification:
     The module imports without error. For a Step whose slug is "Bad_Slug",
     check_identity_slug returns one Finding with check_id "identity.slug";
     for slug "mechanical-gate" it returns an empty list.
-status: draft
+status: done

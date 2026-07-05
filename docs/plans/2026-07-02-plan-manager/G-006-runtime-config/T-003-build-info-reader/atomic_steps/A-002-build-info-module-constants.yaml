@@ -119,4 +119,4 @@ verification:
     REQUIRED_BUILD_KEYS equal to the tuple ("product", "package_version",
     "adapter_version", "build_date", "image_tag") in that exact order.
     The module defines no functions and no classes at this point.
-status: draft
+status: done

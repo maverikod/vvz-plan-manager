@@ -50,4 +50,4 @@ verification:
     The file contains exactly two non-empty lines, in order:
     /etc/default/planmgr and /etc/planmgr/config.json.template. There are
     no blank lines, no comment lines, and no additional paths.
-status: draft
+status: done

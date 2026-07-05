@@ -355,4 +355,4 @@ verification:
     (5 total references, 4 resolved). With an empty branch.gs.fields and
     no concepts or depends_on entries on any of the three steps, the
     function returns 1.0.
-status: draft
+status: done

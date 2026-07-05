@@ -172,4 +172,4 @@ verification:
     ErrorResult whose code is "CONCEPT_NOT_FOUND"; calling it with a resolvable
     concept_id returns a SuccessResult whose data contains concept_id, name,
     definition, properties, and source_labels matching the stored concept.
-status: draft
+status: done

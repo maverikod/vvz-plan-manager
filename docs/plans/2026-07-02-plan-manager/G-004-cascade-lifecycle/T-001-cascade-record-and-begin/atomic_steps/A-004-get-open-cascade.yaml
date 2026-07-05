@@ -6,7 +6,7 @@ operation: modify_file
 priority: 4
 depends_on: [A-003]
 concepts: [C-016, C-035]
-status: draft
+status: done
 prompt: |
   Modify the file plan_manager/cascade/record.py. Its full current content,
   as it exists after all lower-priority atomic steps on this file have been

@@ -165,4 +165,4 @@ verification:
     subset is empty, and Report.green true iff findings is empty overall.
     When findings contains a check_id absent from check_ids, build_report
     raises ValueError whose message names that check_id.
-status: draft
+status: done

@@ -149,4 +149,4 @@ verification:
     final `exec python -m plan_manager.main --config
     /etc/planmgr/config.json`. A POSIX shell syntax checker (e.g. `sh -n
     docker/entrypoint.sh` or shellcheck) reports no syntax errors.
-status: draft
+status: done

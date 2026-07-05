@@ -341,4 +341,4 @@ verification:
     head revision. Reverting from a head state that contains an entity absent
     from the target revision records a tombstone change for that entity, so the
     new head state omits it.
-status: draft
+status: done

@@ -315,4 +315,4 @@ verification:
     PlanScore(index=92.0, color="green", aggregation="minimum",
     weakest=[], revision_uuid=None) constructs successfully and exposes
     all five attributes with the given values.
-status: draft
+status: done

@@ -5,7 +5,7 @@ target_file: plan_manager/storage/identity.py
 operation: create_file
 priority: 1
 depends_on: [A-001]
-concepts: [C-035, C-018]
+concepts: [C-035, C-018, C-019]
 prompt: >
   Create the file plan_manager/storage/identity.py from scratch (operation:
   create_file). The file does not exist yet; do not assume any pre-existing
@@ -28,6 +28,11 @@ prompt: >
   store is realized by three table families — node versions, revisions, and
   refs — which, like every other stored entity, carry the immutable UUID
   identity described under C-035.
+
+  C-019 PlanLock: "Per-plan database advisory lock serializing cascades and
+  identifier assignment." Relevant property: no lock files, no in-process lock
+  state; lock identity is a stored per-plan database concern and participates
+  in the same immutable UUID/scoped-name identity model.
 
 
   Required imports, with exact module paths:
@@ -175,4 +180,4 @@ verification:
     <name_column> = %s` with plan_uuid and name bound as parameters, and
     returns the uuid of the first matching row, or raises
     plan_manager.storage.errors.NotFoundError when fetchone() returns None.
-status: draft
+status: done

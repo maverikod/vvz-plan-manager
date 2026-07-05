@@ -305,4 +305,4 @@ verification:
     above; `StepCreateCommand.metadata()` returns the dict produced by
     get_step_create_metadata; calling `execute` raises NotImplementedError
     until the follow-up AS replaces its body.
-status: draft
+status: done

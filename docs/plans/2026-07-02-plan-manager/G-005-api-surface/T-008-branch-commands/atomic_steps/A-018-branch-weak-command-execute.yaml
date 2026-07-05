@@ -254,4 +254,4 @@ verification:
     ErrorResult with code GATE_RED; an EmbeddingUnavailable exception is mapped
     to code EMBEDDINGS_UNAVAILABLE; a plan resolution failure is mapped to code
     PLAN_NOT_FOUND.
-status: draft
+status: done

@@ -184,4 +184,4 @@ verification:
     {"markdown": <str>} equal to the plan's stored HRS text. Calling
     execute(plan="unknown") returns an ErrorResult with code
     PLAN_NOT_FOUND. The command never mutates plan data.
-status: draft
+status: done

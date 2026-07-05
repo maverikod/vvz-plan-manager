@@ -187,4 +187,4 @@ verification:
     False, default False); error_cases contains exactly PLAN_NOT_FOUND,
     GATE_RED, EMBEDDINGS_UNAVAILABLE, each with description, message, and
     solution.
-status: draft
+status: done

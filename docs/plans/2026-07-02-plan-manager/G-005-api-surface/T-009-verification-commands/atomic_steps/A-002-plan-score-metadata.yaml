@@ -245,4 +245,4 @@ verification:
     expected_revision, and error_cases containing exactly the five keys
     PLAN_NOT_FOUND, STEP_NOT_FOUND, GATE_RED, VERDICT_STALE, and
     EMBEDDINGS_UNAVAILABLE.
-status: draft
+status: done

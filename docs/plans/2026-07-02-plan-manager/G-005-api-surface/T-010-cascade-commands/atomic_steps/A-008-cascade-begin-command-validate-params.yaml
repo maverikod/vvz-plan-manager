@@ -120,4 +120,4 @@ verification:
   expected: >
     Importing plan_manager.commands.cascade_begin_command succeeds and CascadeBeginCommand.validate_params
     is defined, calls super().validate_params(params) first, and returns its result unmodified.
-status: draft
+status: done

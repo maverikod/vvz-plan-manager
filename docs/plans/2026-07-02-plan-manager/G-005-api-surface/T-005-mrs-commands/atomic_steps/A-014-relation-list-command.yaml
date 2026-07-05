@@ -148,4 +148,4 @@ verification:
     returns N (from_concept, to_concept, type) tuples returns a SuccessResult
     whose data["relations"] is a list of N dicts with keys from_concept,
     to_concept, type matching each tuple's positions.
-status: draft
+status: done

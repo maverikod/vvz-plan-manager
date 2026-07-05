@@ -227,4 +227,4 @@ verification:
     scoring_threshold typed float, scoring_aggregation typed str,
     trust_floor typed float, concept_weight typed float. No field
     declares a default value.
-status: draft
+status: done

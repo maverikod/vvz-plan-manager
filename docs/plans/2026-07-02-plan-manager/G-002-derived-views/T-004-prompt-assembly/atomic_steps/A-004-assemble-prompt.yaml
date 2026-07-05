@@ -289,4 +289,4 @@ verification:
     branch values against an unchanged database returns byte-identical
     strings, and the first line of the returned text is the MRS excerpt
     header line (a number sign, a space, and the words MRS excerpt).
-status: draft
+status: done

@@ -487,4 +487,4 @@ verification:
     "coverage.relations" present in the check list as passed with no
     findings. Calling run_gate twice against the same unchanged tree state
     produces two Report objects whose render_json output is byte-identical.
-status: draft
+status: done

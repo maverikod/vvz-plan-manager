@@ -39,4 +39,4 @@ outputs:
     needs_review, and the atomic-only in_progress and done, with needs_review
     reserved for cascade propagation.
 atomic_steps: [A-001, A-002, A-003, A-004]
-status: draft
+status: frozen

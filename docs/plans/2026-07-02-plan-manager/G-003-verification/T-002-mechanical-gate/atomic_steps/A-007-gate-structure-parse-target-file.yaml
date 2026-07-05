@@ -180,4 +180,4 @@ verification:
     one Finding with check_id "parse.target_file"; for a level-5 step whose
     target_file is "plan_manager/verify/gate.py" it returns an empty list;
     level-3 and level-4 steps never produce findings from this check.
-status: draft
+status: done

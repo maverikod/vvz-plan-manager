@@ -266,4 +266,4 @@ verification:
     RuntimeError instance not matching
     any listed type, map_exception re-raises the same exception instance
     instead of returning a value.
-status: draft
+status: done

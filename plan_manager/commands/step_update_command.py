@@ -93,6 +93,7 @@ class StepUpdateCommand(Command):
         step_id: str,
         fields: dict[str, Any],
         cascade_uuid: str | None = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Patch level-specific fields of an existing step and record it.
 
@@ -124,7 +125,9 @@ class StepUpdateCommand(Command):
                     if frozen_at_or_below(nodes, target.uuid):
                         return domain_error("FROZEN_ARTIFACT", str(exc))
                     return domain_error("CASCADE_REQUIRED", str(exc))
-                update_step_fields(conn, target.uuid, fields)
+                merged_fields = dict(target.fields)
+                merged_fields.update(fields)
+                update_step_fields(conn, target.uuid, merged_fields)
                 patched = get_step(conn, target.uuid)
                 snapshot = step_snapshot(patched, patched.status)
                 if rec is not None:

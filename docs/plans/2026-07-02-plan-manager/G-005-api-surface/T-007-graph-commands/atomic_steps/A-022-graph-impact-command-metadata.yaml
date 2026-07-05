@@ -138,4 +138,4 @@ verification:
     imports get_graph_impact_metadata from plan_manager.commands.
     graph_impact_metadata, and GraphImpactCommand.metadata() returns
     exactly get_graph_impact_metadata(GraphImpactCommand).
-status: draft
+status: done

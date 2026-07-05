@@ -237,4 +237,4 @@ verification:
     (plan_uuid, level, step_id), raises BranchResolutionError naming the
     level and step_id when no row is found, and on success returns a Step
     whose depends_on and concepts fields are plain lists (never None).
-status: draft
+status: done

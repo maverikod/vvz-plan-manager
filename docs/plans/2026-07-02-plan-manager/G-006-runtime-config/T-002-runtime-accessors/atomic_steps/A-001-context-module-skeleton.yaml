@@ -120,4 +120,4 @@ verification:
     module-level names _SECTION and _PASSWORD both initialized to None
     with the annotated types PlanManagerSection | None and str | None
     respectively. No function or class is defined yet.
-status: draft
+status: done

@@ -123,4 +123,4 @@ verification:
     succeeds and exposes all five fields as attributes; constructing Verdict
     with any other kind value raises VerdictError whose message names the
     invalid kind.
-status: draft
+status: done

@@ -69,4 +69,4 @@ verification:
     defines a single class GraphParallelMapCommand(Command) whose body
     consists solely of the eight listed class attributes with the exact
     literal values specified, and no methods.
-status: draft
+status: done

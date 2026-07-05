@@ -190,4 +190,4 @@ verification:
     The module imports without error and exposes a callable
     `tie_break_key` accepting (nodes: dict[uuid.UUID, Step], node_uuid:
     uuid.UUID) and returning a 3-tuple (level, parent_path, step_id).
-status: draft
+status: done

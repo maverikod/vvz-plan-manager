@@ -210,4 +210,4 @@ verification:
     executing an INSERT into table relation with columns uuid, plan_uuid,
     from_concept, to_concept, type in that order, returning the generated
     uuid. Validation and psycopg exceptions are not caught by this module.
-status: draft
+status: done

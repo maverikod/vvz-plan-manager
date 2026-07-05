@@ -172,4 +172,4 @@ verification:
     "additionalProperties": False, and "properties" containing exactly
     one key "section" whose "enum" list equals
     ["identity", "build", "runtime", "documentation"].
-status: draft
+status: done

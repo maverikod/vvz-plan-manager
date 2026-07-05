@@ -226,4 +226,4 @@ verification:
     rows returns a list of Plan objects, one per row, ordered ascending by
     name; calling it against a database with no plan rows returns an empty
     list.
-status: draft
+status: done

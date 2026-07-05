@@ -239,4 +239,4 @@ verification:
     return_value, usage_examples, error_cases, best_practices, with
     parameters containing exactly the key plan and error_cases containing
     exactly the keys PLAN_NOT_FOUND, GATE_RED, EMBEDDINGS_UNAVAILABLE.
-status: draft
+status: done

@@ -179,4 +179,4 @@ verification:
     step row, concept_ids and relations and labels match the corresponding
     tables, and counts equals {"steps": len(steps), "concepts":
     len(concept_ids), "paragraphs": <paragraph row count>}.
-status: draft
+status: done

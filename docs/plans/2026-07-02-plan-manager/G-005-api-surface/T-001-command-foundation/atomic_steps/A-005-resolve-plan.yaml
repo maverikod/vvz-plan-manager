@@ -138,4 +138,4 @@ verification:
     row[0]). Calling it with plan a non-UUID string matching no row raises
     DomainCommandError with code "PLAN_NOT_FOUND". No call ever derives
     database connection parameters from the plan argument.
-status: draft
+status: done

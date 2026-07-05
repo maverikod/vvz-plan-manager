@@ -212,4 +212,4 @@ verification:
     initialization happens idempotently inside the container entrypoint
     triggered by the service start, and no command in the script invokes
     database initialization directly.
-status: draft
+status: done

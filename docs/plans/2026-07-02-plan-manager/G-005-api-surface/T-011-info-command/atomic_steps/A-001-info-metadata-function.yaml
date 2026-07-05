@@ -215,4 +215,4 @@ verification:
     error_cases is an empty dict; parameters contains exactly one key
     "section" whose "enum" list equals
     ["identity", "build", "runtime", "documentation"].
-status: draft
+status: done

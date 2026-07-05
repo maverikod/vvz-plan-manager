@@ -269,4 +269,4 @@ verification:
     concept_weight equals the section's scoring.concept_weights. Before
     init_runtime has been called, app_config raises RuntimeError with
     message "runtime not initialized: call init_runtime first".
-status: draft
+status: done

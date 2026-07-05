@@ -88,4 +88,4 @@ verification:
     str and readable back as attributes after construction; reassigning an
     attribute after construction raises an error because the dataclass is
     frozen.
-status: draft
+status: done

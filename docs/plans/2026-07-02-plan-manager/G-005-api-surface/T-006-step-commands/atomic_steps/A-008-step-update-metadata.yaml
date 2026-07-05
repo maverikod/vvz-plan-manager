@@ -209,4 +209,4 @@ verification:
     return_value, usage_examples, error_cases, best_practices, with
     error_cases containing exactly the keys PLAN_NOT_FOUND, STEP_NOT_FOUND,
     CASCADE_REQUIRED, CASCADE_CONFLICT, FROZEN_ARTIFACT.
-status: draft
+status: done

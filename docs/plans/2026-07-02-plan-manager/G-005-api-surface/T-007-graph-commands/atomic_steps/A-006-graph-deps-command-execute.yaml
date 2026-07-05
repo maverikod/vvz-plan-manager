@@ -250,4 +250,4 @@ verification:
     SuccessResult with step, depends_on, and dependents artifact paths on
     success, and returns an ErrorResult carrying PLAN_NOT_FOUND or
     STEP_NOT_FOUND on the corresponding failure.
-status: draft
+status: done

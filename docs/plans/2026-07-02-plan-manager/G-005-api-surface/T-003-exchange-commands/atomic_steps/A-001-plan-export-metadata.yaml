@@ -152,4 +152,4 @@ verification:
     usage_examples, error_cases, best_practices), with parameters
     containing "plan" and "revision" entries and error_cases containing
     "PLAN_NOT_FOUND" and "REVISION_NOT_FOUND" entries.
-status: draft
+status: done

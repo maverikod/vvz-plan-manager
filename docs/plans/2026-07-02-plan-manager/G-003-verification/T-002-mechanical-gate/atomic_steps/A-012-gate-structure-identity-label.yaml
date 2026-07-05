@@ -343,4 +343,4 @@ verification:
     "AB12" (uppercase letters, not lowercase base36), check_identity_label
     returns one Finding with check_id "identity.label" and artifact_path
     "{AB12}"; for labels ["m9x4", "x8m3"] it returns an empty list.
-status: draft
+status: done

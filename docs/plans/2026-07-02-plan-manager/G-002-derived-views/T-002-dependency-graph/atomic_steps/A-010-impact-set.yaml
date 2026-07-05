@@ -449,4 +449,4 @@ verification:
     called with origin_uuid X.uuid returns [Y.uuid, Z.uuid] sorted
     ascending by tie_break_key, excludes X.uuid itself, and mutates
     neither nodes nor the database.
-status: draft
+status: done

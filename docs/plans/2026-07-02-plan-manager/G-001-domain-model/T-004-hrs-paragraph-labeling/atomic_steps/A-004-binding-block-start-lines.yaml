@@ -211,4 +211,4 @@ verification:
     document, and each returned index points at the line in
     document_text.splitlines() where the corresponding binding
     paragraph's text begins.
-status: draft
+status: done

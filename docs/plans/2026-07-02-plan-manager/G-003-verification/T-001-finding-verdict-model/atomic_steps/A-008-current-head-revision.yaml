@@ -153,4 +153,4 @@ verification:
     whose message names the plan_uuid. The SQL query is parameterized (no
     string interpolation of plan_uuid into the query text) and selects only
     head_revision_uuid from plan filtered by uuid.
-status: draft
+status: done

@@ -100,4 +100,4 @@ verification:
   expected: Calling text_content_hash with a given string returns exactly
     the same value as calling plan_manager.storage.canonical.content_hash
     with that same string, since text_content_hash only delegates to it.
-status: draft
+status: done

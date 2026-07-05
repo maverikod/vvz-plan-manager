@@ -197,4 +197,4 @@ verification:
     apply_overrides(default_plan_schema(), {"bogus_key": {}}) raises
     ValueError. The original schema object passed in is never mutated by
     the call.
-status: draft
+status: done

@@ -260,4 +260,4 @@ verification:
     priority-1 uuid to the priority-2 uuid; a depends_on entry naming a
     nonexistent sibling raises ValueError mentioning both the dependent
     step_id and the unresolved entry.
-status: draft
+status: done

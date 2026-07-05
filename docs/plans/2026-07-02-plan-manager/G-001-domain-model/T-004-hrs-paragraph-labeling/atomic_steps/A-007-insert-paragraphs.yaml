@@ -180,4 +180,4 @@ verification:
     the corresponding Paragraph; calling insert_paragraphs with a list
     containing one Paragraph whose label is None raises ValueError whose
     message is exactly "paragraph has no label".
-status: draft
+status: done

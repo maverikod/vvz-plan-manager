@@ -80,4 +80,4 @@ relations:
 source_labels: ["{r5t2}", "{c9a6}", "{d4r8}", "{e7i2}", "{t3u5}", "{y6q1}", "{w5e2}", "{d1t3}", "{e8p5}", "{t2a7}", "{y9k4}", "{x4v1}", "{s5m8}", "{j1w5}", "{q6d8}", "{t6s8}"]
 depends_on: [G-001]
 tactical_steps: [T-001, T-002, T-003, T-004]
-status: draft
+status: frozen

@@ -124,4 +124,4 @@ verification:
     email attributes, returns a dict containing exactly the metadatastd
     required top-level keys, with the single parameter plan marked
     required and with error_cases containing exactly PLAN_NOT_FOUND.
-status: draft
+status: done

@@ -116,4 +116,4 @@ verification:
     both times, and that integer is the big-endian signed integer formed
     from the first eight bytes of the SHA-256 digest of the UUID's string
     representation encoded as UTF-8.
-status: draft
+status: done

@@ -403,4 +403,4 @@ verification:
   target: plan_manager.hrs.paragraphs.set_non_binding
   expected: >
     Importing plan_manager.hrs.paragraphs succeeds and the module exposes a callable named set_non_binding accepting exactly six positional parameters (conn, plan_uuid, position, non_binding, author, cascade). Calling it with non_binding=False always raises ValueError with a message stating no stored block at that position because non-binding blocks are not stored, without touching the database. Calling it with non_binding=True and a position that has no stored row raises ValueError stating no block at that position. Calling it with non_binding=True and a position that has a stored row deletes that row and records exactly one revision carrying a tombstone snapshot with deleted true, via record_revision when cascade is None or via cascade_write when cascade is a CascadeRecord.
-status: draft
+status: done

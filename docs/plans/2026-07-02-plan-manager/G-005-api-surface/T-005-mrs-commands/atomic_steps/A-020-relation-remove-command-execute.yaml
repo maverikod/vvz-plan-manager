@@ -261,4 +261,4 @@ verification:
     list_relations to confirm the edge no longer appears, and returns a
     SuccessResult whose data is {"from_concept", "to_concept", "type",
     "deleted": true, "revision_uuid": str(cascade_write's return value)}.
-status: draft
+status: done

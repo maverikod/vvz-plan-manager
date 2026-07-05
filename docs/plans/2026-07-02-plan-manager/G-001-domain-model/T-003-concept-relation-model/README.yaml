@@ -37,4 +37,4 @@ outputs:
     The persisted typed edge whose type is one of the seven allowed types, with
     free-form types rejected at write time.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008, A-009, A-010, A-011, A-012, A-013, A-014]
-status: draft
+status: frozen

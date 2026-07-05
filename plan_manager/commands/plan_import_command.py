@@ -85,7 +85,12 @@ class PlanImportCommand(Command):
             raise ValueError("source must be a bare layout name without path separators")
         return params
 
-    async def execute(self, source: str, dry_run: bool = True) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        source: str,
+        dry_run: bool = True,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Import a plan from a standard file layout, validating before write.
 
         Args:

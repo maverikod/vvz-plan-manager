@@ -107,4 +107,4 @@ verification:
     "numpy", and "PyYAML", tool.setuptools.packages.find.include equal to
     ["plan_manager*"], and tool.setuptools.package-data.plan_manager equal to
     ["_build/*"].
-status: draft
+status: done

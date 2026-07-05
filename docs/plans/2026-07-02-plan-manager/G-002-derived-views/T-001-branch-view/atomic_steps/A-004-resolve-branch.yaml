@@ -420,4 +420,4 @@ verification:
     paragraphs from list_paragraphs whose label, without braces, appears in
     gs.fields["source_labels"], preserving list_paragraphs's document
     order.
-status: draft
+status: done

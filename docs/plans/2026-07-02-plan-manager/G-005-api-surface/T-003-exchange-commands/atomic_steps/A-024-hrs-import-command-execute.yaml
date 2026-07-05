@@ -342,4 +342,4 @@ verification:
     SuccessResult with data {"dry_run": False, "paragraphs": <int>}.
     Calling execute(plan="unknown", ...) returns an ErrorResult with
     code PLAN_NOT_FOUND.
-status: draft
+status: done

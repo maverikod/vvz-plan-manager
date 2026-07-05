@@ -97,6 +97,7 @@ class RelationAddCommand(Command):
         from_concept: str,
         to_concept: str,
         type: str,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Add a new relation under an open cascade and verify by re-read.
 

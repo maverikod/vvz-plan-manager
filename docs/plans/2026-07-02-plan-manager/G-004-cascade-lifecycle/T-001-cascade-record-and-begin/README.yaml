@@ -50,4 +50,4 @@ outputs:
     The explicit condition raised when the plan already has an open cascade
     or has no recorded head revision to anchor at.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
-status: draft
+status: frozen

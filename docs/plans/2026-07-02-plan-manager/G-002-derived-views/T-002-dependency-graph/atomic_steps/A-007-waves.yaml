@@ -377,4 +377,4 @@ verification:
     in strictly earlier waves, and each wave is sorted ascending by
     tie_break_key; for a nodes/edges pair containing a cycle, waves
     raises ValueError with message "cycle detected".
-status: draft
+status: done

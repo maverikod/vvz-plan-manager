@@ -94,4 +94,4 @@ verification:
     exposes a dataclass named Paragraph with exactly three attributes,
     label, text, and position, matching the types Optional[str], str, and
     int respectively.
-status: draft
+status: done

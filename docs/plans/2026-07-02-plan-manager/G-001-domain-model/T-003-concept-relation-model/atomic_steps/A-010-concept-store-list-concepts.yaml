@@ -178,4 +178,4 @@ verification:
   target: plan_manager.domain.concept_store.list_concepts
   expected: >
     The function list_concepts accepts a psycopg connection and a plan_uuid, and returns list[Concept]. It executes a SELECT against table concept filtered by plan_uuid and ordered by concept_id, returning one Concept per row built from the five selected columns (concept_id, name, definition, properties, source_labels) in that order.
-status: draft
+status: done

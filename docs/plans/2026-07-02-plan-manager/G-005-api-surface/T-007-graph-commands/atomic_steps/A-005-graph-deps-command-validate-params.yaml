@@ -140,4 +140,4 @@ verification:
     The file parses as valid Python 3.12 source with no syntax errors and
     GraphDepsCommand defines validate_params(self, params) that calls
     super().validate_params(params) and returns its result unchanged.
-status: draft
+status: done

@@ -140,4 +140,4 @@ verification:
     BranchPromptCommand.validate_params(self, params) is an instance method
     whose body calls super().validate_params(params), reassigns the result to
     params, and returns params unchanged, with no additional semantic checks.
-status: draft
+status: done

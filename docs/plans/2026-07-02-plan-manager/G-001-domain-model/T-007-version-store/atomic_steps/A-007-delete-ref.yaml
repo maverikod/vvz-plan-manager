@@ -181,4 +181,4 @@ verification:
     The module imports without error and exposes a callable
     `delete_ref(conn, plan_uuid, name)` with the exact parameter types and `None`
     return type shown in the signature above.
-status: draft
+status: done

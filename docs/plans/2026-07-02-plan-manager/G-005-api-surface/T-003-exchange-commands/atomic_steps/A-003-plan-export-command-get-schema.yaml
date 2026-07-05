@@ -115,4 +115,4 @@ verification:
     properties containing exactly "plan" and "revision" (both type
     string with descriptions), required equal to ["plan"], and
     additionalProperties equal to False.
-status: draft
+status: done

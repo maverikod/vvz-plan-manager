@@ -309,4 +309,4 @@ verification:
     ...}}. When operator_doc is monkeypatched to raise RuntimeError, both
     execute() and execute(section="documentation") return an ErrorResult
     instead of raising.
-status: draft
+status: done

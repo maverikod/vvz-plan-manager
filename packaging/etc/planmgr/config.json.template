@@ -44,6 +44,10 @@
       "dbname": "${PLANMGR_DB_NAME}",
       "user": "${PLANMGR_DB_USER}"
     },
+    "embedding": {
+      "url": ${PLANMGR_EMBEDDING_URL_JSON},
+      "timeout": ${PLANMGR_EMBEDDING_TIMEOUT}
+    },
     "export_root": "/var/planmgr/export"
   }
 }

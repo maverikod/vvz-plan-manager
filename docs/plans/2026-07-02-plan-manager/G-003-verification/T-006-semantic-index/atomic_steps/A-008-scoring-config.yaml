@@ -132,4 +132,4 @@ verification:
     embedding_url=None. ScoringConfig(aggregation="fraction_above_threshold")
     constructs successfully. ScoringConfig(aggregation="bogus") raises
     ValueError.
-status: draft
+status: done

@@ -242,4 +242,4 @@ verification:
     of "step", "concept", "relation", or "paragraph", issues the matching
     INSERT ... ON CONFLICT (uuid) DO UPDATE statement, and raises
     CascadeError for any other kind value.
-status: draft
+status: done

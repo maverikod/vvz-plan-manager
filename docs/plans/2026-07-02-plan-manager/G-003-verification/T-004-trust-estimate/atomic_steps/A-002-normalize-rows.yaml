@@ -109,4 +109,4 @@ verification:
     array where every row with nonzero L2 norm has unit L2 norm in the
     output, and a row that was originally all zeros stays all zeros in the
     output without raising an error or producing NaN.
-status: draft
+status: done

@@ -80,7 +80,12 @@ class BranchWeakCommand(Command):
         params = super().validate_params(params)
         return params
 
-    def execute(self, plan: str, verbose: bool = False) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        verbose: bool = False,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Rank the plan's branches by ascending semantic index.
 
         :param plan: Plan identifier (name or UUID) resolved via

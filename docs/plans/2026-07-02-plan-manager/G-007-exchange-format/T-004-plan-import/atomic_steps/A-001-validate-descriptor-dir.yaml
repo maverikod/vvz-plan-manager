@@ -148,4 +148,4 @@ verification:
     prefix returns a one-item list containing "does not match directory".
     Calling it on a correctly named directory whose README.yaml parses to a
     dict with a matching step_id returns an empty list.
-status: draft
+status: done

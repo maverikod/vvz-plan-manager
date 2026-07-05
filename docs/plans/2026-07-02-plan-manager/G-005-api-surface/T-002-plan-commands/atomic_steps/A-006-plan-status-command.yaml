@@ -293,4 +293,4 @@ verification:
     {"refused": "GATE_RED"} scoring section when it is not, returning a
     SuccessResult, or an ErrorResult (e.g. PLAN_NOT_FOUND,
     EMBEDDINGS_UNAVAILABLE) via map_exception on failure.
-status: draft
+status: done

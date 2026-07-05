@@ -133,4 +133,4 @@ verification:
     returns a list with one Finding with check_id "uniqueness.step_id" per
     duplicate step; given steps with distinct (parent_step_uuid, level,
     step_id) triples it returns an empty list.
-status: draft
+status: done

@@ -151,4 +151,4 @@ verification:
     "p", "revision": "not-a-uuid"} raises ValueError from the uuid.UUID
     parse. Calling validate_params with {"plan": "p", "revision":
     "3fa85f64-5717-4562-b3fc-2c963f66afa6"} returns without raising.
-status: draft
+status: done

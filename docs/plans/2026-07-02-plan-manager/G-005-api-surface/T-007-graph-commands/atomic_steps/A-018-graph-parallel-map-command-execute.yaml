@@ -234,4 +234,4 @@ verification:
     returns a PLAN_NOT_FOUND ErrorResult when the plan cannot be resolved,
     and returns a CYCLE_DETECTED ErrorResult when the wave partition cannot
     be computed because of a cycle.
-status: draft
+status: done

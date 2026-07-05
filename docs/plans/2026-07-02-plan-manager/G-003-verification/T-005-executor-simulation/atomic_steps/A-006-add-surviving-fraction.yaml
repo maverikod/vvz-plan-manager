@@ -180,4 +180,4 @@ verification:
     candidates from model_output; otherwise it returns the count of
     surviving candidates divided by the total candidate count, as a float
     in the closed-open range [0.0, 1.0].
-status: draft
+status: done

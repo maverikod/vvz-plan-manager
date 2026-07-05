@@ -373,4 +373,4 @@ verification:
     identifier and slug, containing the same text assemble_prompt would
     return for that step's branch, and the function returns a list holding
     that one written file path.
-status: draft
+status: done

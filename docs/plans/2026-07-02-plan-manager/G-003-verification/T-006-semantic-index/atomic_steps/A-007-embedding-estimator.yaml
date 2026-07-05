@@ -406,4 +406,4 @@ verification:
     all-zero). If the stub embed_text raises EmbeddingUnavailable,
     embedding_estimator raises EmbeddingUnavailable to its own caller
     unchanged.
-status: draft
+status: done

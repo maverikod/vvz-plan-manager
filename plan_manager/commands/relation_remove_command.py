@@ -95,6 +95,7 @@ class RelationRemoveCommand(Command):
         from_concept: str,
         to_concept: str,
         type: str,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Remove an existing relation under an open cascade and verify by re-read.
 

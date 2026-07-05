@@ -161,4 +161,4 @@ verification:
     ExecStop line running "docker stop planmgr"; Restart=on-failure and
     RestartSec=5. [Install] contains WantedBy=multi-user.target. Each
     directive group is preceded by a comment naming its GS role.
-status: draft
+status: done

@@ -114,4 +114,4 @@ verification:
   expected: >
     Importing plan_manager.commands.cascade_commit_command succeeds and CascadeCommitCommand.metadata()
     returns exactly the dict produced by get_cascade_commit_metadata(CascadeCommitCommand).
-status: draft
+status: done

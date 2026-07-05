@@ -107,4 +107,4 @@ verification:
     DuplicateNameError with the same message rule; given any other
     psycopg.errors.IntegrityError instance, returns a StorageError with the
     same message rule.
-status: draft
+status: done

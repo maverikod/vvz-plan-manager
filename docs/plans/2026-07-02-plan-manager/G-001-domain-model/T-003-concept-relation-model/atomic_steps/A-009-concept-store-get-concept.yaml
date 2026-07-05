@@ -148,4 +148,4 @@ verification:
   target: plan_manager.domain.concept_store.get_concept
   expected: >
     The function get_concept accepts a psycopg connection, a plan_uuid, and a concept_id, and returns Concept | None. It executes a SELECT against table concept filtered by plan_uuid and concept_id, returning None when no row matches and otherwise returning a Concept built from the five selected columns (concept_id, name, definition, properties, source_labels) in that order.
-status: draft
+status: done

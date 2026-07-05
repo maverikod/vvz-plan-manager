@@ -269,4 +269,4 @@ verification:
   target: plan_manager.domain.concept_store.remove_concept
   expected: >
     The function remove_concept accepts a psycopg connection, a plan_uuid, and a concept_id, and returns a Concept. It raises ValueError with message 'concept not found: <concept_id>' when no row with that concept_id exists for the plan. Otherwise it deletes the matching row from table concept and returns the row exactly as it existed immediately before deletion.
-status: draft
+status: done

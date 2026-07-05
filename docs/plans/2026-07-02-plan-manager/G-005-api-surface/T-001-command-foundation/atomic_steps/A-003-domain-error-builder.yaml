@@ -181,4 +181,4 @@ verification:
     {"a": 1}) returns an ErrorResult whose details include both
     {"domain_code": "PLAN_NOT_FOUND"} and {"a": 1}. domain_error("NOT_A_CODE",
     "x") raises ValueError.
-status: draft
+status: done

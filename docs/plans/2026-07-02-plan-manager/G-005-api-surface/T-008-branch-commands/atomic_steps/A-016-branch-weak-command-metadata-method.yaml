@@ -116,4 +116,4 @@ verification:
     BranchWeakCommand.metadata() is a classmethod whose body is exactly
     `return get_branch_weak_metadata(cls)`, and the module imports
     get_branch_weak_metadata from plan_manager.commands.branch_weak_metadata.
-status: draft
+status: done

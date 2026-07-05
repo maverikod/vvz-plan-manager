@@ -134,4 +134,4 @@ verification:
     The module imports without error and exposes a callable `load_steps`
     accepting (conn: psycopg.Connection, plan_uuid: uuid.UUID) and returning
     a dict.
-status: draft
+status: done

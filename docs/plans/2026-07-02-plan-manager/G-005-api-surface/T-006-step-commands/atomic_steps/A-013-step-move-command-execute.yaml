@@ -312,4 +312,4 @@ verification:
     cascade_uuid that check_admission rejects returns
     CASCADE_CONFLICT; a subsequent step_get on the moved step confirms the
     new parent.
-status: draft
+status: done

@@ -211,4 +211,4 @@ verification:
     CoverageReport(missing=["C-002"], extra=[]). When a global step's own
     concepts are already a subset of its children's union, its entry has
     missing=[] and extra=[].
-status: draft
+status: done

@@ -310,4 +310,4 @@ verification:
     description, required, additionalProperties, each metadata key, and
     descr) causes probe_commands to raise RuntimeError whose message
     names that command and that exact key.
-status: draft
+status: done

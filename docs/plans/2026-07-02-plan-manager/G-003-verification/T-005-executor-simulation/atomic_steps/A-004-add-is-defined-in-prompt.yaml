@@ -150,4 +150,4 @@ verification:
     starting with the candidate name followed by ":", allowing leading
     whitespace on assignment and annotation lines; returns False when none
     of these three deterministic patterns match.
-status: draft
+status: done

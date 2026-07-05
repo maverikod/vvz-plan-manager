@@ -120,4 +120,4 @@ verification:
     properties containing "source" (string, no default) and "dry_run"
     (boolean, default True), required equal to ["source"], and
     additionalProperties equal to False.
-status: draft
+status: done

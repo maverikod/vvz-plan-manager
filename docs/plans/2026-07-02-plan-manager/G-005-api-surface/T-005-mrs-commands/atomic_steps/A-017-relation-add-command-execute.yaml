@@ -295,4 +295,4 @@ verification:
     edge is present, and returns a SuccessResult whose data is
     {"from_concept", "to_concept", "type", "revision_uuid": str(cascade_write's
     return value)}.
-status: draft
+status: done

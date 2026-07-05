@@ -78,4 +78,4 @@ verification:
     and TrustReport can be instantiated by keyword with the five fields
     trust, available, pairwise_cosines, gram_determinant, spectrum, each
     holding the value passed to it with no coercion or default substitution.
-status: draft
+status: done

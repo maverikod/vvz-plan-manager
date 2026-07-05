@@ -137,4 +137,4 @@ verification:
     imports get_graph_parallel_map_metadata from plan_manager.commands.
     graph_parallel_map_metadata, and GraphParallelMapCommand.metadata()
     returns exactly get_graph_parallel_map_metadata(GraphParallelMapCommand).
-status: draft
+status: done

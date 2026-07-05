@@ -30,13 +30,7 @@ def get_plan_list_metadata(cls: Any) -> dict:
             "read-only: it never mutates the database and takes no "
             "parameters."
         ),
-        "parameters": {
-            "none": {
-                "description": "This read-only catalog command accepts no parameters.",
-                "type": "object",
-                "required": False,
-            },
-        },
+        "parameters": {},
         "return_value": {
             "success": {
                 "description": "The catalog of all plans.",

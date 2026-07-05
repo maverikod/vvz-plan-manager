@@ -112,4 +112,4 @@ verification:
     numbered-list marker (digits followed by "." or ")") together with the
     whitespace following it stripped from the start of each line before
     deduplication.
-status: draft
+status: done

@@ -40,4 +40,4 @@ outputs:
     Accept or reject decision enforcing that every identifier reference in a write
     resolves to an existing entity at write time.
 atomic_steps: [A-001, A-002, A-003]
-status: draft
+status: frozen

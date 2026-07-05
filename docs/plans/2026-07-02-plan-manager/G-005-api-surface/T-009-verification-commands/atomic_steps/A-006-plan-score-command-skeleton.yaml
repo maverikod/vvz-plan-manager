@@ -165,4 +165,4 @@ verification:
     required equal to ["plan"], and additionalProperties equal to False.
     Calling PlanScoreCommand.metadata() returns the dict produced by
     get_plan_score_metadata(PlanScoreCommand).
-status: draft
+status: done

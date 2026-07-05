@@ -305,4 +305,4 @@ verification:
     domain_error, map_exception, resolve_plan, db_connection, render_text,
     render_json, run_gate, and resolve_branch from their exact contract
     module paths.
-status: draft
+status: done

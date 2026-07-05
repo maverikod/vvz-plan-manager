@@ -364,4 +364,4 @@ verification:
     filename, reports the corresponding issue from validate_descriptor_dir or
     validate_as_file. Calling it on a fully well-formed tree whose
     source_spec.md is also a valid HRS document returns an empty list.
-status: draft
+status: done

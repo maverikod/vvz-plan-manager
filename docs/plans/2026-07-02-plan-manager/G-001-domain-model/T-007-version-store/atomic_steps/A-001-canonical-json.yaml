@@ -82,4 +82,4 @@ verification:
     that, given a dict whose keys are not already in sorted order, returns UTF-8
     encoded JSON bytes with the keys reordered alphabetically and no whitespace
     following any colon or comma separator.
-status: draft
+status: done

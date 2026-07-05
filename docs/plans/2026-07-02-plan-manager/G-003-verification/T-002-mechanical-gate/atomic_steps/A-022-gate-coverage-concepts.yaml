@@ -146,4 +146,4 @@ verification:
     check_coverage_concepts returns a list with exactly one Finding with
     check_id "coverage.concepts", severity "error", artifact_path "plan";
     when both missing and extra are empty it returns an empty list.
-status: draft
+status: done

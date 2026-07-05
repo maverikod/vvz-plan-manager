@@ -274,4 +274,4 @@ verification:
     defaults threshold 85, aggregation minimum, and trust floor 0.2; the
     COMMAND SURFACE section lists the eleven command families with a total
     of 41 commands; the file is between 120 and 200 lines long.
-status: draft
+status: done

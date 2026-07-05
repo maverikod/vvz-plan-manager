@@ -224,4 +224,4 @@ verification:
     step_id is absent, and otherwise returns a SuccessResult whose data
     contains uuid, step_id, slug, level, status, parent_path, fields,
     depends_on, concepts, and path.
-status: draft
+status: done

@@ -94,4 +94,4 @@ verification:
     plan_manager/domain/step_store.py, and
     plan_manager/views/dependency_graph.py exist. The file contains no
     function or class definitions.
-status: draft
+status: done

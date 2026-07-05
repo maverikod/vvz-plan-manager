@@ -254,4 +254,4 @@ verification:
     check_references_concepts returns one Finding with check_id
     "references.concepts"; for a step whose every concepts entry exists in
     tree.concept_ids it returns an empty list.
-status: draft
+status: done

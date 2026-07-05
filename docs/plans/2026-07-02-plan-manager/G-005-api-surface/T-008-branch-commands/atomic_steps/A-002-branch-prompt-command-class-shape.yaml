@@ -84,4 +84,4 @@ verification:
     author="Vasiliy Zdanovskiy", email="vasilyvz@gmail.com", result_class bound
     to SuccessResult from mcp_proxy_adapter.commands.result, and use_queue=False;
     no methods are defined yet.
-status: draft
+status: done

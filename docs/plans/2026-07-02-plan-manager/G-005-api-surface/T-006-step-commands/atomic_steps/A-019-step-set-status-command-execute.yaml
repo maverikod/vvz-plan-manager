@@ -288,4 +288,4 @@ verification:
     cascade_uuid that check_admission rejects returns CASCADE_CONFLICT;
     when admitted under an open cascade, the revision is written via
     cascade_write with status_updates computed by step_invalidation.
-status: draft
+status: done

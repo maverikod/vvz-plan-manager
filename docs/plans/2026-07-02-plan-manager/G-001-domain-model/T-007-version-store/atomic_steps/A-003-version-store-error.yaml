@@ -75,4 +75,4 @@ verification:
   expected: >
     The module imports without error and exposes a class `VersionStoreError` that
     is a subclass of the built-in `ValueError`.
-status: draft
+status: done

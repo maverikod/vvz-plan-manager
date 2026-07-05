@@ -310,4 +310,4 @@ verification:
     dict contains no "slug" key. export_hrs, ExportError, the four layout
     constants, emit_yaml, assemble_state, and render_hrs_text remain
     unchanged and importable.
-status: draft
+status: done

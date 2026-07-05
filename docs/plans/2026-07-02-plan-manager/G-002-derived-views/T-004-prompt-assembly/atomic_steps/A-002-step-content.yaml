@@ -157,4 +157,4 @@ verification:
     text of a seven-key object built from exactly that step's step_id, slug,
     level, depends_on, concepts, status, and fields attribute values, in that
     key order.
-status: draft
+status: done

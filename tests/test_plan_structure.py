@@ -45,6 +45,62 @@ def test_active_plan_tree_has_consistent_atomic_references() -> None:
         assert set(listed) == actual, tactical_readme
 
 
+def test_active_plan_statuses_reflect_completed_atomic_execution() -> None:
+    for global_readme in sorted(PLAN_ROOT.glob("G-*/README.yaml")):
+        global_step = _load_yaml(global_readme)
+        assert global_step.get("status") == "frozen", global_readme
+
+    for tactical_readme in sorted(PLAN_ROOT.glob("G-*/T-*/README.yaml")):
+        tactical = _load_yaml(tactical_readme)
+        assert tactical.get("status") == "frozen", tactical_readme
+
+    for atomic_path in sorted(PLAN_ROOT.glob("G-*/T-*/atomic_steps/A-*.yaml")):
+        atomic = _load_yaml(atomic_path)
+        assert atomic.get("status") == "done", atomic_path
+
+
+def test_active_plan_has_concept_coverage_across_levels() -> None:
+    spec = _load_yaml(PLAN_ROOT / "spec.yaml")
+    concept_ids = {
+        item["concept_id"]
+        for item in spec.get("concepts", [])
+        if isinstance(item, dict) and "concept_id" in item
+    }
+    assert concept_ids
+
+    global_readmes = sorted(PLAN_ROOT.glob("G-*/README.yaml"))
+    global_concepts = set()
+    for global_readme in global_readmes:
+        global_step = _load_yaml(global_readme)
+        global_concepts.update(global_step.get("concepts", []))
+
+        tactical_concepts = set()
+        for tactical_readme in sorted(global_readme.parent.glob("T-*/README.yaml")):
+            tactical = _load_yaml(tactical_readme)
+            tactical_concepts.update(tactical.get("concepts", []))
+
+            atomic_concepts = set()
+            for atomic_path in sorted(
+                tactical_readme.parent.glob("atomic_steps/A-*.yaml")
+            ):
+                atomic = _load_yaml(atomic_path)
+                atomic_concepts.update(atomic.get("concepts", []))
+
+            missing_from_atomic = set(tactical.get("concepts", [])) - atomic_concepts
+            assert not missing_from_atomic, (
+                tactical_readme,
+                sorted(missing_from_atomic),
+            )
+
+        missing_from_tactical = set(global_step.get("concepts", [])) - tactical_concepts
+        assert not missing_from_tactical, (
+            global_readme,
+            sorted(missing_from_tactical),
+        )
+
+    assert global_concepts == concept_ids
+
+
 def test_active_plan_atomic_step_fields_are_mechanically_valid() -> None:
     spec = _load_yaml(PLAN_ROOT / "spec.yaml")
     concept_ids = {
@@ -62,7 +118,7 @@ def test_active_plan_atomic_step_fields_are_mechanically_valid() -> None:
         atomic = _load_yaml(atomic_path)
         assert STEP_ID_RE.fullmatch(atomic.get("step_id", "")), atomic_path
         assert atomic.get("operation") in allowed_operations, atomic_path
-        assert atomic.get("status") == "draft", atomic_path
+        assert atomic.get("status") == "done", atomic_path
 
         target_file = atomic.get("target_file")
         assert isinstance(target_file, str) and target_file.strip(), atomic_path

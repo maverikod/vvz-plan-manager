@@ -286,4 +286,4 @@ verification:
     under an open cascade, the revision is written via cascade_write with
     status_updates computed by step_invalidation; a subsequent step_get on
     the step confirms the patched fields.
-status: draft
+status: done

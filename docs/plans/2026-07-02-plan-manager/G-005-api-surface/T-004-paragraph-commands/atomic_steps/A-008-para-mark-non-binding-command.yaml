@@ -274,4 +274,4 @@ verification:
     ValueError when position is missing, not an integer, or negative, and
     when cascade_uuid is present but not a valid UUID string. metadata()
     returns the dict produced by get_para_mark_non_binding_metadata(cls).
-status: draft
+status: done

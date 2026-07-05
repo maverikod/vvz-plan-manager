@@ -477,4 +477,4 @@ verification:
     Given a plan whose mechanical gate is not green, score_plan raises
     ScoreRefusedError whose message contains the plan_uuid and the exact
     finding count from the gate report.
-status: draft
+status: done

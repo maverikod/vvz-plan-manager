@@ -17,6 +17,7 @@ def register_custom_commands_hook(registry) -> None:
 
 
 register_custom_commands_hook.__auto_import_modules__ = [
+    "plan_manager.runtime.worker_bootstrap",
     "plan_manager.hooks",
     "plan_manager.commands.registration",
 ]

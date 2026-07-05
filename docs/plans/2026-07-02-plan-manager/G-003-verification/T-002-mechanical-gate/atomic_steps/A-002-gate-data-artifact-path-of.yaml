@@ -88,4 +88,4 @@ verification:
     artifact_path_of(nodes, step) that returns step.step_id unchanged for a
     level-3 step, and returns parent_path(nodes, step) + "/" + step.step_id
     for level-4 and level-5 steps.
-status: draft
+status: done

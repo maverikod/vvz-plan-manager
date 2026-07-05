@@ -143,4 +143,4 @@ verification:
     containing one Finding with check_id "parse.required_fields", severity
     "error", and artifact_path equal to artifact_path_of(tree.steps, step);
     for a fully-populated step of any level it returns an empty list.
-status: draft
+status: done

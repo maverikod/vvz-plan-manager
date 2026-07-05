@@ -101,4 +101,4 @@ verification:
     Importing plan_manager.commands.cascade_abort_command succeeds and CascadeAbortCommand.get_schema()
     returns {"type": "object", "properties": {"plan": {"type": "string", "description": "Plan UUID or
     unique plan name."}}, "required": ["plan"], "additionalProperties": False}.
-status: draft
+status: done

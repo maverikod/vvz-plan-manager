@@ -248,4 +248,4 @@ verification:
     raises ValueError when cascade_uuid is present but not a valid UUID
     string. metadata() returns the dict produced by
     get_para_label_assign_metadata(cls).
-status: draft
+status: done

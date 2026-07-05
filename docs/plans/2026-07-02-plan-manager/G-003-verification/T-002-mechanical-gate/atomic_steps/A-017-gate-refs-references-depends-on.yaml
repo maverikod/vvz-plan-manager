@@ -228,4 +228,4 @@ verification:
     check_references_depends_on returns one Finding with check_id
     "references.depends_on"; for a depends_on entry naming an existing
     sibling it returns an empty list for that entry.
-status: draft
+status: done

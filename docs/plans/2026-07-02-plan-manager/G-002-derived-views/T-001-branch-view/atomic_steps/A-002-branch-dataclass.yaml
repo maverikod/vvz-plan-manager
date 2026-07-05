@@ -157,4 +157,4 @@ verification:
     a dataclass, and Branch.__dataclass_fields__ lists exactly the five
     fields plan_uuid, gs, ts, atomic, hrs_slice in that order with the
     types uuid.UUID, Step, Step, Step, list[Paragraph] respectively.
-status: draft
+status: done

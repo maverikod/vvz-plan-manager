@@ -180,4 +180,4 @@ verification:
     "dry_run" (default True), and "cascade_uuid" entries, and
     error_cases containing PLAN_NOT_FOUND, IMPORT_INVALID,
     CASCADE_REQUIRED, CASCADE_CONFLICT, and FROZEN_ARTIFACT entries.
-status: draft
+status: done

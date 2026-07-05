@@ -134,4 +134,4 @@ verification:
     ValueError); and the dataclass Relation with fields from_concept,
     to_concept, type in that order. The module successfully imports
     CONCEPT_ID_PATTERN from plan_manager.domain.concept.
-status: draft
+status: done

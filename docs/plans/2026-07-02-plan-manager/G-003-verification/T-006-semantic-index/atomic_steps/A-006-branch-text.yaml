@@ -297,4 +297,4 @@ verification:
     branch_text(branch) returns the string "A\n\nB\n\nC". Given a Branch
     whose atomic.fields has no "prompt" key, the third joined part is the
     empty string rather than raising KeyError.
-status: draft
+status: done

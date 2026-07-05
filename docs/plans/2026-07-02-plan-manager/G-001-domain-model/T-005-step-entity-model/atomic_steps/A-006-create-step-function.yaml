@@ -274,4 +274,4 @@ verification:
     with fields stored via Jsonb, returns the created Step, and always
     releases the per-plan lock in a finally block even when validate_step
     raises.
-status: draft
+status: done

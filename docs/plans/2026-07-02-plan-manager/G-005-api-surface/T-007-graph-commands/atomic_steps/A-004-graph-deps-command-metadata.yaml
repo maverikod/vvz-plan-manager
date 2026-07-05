@@ -138,4 +138,4 @@ verification:
     imports get_graph_deps_metadata from plan_manager.commands.
     graph_deps_metadata, and GraphDepsCommand.metadata() returns exactly
     get_graph_deps_metadata(GraphDepsCommand).
-status: draft
+status: done

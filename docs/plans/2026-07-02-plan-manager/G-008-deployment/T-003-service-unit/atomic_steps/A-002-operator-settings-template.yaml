@@ -136,4 +136,4 @@ verification:
     PLANMGR_HEARTBEAT_INTERVAL=30, PLANMGR_DB_NAME=planmgr,
     PLANMGR_DB_USER=planmgr, PLANMGR_DB_PORT=5432. No other variables are
     present, and every documented default matches the values listed here.
-status: draft
+status: done

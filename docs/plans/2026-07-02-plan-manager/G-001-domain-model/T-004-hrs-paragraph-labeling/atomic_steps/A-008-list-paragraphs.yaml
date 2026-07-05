@@ -227,4 +227,4 @@ verification:
     list_paragraphs(conn, plan_uuid) returns a list of three Paragraph
     objects ordered by position ascending (0, 1, 2), each with label and
     text matching the row that was inserted with that position value.
-status: draft
+status: done

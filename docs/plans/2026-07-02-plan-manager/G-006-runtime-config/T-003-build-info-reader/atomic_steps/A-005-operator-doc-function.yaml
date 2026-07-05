@@ -185,4 +185,4 @@ verification:
     character-for-character since it is a frozen contract with the
     command layer that catches the RuntimeError to report the missing
     payload.
-status: draft
+status: done

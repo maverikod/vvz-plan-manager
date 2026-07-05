@@ -53,4 +53,4 @@ outputs:
     Artifact counts per level, status distribution, gate verdict, semantic
     index with trust, and ranked weakest branches for one plan.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
-status: draft
+status: frozen

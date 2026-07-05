@@ -96,4 +96,4 @@ verification:
     to the frozensets {"ready_for_review"}, {"frozen", "draft"}, set(),
     {"draft", "frozen"}, {"done"}, set(). StatusTransitionError is a class
     that is a subclass of ValueError.
-status: draft
+status: done

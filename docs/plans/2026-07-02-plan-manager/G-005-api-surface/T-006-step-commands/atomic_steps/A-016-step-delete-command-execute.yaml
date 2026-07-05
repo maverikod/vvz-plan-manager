@@ -342,4 +342,4 @@ verification:
     CASCADE_REQUIRED, with FROZEN_ARTIFACT returned instead when
     frozen_at_or_below reports the step frozen; a cascade_uuid that
     check_admission rejects returns CASCADE_CONFLICT.
-status: draft
+status: done

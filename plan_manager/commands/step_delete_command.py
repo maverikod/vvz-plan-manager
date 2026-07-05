@@ -91,6 +91,7 @@ class StepDeleteCommand(Command):
         step_id: str,
         cascade_uuid: str | None = None,
         dry_run: bool = True,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Delete a step, or preview its deletion impact when dry_run is true.
 

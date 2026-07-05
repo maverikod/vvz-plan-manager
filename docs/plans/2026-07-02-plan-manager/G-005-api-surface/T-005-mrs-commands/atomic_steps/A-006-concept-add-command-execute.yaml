@@ -348,4 +348,4 @@ verification:
     uuid returned by insert_concept), plan_uuid, concept_id, name,
     definition, properties, source_labels, and revision_uuid equal to
     str(cascade_write's return value).
-status: draft
+status: done

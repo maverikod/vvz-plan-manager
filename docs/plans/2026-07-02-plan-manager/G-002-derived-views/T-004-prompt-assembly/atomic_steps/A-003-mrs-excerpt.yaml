@@ -245,4 +245,4 @@ verification:
     concept's id returns a single canonical JSON line describing that
     concept. Calling mrs_excerpt with a concept id absent from the concept
     table raises PromptAssemblyError naming that missing concept id.
-status: draft
+status: done

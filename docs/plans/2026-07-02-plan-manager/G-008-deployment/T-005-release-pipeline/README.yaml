@@ -47,4 +47,4 @@ outputs:
     five-key build information document; divergence or any rendering
     failure aborts the build.
 atomic_steps: [A-001, A-002]
-status: draft
+status: frozen

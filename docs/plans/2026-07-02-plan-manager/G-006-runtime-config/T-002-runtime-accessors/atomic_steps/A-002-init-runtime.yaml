@@ -157,4 +157,4 @@ verification:
     file: {secrets_path}". When the secrets file content is empty or
     whitespace-only, a ConfigError is raised with message "database
     secrets file is empty: {secrets_path}".
-status: draft
+status: done

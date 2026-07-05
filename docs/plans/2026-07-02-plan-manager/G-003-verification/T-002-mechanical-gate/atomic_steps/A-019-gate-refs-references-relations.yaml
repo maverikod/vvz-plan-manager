@@ -314,4 +314,4 @@ verification:
     one Finding naming the disallowed type; for a well-formed relations list
     it returns an empty list; level-4 and level-5 steps never produce
     findings from this check.
-status: draft
+status: done

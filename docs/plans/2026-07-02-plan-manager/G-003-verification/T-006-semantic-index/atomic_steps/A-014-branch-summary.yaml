@@ -421,4 +421,4 @@ verification:
     verbose=False, the returned dict additionally has the keys
     "estimator_vector" and "trust" equal to score.estimator_vector and
     score.trust respectively.
-status: draft
+status: done

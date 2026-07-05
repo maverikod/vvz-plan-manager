@@ -181,4 +181,4 @@ verification:
     result_class SuccessResult, and use_queue False. get_schema() returns an
     object schema requiring only "plan" with additionalProperties False.
     metadata() returns the dict produced by get_para_list_metadata(cls).
-status: draft
+status: done

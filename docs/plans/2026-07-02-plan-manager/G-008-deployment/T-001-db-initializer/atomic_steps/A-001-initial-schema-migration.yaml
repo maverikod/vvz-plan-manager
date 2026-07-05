@@ -201,4 +201,4 @@ verification:
     relation.from_concept/relation.to_concept. The file parses as valid
     PostgreSQL DDL (no unbalanced parentheses, no missing semicolons, no
     unclosed statements).
-status: draft
+status: done

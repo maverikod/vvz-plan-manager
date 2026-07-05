@@ -100,6 +100,7 @@ class ConceptAddCommand(Command):
         definition: str,
         properties: list[str] | None = None,
         source_labels: list[str] | None = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Add a new concept under an open cascade and verify by re-read.
 

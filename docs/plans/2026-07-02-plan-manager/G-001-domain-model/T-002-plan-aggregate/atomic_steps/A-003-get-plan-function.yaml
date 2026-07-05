@@ -199,4 +199,4 @@ verification:
     returns a Plan object whose fields match the stored row exactly;
     calling it with a uuid that has no matching row raises
     PlanNotFoundError.
-status: draft
+status: done

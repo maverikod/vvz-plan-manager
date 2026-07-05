@@ -288,4 +288,4 @@ verification:
     by "; ". The function signature accepts five positional-or-keyword
     parameters in the given order and its return type on the success path
     is a dict with a single key "paragraphs" holding an integer count.
-status: draft
+status: done

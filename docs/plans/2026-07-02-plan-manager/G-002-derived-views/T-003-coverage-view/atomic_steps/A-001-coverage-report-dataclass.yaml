@@ -93,4 +93,4 @@ verification:
     CoverageReport.__dataclass_fields__ lists exactly the two fields
     missing and extra, in that order, both typed list[str] and neither
     carrying a default value.
-status: draft
+status: done

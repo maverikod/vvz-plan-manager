@@ -364,4 +364,4 @@ verification:
     Paragraph-like objects assigns missing labels in order, preserves existing
     labels, and returns both the labeled objects and the list of newly assigned
     labels.
-status: draft
+status: done

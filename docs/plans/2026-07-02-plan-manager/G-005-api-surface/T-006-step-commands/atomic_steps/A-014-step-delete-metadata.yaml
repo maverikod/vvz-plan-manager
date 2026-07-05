@@ -228,4 +228,4 @@ verification:
     error_cases containing exactly the keys PLAN_NOT_FOUND, STEP_NOT_FOUND,
     INVALID_TRANSITION, CASCADE_REQUIRED, CASCADE_CONFLICT,
     FROZEN_ARTIFACT.
-status: draft
+status: done

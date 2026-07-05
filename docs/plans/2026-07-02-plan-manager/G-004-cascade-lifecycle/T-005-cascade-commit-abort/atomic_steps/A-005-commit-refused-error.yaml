@@ -70,4 +70,4 @@ verification:
     raising any exception, and the module exposes a class named
     CommitRefusedError that is a subclass of the builtin RuntimeError and
     can be instantiated and raised with a message argument.
-status: draft
+status: done

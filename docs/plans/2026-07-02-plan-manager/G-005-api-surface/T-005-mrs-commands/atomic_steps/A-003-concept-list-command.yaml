@@ -156,4 +156,4 @@ verification:
     whose data["concepts"] is a list of N dicts, each containing concept_id,
     name, definition, properties, and source_labels matching the corresponding
     stored concept.
-status: draft
+status: done

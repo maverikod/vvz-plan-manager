@@ -112,4 +112,4 @@ verification:
   target: plan_manager.domain.relation_store.list_relations
   expected: >
     The function list_relations accepts a psycopg connection and a plan_uuid, and returns list[tuple[str, str, str]]. It executes a SELECT against table relation filtered by plan_uuid and ordered by from_concept, to_concept, type, returning one (from_concept, to_concept, type) tuple per row in that column order.
-status: draft
+status: done

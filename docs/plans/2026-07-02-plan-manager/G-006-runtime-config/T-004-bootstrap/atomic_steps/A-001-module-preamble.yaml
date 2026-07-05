@@ -6,7 +6,7 @@ operation: create_file
 priority: 1
 depends_on: []
 concepts: [C-027, C-028]
-status: draft
+status: done
 prompt: |
   Create the file `plan_manager/main.py` (operation: create_file; the file
   does not exist yet — do not assume any pre-existing content).

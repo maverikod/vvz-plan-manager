@@ -94,4 +94,4 @@ verification:
     planmgruser || true", "groupdel planmgrgrp || true", and "systemctl
     daemon-reload". No other argument value triggers directory deletion,
     and the script ends with "exit 0".
-status: draft
+status: done

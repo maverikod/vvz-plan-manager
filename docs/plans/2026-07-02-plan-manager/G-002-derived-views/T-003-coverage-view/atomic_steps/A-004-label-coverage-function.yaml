@@ -258,4 +258,4 @@ verification:
     braces), label_coverage(conn, plan_uuid) returns
     CoverageReport(missing=["{cccc}"], extra=["{bbbb}"]). When the two
     braced sets are equal, both missing and extra are empty lists.
-status: draft
+status: done

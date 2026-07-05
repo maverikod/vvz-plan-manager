@@ -254,4 +254,4 @@ verification:
     plan_uuid, revision_uuid, entity_uuid)` with the exact parameter and return
     types shown in the signature above, raising `VersionStoreError` if the entity
     has no node_version at that revision.
-status: draft
+status: done

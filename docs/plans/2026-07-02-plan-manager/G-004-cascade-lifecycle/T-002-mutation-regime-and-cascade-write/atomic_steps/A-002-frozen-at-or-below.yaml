@@ -105,4 +105,4 @@ verification:
     any uuid in impact_set(nodes, origin_uuid) maps to a Step with status
     "frozen"; returns False when neither the origin nor any of its impact
     set is frozen.
-status: draft
+status: done

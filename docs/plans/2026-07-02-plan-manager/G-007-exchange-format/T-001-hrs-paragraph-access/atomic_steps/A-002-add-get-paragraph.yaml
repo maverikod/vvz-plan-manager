@@ -143,4 +143,4 @@ verification:
   target: plan_manager.hrs.paragraphs.get_paragraph
   expected: >
     Importing plan_manager.hrs.paragraphs succeeds and the module exposes a callable named get_paragraph accepting exactly three positional parameters (conn, plan_uuid, label). Calling it with a label that matches a stored paragraph returns that paragraph's dict as produced by list_paragraphs; calling it with an unknown label returns None.
-status: draft
+status: done

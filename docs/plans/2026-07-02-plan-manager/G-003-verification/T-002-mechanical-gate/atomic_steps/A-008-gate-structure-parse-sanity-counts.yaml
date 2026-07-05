@@ -251,4 +251,4 @@ verification:
     branch whose hrs_slice is [], it returns exactly one Finding whose
     artifact_path equals artifact_path_of(tree.steps, branch.gs); called with
     all counts >= 1 and a non-empty hrs_slice it returns an empty list.
-status: draft
+status: done

@@ -600,4 +600,4 @@ verification:
     reproduced by step auto-assignment causes import_plan to raise ValueError
     naming the expected and assigned identifiers, aborting before the
     revision is recorded.
-status: draft
+status: done

@@ -113,4 +113,4 @@ verification:
   expected: >
     Importing plan_manager.commands.cascade_preview_command succeeds and CascadePreviewCommand.metadata()
     returns exactly the dict produced by get_cascade_preview_metadata(CascadePreviewCommand).
-status: draft
+status: done

@@ -256,4 +256,4 @@ verification:
     The module imports without error and exposes a callable `diff(conn, plan_uuid,
     revision_a, revision_b)` with the exact parameter and return types shown in the
     signature above.
-status: draft
+status: done

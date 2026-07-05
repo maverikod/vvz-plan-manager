@@ -285,4 +285,4 @@ verification:
     the concept no longer resolves, and returns a SuccessResult whose data is
     {"concept_id": <id>, "deleted": true, "revision_uuid": str(cascade_write's
     return value)}.
-status: draft
+status: done

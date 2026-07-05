@@ -201,4 +201,4 @@ verification:
     parameters containing "plan" and "cascade_uuid" entries and error_cases
     containing PLAN_NOT_FOUND, CASCADE_REQUIRED, CASCADE_CONFLICT, and
     FROZEN_ARTIFACT entries.
-status: draft
+status: done

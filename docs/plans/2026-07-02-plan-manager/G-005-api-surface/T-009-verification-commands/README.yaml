@@ -49,4 +49,4 @@ outputs:
     request; gate-red, verdict-stale, and embeddings-unavailable signals
     as explicit typed results.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007, A-008]
-status: draft
+status: frozen

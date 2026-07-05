@@ -395,4 +395,4 @@ verification:
     (c, b) among others, prerequisites_of(nodes, edges, b) returns
     exactly [a, c] (or [c, a]) ordered ascending by tie_break_key, and
     excludes any uuid that is not a direct prerequisite of b.
-status: draft
+status: done

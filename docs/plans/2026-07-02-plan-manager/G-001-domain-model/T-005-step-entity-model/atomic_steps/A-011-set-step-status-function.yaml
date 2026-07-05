@@ -283,4 +283,4 @@ verification:
     propagate uncaught, and only when validation passes issues exactly
     one UPDATE statement setting the status column for the row matching
     step_uuid, with no return value.
-status: draft
+status: done

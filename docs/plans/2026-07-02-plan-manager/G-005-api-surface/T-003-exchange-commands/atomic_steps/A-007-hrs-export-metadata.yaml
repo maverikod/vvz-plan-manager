@@ -123,4 +123,4 @@ verification:
     returns a dict containing exactly the twelve required
     metadatastd.yaml keys, with parameters containing a "plan" entry and
     error_cases containing a "PLAN_NOT_FOUND" entry.
-status: draft
+status: done

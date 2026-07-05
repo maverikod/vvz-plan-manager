@@ -62,7 +62,12 @@ class StepGetCommand(Command):
         params = super().validate_params(params)
         return params
 
-    async def execute(self, plan: str, step_id: str) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        step_id: str,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Return one step of the plan with its resolved parent path.
 
         Args:

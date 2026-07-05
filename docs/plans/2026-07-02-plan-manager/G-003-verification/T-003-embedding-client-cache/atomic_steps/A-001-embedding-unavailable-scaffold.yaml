@@ -93,4 +93,4 @@ verification:
   expected: The module imports without any error, and EmbeddingUnavailable
     is defined as a class that is a direct subclass of the builtin
     Exception.
-status: draft
+status: done

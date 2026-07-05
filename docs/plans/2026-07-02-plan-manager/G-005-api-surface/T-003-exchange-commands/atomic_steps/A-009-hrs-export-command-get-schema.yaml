@@ -101,4 +101,4 @@ verification:
     HrsExportCommand.get_schema() returns a dict with type="object",
     properties containing exactly "plan" (type string with description),
     required equal to ["plan"], and additionalProperties equal to False.
-status: draft
+status: done

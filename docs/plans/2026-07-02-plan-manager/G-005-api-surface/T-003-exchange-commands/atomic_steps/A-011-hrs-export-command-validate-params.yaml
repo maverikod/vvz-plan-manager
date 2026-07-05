@@ -123,4 +123,4 @@ verification:
     Calling validate_params with {"plan": "p"} returns a dict containing
     "plan": "p" without raising, delegating structural checks to
     super().validate_params().
-status: draft
+status: done

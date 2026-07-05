@@ -39,4 +39,4 @@ outputs:
     answers malformed; degrades only semantic scoring, with trust dropping to
     its declared floor downstream.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
-status: draft
+status: frozen

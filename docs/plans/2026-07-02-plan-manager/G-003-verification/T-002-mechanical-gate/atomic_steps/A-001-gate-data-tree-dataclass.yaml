@@ -101,4 +101,4 @@ verification:
     the declared type; instantiating GateTree with keyword arguments for all
     five fields succeeds and the resulting object's attributes equal the
     values passed in.
-status: draft
+status: done

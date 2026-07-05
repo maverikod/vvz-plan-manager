@@ -230,4 +230,4 @@ verification:
     parameters has entries for plan, cascade_uuid, concept_id, name,
     definition (required True) and properties, source_labels (required
     False, default []).
-status: draft
+status: done

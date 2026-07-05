@@ -53,7 +53,12 @@ class ConceptGetCommand(Command):
         params = super().validate_params(params)
         return params
 
-    async def execute(self, plan: str, concept_id: str) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        concept_id: str,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Return the concept with concept_id in plan, or CONCEPT_NOT_FOUND.
 
         Args:

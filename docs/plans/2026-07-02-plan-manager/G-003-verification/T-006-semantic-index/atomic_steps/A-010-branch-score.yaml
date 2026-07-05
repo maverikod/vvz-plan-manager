@@ -176,4 +176,4 @@ verification:
     color="green", estimator_vector={"coverage": 1.0}, trust=0.8,
     revision_uuid=None, below_threshold=False) constructs successfully
     and exposes all seven attributes with the given values.
-status: draft
+status: done

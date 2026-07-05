@@ -41,4 +41,4 @@ outputs:
     The pairwise cosine matrix, Gram determinant, and eigenvalue spectrum of the
     concept basis underlying the trust value.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005]
-status: draft
+status: frozen

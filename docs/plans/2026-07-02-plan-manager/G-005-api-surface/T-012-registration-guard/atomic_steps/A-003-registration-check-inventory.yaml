@@ -205,4 +205,4 @@ verification:
     with command type "custom" causes check_inventory to raise RuntimeError
     whose message lists that key under extra=. Adding adapter builtin keys
     whose command type is not "custom" does not fail the inventory check.
-status: draft
+status: done

@@ -346,4 +346,4 @@ verification:
     the parent frozen; a cascade_uuid that check_admission rejects returns
     CASCADE_CONFLICT; a subsequent step_get on the returned uuid confirms
     the step is present with the expected fields.
-status: draft
+status: done

@@ -183,4 +183,4 @@ verification:
     "  <artifact_path> [<severity>] <message>" line per finding of that
     check in that check's findings order; all lines joined with a single
     newline character and no trailing newline at the end of the string.
-status: draft
+status: done

@@ -273,4 +273,4 @@ verification:
     available=True whose trust, pairwise_cosines, gram_determinant, and
     spectrum equal exactly what basis_geometry and trust_from_geometry
     would produce for the list of embedded vectors, in call order.
-status: draft
+status: done

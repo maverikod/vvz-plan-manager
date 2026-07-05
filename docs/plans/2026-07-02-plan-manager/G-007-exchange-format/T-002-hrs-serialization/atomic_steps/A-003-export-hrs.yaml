@@ -107,4 +107,4 @@ verification:
     "{a1b2} First.\n\n{c3d4} Second.\n". Two calls against the same stored
     rows return identical strings, and no argument beyond conn and plan_uuid
     is accepted.
-status: draft
+status: done

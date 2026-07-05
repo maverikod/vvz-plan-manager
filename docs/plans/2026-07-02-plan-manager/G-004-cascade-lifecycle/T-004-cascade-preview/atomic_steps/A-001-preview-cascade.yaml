@@ -230,4 +230,4 @@ verification:
     plan_uuid, annotated psycopg.Connection and uuid.UUID respectively,
     returning dict; calling inspect.signature on it reflects those two
     parameters and no others.
-status: draft
+status: done

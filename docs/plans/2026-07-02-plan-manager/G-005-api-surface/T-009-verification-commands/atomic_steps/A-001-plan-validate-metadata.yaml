@@ -223,4 +223,4 @@ verification:
     keys plan, scope, gs_step_id, ts_step_id, as_step_id, fail_fast, format,
     and error_cases containing exactly the two keys PLAN_NOT_FOUND and
     STEP_NOT_FOUND.
-status: draft
+status: done

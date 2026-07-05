@@ -116,4 +116,4 @@ relations:
 source_labels: ["{r1c7}", "{z5t4}", "{p8q4}", "{a1z3}", "{k7r9}", "{m4c2}", "{q6d8}", "{r9f1}", "{z2b5}", "{v6t8}", "{v8y2}", "{b3e6}", "{t4k1}", "{y2m6}", "{h2f8}", "{f4d6}", "{g9b1}", "{w6t5}", "{u3x7}", "{n5c2}", "{d7e4}", "{o9f2}", "{v4n6}", "{d8o2}"]
 depends_on: [G-002, G-003, G-004, G-006, G-007]
 tactical_steps: [T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012]
-status: draft
+status: frozen

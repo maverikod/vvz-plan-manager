@@ -49,4 +49,4 @@ outputs:
     The flat object with embedding URL, export root, scoring threshold,
     aggregation mode, trust floor, and uniform concept weight.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
-status: draft
+status: frozen

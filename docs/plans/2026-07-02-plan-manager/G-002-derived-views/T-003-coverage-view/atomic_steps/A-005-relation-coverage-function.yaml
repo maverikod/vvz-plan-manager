@@ -299,4 +299,4 @@ verification:
     plan_uuid) returns CoverageReport(missing=["C-002|C-003|owns"],
     extra=[]). When the two sets of "from|to|type" strings are equal,
     both missing and extra are empty lists.
-status: draft
+status: done

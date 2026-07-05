@@ -85,12 +85,13 @@ class BranchPromptCommand(Command):
         params = super().validate_params(params)
         return params
 
-    def execute(
+    async def execute(
         self,
         plan: str,
         gs_step_id: str,
         ts_step_id: str,
         as_step_id: str,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Resolve one branch, assemble its prompt, and report the budget verdict.
 

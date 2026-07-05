@@ -5,7 +5,7 @@ target_file: plan_manager/domain/plan.py
 operation: create_file
 priority: 1
 depends_on: []
-concepts: [C-001, C-007, C-018]
+concepts: [C-001, C-002, C-003, C-004, C-005, C-007, C-018]
 prompt: |
   Create a new Python file at the exact project-relative path
   plan_manager/domain/plan.py.
@@ -112,6 +112,35 @@ prompt: |
     - carries a user-set context budget in tokens (default 4000) consumed
       by prompt assembly
 
+  - concept_id: C-002
+    name: Paragraph
+    definition: Addressable binding unit of the HRS text carrying a stable
+      four-character base36 label.
+    properties:
+    - the Plan aggregate owns paragraphs as part of the five-level hierarchy
+      rooted at one plan
+
+  - concept_id: C-003
+    name: Concept
+    definition: MRS basis axis with canonical name, one-sentence definition,
+      properties, and source labels.
+    properties:
+    - the Plan aggregate owns concepts as part of its MRS content
+
+  - concept_id: C-004
+    name: Relation
+    definition: Typed directed edge between two concepts restricted to seven
+      allowed types.
+    properties:
+    - the Plan aggregate owns relations as part of its MRS content
+
+  - concept_id: C-005
+    name: Step
+    definition: Single stored entity for plan levels 3-5 with level, step id,
+      slug, level-specific fields, and status.
+    properties:
+    - the Plan aggregate owns the global, tactical, and atomic step hierarchy
+
   - concept_id: C-007
     name: StatusModel
     definition: Lifecycle state machine for plan artifacts with enforced
@@ -149,4 +178,4 @@ verification:
     context_budget, head_revision_uuid in that order; `DEFAULT_CONTEXT_BUDGET`
     equals 4000; `PlanNotFoundError` is importable and is a subclass of
     ValueError.
-status: draft
+status: done

@@ -136,4 +136,4 @@ verification:
     that command as missing. Making one registered command's metadata
     omit a required key causes a RuntimeError to propagate out of
     register_custom_commands_hook naming that command and that key.
-status: draft
+status: done

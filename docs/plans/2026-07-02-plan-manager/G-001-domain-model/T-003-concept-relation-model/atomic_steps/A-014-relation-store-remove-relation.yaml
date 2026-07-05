@@ -161,4 +161,4 @@ verification:
   target: plan_manager.domain.relation_store.remove_relation
   expected: >
     The function remove_relation accepts a psycopg connection, a plan_uuid, from_concept, to_concept, and type (the parameter named type shadows the builtin, matching Relation.type vocabulary), and returns a uuid.UUID. It raises ValueError with message 'relation not found' when no row in table relation matches all three of from_concept, to_concept, and type for the given plan_uuid. Otherwise it deletes the matching row and returns its uuid primary identity as read before deletion.
-status: draft
+status: done

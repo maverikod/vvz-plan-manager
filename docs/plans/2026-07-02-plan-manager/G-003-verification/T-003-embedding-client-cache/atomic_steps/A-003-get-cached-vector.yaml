@@ -152,4 +152,4 @@ verification:
     content hash has no matching row returns None; calling it for a text
     whose content hash matches a stored row returns a list of floats
     parsed from that row's vector column, without any network call.
-status: draft
+status: done

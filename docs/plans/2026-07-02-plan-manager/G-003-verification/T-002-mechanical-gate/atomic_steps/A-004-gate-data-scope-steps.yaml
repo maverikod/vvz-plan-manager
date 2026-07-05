@@ -187,4 +187,4 @@ verification:
     artifact_path_of(tree.steps, step)). scope_steps(tree, branch) for a
     non-None branch returns exactly [branch.gs, branch.ts, branch.atomic] in
     that order, regardless of tree contents.
-status: draft
+status: done

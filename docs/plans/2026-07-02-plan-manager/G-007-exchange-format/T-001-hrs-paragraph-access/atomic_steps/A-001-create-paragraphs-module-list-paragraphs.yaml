@@ -171,4 +171,4 @@ verification:
   target: plan_manager.hrs.paragraphs.list_paragraphs
   expected: >
     Importing plan_manager.hrs.paragraphs succeeds without error and the module exposes a callable named list_paragraphs accepting exactly two positional parameters (conn, plan_uuid). Calling it against a plan with stored binding paragraphs returns a list of dict in position order, each dict carrying exactly the keys label, binding, position, text, with binding always True.
-status: draft
+status: done

@@ -129,4 +129,4 @@ verification:
     returns an empty list. Calling it with a structurally unparseable
     document (parse raises ValueError) returns a one-item list containing
     the exception's string message.
-status: draft
+status: done

@@ -268,4 +268,4 @@ verification:
     order (sorted internally by "position"). Given an empty list, it
     returns "\n". export_hrs, ExportError, the four layout constants,
     emit_yaml, and assemble_state remain unchanged and importable.
-status: draft
+status: done

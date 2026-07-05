@@ -168,4 +168,4 @@ verification:
     source_labels is not a list of strings each matching
     PARAGRAPH_LABEL_PATTERN. It returns normally (no exception) when all
     fields are well formed.
-status: draft
+status: done

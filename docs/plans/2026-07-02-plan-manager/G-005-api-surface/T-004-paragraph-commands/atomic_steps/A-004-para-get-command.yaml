@@ -204,4 +204,4 @@ verification:
     False. validate_params raises ValueError for a label that is not exactly
     four characters from [0-9a-z]. metadata() returns the dict produced by
     get_para_get_metadata(cls).
-status: draft
+status: done

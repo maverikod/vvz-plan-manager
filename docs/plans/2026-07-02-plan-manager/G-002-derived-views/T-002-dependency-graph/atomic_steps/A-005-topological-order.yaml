@@ -304,4 +304,4 @@ verification:
     among a subset of nodes, the acyclic prefix is extracted normally
     and the second returned list contains exactly the cyclic residual
     nodes sorted ascending by tie_break_key.
-status: draft
+status: done

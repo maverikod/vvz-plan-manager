@@ -180,4 +180,4 @@ verification:
     artifact_path "G-001"; check_coverage_gs(conn, plan_uuid, "G-002")
     returns an empty list; check_coverage_gs(conn, plan_uuid, "G-099")
     (a key absent from the dict) returns an empty list.
-status: draft
+status: done

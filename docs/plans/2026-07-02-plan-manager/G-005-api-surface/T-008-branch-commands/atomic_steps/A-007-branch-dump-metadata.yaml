@@ -180,4 +180,4 @@ verification:
     parameters contains exactly plan (required True) and dry_run (required
     False, default False); error_cases contains exactly PLAN_NOT_FOUND with
     description, message, and solution.
-status: draft
+status: done

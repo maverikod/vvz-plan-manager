@@ -84,4 +84,4 @@ verification:
     Zdanovskiy <vasilyvz@gmail.com>, and a Description whose synopsis line and
     indented extended-description lines match the prompt text. No comment
     lines and no extra fields are present.
-status: draft
+status: done

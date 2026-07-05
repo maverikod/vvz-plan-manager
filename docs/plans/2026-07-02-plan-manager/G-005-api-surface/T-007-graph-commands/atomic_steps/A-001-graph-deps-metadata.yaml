@@ -144,4 +144,4 @@ verification:
     returns a dict containing exactly the metadatastd required top-level
     keys, with parameters plan and step_id both marked required and with
     error_cases containing exactly PLAN_NOT_FOUND and STEP_NOT_FOUND.
-status: draft
+status: done

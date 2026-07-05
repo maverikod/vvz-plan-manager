@@ -158,4 +158,4 @@ verification:
     Gram matrix's eigenvalues sorted descending; calling it with an empty
     list or with rows of unequal length raises ValueError before any numpy
     computation is attempted.
-status: draft
+status: done

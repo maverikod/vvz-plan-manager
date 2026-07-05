@@ -130,4 +130,4 @@ verification:
     of Command with name == "cascade_commit", version == "1.0.0", category == "cascade", author == "Vasiliy
     Zdanovskiy", email == "vasilyvz@gmail.com", result_class is SuccessResult, use_queue is False, and
     descr is a non-empty string.
-status: draft
+status: done

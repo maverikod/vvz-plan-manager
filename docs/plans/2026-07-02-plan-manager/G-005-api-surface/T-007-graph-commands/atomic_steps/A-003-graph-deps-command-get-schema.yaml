@@ -105,4 +105,4 @@ verification:
     properties plan and step_id both typed string with descriptions,
     required equal to ["plan", "step_id"], and additionalProperties equal
     to False.
-status: draft
+status: done

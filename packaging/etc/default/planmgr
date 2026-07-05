@@ -56,3 +56,10 @@ PLANMGR_DB_USER=planmgr
 
 # PostgreSQL port inside the container.
 PLANMGR_DB_PORT=5432
+
+# Optional embedding service base URL used by semantic scoring.
+# Leave empty to disable embedding-backed estimators.
+PLANMGR_EMBEDDING_URL=
+
+# Embedding client timeout in seconds.
+PLANMGR_EMBEDDING_TIMEOUT=60.0

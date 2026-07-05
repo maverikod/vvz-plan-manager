@@ -261,4 +261,4 @@ verification:
     STEP_NOT_FOUND when resolve_branch raises ValueError, and returns
     map_exception(exc) for any other exception including plan resolution
     failure (PLAN_NOT_FOUND).
-status: draft
+status: done

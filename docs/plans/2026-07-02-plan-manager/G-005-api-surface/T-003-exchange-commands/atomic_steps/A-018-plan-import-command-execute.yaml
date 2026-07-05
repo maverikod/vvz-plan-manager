@@ -252,4 +252,4 @@ verification:
     creates the plan, then verifies it by re-reading it via resolve_plan,
     and returns a SuccessResult with data {"dry_run": False, "plan_uuid":
     <str>, "name": <str>}.
-status: draft
+status: done

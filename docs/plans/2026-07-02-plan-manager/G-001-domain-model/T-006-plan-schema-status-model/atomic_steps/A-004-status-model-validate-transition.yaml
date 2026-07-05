@@ -178,4 +178,4 @@ verification:
     validate_transition("frozen", "frozen", False, False) raises
     StatusTransitionError ("frozen" has no legal direct transitions, its
     LEGAL_TRANSITIONS entry is empty).
-status: draft
+status: done

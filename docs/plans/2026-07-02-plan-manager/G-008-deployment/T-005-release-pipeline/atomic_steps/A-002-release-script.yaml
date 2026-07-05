@@ -207,4 +207,4 @@ verification:
     `dpkg-deb --build --root-owner-group build/deb` producing
     build/planmgr_${VERSION}_all.deb. It ends by echoing the image tag and
     the deb path. No stage can silently continue past a failure.
-status: draft
+status: done

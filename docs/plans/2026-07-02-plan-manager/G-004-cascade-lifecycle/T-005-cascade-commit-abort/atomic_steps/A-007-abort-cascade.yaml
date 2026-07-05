@@ -232,4 +232,4 @@ verification:
     base-revision state via restore_state, deletes the cascade ref,
     marks the cascade record aborted, releases the plan lock in all
     cases, and leaves the published plan head untouched.
-status: draft
+status: done

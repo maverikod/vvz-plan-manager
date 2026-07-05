@@ -50,4 +50,4 @@ outputs:
     The version-store error for an unknown revision, or the abort condition
     when any emitted file fails the round-trip check.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
-status: draft
+status: frozen

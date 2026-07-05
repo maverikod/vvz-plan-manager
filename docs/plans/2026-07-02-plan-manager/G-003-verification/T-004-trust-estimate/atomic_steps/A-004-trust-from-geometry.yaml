@@ -174,4 +174,4 @@ verification:
     yields the same result as a gram_determinant of 0.0 at the same n, and
     for a fixed n a larger non-negative gram_determinant never yields a
     lower trust value than a smaller one.
-status: draft
+status: done

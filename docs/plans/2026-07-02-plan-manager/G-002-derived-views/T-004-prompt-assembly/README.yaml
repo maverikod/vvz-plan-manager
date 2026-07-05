@@ -52,4 +52,4 @@ outputs:
     The write-only materialization of the plan's assembled prompts as a snapshot
     for human reading and handoff, never read back as input to any check.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006]
-status: draft
+status: frozen

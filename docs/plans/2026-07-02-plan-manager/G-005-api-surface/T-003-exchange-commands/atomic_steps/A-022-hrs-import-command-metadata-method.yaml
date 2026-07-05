@@ -151,4 +151,4 @@ verification:
     metadatastd.yaml required keys and not contradicting get_schema()
     (parameters "plan", "source", "dry_run", "cascade_uuid" match the
     schema properties).
-status: draft
+status: done

@@ -313,4 +313,4 @@ verification:
     includes "C-1" (not three digits), check_identity_concept_id returns one
     Finding with check_id "identity.concept_id" and artifact_path "C-1"; for
     concept_ids ["C-001", "C-002"] it returns an empty list.
-status: draft
+status: done

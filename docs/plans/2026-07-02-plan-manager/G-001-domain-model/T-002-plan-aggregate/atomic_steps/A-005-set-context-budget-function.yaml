@@ -254,4 +254,4 @@ verification:
     existing plan updates its context_budget column to 8000 and leaves all
     other columns unchanged; calling it with context_budget=0 or a negative
     value raises ValueError without modifying the row.
-status: draft
+status: done

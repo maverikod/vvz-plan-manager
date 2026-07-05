@@ -318,4 +318,4 @@ verification:
     owner_keys has one entry, modules has one entry, and
     declared_concepts is a subset of as_concepts, object_findings
     returns no finding for it.
-status: draft
+status: done

@@ -146,4 +146,4 @@ verification:
     not match CONCEPT_ID_PATTERN. It returns normally when type is allowed
     and both endpoints match the pattern, including when from_concept
     equals to_concept.
-status: draft
+status: done

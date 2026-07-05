@@ -169,4 +169,4 @@ verification:
     `insert_revision(conn, plan_uuid, parent_uuid, author, message,
     node_version_uuids)` with the exact parameter and return types shown in the
     signature above.
-status: draft
+status: done

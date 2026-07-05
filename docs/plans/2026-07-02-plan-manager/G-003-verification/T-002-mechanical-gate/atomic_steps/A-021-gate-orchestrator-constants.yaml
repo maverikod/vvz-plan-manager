@@ -95,4 +95,4 @@ verification:
     ["parse", "identity", "uniqueness", "references", "coverage"] and
     CHECK_IDS equal to a dict with those five keys each mapping to its
     four-element list of dotted check ids exactly as shown above.
-status: draft
+status: done

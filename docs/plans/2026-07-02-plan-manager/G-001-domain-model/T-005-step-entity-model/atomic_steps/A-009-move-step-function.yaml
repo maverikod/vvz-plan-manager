@@ -215,4 +215,4 @@ verification:
     depends_on to an empty list, applies parent_step_uuid, step_id, and
     depends_on in a single UPDATE statement, and returns the step
     re-read from the database after the update.
-status: draft
+status: done

@@ -125,4 +125,4 @@ verification:
     Constructing DomainCommandError("NOT_A_CODE", "x") raises ValueError.
     Constructing DomainCommandError("PLAN_NOT_FOUND", "x", {"a": 1}) yields
     .details == {"a": 1}.
-status: draft
+status: done

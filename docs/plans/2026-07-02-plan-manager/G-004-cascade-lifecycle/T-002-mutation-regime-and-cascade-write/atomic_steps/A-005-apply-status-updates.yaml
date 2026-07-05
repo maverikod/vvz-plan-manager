@@ -165,4 +165,4 @@ verification:
     uuid for every non-skipped pair, and returns the list of
     (step_uuid, snapshot) pairs for exactly the non-skipped pairs in
     processing order.
-status: draft
+status: done

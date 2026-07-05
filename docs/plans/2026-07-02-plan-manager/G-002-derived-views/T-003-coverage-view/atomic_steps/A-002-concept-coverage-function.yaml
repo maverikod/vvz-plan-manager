@@ -248,4 +248,4 @@ verification:
     {"C-001", "C-003"}, concept_coverage(conn, plan_uuid) returns
     CoverageReport(missing=["C-003"], extra=["C-002"]). When the two sets
     are equal, both missing and extra are empty lists.
-status: draft
+status: done

@@ -139,4 +139,4 @@ verification:
     ScoreRefusedError("G-001/T-002/A-003 refused: mechanical gate not
     green (2 findings)") and catching it with `except ScoreRefusedError as
     exc` exposes str(exc) equal to that message.
-status: draft
+status: done

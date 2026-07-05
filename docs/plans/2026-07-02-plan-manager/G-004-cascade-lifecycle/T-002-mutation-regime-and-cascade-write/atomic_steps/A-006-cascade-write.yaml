@@ -223,4 +223,4 @@ verification:
     row is updated to the new revision), and returns that revision's
     uuid. The plan's head reference is never read or written by this
     function.
-status: draft
+status: done

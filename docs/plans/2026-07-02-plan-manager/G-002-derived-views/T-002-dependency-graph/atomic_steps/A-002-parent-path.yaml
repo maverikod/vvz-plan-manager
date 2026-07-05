@@ -171,4 +171,4 @@ verification:
     The module imports without error and exposes a callable `parent_path`
     accepting (nodes: dict[uuid.UUID, Step], step: Step) and returning a
     str; calling it with a level-3 step returns "".
-status: draft
+status: done

@@ -123,6 +123,7 @@ class StepCreateCommand(Command):
         slug: str,
         parent_step_id: str | None = None,
         cascade_uuid: str | None = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Scaffold a new step and record it as a revision.
 

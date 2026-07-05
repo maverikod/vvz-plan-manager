@@ -220,4 +220,4 @@ verification:
     reference the step as parent_step_uuid; otherwise it removes the
     deleted step's id from every same-scope sibling's depends_on and
     then deletes exactly the one row matching step_uuid.
-status: draft
+status: done

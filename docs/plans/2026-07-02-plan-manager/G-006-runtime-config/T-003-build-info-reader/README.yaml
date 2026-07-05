@@ -40,4 +40,4 @@ outputs:
     The embedded operator documentation text; its absence raises the
     explicit missing-payload error.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005]
-status: draft
+status: frozen

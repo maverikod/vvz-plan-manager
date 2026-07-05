@@ -114,4 +114,4 @@ verification:
   expected: >
     Importing plan_manager.commands.cascade_abort_command succeeds and CascadeAbortCommand.metadata()
     returns exactly the dict produced by get_cascade_abort_metadata(CascadeAbortCommand).
-status: draft
+status: done

@@ -121,4 +121,4 @@ verification:
     get_hrs_export_metadata(HrsExportCommand), containing the twelve
     metadatastd.yaml required keys and not contradicting get_schema()
     (parameters "plan" matches the schema properties).
-status: draft
+status: done

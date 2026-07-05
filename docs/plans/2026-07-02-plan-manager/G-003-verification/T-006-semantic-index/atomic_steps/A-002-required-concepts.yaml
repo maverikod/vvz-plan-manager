@@ -184,4 +184,4 @@ verification:
     string "{abcd}" and a second concept row whose source_labels list
     does not include "{abcd}", required_concepts(branch, concept_rows)
     returns a set containing only the concept_id of the first row.
-status: draft
+status: done

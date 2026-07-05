@@ -121,7 +121,7 @@ class PlanValidateCommand(Command):
                 )
         return params
 
-    def execute(self, **kwargs: Any):
+    async def execute(self, **kwargs: Any):
         """Run the mechanical gate over the requested scope and return the report.
 
         :param kwargs: Validated parameters: plan (str, plan identifier),

@@ -277,4 +277,4 @@ verification:
     "T-12" (not zero-padded to three digits), check_identity_step_id returns
     one Finding with check_id "identity.step_id"; for step_id "T-012" on a
     level-4 step it returns an empty list.
-status: draft
+status: done

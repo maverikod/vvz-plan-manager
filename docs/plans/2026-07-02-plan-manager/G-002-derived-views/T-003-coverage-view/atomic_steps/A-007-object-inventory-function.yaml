@@ -404,4 +404,4 @@ verification:
     ["plan_manager.views.coverage"], "artifact_paths":
     ["G-002/T-003/A-001"], "declared_concepts": ["C-005", "C-010"],
     "as_concepts": ["C-010"]}.
-status: draft
+status: done

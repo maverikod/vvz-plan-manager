@@ -22,6 +22,7 @@ and the registration hook are available in worker process memory.
 """
 
 import argparse
+import os
 import sys
 
 from plan_manager.runtime.context import init_runtime
@@ -137,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the JSON configuration file.",
     )
     args = parser.parse_args(argv)
+    os.environ["PLANMGR_CONFIG_PATH"] = args.config
 
     try:
         init_runtime(args.config)

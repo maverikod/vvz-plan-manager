@@ -245,4 +245,4 @@ verification:
     context_budget to 4000. execute is an async method returning a
     SuccessResult or ErrorResult, with DomainCommandError not imported or
     used anywhere in the module.
-status: draft
+status: done

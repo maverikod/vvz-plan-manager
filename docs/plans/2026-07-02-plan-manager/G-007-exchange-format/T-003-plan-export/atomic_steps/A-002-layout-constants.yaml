@@ -106,4 +106,4 @@ verification:
     "source_spec.md", MRS_FILENAME == "spec.yaml", STEP_README ==
     "README.yaml", and ATOMIC_DIR == "atomic_steps", in addition to the
     unchanged export_hrs function and ExportError class from prior steps.
-status: draft
+status: done

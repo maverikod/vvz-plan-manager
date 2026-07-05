@@ -66,7 +66,11 @@ class HrsExportCommand(Command):
         params = super().validate_params(params)
         return params
 
-    async def execute(self, plan: str) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Return the HRS Markdown text of the resolved plan.
 
         Args:

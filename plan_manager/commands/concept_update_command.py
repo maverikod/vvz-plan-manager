@@ -112,6 +112,7 @@ class ConceptUpdateCommand(Command):
         cascade_uuid: str,
         concept_id: str,
         fields: dict,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Apply fields to an existing concept under an open cascade and verify by re-read.
 

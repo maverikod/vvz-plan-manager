@@ -89,4 +89,4 @@ verification:
     returning an int. Calling token_estimate with an empty string returns
     zero, and calling it with a four-character string returns one, matching
     the normative character-based token estimate algorithm.
-status: draft
+status: done

@@ -121,4 +121,4 @@ verification:
   expected: >
     Importing plan_manager.commands.cascade_commit_command succeeds and CascadeCommitCommand.validate_params
     is defined, calls super().validate_params(params) first, and returns its result unmodified.
-status: draft
+status: done

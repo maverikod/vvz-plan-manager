@@ -154,4 +154,4 @@ verification:
     "dry_run" entries (dry_run default True) and error_cases containing
     an "IMPORT_INVALID" entry, and best_practices documenting the
     dry_run-on-by-default safety behavior.
-status: draft
+status: done

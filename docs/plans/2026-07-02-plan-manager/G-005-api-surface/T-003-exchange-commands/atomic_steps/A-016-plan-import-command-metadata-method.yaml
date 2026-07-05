@@ -134,4 +134,4 @@ verification:
     get_plan_import_metadata(PlanImportCommand), containing the twelve
     metadatastd.yaml required keys and not contradicting get_schema()
     (parameters "source" and "dry_run" match the schema properties).
-status: draft
+status: done

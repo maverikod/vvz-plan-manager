@@ -74,6 +74,7 @@ class ConceptRemoveCommand(Command):
         plan: str,
         cascade_uuid: str,
         concept_id: str,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Remove concept_id under an open cascade and verify by re-read.
 

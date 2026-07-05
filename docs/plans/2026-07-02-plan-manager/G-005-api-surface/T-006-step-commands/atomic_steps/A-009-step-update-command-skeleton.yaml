@@ -251,4 +251,4 @@ verification:
     ValueError; `StepUpdateCommand.metadata()` returns the dict produced by
     get_step_update_metadata; calling `execute` raises NotImplementedError
     until the follow-up AS replaces its body.
-status: draft
+status: done

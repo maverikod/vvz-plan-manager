@@ -198,4 +198,4 @@ verification:
     check_coverage_labels returns a list with exactly one Finding with
     check_id "coverage.labels", severity "error", artifact_path "plan";
     when both missing and extra are empty it returns an empty list.
-status: draft
+status: done

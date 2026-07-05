@@ -108,4 +108,4 @@ verification:
     restricted to plan_uuid, level, and a NULL-safe comparison
     (IS NOT DISTINCT FROM) on parent_step_uuid, and returns the list of
     step_id values from the result rows.
-status: draft
+status: done

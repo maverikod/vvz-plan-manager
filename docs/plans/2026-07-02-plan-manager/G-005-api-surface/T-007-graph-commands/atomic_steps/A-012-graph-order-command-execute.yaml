@@ -238,4 +238,4 @@ verification:
     CYCLE_DETECTED ErrorResult with the cycle's artifact paths when
     topological_order reports a non-empty cycle residual, and returns a
     PLAN_NOT_FOUND ErrorResult when the plan cannot be resolved.
-status: draft
+status: done

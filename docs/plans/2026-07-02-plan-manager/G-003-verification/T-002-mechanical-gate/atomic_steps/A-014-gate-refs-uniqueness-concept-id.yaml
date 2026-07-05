@@ -109,4 +109,4 @@ verification:
     ["C-001", "C-001", "C-002"], check_uniqueness_concept_id returns a list
     with one Finding with check_id "uniqueness.concept_id" and artifact_path
     "C-001"; for concept_ids with no duplicates it returns an empty list.
-status: draft
+status: done

@@ -151,4 +151,4 @@ verification:
     coverage_estimator(set(), {"C-001"}) returns 1.0.
     coverage_estimator({"C-001", "C-002"}, {"C-001"}) returns 0.5.
     coverage_estimator({"C-001"}, set()) returns 0.0.
-status: draft
+status: done

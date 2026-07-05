@@ -70,4 +70,4 @@ verification:
     planmgr.service || true", and "docker rm -f planmgr || true" in that
     order, then "exit 0". No command in the script deletes or modifies
     any path under /etc/planmgr, /var/planmgr, or /var/log/planmgr.
-status: draft
+status: done

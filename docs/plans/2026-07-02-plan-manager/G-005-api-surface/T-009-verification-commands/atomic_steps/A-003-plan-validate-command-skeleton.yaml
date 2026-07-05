@@ -161,4 +161,4 @@ verification:
     equal to ["plan"], and additionalProperties equal to False. Calling
     PlanValidateCommand.metadata() returns the dict produced by
     get_plan_validate_metadata(PlanValidateCommand).
-status: draft
+status: done

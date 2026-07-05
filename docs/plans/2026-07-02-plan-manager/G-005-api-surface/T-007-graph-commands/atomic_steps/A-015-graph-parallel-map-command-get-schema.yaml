@@ -100,4 +100,4 @@ verification:
     GraphParallelMapCommand.get_schema() returns a dict with type "object",
     properties containing only plan typed string with a description,
     required equal to ["plan"], and additionalProperties equal to False.
-status: draft
+status: done

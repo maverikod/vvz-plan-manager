@@ -190,4 +190,4 @@ verification:
     unchanged from what super().validate_params returned. The method does
     not raise or return any plan_manager.commands.errors.DomainCommandError
     or ErrorResult.
-status: draft
+status: done

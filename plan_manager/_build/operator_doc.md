@@ -58,7 +58,13 @@ planmgr installs from the Ubuntu package produced by the release pipeline:
 
     apt install ./planmgr_<version>_all.deb
 
-The package's postinst script provisions the deployment on install:
+The package installs the systemd unit, configuration templates, operator
+documentation, and service lifecycle scripts. The first deployment bootstrap is
+performed by the package initialization step described below.
+
+# INITIALIZATION
+
+The package's postinst script initializes the deployment during install:
 
   1. creates the planmgruser system user and the planmgrgrp system group if
      they do not already exist;
@@ -88,6 +94,13 @@ lines) with these operator variables:
 | PLANMGR_DB_NAME | PostgreSQL database name |
 | PLANMGR_DB_USER | PostgreSQL role name |
 | PLANMGR_DB_PASSWORD_FILE | Path under /etc/planmgr/secrets to the mounted database password file |
+| PLANMGR_EMBEDDING_URL | Optional embedding service base URL used by semantic scoring; empty disables embedding-backed estimators |
+| PLANMGR_EMBEDDING_TIMEOUT | Embedding client timeout in seconds |
+
+For example, enable the embedding service on the local deployment network with:
+
+    PLANMGR_EMBEDDING_URL=https://192.168.254.26:8001
+    PLANMGR_EMBEDDING_TIMEOUT=60.0
 
 /etc/planmgr/config.json is rendered from config.json.template at install
 time and holds the adapter sections plus one plan_manager section validated

@@ -81,7 +81,12 @@ class PlanExportCommand(Command):
             uuid.UUID(revision)
         return params
 
-    async def execute(self, plan: str, revision: Optional[str] = None) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        revision: Optional[str] = None,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Export the resolved plan to the standard file layout.
 
         Args:

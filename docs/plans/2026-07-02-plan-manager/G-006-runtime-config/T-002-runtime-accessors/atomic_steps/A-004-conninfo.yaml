@@ -206,4 +206,4 @@ verification:
     the password stored by init_runtime from the secrets file. Before
     init_runtime has been called, _conninfo raises RuntimeError with
     message "runtime not initialized: call init_runtime first".
-status: draft
+status: done

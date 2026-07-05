@@ -110,4 +110,4 @@ verification:
     type "object", properties for exactly plan (type string) and dry_run
     (type boolean, default False), required equal to ["plan"], and
     additionalProperties False.
-status: draft
+status: done

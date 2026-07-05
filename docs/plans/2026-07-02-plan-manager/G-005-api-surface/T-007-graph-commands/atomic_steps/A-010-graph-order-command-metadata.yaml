@@ -130,4 +130,4 @@ verification:
     imports get_graph_order_metadata from plan_manager.commands.
     graph_order_metadata, and GraphOrderCommand.metadata() returns exactly
     get_graph_order_metadata(GraphOrderCommand).
-status: draft
+status: done

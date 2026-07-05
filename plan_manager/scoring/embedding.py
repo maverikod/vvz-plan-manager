@@ -6,11 +6,14 @@ raising on service failure.
 """
 
 import json
-import urllib.error
-import urllib.request
+import asyncio
+import threading
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
+from embed_client import EmbeddingClient
+from embed_client.exceptions import EmbedClientError, EmbedError
 import psycopg
 
 from plan_manager.storage.canonical import content_hash
@@ -108,13 +111,69 @@ def store_vector(conn: psycopg.Connection, text: str, vector: list[float]) -> No
         )
 
 
+def _run_async_blocking(coro):
+    """Run *coro* from synchronous scoring code, even inside an event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: list[object] = []
+    error: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result.append(asyncio.run(coro))
+        except BaseException as exc:
+            error.append(exc)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if error:
+        raise error[0]
+    return result[0]
+
+
+def _client_from_url(base_url: str, timeout: float = 60.0) -> EmbeddingClient:
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https"):
+        raise EmbeddingUnavailable(f"unsupported embedding URL scheme: {parsed.scheme!r}")
+    if not parsed.hostname:
+        raise EmbeddingUnavailable("embedding URL must include a host")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return EmbeddingClient(
+        protocol=parsed.scheme,
+        host=parsed.hostname,
+        port=port,
+        check_hostname=False,
+        timeout=timeout,
+    )
+
+
+async def _fetch_vector_async(base_url: str, text: str) -> list[float]:
+    client = _client_from_url(base_url)
+    result = await client.embed([text], wait=True, wait_timeout=60)
+    results = result.get("results")
+    if not isinstance(results, list) or not results:
+        raise EmbeddingUnavailable("embed-client response missing results")
+    first = results[0]
+    if not isinstance(first, dict):
+        raise EmbeddingUnavailable("embed-client result item is not an object")
+    embedding = first.get("embedding")
+    if not isinstance(embedding, list):
+        raise EmbeddingUnavailable("embed-client result missing embedding list")
+    return embedding
+
+
 def fetch_vector(base_url: str, text: str) -> list[float]:
-    """Request the embedding vector for ``text`` from the external embedding service.
+    """Request the embedding vector for ``text`` through embed-client.
 
     Parameters
     ----------
     base_url:
-        The configured URL of the embedding service endpoint.
+        The configured base URL of the embedding service, for example
+        ``https://192.168.254.26:8001``.
     text:
         The text to embed.
 
@@ -126,53 +185,22 @@ def fetch_vector(base_url: str, text: str) -> list[float]:
     Raises
     ------
     EmbeddingUnavailable
-        Raised, carrying the reason as its argument, for every deviation
-        from the normative protocol: a connection error, a timeout, a
-        non-200 HTTP status, a malformed (non-JSON) response body, or a
-        response body whose JSON has no "embedding" key or whose
-        "embedding" value is not a list.
+        Raised, carrying the reason as its argument, when embed-client
+        cannot reach the service, the job fails or times out, or the
+        completed response does not contain a vector.
 
     Behavior
     --------
-    Sends an HTTP POST request to ``base_url`` with body
-    ``json.dumps({"input": text}).encode("utf-8")``, header
-    ``Content-Type: application/json``, and a timeout of 10.0 seconds,
-    using ``urllib.request`` only. On HTTP 200, parses the response body
-    as JSON and returns the value of its "embedding" key as a list of
-    floats.
+    Uses :class:`embed_client.EmbeddingClient`, which talks to the
+    embedding service through the mcp-proxy-adapter JSON-RPC command
+    surface and waits for completion through the client-supported
+    async path. The rest of plan_manager's scoring code is synchronous,
+    so this function bridges the async client in a blocking wrapper.
     """
-    payload = json.dumps({"input": text}).encode("utf-8")
-    request = urllib.request.Request(
-        base_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=10.0) as response:
-            status = response.status
-            body = response.read()
-    except urllib.error.URLError as exc:
+        return _run_async_blocking(_fetch_vector_async(base_url, text))
+    except (EmbedClientError, EmbedError, TimeoutError, OSError, RuntimeError) as exc:
         raise EmbeddingUnavailable(str(exc)) from exc
-    except OSError as exc:
-        raise EmbeddingUnavailable(str(exc)) from exc
-
-    if status != 200:
-        raise EmbeddingUnavailable(f"unexpected HTTP status {status}")
-
-    try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise EmbeddingUnavailable(f"malformed JSON response: {exc}") from exc
-
-    if not isinstance(parsed, dict) or "embedding" not in parsed:
-        raise EmbeddingUnavailable("response JSON missing 'embedding' key")
-
-    embedding = parsed["embedding"]
-    if not isinstance(embedding, list):
-        raise EmbeddingUnavailable("'embedding' value is not a list")
-
-    return embedding
 
 
 def embed_text(conn: psycopg.Connection, base_url: str, text: str) -> list[float]:

@@ -85,7 +85,12 @@ class BranchDumpCommand(Command):
         params = super().validate_params(params)
         return params
 
-    def execute(self, plan: str, dry_run: bool = False) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        plan: str,
+        dry_run: bool = False,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Dump the executor prompt of every branch of the plan to disk.
 
         :param plan: Plan identifier (name or UUID) resolved via

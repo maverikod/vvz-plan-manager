@@ -46,4 +46,4 @@ outputs:
     Successful start on exact inventory match and all probes passing, or
     an abort naming the exact difference or the failing command and key.
 atomic_steps: [A-001, A-002, A-003, A-004, A-005]
-status: draft
+status: frozen

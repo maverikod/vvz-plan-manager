@@ -474,4 +474,4 @@ verification:
     score_branch raises ScoreRefusedError whose message contains the
     branch path "G-001/T-002/A-003" and the exact finding count from the
     gate report.
-status: draft
+status: done

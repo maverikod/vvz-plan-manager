@@ -202,4 +202,4 @@ verification:
     collects every failing check into one StepValidationError raised with
     messages joined by "; ", and returns None silently when a Step
     instance satisfies all six checks.
-status: draft
+status: done

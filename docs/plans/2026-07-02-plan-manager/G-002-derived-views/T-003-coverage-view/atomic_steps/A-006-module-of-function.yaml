@@ -112,4 +112,4 @@ verification:
     "README" unchanged. module_of("a.b/c.py") (a "." in a non-final
     segment) returns "a.b.c" — only the final segment's extension is
     stripped.
-status: draft
+status: done

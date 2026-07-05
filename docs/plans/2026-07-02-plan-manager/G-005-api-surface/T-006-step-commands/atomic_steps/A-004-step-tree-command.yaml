@@ -208,4 +208,4 @@ verification:
     get_step_tree_metadata; `execute` resolves the plan, loads steps, and
     returns a SuccessResult whose data is {"tree": [...]} with entries
     sorted by (level, path).
-status: draft
+status: done

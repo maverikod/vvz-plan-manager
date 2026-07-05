@@ -125,4 +125,4 @@ verification:
     three (concept_id, definition, source_labels) tuples in that same
     ascending concept_id order, with source_labels equal to plain Python
     lists of the original brace-wrapped strings.
-status: draft
+status: done

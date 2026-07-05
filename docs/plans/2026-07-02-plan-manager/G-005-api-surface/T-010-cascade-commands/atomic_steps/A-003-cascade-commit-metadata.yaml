@@ -207,4 +207,4 @@ verification:
     parameters, return_value, usage_examples, error_cases, best_practices; error_cases contains exactly
     the keys PLAN_NOT_FOUND, CASCADE_REQUIRED, GATE_RED, each with description, message, and solution;
     parameters contains exactly the key plan with description, type, and required.
-status: draft
+status: done

@@ -160,4 +160,4 @@ verification:
     Given a Branch whose gs.concepts is ["C-001"], ts.concepts is
     ["C-002"], and atomic.concepts is ["C-001", "C-003"],
     declared_concepts(branch) returns the set {"C-001", "C-002", "C-003"}.
-status: draft
+status: done

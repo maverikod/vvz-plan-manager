@@ -138,4 +138,4 @@ verification:
     (boolean, default True), and "cascade_uuid" (string, no default),
     required equal to ["plan", "source"], and additionalProperties
     equal to False.
-status: draft
+status: done

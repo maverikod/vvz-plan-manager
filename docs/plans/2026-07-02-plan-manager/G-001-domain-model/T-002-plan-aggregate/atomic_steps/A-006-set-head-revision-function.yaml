@@ -298,4 +298,4 @@ verification:
     existing plan updates its head_revision_uuid column to revision_uuid and
     leaves all other columns unchanged; calling it again with a different
     revision_uuid overwrites the previous value.
-status: draft
+status: done

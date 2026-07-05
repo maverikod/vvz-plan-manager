@@ -137,4 +137,4 @@ verification:
     GraphParallelMapCommand defines validate_params(self, params) that
     calls super().validate_params(params) and returns its result
     unchanged.
-status: draft
+status: done

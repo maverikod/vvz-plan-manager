@@ -122,4 +122,4 @@ verification:
     as_step_id (all type string), required equal to
     ["plan", "gs_step_id", "ts_step_id", "as_step_id"], and
     additionalProperties False.
-status: draft
+status: done

@@ -230,4 +230,4 @@ verification:
     super().validate_params returned, with expected_revision left as the
     original string. The module plan_manager.commands.plan_score_command
     imports the standard library uuid module at module level.
-status: draft
+status: done

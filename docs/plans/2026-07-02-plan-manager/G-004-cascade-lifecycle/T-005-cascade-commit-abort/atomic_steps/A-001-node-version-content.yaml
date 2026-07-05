@@ -112,4 +112,4 @@ verification:
     parameters (conn, version_uuid) and returning a dict at runtime when
     given a connection and a version uuid that exists in node_version;
     it raises CascadeError when the row is absent.
-status: draft
+status: done

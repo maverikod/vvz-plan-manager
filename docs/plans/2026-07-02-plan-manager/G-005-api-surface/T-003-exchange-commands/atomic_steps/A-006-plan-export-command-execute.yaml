@@ -232,4 +232,4 @@ verification:
     revision="<unknown-uuid>") returns an ErrorResult with code
     REVISION_NOT_FOUND. The command never mutates plan data (read-only
     over plan truth).
-status: draft
+status: done

@@ -200,4 +200,4 @@ verification:
     parameters contains exactly plan, gs_step_id, ts_step_id, as_step_id, all
     marked required True; error_cases contains exactly PLAN_NOT_FOUND and
     STEP_NOT_FOUND, each with description, message, and solution.
-status: draft
+status: done

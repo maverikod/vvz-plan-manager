@@ -48,4 +48,4 @@ outputs:
     idempotent initialization, readiness wait, then the server with the
     mounted configuration.
 atomic_steps: [A-001, A-002, A-003]
-status: draft
+status: frozen

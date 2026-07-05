@@ -105,7 +105,11 @@ class InfoCommand(Command):
             )
         return params
 
-    def execute(self, section: str | None = None) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        section: str | None = None,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
         """Assemble and return the server self-description.
 
         Builds four parts from embedded package data and live runtime

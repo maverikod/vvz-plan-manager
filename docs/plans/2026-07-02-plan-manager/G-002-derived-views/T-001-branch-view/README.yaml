@@ -41,4 +41,4 @@ outputs:
     not resolve: a missing step, a child not belonging to the addressed parent, or
     a step at the wrong level.
 atomic_steps: [A-001, A-002, A-003, A-004]
-status: draft
+status: frozen

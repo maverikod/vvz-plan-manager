@@ -347,4 +347,4 @@ verification:
   target: plan_manager.hrs.paragraphs.assign_labels
   expected: >
     Importing plan_manager.hrs.paragraphs succeeds and the module exposes a callable named assign_labels accepting exactly four positional parameters (conn, plan_uuid, author, cascade). When no stored paragraph is unlabeled it returns an empty list and issues no SQL and records no revision. When at least one stored paragraph is unlabeled, it issues one UPDATE per changed row, returns the list of newly generated labels, and records exactly one revision via record_revision when cascade is None or one cascade_write call per changed row when cascade is a CascadeRecord.
-status: draft
+status: done

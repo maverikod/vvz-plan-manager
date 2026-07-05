@@ -39,4 +39,4 @@ outputs:
     blast radius classified by artifact path, and the mechanical gate
     verdict with its findings report; returned to the caller, never stored.
 atomic_steps: [A-001]
-status: draft
+status: frozen

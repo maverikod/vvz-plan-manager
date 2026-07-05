@@ -139,4 +139,4 @@ verification:
     The module imports without error and exposes a callable
     `insert_node_version(conn, plan_uuid, entity_uuid, content)` with the exact
     parameter and return types shown in the signature above.
-status: draft
+status: done

@@ -134,4 +134,4 @@ verification:
     get_plan_export_metadata(PlanExportCommand), containing the twelve
     metadatastd.yaml required keys and not contradicting get_schema()
     (parameters "plan" and "revision" match the schema properties).
-status: draft
+status: done

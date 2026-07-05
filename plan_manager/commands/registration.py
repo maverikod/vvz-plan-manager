@@ -92,7 +92,9 @@ def probe_commands(registry) -> None:
 
         meta = cls.metadata()
         for key in _REQUIRED_METADATA_KEYS:
-            if not meta.get(key):
+            if key not in meta:
+                raise RuntimeError(f"no-stub probe failed: command={name} key={key}")
+            if key != "parameters" and not meta.get(key):
                 raise RuntimeError(f"no-stub probe failed: command={name} key={key}")
         if not isinstance(getattr(cls, "descr", None), str) or not cls.descr.strip():
             raise RuntimeError(f"no-stub probe failed: command={name} key=descr")

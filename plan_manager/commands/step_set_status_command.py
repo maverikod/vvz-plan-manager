@@ -90,6 +90,7 @@ class StepSetStatusCommand(Command):
         step_id: str,
         status: str,
         cascade_uuid: str | None = None,
+        context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Transition a step's status and record the transition as a revision.
 
