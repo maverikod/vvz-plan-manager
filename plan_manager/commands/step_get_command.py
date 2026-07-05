@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_get_metadata import get_step_get_metadata
+from plan_manager.domain.step_runtime import get_runtime_record
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.dependency_graph import load_steps
@@ -44,6 +45,11 @@ class StepGetCommand(Command):
                     "type": "string",
                     "description": "Human-readable step identifier (e.g. G-001, T-006, A-003) to look up within the plan.",
                 },
+                "include_runtime": {
+                    "type": "boolean",
+                    "description": "When true, include the step's runtime parameters in the response.",
+                    "default": False,
+                },
             },
             "required": ["plan", "step_id"],
             "additionalProperties": False,
@@ -66,6 +72,7 @@ class StepGetCommand(Command):
         self,
         plan: str,
         step_id: str,
+        include_runtime: bool = False,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Return one step of the plan with its resolved parent path.
@@ -73,6 +80,7 @@ class StepGetCommand(Command):
         Args:
             plan: Plan identifier (UUID or name).
             step_id: Human-readable step identifier to look up.
+            include_runtime: Whether to include runtime parameters.
 
         Returns:
             SuccessResult with the step's fields on success, or ErrorResult
@@ -102,6 +110,8 @@ class StepGetCommand(Command):
                     "concepts": target.concepts,
                     "path": artifact_path_of(nodes, target),
                 }
+                if include_runtime:
+                    data["runtime"] = get_runtime_record(conn, p.uuid, target.uuid)
                 return SuccessResult(data=data)
         except Exception as exc:
             return map_exception(exc)

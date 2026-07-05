@@ -44,6 +44,11 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
                 "type": "string",
                 "required": True,
             },
+            "include_runtime": {
+                "description": "Optional flag; when true, include the step's runtime parameters.",
+                "type": "boolean",
+                "required": False,
+            },
         },
         "return_value": {
             "success": {
@@ -59,6 +64,7 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
                     "depends_on": "List of step_id values this step depends on.",
                     "concepts": "List of MRS concept_id values this step realizes.",
                     "path": "Artifact path of this step.",
+                    "runtime": "RuntimeRecord with activations, execution_attempts, journal_aggregates, authoring when include_runtime is true.",
                 },
                 "example": {
                     "uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
@@ -86,6 +92,11 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
                 "command": {"plan": "plan_manager", "step_id": "T-006"},
                 "explanation": "Returns T-006 with its resolved parent path and level-specific fields.",
             },
+            {
+                "description": "Read one step with runtime parameters.",
+                "command": {"plan": "plan_manager", "step_id": "A-001", "include_runtime": True},
+                "explanation": "Includes runtime only when explicitly requested.",
+            },
         ],
         "error_cases": {
             "PLAN_NOT_FOUND": {
@@ -102,5 +113,6 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
         "best_practices": [
             "Use step_tree first to discover valid step_id values before calling step_get.",
             "This command never mutates state; it is safe to call at any time and any status.",
+            "Leave include_runtime false unless the caller explicitly needs operational runtime data.",
         ],
     }

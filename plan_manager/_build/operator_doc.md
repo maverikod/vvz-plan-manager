@@ -159,7 +159,7 @@ alongside it for configuration continuity.
 
 # COMMAND SURFACE
 
-The server exposes 43 commands over JSON-RPC, grouped into eleven families.
+The server exposes 46 commands over JSON-RPC, grouped into eleven families.
 The mutating subset within each family requires either an explicit open
 cascade (for machine-specification-level changes) or draft status on the
 target artifact (for global-step, tactical-step, and atomic-step-level
@@ -170,7 +170,7 @@ changes); no mutation bypasses both.
   paragraph           — list, get, assign a label, toggle non-binding markup (4 commands).
   mrs                 — list concepts, get concept, list relations, add concept, update concept, delete concept; every mutation runs inside a cascade (6 commands).
   concept coverage    — concept coverage report, label coverage report (2 commands).
-  step                — create, get, update, delete, move, list, uniform across levels 3-5 (6 commands).
+  step                — create, get, update, delete, move, list, runtime get/report/list, uniform across levels 3-5 (9 commands).
   graph               — dependency order, parallel execution waves, cycle report, impact report (4 commands).
   branch              — branch view, branch verify (2 commands).
   validation/scoring  — mechanical gate run, semantic index run, trust estimate (3 commands).

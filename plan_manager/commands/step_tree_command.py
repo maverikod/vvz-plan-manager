@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_tree_metadata import get_step_tree_metadata
+from plan_manager.domain.step_runtime import get_runtime_record
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.dependency_graph import load_steps
@@ -40,6 +41,11 @@ class StepTreeCommand(Command):
                     "type": "string",
                     "description": "Plan identifier (UUID or name) to resolve the plan against the catalog.",
                 },
+                "include_runtime": {
+                    "type": "boolean",
+                    "description": "When true, include each step's runtime parameters in the response.",
+                    "default": False,
+                },
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -61,12 +67,14 @@ class StepTreeCommand(Command):
     async def execute(
         self,
         plan: str,
+        include_runtime: bool = False,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Return the plan's full step tree as a flat, sorted list.
 
         Args:
             plan: Plan identifier (UUID or name).
+            include_runtime: Whether to include runtime parameters.
 
         Returns:
             SuccessResult with data {"tree": [...]} on success, where each
@@ -78,16 +86,18 @@ class StepTreeCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
-                tree = [
-                    {
+                tree = []
+                for s in nodes.values():
+                    entry = {
                         "path": artifact_path_of(nodes, s),
                         "step_id": s.step_id,
                         "slug": s.slug,
                         "level": s.level,
                         "status": s.status,
                     }
-                    for s in nodes.values()
-                ]
+                    if include_runtime:
+                        entry["runtime"] = get_runtime_record(conn, p.uuid, s.uuid)
+                    tree.append(entry)
                 tree.sort(key=lambda entry: (entry["level"], entry["path"]))
                 return SuccessResult(data={"tree": tree})
         except Exception as exc:

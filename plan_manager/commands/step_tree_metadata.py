@@ -37,12 +37,17 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
                 "type": "string",
                 "required": True,
             },
+            "include_runtime": {
+                "description": "Optional flag; when true, include each step's runtime parameters.",
+                "type": "boolean",
+                "required": False,
+            },
         },
         "return_value": {
             "success": {
                 "description": "The plan's full step tree as a flat, sorted list.",
                 "data": {
-                    "tree": "List of {path, step_id, slug, level, status} entries, sorted by (level, path).",
+                    "tree": "List of {path, step_id, slug, level, status} entries, sorted by (level, path). Entries include runtime when include_runtime is true.",
                 },
                 "example": {
                     "tree": [
@@ -76,6 +81,11 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
                 "command": {"plan": "plan_manager"},
                 "explanation": "Returns every step of the plan as a flat, sorted list with statuses.",
             },
+            {
+                "description": "List the step tree with runtime parameters.",
+                "command": {"plan": "plan_manager", "include_runtime": True},
+                "explanation": "Includes runtime only when explicitly requested.",
+            },
         ],
         "error_cases": {
             "PLAN_NOT_FOUND": {
@@ -87,5 +97,6 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
         "best_practices": [
             "Use step_tree to discover valid step_id values before calling step_get, step_update, step_move, step_delete, or step_set_status.",
             "This command never mutates state; it is safe to call at any time and any status.",
+            "Leave include_runtime false for ordinary topology reads and use it only when operational runtime data is needed.",
         ],
     }
