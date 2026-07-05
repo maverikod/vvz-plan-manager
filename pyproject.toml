@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plan-manager"
-version = "0.1.1"
+version = "0.1.2"
 description = "Plan Manager server: hierarchical development plan storage, verification, and exchange service."
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2",
     "numpy",
     "PyYAML",
+    "embed-client>=3.1.9.5",
 ]
 
 [project.optional-dependencies]
