@@ -18,12 +18,23 @@ from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.views.dependency_graph import load_steps
 
 
+def _invalid_request(message: str, field: str) -> ErrorResult:
+    return ErrorResult(
+        message=message,
+        code=-32602,
+        details={"error_type": "InvalidRequest", "field": field},
+    )
+
+
 class HrsImportCommand(Command):
-    """Replace the HRS text of a resolved plan from a Markdown source."""
+    """Replace the HRS text of a resolved plan from Markdown content."""
 
     name: ClassVar[str] = "hrs_import"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "Replace a plan's HRS text from a Markdown source under the configured export root."
+    descr: ClassVar[str] = (
+        "Replace a plan's HRS text from a Markdown file under the configured "
+        "export root or from inline source_text."
+    )
     category: ClassVar[str] = "exchange"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -52,6 +63,13 @@ class HrsImportCommand(Command):
                         "configured export root."
                     ),
                 },
+                "source_text": {
+                    "type": "string",
+                    "description": (
+                        "Inline Markdown HRS source text. Mutually exclusive "
+                        "with source."
+                    ),
+                },
                 "dry_run": {
                     "type": "boolean",
                     "description": (
@@ -68,7 +86,7 @@ class HrsImportCommand(Command):
                     ),
                 },
             },
-            "required": ["plan", "source"],
+            "required": ["plan"],
             "additionalProperties": False,
         }
 
@@ -92,14 +110,12 @@ class HrsImportCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: When 'source' is empty or contains '/', '\\' or
-                '..', or when 'cascade_uuid' is present but does not
+            ValueError: When exactly one of 'source' and 'source_text' is
+                not present; when 'source' is empty or contains '/', '\\'
+                or '..'; or when 'cascade_uuid' is present but does not
                 parse as a UUID.
         """
         params = super().validate_params(params)
-        source = params["source"]
-        if not source or "/" in source or "\\" in source or ".." in source:
-            raise ValueError("source must be a bare file name without path separators")
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
             uuid.UUID(cascade_uuid)
@@ -108,7 +124,8 @@ class HrsImportCommand(Command):
     async def execute(
         self,
         plan: str,
-        source: str,
+        source: Optional[str] = None,
+        source_text: Optional[str] = None,
         dry_run: bool = True,
         cascade_uuid: Optional[str] = None,
         context: object | None = None,
@@ -117,8 +134,10 @@ class HrsImportCommand(Command):
 
         Args:
             plan: Plan identifier resolved against the catalog.
-            source: Bare Markdown file name under the configured export
-                root.
+            source: Optional bare Markdown file name under the configured
+                export root.
+            source_text: Optional inline Markdown HRS content. Exactly
+                one of source and source_text is required.
             dry_run: When True (the default), only validate the source
                 text.
             cascade_uuid: Optional identifier of an already-open cascade
@@ -132,9 +151,26 @@ class HrsImportCommand(Command):
             failure.
         """
         try:
+            has_source = source is not None
+            has_source_text = source_text is not None
+            if has_source == has_source_text:
+                return _invalid_request(
+                    "exactly one of source or source_text must be supplied",
+                    "source",
+                )
+            if source is not None and (
+                not source or "/" in source or "\\" in source or ".." in source
+            ):
+                return _invalid_request(
+                    "source must be a bare file name without path separators",
+                    "source",
+                )
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                text = Path(app_config().export_root, source).read_text(encoding="utf-8")
+                if source_text is not None:
+                    text = source_text
+                elif source is not None:
+                    text = Path(app_config().export_root, source).read_text(encoding="utf-8")
                 issues = validate_hrs(text)
                 if issues:
                     return domain_error(

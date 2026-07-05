@@ -19,7 +19,7 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
         "category": cls.category,
         "author": cls.author,
         "email": cls.email,
-        "detailed_description": "Replaces the HRS text of a resolved plan from a Markdown source selected by name under the server-configured export root. The source text is validated before any write, and a malformed source is rejected with IMPORT_INVALID without touching the database. Exposes a dry_run mode that defaults to True (safety default on): a dry run only validates the text and reports whether it would succeed. When dry_run is False and validation passes, admission is checked: an open cascade is required unless the change is admissible directly. When an explicit cascade_uuid was supplied and admission is rejected, the command returns CASCADE_CONFLICT; when no cascade_uuid was supplied and any step of the plan is frozen, it returns FROZEN_ARTIFACT; otherwise it returns CASCADE_REQUIRED. On successful admission the HRS text is replaced and the result is verified by re-reading the HRS text and asserting it equals the imported text — a mismatch is treated as an internal defect. The source parameter is a bare file name resolved under app_config().export_root; it never carries a filesystem path (no '/', no '\\', no '..').",
+        "detailed_description": "Replaces the HRS text of a resolved plan from exactly one Markdown input: either a source file selected by bare name under the server-configured export root, or inline source_text supplied in the JSON-RPC request. The source text is validated before any write, and a malformed source is rejected with IMPORT_INVALID without touching the database. Exposes a dry_run mode that defaults to True (safety default on): a dry run only validates the text and reports whether it would succeed. When dry_run is False and validation passes, admission is checked: an open cascade is required unless the change is admissible directly. When an explicit cascade_uuid was supplied and admission is rejected, the command returns CASCADE_CONFLICT; when no cascade_uuid was supplied and any step of the plan is frozen, it returns FROZEN_ARTIFACT; otherwise it returns CASCADE_REQUIRED. On successful admission the HRS text is replaced and the result is verified by re-reading the HRS text and asserting it equals the imported text — a mismatch is treated as an internal defect. The source parameter is a bare file name resolved under app_config().export_root; it never carries a filesystem path (no '/', no '\\', no '..'). source_text is mutually exclusive with source and follows the same validation and dry_run/admission path after input acquisition.",
         "parameters": {
             "plan": {
                 "description": "Plan identifier resolved against the catalog.",
@@ -27,9 +27,14 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
                 "required": True,
             },
             "source": {
-                "description": "Name of the Markdown source file under the configured export root. Must not contain '/', '\\' or '..'.",
+                "description": "Name of the Markdown source file under the configured export root. Must not contain '/', '\\' or '..'. Mutually exclusive with source_text.",
                 "type": "string",
-                "required": True,
+                "required": False,
+            },
+            "source_text": {
+                "description": "Inline Markdown HRS source text. Mutually exclusive with source.",
+                "type": "string",
+                "required": False,
             },
             "dry_run": {
                 "description": "When true (the default), only validate the HRS text without writing to the database.",
@@ -67,6 +72,11 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
                 "explanation": "Validates the Markdown source only; dry_run defaults to true.",
             },
             {
+                "description": "Preview an inline HRS replacement without writing to the database.",
+                "command": {"plan": "my-plan", "source_text": "# HRS\n\n{a1b2} Text."},
+                "explanation": "Uses request-body content instead of a file under export_root; dry_run still defaults to true.",
+            },
+            {
                 "description": "Replace the HRS text inside an already-open cascade.",
                 "command": {
                     "plan": "my-plan",
@@ -84,7 +94,7 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
                 "solution": "Call the plan catalog command and retry with a valid plan identifier.",
             },
             "IMPORT_INVALID": {
-                "description": "The HRS Markdown source failed structural validation.",
+                "description": "The HRS Markdown source failed structural validation, or the request supplied neither/both source and source_text.",
                 "message": "hrs validation failed",
                 "solution": "Inspect the returned issues list, fix the Markdown source, and retry.",
             },
@@ -109,5 +119,7 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
             "The HRS text is always validated before any database write; a malformed source never touches the database.",
             "After a real import, the command itself verifies the result by re-reading the HRS text and asserting equality.",
             "source is a bare name under server-configured export_root; it is never a filesystem path.",
+            "For small Markdown documents, prefer source_text to avoid an extra transfer staging step.",
+            "Supply exactly one of source and source_text; never both.",
         ],
     }

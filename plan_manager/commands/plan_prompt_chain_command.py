@@ -117,9 +117,12 @@ class PlanPromptChainCommand(Command):
                         )
                 try:
                     normalized_scope = normalize_scope(scope)
-                    statuses = normalize_statuses(include_statuses)
                 except ValueError as exc:
                     return domain_error("STEP_NOT_FOUND", str(exc))
+                try:
+                    statuses = normalize_statuses(include_statuses)
+                except ValueError as exc:
+                    return domain_error("INVALID_TRANSITION", str(exc))
 
                 if normalized_scope.label == "whole_plan":
                     report, _verdict = run_gate(conn, p.uuid, branch=None)

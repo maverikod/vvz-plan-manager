@@ -6,6 +6,7 @@ INVENTORY: tuple[str, ...] = (
     "plan_status",
     "plan_export",
     "plan_import",
+    "export_upload_save",
     "hrs_import",
     "hrs_export",
     "para_list",

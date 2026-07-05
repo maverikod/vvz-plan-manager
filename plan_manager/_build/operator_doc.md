@@ -159,14 +159,14 @@ alongside it for configuration continuity.
 
 # COMMAND SURFACE
 
-The server exposes 42 commands over JSON-RPC, grouped into eleven families.
+The server exposes 43 commands over JSON-RPC, grouped into eleven families.
 The mutating subset within each family requires either an explicit open
 cascade (for machine-specification-level changes) or draft status on the
 target artifact (for global-step, tactical-step, and atomic-step-level
 changes); no mutation bypasses both.
 
   plan                — catalog, create, get, update metadata, delete, set head, set context budget, prompt-chain assembly (8 commands).
-  exchange            — export a plan at a revision, import a plan from files as the sole file-to-truth path (2 commands).
+  exchange            — export a plan at a revision, import a plan from files as the sole file-to-truth path, promote completed uploads into export_root (3 commands).
   paragraph           — list, get, assign a label, toggle non-binding markup (4 commands).
   mrs                 — list concepts, get concept, list relations, add concept, update concept, delete concept; every mutation runs inside a cascade (6 commands).
   concept coverage    — concept coverage report, label coverage report (2 commands).
