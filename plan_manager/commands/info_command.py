@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.info_metadata import get_info_metadata
 from plan_manager.commands.info_reference import (
+    context_block_capabilities,
     planning_standards_reference,
     project_binding_capabilities,
 )
@@ -86,7 +87,10 @@ class InfoCommand(Command):
                 "image_tag": info["image_tag"],
             }
             runtime = self._runtime_summary()
-            capabilities = {"project_bindings": project_binding_capabilities()}
+            capabilities = {
+                "project_bindings": project_binding_capabilities(),
+                "context_blocks": context_block_capabilities(),
+            }
             planning_standards = planning_standards_reference()
             documentation = {"text": operator_doc()}
 

@@ -79,6 +79,106 @@ def project_binding_capabilities() -> dict[str, Any]:
     }
 
 
+def context_block_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for context-block APIs."""
+    return {
+        "purpose": (
+            "Read-only, cascade-aware authoring context compilation from MRS "
+            "concept ids. The API stores typed derived ContextBlock records in "
+            "the database and returns them inline over JSON-RPC; it never writes "
+            "files under export_root and never advances plan head."
+        ),
+        "record_model": {
+            "ContextBlock": {
+                "block_id": "UUID primary identity of the stored derived block.",
+                "plan_uuid": "Owning plan UUID.",
+                "revision_uuid": "Head or cascade-tip revision the block was compiled against.",
+                "cascade_uuid": "Open cascade UUID when compiled against working state; otherwise null.",
+                "node_path": "Parent step path or 'plan'.",
+                "child_level": "Target child level: 3 for GS, 4 for TS, 5 for AS.",
+                "kind": "compile, common, or specific.",
+                "common_block_id": "Referenced common block for specific blocks; null otherwise.",
+                "scope_concepts": "Sorted concept ids that define this block's semantic scope.",
+                "content_hash": "SHA-256 of canonical JSON content; excludes block_id and created_at.",
+                "content": "Ordered typed content blocks.",
+            },
+            "content_block_types": [
+                "authoring_template",
+                "standards",
+                "field_schema",
+                "step_definition",
+                "hrs_fragment",
+                "mrs_concept",
+                "mrs_relation",
+            ],
+            "canonical_order": [
+                "authoring_template",
+                "standards",
+                "field_schema",
+                "step_definition",
+                "hrs_fragment",
+                "mrs_concept",
+                "mrs_relation",
+            ],
+        },
+        "commands": {
+            "context_compile": {
+                "mutates_plan_truth": False,
+                "stores_derived_record": True,
+                "summary": "Compile a standalone context block directly from concept ids.",
+            },
+            "context_common": {
+                "mutates_plan_truth": False,
+                "stores_derived_record": True,
+                "summary": "Compile the shared parent context for authoring children.",
+            },
+            "context_specific": {
+                "mutates_plan_truth": False,
+                "stores_derived_record": True,
+                "summary": "Compile a child-specific delta over an existing common block.",
+            },
+            "context_bundle": {
+                "mutates_plan_truth": False,
+                "stores_derived_record": True,
+                "summary": "Compile one common block first, then ordered child-specific deltas.",
+            },
+            "block_get": {
+                "mutates_plan_truth": False,
+                "summary": "Return one stored ContextBlock by block_id.",
+            },
+            "block_list": {
+                "mutates_plan_truth": False,
+                "summary": "List stored ContextBlock summaries by plan, node, kind, revision, or cascade.",
+            },
+        },
+        "compilation_rules": {
+            "concept_join_key": "Caller supplies concept ids; planmgr resolves all HRS/MRS material from plan truth.",
+            "hrs_fragments": "Union of source_labels for supplied concepts, deduped by label.",
+            "mrs_concepts": "One block per supplied concept id, deduped and sorted.",
+            "mrs_relations": "Relations whose from_concept is inside scope; to_concept may be outside scope as a bare reference.",
+            "common_default_scope": "For node='plan', all plan concepts; for a step node, that step's top-level concepts unless shared_concepts is supplied.",
+            "specific_delta": "Specific blocks remove any hrs_fragment, mrs_concept, or mrs_relation already present in the referenced common block.",
+            "scope_identity": "Specific blocks with identical empty delta content remain distinct when scope_concepts differ.",
+        },
+        "invariants": [
+            "context_common must be created before context_specific.",
+            "specific concepts must be a subset of common.scope_concepts.",
+            "Compilation is read-only over HRS, MRS, steps, head revision, gates, and cascade state.",
+            "Derived block storage is idempotent for the same plan, revision or cascade, node_path, child_level, kind, common_block_id, scope_concepts, and content_hash.",
+            "Use cascade_uuid to compile against open-cascade working state; omit it for current head.",
+        ],
+        "domain_errors": {
+            "NODE_NOT_FOUND": "node is not 'plan' and does not resolve to a step.",
+            "CONCEPT_NOT_FOUND": "A supplied concept id is absent from the plan MRS.",
+            "CONCEPT_OUT_OF_SCOPE": "Specific child concepts are not within common.scope_concepts.",
+            "COMMON_BLOCK_NOT_FOUND": "common_block_id is absent, from another plan, or not a common block.",
+            "INVALID_LEVEL": "child_level is not one of 3, 4, or 5.",
+            "REVISION_NOT_FOUND": "Explicit revision is not available for live context compilation.",
+            "CASCADE_CONFLICT": "cascade_uuid is not the plan's open cascade, or revision and cascade_uuid were both supplied.",
+        },
+    }
+
+
 def planning_standards_reference() -> dict[str, Any]:
     """Return a compact glossary of planning standard terms for agents."""
     return {
@@ -208,6 +308,9 @@ def planning_standards_reference() -> dict[str, Any]:
             "concept_object_inventory": "Computed source-derived map from concepts to required packages, modules, classes, functions, constants, configs, and generated artifacts.",
             "concept_as_traceability": "Computed map from concepts to AS files and concrete objects that realize them.",
             "object_coverage": "Computed object/work view showing which AS realizes which concrete object or work unit.",
+            "context_block": "Stored derived authoring-context view compiled from concept ids; not a normative artifact and not exported as a file.",
+            "common_context_block": "Shared parent context for child authoring: baked template, standards, field schema, optional parent step definition, and compiled concept material for the inherited scope.",
+            "specific_context_block": "Child-specific delta over a common block; narrows attention to child scope and contains only HRS/MRS material not already present in common.",
         },
         "verification_cycles": {
             "cycle_1_source_to_machine_alignment": {
@@ -241,6 +344,10 @@ def planning_standards_reference() -> dict[str, Any]:
             "overall_green": "Required verification cycles are green under the same MRS snapshot.",
             "finding": "A concrete standards violation found by a check.",
             "escalation": "Stop and return to the correct upper level or human when a finding cannot be fixed at the current layer.",
+            "scope_concepts": "The sorted concept ids defining the semantic scope of a compiled authoring context block.",
+            "downward_narrowing": "A child context scope must be a subset of its parent common scope; violations are rejected as CONCEPT_OUT_OF_SCOPE.",
+            "common_delta_split": "Authoring context is split into common parent material and child-specific deltas so shared material is emitted once.",
+            "derived_record": "Database record computed from plan truth; it is cached and addressable but does not change HRS, MRS, steps, gates, cascade state, or head revision.",
         },
         "tactical_terms": {
             "entity": "Concrete domain object named by TS: class, module boundary, data schema, API contract, or config object.",
