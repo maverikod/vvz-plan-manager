@@ -1,8 +1,10 @@
 """Prompt-chain assembly view for scoped plan execution prompts.
 
-The view is read-only. It turns a gate-green plan scope into a
-deduplicated block graph plus atomic execution rows, without adding any
-provider-specific prompt markup.
+The view is read-only. It compiles a gate-green plan scope into a
+deduplicated, provider-neutral block corpus plus role-scoped assembly
+instructions. Runtime retrieval, tokenization, padding, provider cache
+markers, model selection, and execution dispatch are intentionally out
+of scope here.
 """
 
 from __future__ import annotations
@@ -11,25 +13,31 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 import psycopg
 
+from plan_manager.domain.concept import Concept
+from plan_manager.domain.concept_store import list_concepts
 from plan_manager.domain.paragraph import Paragraph
 from plan_manager.domain.paragraph_store import list_paragraphs
-from plan_manager.domain.status_model import ATOMIC_ONLY_STATUSES, STATUSES
+from plan_manager.domain.plan import get_plan
+from plan_manager.domain.relation_store import list_relations
+from plan_manager.domain.status_model import STATUSES
 from plan_manager.domain.step import Step
 from plan_manager.storage.canonical import canonical_json
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.branch import Branch
-from plan_manager.views.dependency_graph import build_edges, load_steps, parent_path, waves
-from plan_manager.domain.plan import get_plan
-from plan_manager.views.prompt_assembly import mrs_excerpt, step_content
+from plan_manager.views.dependency_graph import load_steps, parent_path, waves
+from plan_manager.views.prompt_assembly import step_content
 
 
 DEFAULT_INCLUDE_STATUSES = ("frozen", "ready_for_review")
+ROLES = ("coder", "review", "conscience")
 
 _GLOBAL_SCOPE_RE = re.compile(r"^G-\d{3}$")
 _TACTICAL_SCOPE_RE = re.compile(r"^(G-\d{3})/(T-\d{3})$")
+_DEPENDENCY_RELATION_TYPES = {"depends_on", "consumes", "uses"}
 
 
 @dataclass(frozen=True)
@@ -55,12 +63,20 @@ def normalize_scope(scope: str | None) -> PromptScope:
     )
 
 
+def normalize_role(role: str | None) -> str:
+    """Normalize the role selector used by assembly manifests."""
+    value = "coder" if role is None or role == "" else role
+    if value not in ROLES:
+        raise ValueError(f"role must be one of {list(ROLES)}")
+    return value
+
+
 def normalize_statuses(include_statuses: list[str] | None) -> list[str]:
-    """Normalize the status filter used to select eligible atomic branches."""
+    """Normalize the status filter used to select eligible branches."""
     values = list(DEFAULT_INCLUDE_STATUSES) if include_statuses is None else include_statuses
     if not values:
         raise ValueError("include_statuses must not be empty")
-    allowed = set(STATUSES) | set(ATOMIC_ONLY_STATUSES)
+    allowed = set(STATUSES)
     unknown = sorted({status for status in values if status not in allowed})
     if unknown:
         raise ValueError(f"unknown status in include_statuses: {unknown}")
@@ -143,50 +159,6 @@ def hrs_slice_for(
     ]
 
 
-def _hrs_content(paragraphs: list[Paragraph]) -> str:
-    return "\n\n".join(
-        "{" + paragraph.label + "} " + paragraph.text for paragraph in paragraphs
-    )
-
-
-def _block_id(block_type: str, source_ref: list[str], content: str) -> str:
-    payload = {
-        "type": block_type,
-        "source_ref": source_ref,
-        "content": content,
-    }
-    digest = hashlib.sha256(canonical_json(payload)).hexdigest()[:16]
-    return f"{block_type.replace('_', '-')}-{digest}"
-
-
-def _put_block(
-    blocks: dict[str, dict],
-    block_type: str,
-    source_ref: list[str],
-    content: str,
-) -> str:
-    block_id = _block_id(block_type, source_ref, content)
-    blocks.setdefault(
-        block_id,
-        {
-            "block_id": block_id,
-            "type": block_type,
-            "source_ref": source_ref,
-            "content": content,
-        },
-    )
-    return block_id
-
-
-def _wave_index(nodes: dict[uuid.UUID, Step]) -> dict[uuid.UUID, int]:
-    edge_set = build_edges(nodes)
-    wave_map: dict[uuid.UUID, int] = {}
-    for index, wave in enumerate(waves(nodes, edge_set)):
-        for node_uuid in wave:
-            wave_map[node_uuid] = index
-    return wave_map
-
-
 def branch_for_atomic(
     nodes: dict[uuid.UUID, Step],
     paragraphs: list[Paragraph],
@@ -204,6 +176,162 @@ def branch_for_atomic(
     )
 
 
+def cache_key(value: Any) -> str:
+    """Return the stable cache key for one canonical block value."""
+    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _block(content: Any) -> dict[str, Any]:
+    return {"content": content, "cache_key": cache_key(content)}
+
+
+def _concept_content(concept: Concept) -> dict[str, Any]:
+    return {
+        "concept_id": concept.concept_id,
+        "name": concept.name,
+        "definition": concept.definition,
+        "properties": list(concept.properties),
+        "source_labels": list(concept.source_labels),
+    }
+
+
+def _relation_key(from_concept: str, to_concept: str, relation_type: str) -> str:
+    return f"{from_concept}|{relation_type}|{to_concept}"
+
+
+def _step_key(nodes: dict[uuid.UUID, Step], atomic: Step) -> str:
+    return f"{parent_path(nodes, atomic)}/{atomic.step_id}"
+
+
+def _atomic_content(atomic: Step) -> dict[str, Any]:
+    return {
+        "prompt": atomic.fields.get("prompt", ""),
+        "operation": atomic.fields.get("operation"),
+        "target_file": atomic.fields.get("target_file"),
+        "verification": atomic.fields.get("verification", {}),
+        "priority": atomic.fields.get("priority"),
+        "concepts": list(atomic.concepts),
+        "depends_on": list(atomic.depends_on),
+        "project_id": atomic.project_id,
+        "status": atomic.status,
+    }
+
+
+def _tool_instructions(role: str) -> dict[str, Any]:
+    if role == "coder":
+        content = (
+            "Use tool access to inspect and edit files. Execute only the AS block "
+            "plus these tool instructions. If the AS names a file or exemplar, read "
+            "that path directly with tools. Do not perform retrieval or semantic "
+            "search, and do not assume HRS/MRS/GS/TS context is present."
+        )
+    elif role == "review":
+        content = (
+            "Review the AS against the selected upper-layer blocks and reported "
+            "verification. Do not mutate project files while reviewing."
+        )
+    else:
+        content = (
+            "Judge whether the AS preserves the plan intent represented by the "
+            "selected upper-layer blocks. Do not mutate project files."
+        )
+    return {"content": content, "cache_key": cache_key(content)}
+
+
+def _module_token(path: str) -> str:
+    if path.endswith(".py"):
+        return path[:-3].replace("/", ".")
+    return path
+
+
+def _step_mentions_target(consumer: Step, producer_target: str) -> bool:
+    prompt = str(consumer.fields.get("prompt", ""))
+    return producer_target in prompt or _module_token(producer_target) in prompt
+
+
+def _derived_edges(
+    atomic_steps: list[Step],
+    relations: list[tuple[str, str, str]],
+) -> tuple[set[tuple[uuid.UUID, uuid.UUID]], str]:
+    """Derive atomic-step DAG edges for prompt-chain waves."""
+    by_concept: dict[str, list[Step]] = {}
+    for step in atomic_steps:
+        for concept_id in step.concepts:
+            by_concept.setdefault(concept_id, []).append(step)
+
+    edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
+
+    for from_concept, to_concept, relation_type in relations:
+        if relation_type not in _DEPENDENCY_RELATION_TYPES:
+            continue
+        for consumer in by_concept.get(from_concept, []):
+            for producer in by_concept.get(to_concept, []):
+                if consumer.uuid != producer.uuid:
+                    edges.add((producer.uuid, consumer.uuid))
+
+    producers = [
+        step
+        for step in atomic_steps
+        if step.fields.get("operation") in {"create_file", "rename_file"}
+        and step.fields.get("target_file")
+    ]
+    for producer in producers:
+        target = str(producer.fields["target_file"])
+        for consumer in atomic_steps:
+            if consumer.uuid != producer.uuid and _step_mentions_target(consumer, target):
+                edges.add((producer.uuid, consumer.uuid))
+
+    explicit_added = False
+    by_sibling_key = {
+        (step.parent_step_uuid, step.step_id): step for step in atomic_steps
+    }
+    for dependent in atomic_steps:
+        for dep_step_id in dependent.depends_on:
+            prerequisite = by_sibling_key.get((dependent.parent_step_uuid, dep_step_id))
+            if prerequisite is not None:
+                edges.add((prerequisite.uuid, dependent.uuid))
+                explicit_added = True
+
+    if explicit_added and len(edges) > 0:
+        return edges, "mixed"
+    return edges, "derived: relations+target_file"
+
+
+def _wave_data(
+    atomic_steps: list[Step],
+    edges: set[tuple[uuid.UUID, uuid.UUID]],
+    nodes: dict[uuid.UUID, Step],
+) -> tuple[list[list[str]], dict[uuid.UUID, int]]:
+    atomic_nodes = {step.uuid: step for step in atomic_steps}
+    atomic_edges = {
+        (prereq, dependent)
+        for prereq, dependent in edges
+        if prereq in atomic_nodes and dependent in atomic_nodes
+    }
+    wave_rows = waves(atomic_nodes, atomic_edges)
+    wave_index: dict[uuid.UUID, int] = {}
+    result: list[list[str]] = []
+    for index, row in enumerate(wave_rows):
+        keys = [_step_key(nodes, atomic_nodes[node_uuid]) for node_uuid in row]
+        result.append(keys)
+        for node_uuid in row:
+            wave_index[node_uuid] = index
+    return result, wave_index
+
+
+def _assembly_use(role: str, step_key: str, branch: Branch) -> dict[str, str]:
+    if role == "coder":
+        return {"as": step_key, "tool_instructions": role}
+    return {
+        "hrs": branch.gs.step_id,
+        "mrs": ",".join(sorted(branch.atomic.concepts)),
+        "gs": branch.gs.step_id,
+        "ts": f"{branch.gs.step_id}/{branch.ts.step_id}",
+        "as": step_key,
+        "tool_instructions": role,
+    }
+
+
 def assemble_prompt_chain(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,
@@ -211,100 +339,108 @@ def assemble_prompt_chain(
     revision_uuid: uuid.UUID | None,
     scope: PromptScope,
     include_statuses: list[str],
-) -> dict:
+    role: str = "coder",
+) -> dict[str, Any]:
     """Assemble the prompt-chain payload for a gate-green scope."""
+    role = normalize_role(role)
     nodes = load_steps(conn, plan_uuid)
     paragraphs = list_paragraphs(conn, plan_uuid)
+    concepts = {concept.concept_id: concept for concept in list_concepts(conn, plan_uuid)}
+    relations = list_relations(conn, plan_uuid)
     atomic_steps = eligible_atomic_steps(
         nodes,
         scope_atomic_steps(nodes, scope),
         include_statuses,
     )
-    wave_map = _wave_index(nodes)
 
-    blocks: dict[str, dict] = {}
-    steps: list[dict] = []
+    edges, dag_source = _derived_edges(atomic_steps, relations)
+    wave_rows, wave_index = _wave_data(atomic_steps, edges, nodes)
+
+    blocks: dict[str, dict[str, dict[str, Any]]] = {
+        "hrs": {},
+        "mrs": {},
+        "gs": {},
+        "ts": {},
+        "as": {},
+        "tool_instructions": {role: _tool_instructions(role)},
+    }
+    assembly: list[dict[str, Any]] = []
+
     for atomic in atomic_steps:
         branch = branch_for_atomic(nodes, paragraphs, plan_uuid, atomic)
+        step_key = _step_key(nodes, atomic)
         branch_path = parent_path(nodes, atomic)
-        block_ids = [
-            _put_block(
-                blocks,
-                "hrs_fragment",
-                ["{" + paragraph.label + "}" for paragraph in branch.hrs_slice],
-                _hrs_content(branch.hrs_slice),
-            ),
-            _put_block(
-                blocks,
-                "mrs_fragment",
-                sorted(branch.atomic.concepts),
-                mrs_excerpt(conn, plan_uuid, branch.atomic.concepts),
-            ),
-            _put_block(
-                blocks,
-                "global_step",
-                [branch.gs.step_id],
-                step_content(branch.gs),
-            ),
-            _put_block(
-                blocks,
-                "tactical_step",
-                [branch_path],
-                step_content(branch.ts),
-            ),
-            _put_block(
-                blocks,
-                "atomic_step",
-                [artifact_path_of(nodes, branch.atomic)],
-                step_content(branch.atomic),
-            ),
-        ]
-        steps.append(
+
+        for paragraph in branch.hrs_slice:
+            if paragraph.label is not None:
+                content = "{" + paragraph.label + "} " + paragraph.text
+                blocks["hrs"].setdefault("{" + paragraph.label + "}", _block(content))
+
+        for concept_id in sorted(branch.atomic.concepts):
+            concept = concepts.get(concept_id)
+            if concept is not None:
+                blocks["mrs"].setdefault(concept_id, _block(_concept_content(concept)))
+
+        for from_concept, to_concept, relation_type in relations:
+            if from_concept in branch.atomic.concepts and to_concept in branch.atomic.concepts:
+                key = _relation_key(from_concept, to_concept, relation_type)
+                blocks["mrs"].setdefault(
+                    key,
+                    _block(
+                        {
+                            "from_concept": from_concept,
+                            "to_concept": to_concept,
+                            "type": relation_type,
+                        }
+                    ),
+                )
+
+        gs_content = step_content(branch.gs)
+        blocks["gs"].setdefault(branch.gs.step_id, _block(gs_content))
+
+        ts_key = f"{branch.gs.step_id}/{branch.ts.step_id}"
+        ts_content = step_content(branch.ts)
+        blocks["ts"].setdefault(ts_key, _block(ts_content))
+
+        blocks["as"].setdefault(step_key, _block(_atomic_content(atomic)))
+
+        assembly.append(
             {
-                "step_id": atomic.step_id,
-                "project_id": atomic.project_id,
-                "target_file": atomic.fields["target_file"],
-                "operation": atomic.fields["operation"],
-                "priority": atomic.fields["priority"],
-                "block_ids": block_ids,
-                "wave": wave_map[atomic.uuid],
+                "step": step_key,
+                "wave": wave_index[atomic.uuid],
                 "branch_path": branch_path,
-                "depends_on": list(atomic.depends_on),
+                "priority": atomic.fields["priority"],
+                "role": role,
+                "use": _assembly_use(role, step_key, branch),
             }
         )
 
-    steps.sort(
+    assembly.sort(
         key=lambda row: (
             row["branch_path"],
             row["priority"],
-            row["step_id"],
+            row["step"],
         )
     )
-    ordered_blocks = {
-        block_id: blocks[block_id]
-        for block_id in sorted(blocks)
-    }
-    diagnostics = []
-    if not steps:
-        diagnostics.append(
-            {
-                "code": "NO_ATOMIC_STEPS",
-                "message": (
-                    "No atomic steps exist in the requested scope; "
-                    "prompt-chain has no executable rows."
-                ),
-            }
-        )
+
     plan = get_plan(conn, plan_uuid)
+    counts = {level: len(values) for level, values in blocks.items()}
+    counts["assembly"] = len(assembly)
     return {
         "plan": plan_name,
         "revision": str(revision_uuid) if revision_uuid is not None else None,
         "scope": scope.label,
-        "projects": {
-            "project_ids": plan.project_ids,
-            "primary_project_id": plan.primary_project_id,
+        "role": role,
+        "waves": wave_rows,
+        "blocks": blocks,
+        "assembly": assembly,
+        "meta": {
+            "dag_source": dag_source,
+            "counts": counts,
+            "include_statuses": include_statuses,
+            "projects": {
+                "project_ids": plan.project_ids,
+                "primary_project_id": plan.primary_project_id,
+            },
         },
-        "blocks": ordered_blocks,
-        "steps": steps,
-        "diagnostics": diagnostics,
     }

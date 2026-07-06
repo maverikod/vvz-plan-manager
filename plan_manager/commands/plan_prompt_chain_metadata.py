@@ -13,24 +13,19 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Builds a deterministic, deduplicated prompt-chain artifact "
-            "for a whole plan, one global-step scope, or one "
-            "global/tactical scope. Before any payload is assembled, the "
-            "command runs the mechanical gate for the requested scope: "
-            "the whole plan for whole_plan, or every atomic branch inside "
-            "a G-NNN or G-NNN/T-NNN scope. If any checked gate is red, "
-            "the command returns GATE_RED and no partial prompt-chain "
-            "payload. On success, blocks are keyed by stable content "
-            "hashes and contain only canonical HRS fragments, MRS "
-            "fragments, global steps, tactical steps, and atomic steps. "
-            "The steps array lists eligible atomic steps with target "
-            "file, operation, priority, block ids, wave number from the "
-            "same graph algorithm as graph_parallel_map, branch path, "
-            "and direct depends_on values. The command is read-only and "
-            "does not tokenize, pad, or add provider-specific prompt "
-            "markup. Historical reconstruction is not available in this "
-            "storage model, so an explicit revision must match the "
-            "current plan head."
+            "Compiles the prompt-chain corpus for a committed, gate-green "
+            "plan revision and scope. The command is read-only and queue-bound. "
+            "It validates plan, revision, scope, role, and include_statuses, "
+            "runs the mechanical gate before assembly, and returns no partial "
+            "payload when the gate is red. The result is structured data: waves, "
+            "level-keyed deduplicated blocks for hrs, mrs, gs, ts, as, and "
+            "tool_instructions, a role-scoped assembly manifest, and meta. Every "
+            "block carries a stable cache_key over canonical bytes. For role=coder, "
+            "assembly.use contains only the AS block and the fixed tool_instructions "
+            "block; upper-layer blocks remain available in the corpus for traceability "
+            "and reviewer/conscience roles. The command performs no retrieval, "
+            "semantic search, tokenization, padding, provider-specific formatting, "
+            "model-tier selection, prompt dispatch, or execution logging."
         ),
         "parameters": {
             "plan": {
@@ -39,78 +34,107 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                 "required": True,
             },
             "revision": {
-                "description": "Optional revision UUID. When supplied, it must equal the current plan head.",
+                "description": "Optional revision UUID. Omit or pass 'head' to use the current plan head.",
                 "type": "string",
                 "required": False,
+                "default": "head",
             },
             "scope": {
-                "description": "Optional scope: whole_plan, G-NNN, or G-NNN/T-NNN. Defaults to whole_plan.",
+                "description": "Optional scope: whole_plan, G-NNN, or G-NNN/T-NNN.",
                 "type": "string",
                 "required": False,
+                "default": "whole_plan",
+            },
+            "role": {
+                "description": "Assembly role selector: coder, review, or conscience.",
+                "type": "string",
+                "required": False,
+                "default": "coder",
+                "enum": ["coder", "review", "conscience"],
             },
             "include_statuses": {
-                "description": "Optional status filter for eligible GS/TS/AS chains. Defaults to ['frozen', 'ready_for_review'].",
+                "description": "Eligible statuses for the GS, TS, and AS chain.",
                 "type": "array",
                 "required": False,
+                "default": ["frozen", "ready_for_review"],
+                "items": {"type": "string", "enum": ["frozen", "ready_for_review"]},
             },
         },
         "return_value": {
             "success": {
-                "description": "A deterministic prompt-chain artifact for eligible atomic steps in the requested scope.",
+                "description": "Structured prompt-chain corpus for the requested scope.",
                 "data": {
                     "plan": "Resolved plan name.",
-                    "revision": "Current head revision UUID, or null when the plan has no revision.",
+                    "revision": "Resolved head revision UUID, or null when the plan has no revision.",
                     "scope": "Normalized scope: whole_plan, G-NNN, or G-NNN/T-NNN.",
-                    "blocks": "Map of stable block_id to canonical prompt-chain block.",
-                    "steps": "Ordered atomic execution rows referencing block_ids.",
+                    "role": "Assembly role used to build assembly.use.",
+                    "waves": "Dependency waves as lists of G-NNN/T-NNN/A-NNN step keys.",
+                    "blocks": "Level-keyed block corpus: hrs, mrs, gs, ts, as, tool_instructions.",
+                    "assembly": "Per-step manifest with wave, branch_path, priority, role, and use.",
+                    "meta": "Counts, dag_source, include_statuses, and project bindings.",
                 },
                 "example": {
                     "plan": "plan_manager",
                     "revision": "00000000-0000-0000-0000-000000000000",
                     "scope": "G-001/T-001",
+                    "role": "coder",
+                    "waves": [["G-001/T-001/A-001"]],
                     "blocks": {
-                        "atomic-step-0123456789abcdef": {
-                            "block_id": "atomic-step-0123456789abcdef",
-                            "type": "atomic_step",
-                            "source_ref": ["G-001/T-001/A-001"],
-                            "content": "{\"step_id\":\"A-001\"}",
-                        }
+                        "as": {
+                            "G-001/T-001/A-001": {
+                                "content": {
+                                    "prompt": "Create the file...",
+                                    "operation": "create_file",
+                                    "target_file": "plan_manager/example.py",
+                                    "verification": {"type": "import"},
+                                },
+                                "cache_key": "0123456789abcdef",
+                            }
+                        },
+                        "tool_instructions": {
+                            "coder": {
+                                "content": "Use tool access...",
+                                "cache_key": "abcdef0123456789",
+                            }
+                        },
                     },
-                    "steps": [
+                    "assembly": [
                         {
-                            "step_id": "A-001",
-                            "target_file": "plan_manager/example.py",
-                            "operation": "update",
-                            "priority": 1,
-                            "block_ids": ["atomic-step-0123456789abcdef"],
-                            "wave": 3,
+                            "step": "G-001/T-001/A-001",
+                            "wave": 0,
                             "branch_path": "G-001/T-001",
-                            "depends_on": [],
+                            "priority": 1,
+                            "role": "coder",
+                            "use": {
+                                "as": "G-001/T-001/A-001",
+                                "tool_instructions": "coder",
+                            },
                         }
                     ],
+                    "meta": {"dag_source": "derived: relations+target_file"},
                 },
             },
             "error": {
-                "description": "Domain error returned when the plan, revision, scope, graph, or gate cannot be accepted.",
-                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | STEP_NOT_FOUND | CYCLE_DETECTED | GATE_RED | INVALID_TRANSITION",
+                "description": "Domain error returned when the plan, revision, scope, role, status filter, graph, or gate cannot be accepted.",
+                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | INVALID_SCOPE | INVALID_ROLE | INVALID_STATUS_FILTER | CYCLE_DETECTED | GATE_RED",
                 "message": "Human-readable explanation of the refused request.",
                 "details": "For GATE_RED, includes scope and findings_count.",
             },
         },
         "usage_examples": [
             {
-                "description": "Build a prompt chain for the whole current plan using the default status filter.",
+                "description": "Compile the coder prompt-chain corpus for the current head.",
                 "command": {"plan": "plan_manager"},
-                "explanation": "Returns blocks and atomic step rows only if the whole-plan gate is green.",
+                "explanation": "Returns coder assembly only as AS plus tool_instructions when the whole-plan gate is green.",
             },
             {
-                "description": "Build a prompt chain for one tactical scope and include draft rows as well.",
+                "description": "Compile one tactical scope for review.",
                 "command": {
                     "plan": "plan_manager",
                     "scope": "G-001/T-002",
-                    "include_statuses": ["draft", "ready_for_review", "frozen"],
+                    "role": "review",
                 },
-                "explanation": "Checks every atomic branch in G-001/T-002 and then emits eligible rows in deterministic order.",
+                "explanation": "Returns the full block corpus and review-oriented assembly for the scoped tactical branch.",
             },
         ],
         "error_cases": {
@@ -122,12 +146,22 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             "REVISION_NOT_FOUND": {
                 "description": "The supplied revision is not the current head revision.",
                 "message": "revision not found for current head: {revision}",
-                "solution": "Omit revision to use the current head, or retry with the current head revision UUID.",
+                "solution": "Omit revision, pass 'head', or retry with the current head revision UUID.",
             },
-            "STEP_NOT_FOUND": {
-                "description": "The scope string is invalid or names a missing global/tactical scope.",
+            "INVALID_SCOPE": {
+                "description": "The scope string is invalid.",
                 "message": "scope must be omitted, 'whole_plan', 'G-NNN', or 'G-NNN/T-NNN'",
                 "solution": "Call step_tree to discover valid scope identifiers and retry.",
+            },
+            "INVALID_ROLE": {
+                "description": "The role selector is not supported.",
+                "message": "role must be one of ['coder', 'review', 'conscience']",
+                "solution": "Use role coder, review, or conscience.",
+            },
+            "INVALID_STATUS_FILTER": {
+                "description": "include_statuses is empty or contains an unsupported status.",
+                "message": "unknown status in include_statuses: {statuses}",
+                "solution": "Use the default or pass only frozen and ready_for_review.",
             },
             "CYCLE_DETECTED": {
                 "description": "The dependency graph cannot be partitioned into waves.",
@@ -141,8 +175,9 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             },
         },
         "best_practices": [
-            "Call this command only after plan_validate is green for the same scope when you want a predictable success path.",
-            "Keep provider-specific wrappers outside this artifact; the output is intentionally model-neutral.",
-            "Use include_statuses to select lifecycle-ready work, not to bypass the mechanical gate.",
+            "Use role=coder for execution: assembly.use intentionally contains only AS plus tool_instructions.",
+            "Use review or conscience when the consumer must judge the AS against upper-layer context.",
+            "Keep provider-specific wrappers outside this artifact; the output is model-neutral structured data.",
+            "Run plan_validate first for a predictable green-gate path.",
         ],
     }

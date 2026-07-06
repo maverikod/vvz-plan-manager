@@ -179,6 +179,61 @@ def context_block_capabilities() -> dict[str, Any]:
     }
 
 
+def prompt_chain_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for plan prompt-chain compilation."""
+    return {
+        "purpose": (
+            "Read-only compilation of a committed, gate-green plan revision and "
+            "scope into a deterministic prompt-chain corpus for downstream executors."
+        ),
+        "command": {
+            "name": "plan_prompt_chain",
+            "mutates": False,
+            "queue_bound": True,
+            "parameters": {
+                "plan": "Plan name or UUID.",
+                "revision": "Optional revision UUID; omit or pass 'head' for current head.",
+                "scope": "whole_plan, G-NNN, or G-NNN/T-NNN.",
+                "role": "coder, review, or conscience.",
+                "include_statuses": "Defaults to frozen and ready_for_review.",
+            },
+        },
+        "return_shape": {
+            "waves": "Dependency waves as lists of G-NNN/T-NNN/A-NNN step keys.",
+            "blocks": "Level-keyed block corpus: hrs, mrs, gs, ts, as, tool_instructions.",
+            "assembly": "Per-step role-scoped manifest with use, wave, branch_path, and priority.",
+            "meta": "dag_source, counts, include_statuses, and plan project bindings.",
+        },
+        "role_behavior": {
+            "coder": "assembly.use contains only as and tool_instructions.",
+            "review": "assembly.use may include upper-layer block selectors.",
+            "conscience": "assembly.use may include upper-layer block selectors.",
+        },
+        "determinism": {
+            "retrieval": "No retrieval or semantic search is performed.",
+            "cache_key": "Every block has cache_key over canonical bytes.",
+            "dag_source": "Waves derive from MRS relations plus target_file produce/consume edges, with explicit depends_on augmenting when present.",
+        },
+        "boundaries": [
+            "No tokenization.",
+            "No padding or provider cache markers.",
+            "No standards injection.",
+            "No model-tier selection.",
+            "No prompt dispatch.",
+            "No execution logging.",
+        ],
+        "domain_errors": {
+            "PLAN_NOT_FOUND": "Plan identifier does not resolve.",
+            "REVISION_NOT_FOUND": "Explicit revision is not the current head.",
+            "INVALID_SCOPE": "Scope is not whole_plan, G-NNN, or G-NNN/T-NNN.",
+            "INVALID_ROLE": "Role is not coder, review, or conscience.",
+            "INVALID_STATUS_FILTER": "include_statuses is empty or unsupported.",
+            "GATE_RED": "Mechanical gate is red; no partial payload is returned.",
+            "CYCLE_DETECTED": "Derived DAG cannot be partitioned into waves.",
+        },
+    }
+
+
 def planning_standards_reference() -> dict[str, Any]:
     """Return a compact glossary of planning standard terms for agents."""
     return {

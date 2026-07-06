@@ -39,7 +39,7 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "documentation; omitting it returns all sections. The "
             "capabilities section is intended for models and agents that "
             "need a compact, machine-readable map of available workflows, "
-            "including project binding commands, read surfaces, invariants, "
+            "including project binding commands, prompt-chain compilation, read surfaces, invariants, "
             "and stable domain error codes. The planning_standards section is "
             "a structured glossary of HRS/MRS/GS/TS/AS terminology, coverage "
             "axes, computed views, verification cycles, authoring terms, "
@@ -96,8 +96,9 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "capabilities": (
                         "Machine-readable workflow notes for agents, "
                         "including command families, project-binding "
-                        "invariants, read surfaces, import/export behavior, "
-                        "prompt behavior, and stable domain error codes."
+                        "invariants, prompt-chain compilation, read surfaces, "
+                        "import/export behavior, prompt behavior, and stable "
+                        "domain error codes."
                     ),
                     "planning_standards": (
                         "Structured glossary of planning standards concepts: "

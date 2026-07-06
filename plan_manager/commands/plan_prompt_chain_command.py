@@ -20,6 +20,7 @@ from plan_manager.views.prompt_chain import (
     assemble_prompt_chain,
     branch_for_atomic,
     normalize_scope,
+    normalize_role,
     normalize_statuses,
     scope_atomic_steps,
 )
@@ -44,7 +45,7 @@ class PlanPromptChainCommand(Command):
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
     result_class = SuccessResult
-    use_queue: ClassVar[bool] = False
+    use_queue: ClassVar[bool] = True
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
@@ -57,19 +58,31 @@ class PlanPromptChainCommand(Command):
                 },
                 "revision": {
                     "type": "string",
-                    "description": "Optional revision UUID; must equal the current plan head.",
+                    "description": "Optional revision UUID; defaults to the current plan head.",
+                    "default": "head",
                 },
                 "scope": {
                     "type": "string",
                     "description": "Optional scope: whole_plan, G-NNN, or G-NNN/T-NNN.",
+                    "default": "whole_plan",
+                },
+                "role": {
+                    "type": "string",
+                    "description": "Assembly role selector.",
+                    "enum": ["coder", "review", "conscience"],
+                    "default": "coder",
                 },
                 "include_statuses": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                        "type": "string",
+                        "enum": ["frozen", "ready_for_review"],
+                    },
                     "description": (
                         "Optional statuses allowed for the GS, TS, and AS chain; "
                         "defaults to ['frozen', 'ready_for_review']."
                     ),
+                    "default": ["frozen", "ready_for_review"],
                 },
             },
             "required": ["plan"],
@@ -82,20 +95,28 @@ class PlanPromptChainCommand(Command):
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         params = super().validate_params(params)
-        return params
+        normalized = dict(params)
+        normalized.setdefault("revision", "head")
+        normalized.setdefault("scope", "whole_plan")
+        normalized.setdefault("role", "coder")
+        normalized.setdefault("include_statuses", ["frozen", "ready_for_review"])
+        return normalized
 
     async def execute(
         self,
         plan: str,
         revision: str | None = None,
         scope: str | None = None,
+        role: str = "coder",
         include_statuses: list[str] | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                if revision is not None:
+                if revision in {None, "", "head"}:
+                    requested_revision = p.head_revision_uuid
+                else:
                     try:
                         requested_revision = uuid.UUID(revision)
                     except ValueError:
@@ -118,11 +139,19 @@ class PlanPromptChainCommand(Command):
                 try:
                     normalized_scope = normalize_scope(scope)
                 except ValueError as exc:
-                    return domain_error("STEP_NOT_FOUND", str(exc))
+                    return domain_error("INVALID_SCOPE", str(exc), {"scope": scope})
+                try:
+                    normalized_role = normalize_role(role)
+                except ValueError as exc:
+                    return domain_error("INVALID_ROLE", str(exc), {"role": role})
                 try:
                     statuses = normalize_statuses(include_statuses)
                 except ValueError as exc:
-                    return domain_error("INVALID_TRANSITION", str(exc))
+                    return domain_error(
+                        "INVALID_STATUS_FILTER",
+                        str(exc),
+                        {"include_statuses": include_statuses},
+                    )
 
                 if normalized_scope.label == "whole_plan":
                     report, _verdict = run_gate(conn, p.uuid, branch=None)
@@ -172,6 +201,7 @@ class PlanPromptChainCommand(Command):
                         p.head_revision_uuid,
                         normalized_scope,
                         statuses,
+                        normalized_role,
                     )
                 except ValueError as exc:
                     if str(exc) == "cycle detected":

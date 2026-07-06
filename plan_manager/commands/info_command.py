@@ -10,6 +10,7 @@ from plan_manager.commands.info_metadata import get_info_metadata
 from plan_manager.commands.info_reference import (
     context_block_capabilities,
     planning_standards_reference,
+    prompt_chain_capabilities,
     project_binding_capabilities,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
@@ -90,6 +91,7 @@ class InfoCommand(Command):
             capabilities = {
                 "project_bindings": project_binding_capabilities(),
                 "context_blocks": context_block_capabilities(),
+                "prompt_chain": prompt_chain_capabilities(),
             }
             planning_standards = planning_standards_reference()
             documentation = {"text": operator_doc()}

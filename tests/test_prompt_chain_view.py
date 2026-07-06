@@ -4,11 +4,14 @@ import pytest
 
 from plan_manager.domain.step import Step
 from plan_manager.views.prompt_chain import (
+    cache_key,
     eligible_atomic_steps,
+    normalize_role,
     normalize_scope,
     normalize_statuses,
     scope_atomic_steps,
 )
+from plan_manager.commands.plan_prompt_chain_command import PlanPromptChainCommand
 
 
 PLAN_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -51,10 +54,35 @@ def test_normalize_scope_rejects_unknown_shape() -> None:
         normalize_scope("A-001")
 
 
+def test_normalize_role_accepts_default_and_rejects_unknown() -> None:
+    assert normalize_role(None) == "coder"
+    assert normalize_role("review") == "review"
+    with pytest.raises(ValueError):
+        normalize_role("executor")
+
+
 def test_normalize_statuses_defaults_and_rejects_unknown_values() -> None:
     assert normalize_statuses(None) == ["frozen", "ready_for_review"]
     with pytest.raises(ValueError):
         normalize_statuses(["frozen", "bogus"])
+
+
+def test_cache_key_is_canonical_and_stable() -> None:
+    assert cache_key({"b": 2, "a": 1}) == cache_key({"a": 1, "b": 2})
+
+
+def test_plan_prompt_chain_schema_matches_rev2_contract() -> None:
+    schema = PlanPromptChainCommand.get_schema()
+
+    assert PlanPromptChainCommand.use_queue is True
+    assert schema["required"] == ["plan"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["role"]["enum"] == ["coder", "review", "conscience"]
+    assert schema["properties"]["role"]["default"] == "coder"
+    assert schema["properties"]["include_statuses"]["default"] == [
+        "frozen",
+        "ready_for_review",
+    ]
 
 
 def test_scope_and_status_filter_select_atomic_branch_chain() -> None:
