@@ -79,42 +79,48 @@ class InfoCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             info = build_info()
-            identity = {
+            if section is not None:
+                data: Dict[str, Any] = {
+                    "section": section,
+                    section: self._section_data(section, info),
+                }
+            else:
+                data = {
+                    name: self._section_data(name, info)
+                    for name in _SECTIONS
+                }
+
+            return SuccessResult(data=data)
+        except Exception as exc:
+            return map_exception(exc)
+
+    @staticmethod
+    def _section_data(section: str, info: dict[str, Any]) -> Any:
+        if section == "identity":
+            return {
                 "product": info["product"],
                 "package_version": info["package_version"],
                 "adapter_version": info["adapter_version"],
             }
-            build = {
+        if section == "build":
+            return {
                 "build_date": info["build_date"],
                 "image_tag": info["image_tag"],
             }
-            runtime = self._runtime_summary()
-            capabilities = {
+        if section == "runtime":
+            return InfoCommand._runtime_summary()
+        if section == "capabilities":
+            return {
                 "project_bindings": project_binding_capabilities(),
                 "context_blocks": context_block_capabilities(),
                 "prompt_chain": prompt_chain_capabilities(),
                 "step_lifecycle": step_lifecycle_capabilities(),
             }
-            planning_standards = planning_standards_reference()
-            documentation = {"text": operator_doc()}
-
-            parts: Dict[str, Any] = {
-                "identity": identity,
-                "build": build,
-                "runtime": runtime,
-                "capabilities": capabilities,
-                "planning_standards": planning_standards,
-                "documentation": documentation,
-            }
-
-            if section is not None:
-                data: Dict[str, Any] = {"section": section, section: parts[section]}
-            else:
-                data = parts
-
-            return SuccessResult(data=data)
-        except Exception as exc:
-            return map_exception(exc)
+        if section == "planning_standards":
+            return planning_standards_reference()
+        if section == "documentation":
+            return {"text": operator_doc()}
+        raise ValueError(f"Invalid section: {section!r}.")
 
     @staticmethod
     def _runtime_summary() -> dict[str, Any]:
@@ -140,7 +146,7 @@ class InfoCommand(Command):
             embedding_service = "unconfigured"
         else:
             try:
-                fetch_vector(cfg.embedding_url, "probe")
+                fetch_vector(cfg.embedding_url, "probe", timeout=3.0)
                 embedding_service = "reachable"
             except EmbeddingUnavailable:
                 embedding_service = "unreachable"

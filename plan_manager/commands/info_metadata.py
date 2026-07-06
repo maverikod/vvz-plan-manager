@@ -56,12 +56,16 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "packaging defect: it is never silently replaced by generated "
             "text, and instead surfaces as an explicit internal error "
             "naming the defect. The database connectivity probe and the "
-            "embedding service probe never raise out of this command: an "
+            "embedding service probe is bounded and never raises out of this command: an "
             "unreachable database is reported as database_connected: "
             "false with open_cascades: 0, and the embedding service is "
             "reported as 'unconfigured' when no embedding URL is set in "
             "server configuration, 'reachable' when a probe call "
-            "succeeds, or 'unreachable' when the probe call fails."
+            "succeeds within the short runtime probe budget, or "
+            "'unreachable' when the probe call fails or times out. "
+            "When a section parameter is supplied, only that section is "
+            "assembled; identity/capabilities/help-style requests do not "
+            "perform runtime probes or load the embedded documentation payload."
         ),
         "parameters": {
             "section": {

@@ -8,8 +8,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_status_metadata import get_plan_status_metadata
 from plan_manager.commands.resolve import resolve_plan
-from plan_manager.runtime.context import app_config, db_connection
-from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
+from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate import run_gate
 from plan_manager.views.dependency_graph import load_steps
 
@@ -106,22 +105,12 @@ class PlanStatusCommand(Command):
                     ),
                 }
                 if report.green:
-                    cfg = app_config()
-                    score = score_plan(
-                        conn,
-                        p.uuid,
-                        ScoringConfig(
-                            threshold=cfg.scoring_threshold,
-                            aggregation=cfg.scoring_aggregation,
-                            concept_weight=cfg.concept_weight,
-                            trust_floor=cfg.trust_floor,
-                            embedding_url=cfg.embedding_url,
-                        ),
-                    )
                     scoring_part = {
-                        "index": score.index,
-                        "color": score.color,
-                        "weakest": [branch_summary(b) for b in score.weakest],
+                        "deferred": "plan_score",
+                        "reason": (
+                            "SemanticIndex scoring is queue-bound and is not "
+                            "computed synchronously by plan_status."
+                        ),
                     }
                 else:
                     findings = [

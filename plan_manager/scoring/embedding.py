@@ -111,12 +111,14 @@ def store_vector(conn: psycopg.Connection, text: str, vector: list[float]) -> No
         )
 
 
-def _run_async_blocking(coro):
+def _run_async_blocking(coro, timeout: float | None = None):
     """Run *coro* from synchronous scoring code, even inside an event loop."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        if timeout is None:
+            return asyncio.run(coro)
+        return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
 
     result: list[object] = []
     error: list[BaseException] = []
@@ -129,7 +131,9 @@ def _run_async_blocking(coro):
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
-    thread.join()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise TimeoutError(f"embedding request timed out after {timeout} seconds")
     if error:
         raise error[0]
     return result[0]
@@ -151,9 +155,9 @@ def _client_from_url(base_url: str, timeout: float = 60.0) -> EmbeddingClient:
     )
 
 
-async def _fetch_vector_async(base_url: str, text: str) -> list[float]:
-    client = _client_from_url(base_url)
-    result = await client.embed([text], wait=True, wait_timeout=60)
+async def _fetch_vector_async(base_url: str, text: str, timeout: float) -> list[float]:
+    client = _client_from_url(base_url, timeout=timeout)
+    result = await client.embed([text], wait=True, wait_timeout=timeout)
     results = result.get("results")
     if not isinstance(results, list) or not results:
         raise EmbeddingUnavailable("embed-client response missing results")
@@ -166,7 +170,7 @@ async def _fetch_vector_async(base_url: str, text: str) -> list[float]:
     return embedding
 
 
-def fetch_vector(base_url: str, text: str) -> list[float]:
+def fetch_vector(base_url: str, text: str, timeout: float = 60.0) -> list[float]:
     """Request the embedding vector for ``text`` through embed-client.
 
     Parameters
@@ -198,8 +202,11 @@ def fetch_vector(base_url: str, text: str) -> list[float]:
     so this function bridges the async client in a blocking wrapper.
     """
     try:
-        return _run_async_blocking(_fetch_vector_async(base_url, text))
-    except (EmbedClientError, EmbedError, TimeoutError, OSError, RuntimeError) as exc:
+        return _run_async_blocking(
+            _fetch_vector_async(base_url, text, timeout),
+            timeout=timeout + 1.0,
+        )
+    except (asyncio.TimeoutError, EmbedClientError, EmbedError, TimeoutError, OSError, RuntimeError) as exc:
         raise EmbeddingUnavailable(str(exc)) from exc
 
 

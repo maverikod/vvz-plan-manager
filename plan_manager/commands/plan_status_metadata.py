@@ -27,15 +27,15 @@ def get_plan_status_metadata(cls: Any) -> dict:
             "Returns the read-only dashboard for one resolved plan "
             "(C-001): artifact counts per level (3, 4, 5), the status "
             "distribution across all steps, the mechanical gate "
-            "verdict for the current tree, and — only when the gate is "
-            "green — the plan semantic index, its color, and the "
-            "ranked weakest branches. When the gate is not green, the "
+            "verdict for the current tree, and a scoring section. When "
+            "the gate is green, plan_status does not compute the "
+            "SemanticIndex inline; scoring is queue-bound and must be "
+            "requested with plan_score. This keeps the dashboard bounded "
+            "and prevents embedding-backed scoring from blocking health "
+            "or command dispatch. When the gate is not green, the "
             "scoring section is refused and carries the GATE_RED "
             "marker instead of a score, because the plan index is "
-            "only published for a gate-green plan. If the embedding "
-            "integration is unreachable while scoring a gate-green "
-            "plan, the command fails with the EMBEDDINGS_UNAVAILABLE "
-            "domain code."
+            "only published for a gate-green plan."
         ),
         "parameters": {
             "plan": {
@@ -57,9 +57,9 @@ def get_plan_status_metadata(cls: Any) -> dict:
                     "status_distribution": "Count of steps per status value across all levels.",
                     "gate": "Gate verdict: green (bool), scope, revision_uuid. When red, also includes findings_count and top_findings.",
                     "scoring": (
-                        "When gate is green: index, color, weakest "
-                        "(list of branch summaries). When gate is not "
-                        "green: {'refused': 'GATE_RED'}."
+                        "When gate is green: {'deferred': 'plan_score', "
+                        "'reason': ...}. When gate is not green: "
+                        "{'refused': 'GATE_RED'}."
                     ),
                 },
                 "example": {
@@ -76,9 +76,8 @@ def get_plan_status_metadata(cls: Any) -> dict:
                         "revision_uuid": "9a1e3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e",
                     },
                     "scoring": {
-                        "index": 92.5,
-                        "color": "green",
-                        "weakest": [],
+                        "deferred": "plan_score",
+                        "reason": "SemanticIndex scoring is queue-bound and is not computed synchronously by plan_status.",
                     },
                 },
             },
@@ -119,15 +118,11 @@ def get_plan_status_metadata(cls: Any) -> dict:
                 "message": "Scoring refused: plan gate is not green.",
                 "solution": "Resolve the mechanical gate findings for the plan, then call plan_status again.",
             },
-            "EMBEDDINGS_UNAVAILABLE": {
-                "description": "The plan gate is green but the embedding service is unreachable while scoring.",
-                "message": "Embedding service is unavailable.",
-                "solution": "Restore embedding service connectivity, or retry once it is reachable again.",
-            },
         },
         "best_practices": [
-            "Call plan_status after a cascade commit to confirm the gate is still green before relying on the scoring section.",
+            "Call plan_status after a cascade commit to confirm the gate is still green before queueing plan_score.",
             "Treat a 'scoring': {'refused': 'GATE_RED'} response as informational, not as a failed call.",
+            "Call plan_score for SemanticIndex values; plan_status intentionally stays bounded and does not compute embedding-backed scores inline.",
             "Use plan_list to resolve a valid plan identifier before calling plan_status.",
         ],
     }
