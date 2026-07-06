@@ -12,6 +12,7 @@ from plan_manager.commands.info_reference import (
     planning_standards_reference,
     prompt_chain_capabilities,
     project_binding_capabilities,
+    step_lifecycle_capabilities,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
 from plan_manager.runtime.context import app_config, db_connection
@@ -92,6 +93,7 @@ class InfoCommand(Command):
                 "project_bindings": project_binding_capabilities(),
                 "context_blocks": context_block_capabilities(),
                 "prompt_chain": prompt_chain_capabilities(),
+                "step_lifecycle": step_lifecycle_capabilities(),
             }
             planning_standards = planning_standards_reference()
             documentation = {"text": operator_doc()}

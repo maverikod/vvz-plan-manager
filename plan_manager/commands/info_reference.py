@@ -234,6 +234,52 @@ def prompt_chain_capabilities() -> dict[str, Any]:
     }
 
 
+def step_lifecycle_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for step lifecycle transition APIs."""
+    return {
+        "purpose": (
+            "Authoring lifecycle movement for GS/TS/AS steps. The authoritative "
+            "state is step.status, not fields.status."
+        ),
+        "statuses": {
+            "draft": "Editable authoring state.",
+            "ready_for_review": "Prepared for review/freeze.",
+            "frozen": "Published for prompt-chain/execution surfaces; content changes require cascade discipline.",
+        },
+        "commands": {
+            "step_set_status": {
+                "mutates": True,
+                "scope": "single_step",
+                "summary": "Backward-compatible single-step status transition command.",
+            },
+            "step_transition": {
+                "mutates": True,
+                "scope": "single_step_or_bulk_scope",
+                "queue_bound": True,
+                "summary": "Transition one step or whole_plan/G-NNN/G-NNN/T-NNN scope with dry_run, green-gate freeze checks, idempotent skips, and one revision per bulk write.",
+            },
+        },
+        "bulk_scopes": ["whole_plan", "G-NNN", "G-NNN/T-NNN"],
+        "freeze_behavior": {
+            "require_green_default": True,
+            "draft_to_frozen": "Allowed by step_transition as draft -> ready_for_review -> frozen inside one auditable batch revision.",
+            "revision_count": "One version-store revision is produced for a non-empty bulk transition.",
+        },
+        "read_surfaces": {
+            "step_get": "Returns authoritative status for one step.",
+            "step_tree": "Returns authoritative status for every step.",
+            "plan_prompt_chain": "Compiles only ready_for_review/frozen steps by default.",
+        },
+        "domain_errors": {
+            "INVALID_SCOPE": "step_id/scope conflict or unsupported scope shape.",
+            "INVALID_TRANSITION": "At least one selected step cannot legally move to the requested status.",
+            "CASCADE_REQUIRED": "A frozen step would be reopened without cascade_uuid.",
+            "CASCADE_CONFLICT": "cascade_uuid does not admit the mutation.",
+            "GATE_RED": "Freezing was refused because the requested scope gate is red.",
+        },
+    }
+
+
 def planning_standards_reference() -> dict[str, Any]:
     """Return a compact glossary of planning standard terms for agents."""
     return {

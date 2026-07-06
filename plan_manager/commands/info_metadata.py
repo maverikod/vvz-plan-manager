@@ -39,8 +39,15 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "documentation; omitting it returns all sections. The "
             "capabilities section is intended for models and agents that "
             "need a compact, machine-readable map of available workflows, "
-            "including project binding commands, prompt-chain compilation, read surfaces, invariants, "
-            "and stable domain error codes. The planning_standards section is "
+            "including project binding commands, step lifecycle transitions, "
+            "bulk freeze behavior, prompt-chain compilation, read surfaces, "
+            "invariants, and stable domain error codes. The step_lifecycle "
+            "capability group explicitly documents step_transition, its "
+            "whole_plan/G-NNN/G-NNN/T-NNN scopes, dry_run behavior, "
+            "require_green freeze gating, idempotent skips, one-revision "
+            "bulk writes, and the fact that authoritative lifecycle state "
+            "is stored in step.status rather than fields.status. The "
+            "planning_standards section is "
             "a structured glossary of HRS/MRS/GS/TS/AS terminology, coverage "
             "axes, computed views, verification cycles, authoring terms, "
             "execution delegation roles, statuses, cascade terms, and command "
@@ -96,7 +103,8 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "capabilities": (
                         "Machine-readable workflow notes for agents, "
                         "including command families, project-binding "
-                        "invariants, prompt-chain compilation, read surfaces, "
+                        "invariants, step lifecycle transition and bulk freeze "
+                        "semantics, prompt-chain compilation, read surfaces, "
                         "import/export behavior, prompt behavior, and stable "
                         "domain error codes."
                     ),
@@ -146,7 +154,20 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                                     "A step references a project not attached to the plan."
                                 )
                             },
-                        }
+                        },
+                        "step_lifecycle": {
+                            "commands": {
+                                "step_transition": {
+                                    "scope": "single_step_or_bulk_scope",
+                                    "queue_bound": True,
+                                }
+                            },
+                            "bulk_scopes": ["whole_plan", "G-NNN", "G-NNN/T-NNN"],
+                            "freeze_behavior": {
+                                "require_green_default": True,
+                                "revision_count": "One version-store revision is produced for a non-empty bulk transition.",
+                            },
+                        },
                     },
                     "planning_standards": {
                         "artifact_levels": {
@@ -192,11 +213,12 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                 ),
             },
             {
-                "description": "Get only the project-binding capability map.",
+                "description": "Get the machine-readable capability map.",
                 "command": {"section": "capabilities"},
                 "explanation": (
-                    "Returns machine-readable command, invariant, and "
-                    "domain-error notes for agents without relying on prose docs."
+                    "Returns machine-readable command, invariant, lifecycle "
+                    "transition, prompt-chain, read-surface, and domain-error "
+                    "notes for agents without relying on prose docs."
                 ),
             },
             {
@@ -235,7 +257,7 @@ def get_info_metadata(cls) -> Dict[str, Any]:
         "best_practices": [
             "Call info without a section parameter to get a full health snapshot in one round trip.",
             "Use section='runtime' for lightweight liveness checks instead of fetching the full documentation payload.",
-            "Use section='capabilities' when an agent needs the supported project-binding graph, mutation paths, and domain errors.",
+            "Use section='capabilities' when an agent needs the supported project-binding graph, step lifecycle transitions, mutation paths, and domain errors.",
             "Use section='planning_standards' when an agent needs exact planning terminology before authoring or verifying artifacts.",
             "A missing documentation payload signals a packaging defect; report it to the release pipeline rather than treating it as an empty answer.",
         ],
