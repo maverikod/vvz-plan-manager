@@ -66,7 +66,7 @@ def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: s
     fields = {
         k: v
         for k, v in data.items()
-        if k not in {"step_id", "depends_on", "concepts", "status"}
+        if k not in {"step_id", "depends_on", "concepts", "project_id", "status"}
     }
     step = create_step(
         conn,
@@ -77,6 +77,7 @@ def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: s
         fields,
         data.get("depends_on", []),
         data.get("concepts", []),
+        data.get("project_id"),
     )
     if step.step_id != declared_id:
         raise ValueError(

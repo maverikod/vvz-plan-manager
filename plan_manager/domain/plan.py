@@ -2,7 +2,8 @@
 
 Implements C-001 (Plan) per docs/plans/2026-07-02-plan-manager/spec.yaml.
 Storage: PostgreSQL table `plan` (columns: uuid, name, status,
-context_budget, head_revision_uuid), accessed via psycopg 3 with plain SQL
+context_budget, head_revision_uuid, project_ids, primary_project_id),
+accessed via psycopg 3 with plain SQL
 (no ORM). DDL for this table is owned by SQL migrations outside this module;
 this module never emits DDL.
 """
@@ -44,6 +45,8 @@ class Plan:
     status: str
     context_budget: int
     head_revision_uuid: uuid.UUID | None
+    project_ids: list[str]
+    primary_project_id: str | None
 
 
 def create_plan(
@@ -80,8 +83,9 @@ def create_plan(
     plan_uuid = uuid.uuid4()
     conn.execute(
         "INSERT INTO plan (uuid, name, status, context_budget, "
-        "head_revision_uuid) VALUES (%s, %s, 'draft', %s, NULL)",
-        (plan_uuid, name, context_budget),
+        "head_revision_uuid, project_ids, primary_project_id) "
+        "VALUES (%s, %s, 'draft', %s, NULL, %s, NULL)",
+        (plan_uuid, name, context_budget, []),
     )
     return Plan(
         uuid=plan_uuid,
@@ -89,6 +93,8 @@ def create_plan(
         status="draft",
         context_budget=context_budget,
         head_revision_uuid=None,
+        project_ids=[],
+        primary_project_id=None,
     )
 
 
@@ -106,7 +112,8 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
         PlanNotFoundError: If no plan row with uuid = plan_uuid exists.
     """
     cur = conn.execute(
-        "SELECT uuid, name, status, context_budget, head_revision_uuid "
+        "SELECT uuid, name, status, context_budget, head_revision_uuid, "
+        "project_ids, primary_project_id "
         "FROM plan WHERE uuid = %s",
         (plan_uuid,),
     )
@@ -119,6 +126,8 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
         status=row[2],
         context_budget=row[3],
         head_revision_uuid=row[4],
+        project_ids=list(row[5]) if row[5] else [],
+        primary_project_id=row[6],
     )
 
 
@@ -133,7 +142,8 @@ def list_plans(conn: psycopg.Connection) -> list[Plan]:
         ascending by name. Empty list if no plans exist.
     """
     cur = conn.execute(
-        "SELECT uuid, name, status, context_budget, head_revision_uuid "
+        "SELECT uuid, name, status, context_budget, head_revision_uuid, "
+        "project_ids, primary_project_id "
         "FROM plan ORDER BY name"
     )
     return [
@@ -143,6 +153,8 @@ def list_plans(conn: psycopg.Connection) -> list[Plan]:
             status=row[2],
             context_budget=row[3],
             head_revision_uuid=row[4],
+            project_ids=list(row[5]) if row[5] else [],
+            primary_project_id=row[6],
         )
         for row in cur.fetchall()
     ]

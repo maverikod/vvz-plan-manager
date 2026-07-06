@@ -53,6 +53,8 @@ class Step:
             each entry matches the same pattern as `step_id`.
         concepts: MRS concept_id values referenced by this step; each
             entry matches CONCEPT_ID_PATTERN (e.g. "C-005").
+        project_id: Optional analysis-server project UUID text bound to
+            this step, or None for plan-level work.
         status: Lifecycle status string (e.g. "draft").
     """
 
@@ -65,6 +67,7 @@ class Step:
     fields: dict[str, Any]
     depends_on: list[str]
     concepts: list[str]
+    project_id: str | None
     status: str
 
 

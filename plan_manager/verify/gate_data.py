@@ -33,7 +33,7 @@ def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-            "fields, depends_on, concepts, status FROM step WHERE plan_uuid = %s",
+            "fields, depends_on, concepts, project_id, status FROM step WHERE plan_uuid = %s",
             (plan_uuid,),
         )
         for row in cur.fetchall():
@@ -47,6 +47,7 @@ def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
                 s_fields,
                 s_depends_on,
                 s_concepts,
+                s_project_id,
                 s_status,
             ) = row
             steps[s_uuid] = Step(
@@ -59,6 +60,7 @@ def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
                 fields=s_fields or {},
                 depends_on=list(s_depends_on) if s_depends_on else [],
                 concepts=list(s_concepts) if s_concepts else [],
+                project_id=s_project_id,
                 status=s_status,
             )
 
@@ -109,4 +111,3 @@ def _safe_artifact_path(nodes: dict[uuid.UUID, Step], step: Step) -> str:
         return artifact_path_of(nodes, step)
     except ValueError:
         return step.step_id
-

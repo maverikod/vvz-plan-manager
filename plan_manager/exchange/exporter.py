@@ -69,6 +69,7 @@ def _step_to_dict(step) -> dict:
         "fields": step.fields,
         "depends_on": step.depends_on,
         "concepts": step.concepts,
+        "project_id": step.project_id,
         "status": step.status,
     }
 
@@ -155,6 +156,7 @@ def step_descriptor(step: dict) -> dict:
         descriptor["depends_on"] = step["depends_on"]
     if step.get("concepts"):
         descriptor["concepts"] = step["concepts"]
+    descriptor["project_id"] = step.get("project_id")
     descriptor["status"] = step["status"]
     return descriptor
 
@@ -189,7 +191,12 @@ def export_plan(conn, plan_uuid, export_root, revision_uuid=None) -> dict:
     ]
     emit_yaml(
         root / MRS_FILENAME,
-        {"concepts": mrs_concepts, "relations": mrs_relations},
+        {
+            "project_ids": plan.project_ids,
+            "primary_project_id": plan.primary_project_id,
+            "concepts": mrs_concepts,
+            "relations": mrs_relations,
+        },
     )
     files += 1
 

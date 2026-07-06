@@ -48,7 +48,7 @@ def test_full_command_inventory_registers_and_passes_no_stub_probe() -> None:
     check_inventory(registry)
     probe_commands(registry)
 
-    assert len(registry.get_all_commands()) == 46
+    assert len(registry.get_all_commands()) == len(INVENTORY)
     assert set(registry.get_all_commands()) == set(INVENTORY)
 
 

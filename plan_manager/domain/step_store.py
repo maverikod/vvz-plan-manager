@@ -54,6 +54,7 @@ def create_step(
     fields: dict,
     depends_on: list[str],
     concepts: list[str],
+    project_id: str | None = None,
 ) -> Step:
     """Scaffolded creation of a Step: assign the next free id and insert it.
 
@@ -111,14 +112,15 @@ def create_step(
             fields=fields,
             depends_on=depends_on,
             concepts=concepts,
+            project_id=project_id,
             status="draft",
         )
         validate_step(step)
         conn.execute(
             "INSERT INTO step "
             "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-            "fields, depends_on, concepts, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "fields, depends_on, concepts, project_id, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 step.uuid,
                 step.plan_uuid,
@@ -129,6 +131,7 @@ def create_step(
                 Jsonb(step.fields),
                 step.depends_on,
                 step.concepts,
+                step.project_id,
                 step.status,
             ),
         )
@@ -152,7 +155,7 @@ def get_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> Step:
     """
     cur = conn.execute(
         "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-        "fields, depends_on, concepts, status "
+        "fields, depends_on, concepts, project_id, status "
         "FROM step WHERE uuid = %s",
         (step_uuid,),
     )
@@ -169,7 +172,8 @@ def get_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> Step:
         fields=row[6],
         depends_on=row[7],
         concepts=row[8],
-        status=row[9],
+        project_id=row[9],
+        status=row[10],
     )
 
 
@@ -212,4 +216,18 @@ def update_step_fields_and_concepts(
     conn.execute(
         "UPDATE step SET fields = %s, concepts = %s WHERE uuid = %s",
         (Jsonb(fields), concepts, step_uuid),
+    )
+
+
+def update_step_fields_concepts_project(
+    conn: psycopg.Connection,
+    step_uuid: uuid.UUID,
+    fields: dict,
+    concepts: list[str],
+    project_id: str | None,
+) -> None:
+    """Overwrite one step's fields, concept bindings, and project binding."""
+    conn.execute(
+        "UPDATE step SET fields = %s, concepts = %s, project_id = %s WHERE uuid = %s",
+        (Jsonb(fields), concepts, project_id, step_uuid),
     )

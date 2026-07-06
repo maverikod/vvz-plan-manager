@@ -11,12 +11,14 @@ import pathlib
 import yaml
 
 from plan_manager.cascade.write import cascade_write
+from plan_manager.commands.errors import DomainCommandError
 from plan_manager.domain.concept import Concept
 from plan_manager.domain.concept_store import insert_concept, list_concepts
 from plan_manager.domain.labeling import assign_missing_labels
 from plan_manager.domain.paragraph import parse
 from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
 from plan_manager.domain.plan import create_plan, get_plan
+from plan_manager.domain.project_binding import validate_plan_projects
 from plan_manager.domain.relation import Relation
 from plan_manager.domain.relation_store import insert_relation, list_relations
 from plan_manager.exchange.layout_import import (
@@ -26,6 +28,19 @@ from plan_manager.exchange.layout_import import (
 )
 from plan_manager.storage.version_store import record_revision
 from plan_manager.views.dependency_graph import load_steps
+
+
+def _descriptor_project_ids(path: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
+    """Read optional project_id from one step descriptor."""
+    if not path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict) or data.get("project_id") is None:
+        return []
+    return [(path, data["project_id"])]
 
 
 def validate_hrs(text: str) -> list[str]:
@@ -147,19 +162,41 @@ def validate_layout(source_root) -> list[str]:
             "spec.yaml: must be a mapping with list-valued 'concepts' and "
             "'relations' keys"
         )
+    if not skip_mrs_structure and isinstance(mrs_data, dict):
+        project_ids = mrs_data.get("project_ids", [])
+        primary_project_id = mrs_data.get("primary_project_id")
+        if not isinstance(project_ids, list):
+            issues.append("spec.yaml: project_ids must be a list when present")
+        else:
+            try:
+                validate_plan_projects(project_ids, primary_project_id)
+            except DomainCommandError as exc:
+                issues.append(f"spec.yaml: {exc}")
 
     gs_dirs = sorted(p for p in root.iterdir() if p.is_dir() and p.name.startswith("G-"))
+    step_project_ids: list[tuple[Path, str]] = []
     for gs_dir in gs_dirs:
         issues.extend(validate_descriptor_dir(gs_dir, "G"))
+        step_project_ids.extend(_descriptor_project_ids(gs_dir / "README.yaml"))
         ts_dirs = sorted(
             p for p in gs_dir.iterdir() if p.is_dir() and p.name.startswith("T-")
         )
         for ts_dir in ts_dirs:
             issues.extend(validate_descriptor_dir(ts_dir, "T"))
+            step_project_ids.extend(_descriptor_project_ids(ts_dir / "README.yaml"))
             as_dir = ts_dir / "atomic_steps"
             if as_dir.is_dir():
                 for as_file in sorted(as_dir.glob("*.yaml")):
                     issues.extend(validate_as_file(as_file))
+                    step_project_ids.extend(_descriptor_project_ids(as_file))
+
+    if not skip_mrs_structure and isinstance(mrs_data, dict):
+        bound_project_ids = set(mrs_data.get("project_ids", []))
+        for path, project_id in step_project_ids:
+            if project_id not in bound_project_ids:
+                issues.append(
+                    f"{path}: project_id {project_id!r} is not present in spec.yaml project_ids"
+                )
 
     if hrs_text is not None:
         issues.extend(f"hrs: {issue}" for issue in validate_hrs(hrs_text))
@@ -180,6 +217,13 @@ def import_plan(conn, source_root, author: str):
     import_hrs(conn, plan.uuid, hrs_text, author, None)
 
     mrs_data = yaml.safe_load((root / "spec.yaml").read_text(encoding="utf-8"))
+    project_ids = list(mrs_data.get("project_ids", []))
+    primary_project_id = mrs_data.get("primary_project_id")
+    validate_plan_projects(project_ids, primary_project_id)
+    conn.execute(
+        "UPDATE plan SET project_ids = %s, primary_project_id = %s WHERE uuid = %s",
+        (project_ids, primary_project_id, plan.uuid),
+    )
     changes: list[tuple] = []
 
     for entry in mrs_data["concepts"]:

@@ -146,6 +146,11 @@ class PlanStatusCommand(Command):
                             "name": p.name,
                             "status": p.status,
                         },
+                        "projects": {
+                            "count": len(p.project_ids),
+                            "project_ids": p.project_ids,
+                            "primary_project_id": p.primary_project_id,
+                        },
                         "counts_by_level": counts_by_level,
                         "status_distribution": status_distribution,
                         "gate": gate_part,

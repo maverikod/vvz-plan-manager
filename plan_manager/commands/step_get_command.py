@@ -102,6 +102,7 @@ class StepGetCommand(Command):
                     "step_id": target.step_id,
                     "slug": target.slug,
                     "level": target.level,
+                    "project_id": target.project_id,
                     "status": target.status,
                     "parent_path": parent_canonical_path(nodes, target),
                     "parent_uuid": parent_uuid(nodes, target),

@@ -38,6 +38,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "FROZEN_ARTIFACT when the target is frozen at or below the change "
             "point. The command verifies its own result by re-reading the "
             "patched step after writing the revision."
+            " The optional top-level project_id sets or clears the step's "
+            "analysis-server project binding; project_id is never nested "
+            "inside fields."
         ),
         "parameters": {
             "plan": {
@@ -65,6 +68,11 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "type": "string",
                 "required": False,
             },
+            "project_id": {
+                "description": "Optional top-level analysis-server project UUID; null clears the step binding.",
+                "type": ["string", "null"],
+                "required": False,
+            },
         },
         "return_value": {
             "success": {
@@ -74,6 +82,7 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                     "step_id": "Human-readable step identifier.",
                     "fields": "The step's fields dict after the patch, as re-read from storage.",
                     "concepts": "The step's top-level concept bindings after the patch, as re-read from storage.",
+                    "project_id": "Top-level analysis-server project UUID, or null.",
                     "status": "Current lifecycle status of the step.",
                     "revision_uuid": "UUID of the version-store revision that recorded the patch, as a string.",
                 },
@@ -82,6 +91,7 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                     "step_id": "T-006",
                     "fields": {"name": "step-commands"},
                     "concepts": ["C-023"],
+                    "project_id": None,
                     "status": "draft",
                     "revision_uuid": "5a1e9b0a-2222-4444-8888-abcdefabcdef",
                 },
@@ -103,6 +113,15 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "description": "Replace a step's top-level concept bindings.",
                 "command": {"plan": "plan_manager", "step_id": "G-001", "concepts": ["C-001", "C-002"]},
                 "explanation": "Validates the concept ids exist, replaces the step concepts column, and returns the re-read result.",
+            },
+            {
+                "description": "Set a step's top-level project binding.",
+                "command": {
+                    "plan": "plan_manager",
+                    "step_id": "G-001",
+                    "project_id": "4acd4be1-d166-417d-81c6-76bf77b4a392",
+                },
+                "explanation": "Validates that the project UUID is already attached to the plan, then stores it on the step.",
             },
         ],
         "error_cases": {
@@ -145,6 +164,16 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "description": "The target step is frozen at or below the change point and no admitting cascade was supplied.",
                 "message": "target is frozen at or below the change point",
                 "solution": "Begin a cascade to mutate a frozen step.",
+            },
+            "INVALID_PROJECT_ID": {
+                "description": "project_id was supplied but is not a UUID.",
+                "message": "project_id must be a valid UUID",
+                "solution": "Retry with an analysis-server project UUID.",
+            },
+            "PROJECT_NOT_BOUND_TO_PLAN": {
+                "description": "project_id was supplied but is not attached to the plan.",
+                "message": "project_id is not bound to plan",
+                "solution": "Call plan_project_attach first, then retry step_update.",
             },
         },
         "best_practices": [

@@ -32,7 +32,7 @@ def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID
     """
     query = (
         "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-        "fields, depends_on, concepts, status FROM step WHERE plan_uuid = %s"
+        "fields, depends_on, concepts, project_id, status FROM step WHERE plan_uuid = %s"
     )
     nodes: dict[uuid.UUID, Step] = {}
     with conn.cursor() as cur:
@@ -48,6 +48,7 @@ def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID
                 fields,
                 depends_on,
                 concepts,
+                project_id,
                 status,
             ) = row
             nodes[row_uuid] = Step(
@@ -60,6 +61,7 @@ def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID
                 fields=fields,
                 depends_on=list(depends_on) if depends_on else [],
                 concepts=list(concepts) if concepts else [],
+                project_id=project_id,
                 status=status,
             )
     return nodes
@@ -369,4 +371,3 @@ def impact_set(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> list[uui
 
     result.sort(key=lambda u: tie_break_key(nodes, u))
     return result
-

@@ -17,13 +17,19 @@ from plan_manager.commands.step_update_metadata import get_step_update_metadata
 from plan_manager.domain.concept import CONCEPT_ID_PATTERN
 from plan_manager.domain.concept_store import list_concept_ids
 from plan_manager.domain.relation import RELATION_TYPES
-from plan_manager.domain.step_store import get_step, update_step_fields_and_concepts
+from plan_manager.domain.project_binding import require_project_bound
+from plan_manager.domain.step_store import (
+    get_step,
+    update_step_fields_and_concepts,
+    update_step_fields_concepts_project,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.version_store import record_revision
 from plan_manager.views.dependency_graph import load_steps
 
 
 _RELATION_KEYS = frozenset({"type", "from_concept", "to_concept"})
+_PROJECT_ID_UNSET = object()
 
 
 def _validate_concept_bindings(concepts: Any) -> list[str]:
@@ -153,6 +159,10 @@ class StepUpdateCommand(Command):
                     "type": "string",
                     "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen target.",
                 },
+                "project_id": {
+                    "type": ["string", "null"],
+                    "description": "Optional top-level analysis-server project UUID; null clears the step binding.",
+                },
             },
             "required": ["plan", "step_id"],
             "additionalProperties": False,
@@ -172,11 +182,19 @@ class StepUpdateCommand(Command):
             ValueError: If fields is empty or if cascade_uuid is not a valid
                 UUID string.
         """
-        params = super().validate_params(params)
+        raw_project_present = "project_id" in params
+        raw_project_clear = raw_project_present and params["project_id"] is None
+        validation_params = dict(params)
+        if raw_project_clear:
+            validation_params.pop("project_id")
+        params = super().validate_params(validation_params)
+        if raw_project_clear:
+            params["project_id"] = None
         fields = params.get("fields")
         concepts_present = "concepts" in params
-        if fields is None and not concepts_present:
-            raise ValueError("fields or concepts must be supplied")
+        project_present = "project_id" in params
+        if fields is None and not concepts_present and not project_present:
+            raise ValueError("fields, concepts, or project_id must be supplied")
         if fields is not None and (not isinstance(fields, dict) or not fields):
             raise ValueError("fields must be a non-empty object when supplied")
         cascade_uuid = params.get("cascade_uuid")
@@ -190,6 +208,7 @@ class StepUpdateCommand(Command):
         step_id: str,
         fields: dict[str, Any] | None = None,
         concepts: list[str] | None = None,
+        project_id: Any = _PROJECT_ID_UNSET,
         cascade_uuid: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
@@ -210,10 +229,11 @@ class StepUpdateCommand(Command):
             domain error code on failure.
         """
         try:
-            if fields is None and concepts is None:
+            project_present = project_id is not _PROJECT_ID_UNSET
+            if fields is None and concepts is None and not project_present:
                 raise DomainCommandError(
                     "INVALID_STEP_FIELD_SHAPE",
-                    "fields or concepts must be supplied",
+                    "fields, concepts, or project_id must be supplied",
                     {},
                 )
             if fields is not None and (not isinstance(fields, dict) or not fields):
@@ -224,6 +244,12 @@ class StepUpdateCommand(Command):
                 )
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                if project_present and project_id is not None:
+                    normalized_project_id = require_project_bound(p, project_id)
+                elif project_present:
+                    normalized_project_id = None
+                else:
+                    normalized_project_id = None
                 nodes = load_steps(conn, p.uuid)
                 target = resolve_step_ref(nodes, step_id)
                 fields = fields or {}
@@ -257,7 +283,12 @@ class StepUpdateCommand(Command):
                     return domain_error("CASCADE_REQUIRED", str(exc))
                 merged_fields = dict(target.fields)
                 merged_fields.update(fields)
-                update_step_fields_and_concepts(conn, target.uuid, merged_fields, new_concepts)
+                if project_present:
+                    update_step_fields_concepts_project(
+                        conn, target.uuid, merged_fields, new_concepts, normalized_project_id
+                    )
+                else:
+                    update_step_fields_and_concepts(conn, target.uuid, merged_fields, new_concepts)
                 patched = get_step(conn, target.uuid)
                 snapshot = step_snapshot(patched, patched.status)
                 if rec is not None:
@@ -277,6 +308,7 @@ class StepUpdateCommand(Command):
                     "step_id": verified.step_id,
                     "fields": verified.fields,
                     "concepts": verified.concepts,
+                    "project_id": verified.project_id,
                     "status": verified.status,
                     "revision_uuid": str(revision),
                 }

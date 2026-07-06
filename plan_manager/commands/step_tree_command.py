@@ -99,6 +99,7 @@ class StepTreeCommand(Command):
                         "step_id": s.step_id,
                         "slug": s.slug,
                         "level": s.level,
+                        "project_id": s.project_id,
                         "status": s.status,
                         "parent_path": parent_canonical_path(nodes, s),
                         "parent_uuid": parent_uuid(nodes, s),

@@ -28,14 +28,23 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "package version, platform adapter version), build metadata "
             "(build date, image tag), a runtime summary (database "
             "connectivity, open cascade count across all plans, and "
-            "embedding service reachability), and the full operator "
-            "documentation text embedded into the package at build time "
+            "embedding service reachability), machine-readable command "
+            "capability notes, and the full operator documentation text "
+            "embedded into the package at build time "
             "from the single documentation source that also produces the "
             "installed man and info pages, so this command's documentation "
             "text and the installed documentation cannot diverge. The "
             "optional section parameter restricts the answer to exactly "
-            "one of identity, build, runtime, or documentation; omitting "
-            "it returns all four. This command is read-only and never "
+            "one of identity, build, runtime, capabilities, planning_standards, or "
+            "documentation; omitting it returns all sections. The "
+            "capabilities section is intended for models and agents that "
+            "need a compact, machine-readable map of available workflows, "
+            "including project binding commands, read surfaces, invariants, "
+            "and stable domain error codes. The planning_standards section is "
+            "a structured glossary of HRS/MRS/GS/TS/AS terminology, coverage "
+            "axes, computed views, verification cycles, authoring terms, "
+            "execution delegation roles, statuses, cascade terms, and command "
+            "metadata/schema rules. This command is read-only and never "
             "mutates state. A missing embedded documentation payload is a "
             "packaging defect: it is never silently replaced by generated "
             "text, and instead surfaces as an explicit internal error "
@@ -51,18 +60,25 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "section": {
                 "description": (
                     "Restrict the response to one section: 'identity', "
-                    "'build', 'runtime', or 'documentation'. Omit this "
-                    "parameter to receive all four sections."
+                    "'build', 'runtime', 'capabilities', 'planning_standards', or "
+                    "'documentation'. Omit this parameter to receive all sections."
                 ),
                 "type": "string",
                 "required": False,
-                "enum": ["identity", "build", "runtime", "documentation"],
+                "enum": [
+                    "identity",
+                    "build",
+                    "runtime",
+                    "capabilities",
+                    "planning_standards",
+                    "documentation",
+                ],
             },
         },
         "return_value": {
             "success": {
                 "description": (
-                    "The server self-description: either all four "
+                    "The server self-description: either all "
                     "sections together, or, when section is given, only "
                     "that section's data nested under a 'section' key "
                     "that echoes the requested section name."
@@ -76,6 +92,19 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "runtime": (
                         "Database connectivity, open cascade count, and "
                         "embedding service reachability status."
+                    ),
+                    "capabilities": (
+                        "Machine-readable workflow notes for agents, "
+                        "including command families, project-binding "
+                        "invariants, read surfaces, import/export behavior, "
+                        "prompt behavior, and stable domain error codes."
+                    ),
+                    "planning_standards": (
+                        "Structured glossary of planning standards concepts: "
+                        "artifact levels, MRS terms, coverage axes, computed "
+                        "views, verification cycles, tactical and atomic terms, "
+                        "execution delegation roles, statuses, cascade terms, "
+                        "and command metadata/schema rules."
                     ),
                     "documentation": (
                         "Full embedded operator documentation text under "
@@ -100,6 +129,36 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                         "database_connected": True,
                         "open_cascades": 0,
                         "embedding_service": "reachable",
+                    },
+                    "capabilities": {
+                        "project_bindings": {
+                            "commands": {
+                                "plan_project_attach": {"mutates": True},
+                                "step_update": {
+                                    "project_id_behavior": (
+                                        "Omitted leaves unchanged; UUID sets; null clears."
+                                    )
+                                },
+                            },
+                            "domain_errors": {
+                                "PROJECT_NOT_BOUND_TO_PLAN": (
+                                    "A step references a project not attached to the plan."
+                                )
+                            },
+                        }
+                    },
+                    "planning_standards": {
+                        "artifact_levels": {
+                            "HRS": {"canonical_name": "source_spec"},
+                            "MRS": {"canonical_name": "machine_spec"},
+                            "GS": {"canonical_name": "global_step"},
+                            "TS": {"canonical_name": "tactical_step"},
+                            "AS": {"canonical_name": "atomic_step"},
+                        },
+                        "coverage_axes": {
+                            "concept_axis": "No semantic gaps; concept overlap is allowed.",
+                            "object_work_axis": "No duplicated implementation work.",
+                        },
                     },
                     "documentation": {"text": "..."},
                 },
@@ -132,6 +191,23 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                 ),
             },
             {
+                "description": "Get only the project-binding capability map.",
+                "command": {"section": "capabilities"},
+                "explanation": (
+                    "Returns machine-readable command, invariant, and "
+                    "domain-error notes for agents without relying on prose docs."
+                ),
+            },
+            {
+                "description": "Get the planning standards glossary.",
+                "command": {"section": "planning_standards"},
+                "explanation": (
+                    "Returns structured terminology for HRS, MRS, GS, TS, AS, "
+                    "coverage axes, computed views, verification cycles, "
+                    "execution roles, statuses, cascade, and metadata rules."
+                ),
+            },
+            {
                 "description": "Get only the runtime summary.",
                 "command": {"section": "runtime"},
                 "explanation": (
@@ -158,6 +234,8 @@ def get_info_metadata(cls) -> Dict[str, Any]:
         "best_practices": [
             "Call info without a section parameter to get a full health snapshot in one round trip.",
             "Use section='runtime' for lightweight liveness checks instead of fetching the full documentation payload.",
+            "Use section='capabilities' when an agent needs the supported project-binding graph, mutation paths, and domain errors.",
+            "Use section='planning_standards' when an agent needs exact planning terminology before authoring or verifying artifacts.",
             "A missing documentation payload signals a packaging defect; report it to the release pipeline rather than treating it as an empty answer.",
         ],
     }

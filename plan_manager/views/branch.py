@@ -77,7 +77,7 @@ def _get_step_row(
     """
     row = conn.execute(
         "SELECT uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-        "fields, depends_on, concepts, status FROM step "
+        "fields, depends_on, concepts, project_id, status FROM step "
         "WHERE plan_uuid = %s AND level = %s AND step_id = %s;",
         (plan_uuid, level, step_id),
     ).fetchone()
@@ -95,6 +95,7 @@ def _get_step_row(
         fields,
         depends_on,
         concepts,
+        project_id,
         status,
     ) = row
     return Step(
@@ -107,6 +108,7 @@ def _get_step_row(
         fields=fields,
         depends_on=list(depends_on) if depends_on is not None else [],
         concepts=list(concepts) if concepts is not None else [],
+        project_id=project_id,
         status=status,
     )
 

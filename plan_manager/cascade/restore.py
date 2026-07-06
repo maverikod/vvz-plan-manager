@@ -45,7 +45,7 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
 
     - ``"step"``: plan_uuid, parent_step_uuid, level, step_id, slug,
       fields (wrapped in ``psycopg.types.json.Jsonb``), depends_on,
-      concepts, status.
+      concepts, project_id, status.
     - ``"concept"``: plan_uuid, concept_id, name, definition, properties,
       source_labels.
     - ``"relation"``: plan_uuid, from_concept, to_concept, type.
@@ -64,8 +64,8 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
         conn.execute(
             "INSERT INTO step "
             "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-            "fields, depends_on, concepts, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "fields, depends_on, concepts, project_id, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (uuid) DO UPDATE SET "
             "plan_uuid = EXCLUDED.plan_uuid, "
             "parent_step_uuid = EXCLUDED.parent_step_uuid, "
@@ -75,6 +75,7 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
             "fields = EXCLUDED.fields, "
             "depends_on = EXCLUDED.depends_on, "
             "concepts = EXCLUDED.concepts, "
+            "project_id = EXCLUDED.project_id, "
             "status = EXCLUDED.status",
             (
                 node_uuid,
@@ -86,6 +87,7 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
                 Jsonb(snapshot["fields"]),
                 snapshot["depends_on"],
                 snapshot["concepts"],
+                snapshot.get("project_id"),
                 snapshot["status"],
             ),
         )

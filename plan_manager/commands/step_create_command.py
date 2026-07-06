@@ -14,6 +14,7 @@ from plan_manager.commands.errors import DomainCommandError, domain_error, map_e
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_create_metadata import get_step_create_metadata
 from plan_manager.commands.step_ref import resolve_step_ref
+from plan_manager.domain.project_binding import require_project_bound
 from plan_manager.domain.step_store import create_step, get_step
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.version_store import record_revision
@@ -81,6 +82,10 @@ class StepCreateCommand(Command):
                     "type": "string",
                     "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen parent.",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional analysis-server project UUID already bound to the plan.",
+                },
             },
             "required": ["plan", "level", "slug"],
             "additionalProperties": False,
@@ -124,6 +129,7 @@ class StepCreateCommand(Command):
         slug: str,
         parent_step_id: str | None = None,
         cascade_uuid: str | None = None,
+        project_id: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Scaffold a new step and record it as a revision.
@@ -145,6 +151,11 @@ class StepCreateCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                normalized_project_id = (
+                    require_project_bound(p, project_id)
+                    if project_id is not None
+                    else None
+                )
                 nodes = load_steps(conn, p.uuid)
                 parent = None
                 parent_uuid = None
@@ -181,6 +192,7 @@ class StepCreateCommand(Command):
                     step_fields,
                     [],
                     [],
+                    normalized_project_id,
                 )
                 snapshot = step_snapshot(new_step, new_step.status)
                 if rec is not None:
@@ -199,6 +211,7 @@ class StepCreateCommand(Command):
                     "step_id": verified.step_id,
                     "slug": verified.slug,
                     "level": verified.level,
+                    "project_id": verified.project_id,
                     "status": verified.status,
                     "revision_uuid": str(revision),
                 }

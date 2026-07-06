@@ -83,6 +83,8 @@ class PlanListCommand(Command):
                                 "status": pl.status,
                                 "context_budget": pl.context_budget,
                                 "has_head": pl.head_revision_uuid is not None,
+                                "project_count": len(pl.project_ids),
+                                "primary_project_id": pl.primary_project_id,
                             }
                             for pl in plans
                         ]

@@ -41,7 +41,9 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
             "when the parent is frozen at or below the change point. A "
             "fresh draft leaf never invalidates any other step. The command "
             "verifies its own result by re-reading the created step after "
-            "writing the revision."
+            "writing the revision. The optional top-level project_id binds "
+            "the new step to an analysis-server project UUID already attached "
+            "to the plan; it is never passed inside fields."
         ),
         "parameters": {
             "plan": {
@@ -70,6 +72,11 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "type": "string",
                 "required": False,
             },
+            "project_id": {
+                "description": "Optional analysis-server project UUID already bound to the plan; stored as the step's top-level project_id.",
+                "type": "string",
+                "required": False,
+            },
         },
         "return_value": {
             "success": {
@@ -79,6 +86,7 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                     "step_id": "The assigned human-readable step identifier.",
                     "slug": "The slug of the new step.",
                     "level": "The hierarchy level of the new step.",
+                    "project_id": "Top-level analysis-server project UUID, or null.",
                     "status": "The status of the new step (always draft).",
                     "revision_uuid": "UUID of the version-store revision that recorded the creation, as a string.",
                 },
@@ -87,6 +95,7 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                     "step_id": "T-007",
                     "slug": "graph-commands",
                     "level": 4,
+                    "project_id": None,
                     "status": "draft",
                     "revision_uuid": "5a1e9b0a-2222-4444-8888-abcdefabcdef",
                 },
@@ -103,6 +112,16 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "description": "Create a new tactical step under an existing global step.",
                 "command": {"plan": "plan_manager", "level": 4, "slug": "graph-commands", "parent_step_id": "G-005"},
                 "explanation": "Scaffolds a draft T-NNN step under G-005 with the next free zero-padded id.",
+            },
+            {
+                "description": "Create a new global step bound to an attached project.",
+                "command": {
+                    "plan": "plan_manager",
+                    "level": 3,
+                    "slug": "project-context",
+                    "project_id": "4acd4be1-d166-417d-81c6-76bf77b4a392",
+                },
+                "explanation": "Validates that the project UUID is already attached to the plan, then stores it on the step.",
             },
         ],
         "error_cases": {
@@ -135,6 +154,16 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "description": "The parent is frozen at or below the change point and no admitting cascade was supplied.",
                 "message": "parent is frozen at or below the change point",
                 "solution": "Begin a cascade to mutate under a frozen parent.",
+            },
+            "INVALID_PROJECT_ID": {
+                "description": "project_id was supplied but is not a UUID.",
+                "message": "project_id must be a valid UUID",
+                "solution": "Retry with an analysis-server project UUID.",
+            },
+            "PROJECT_NOT_BOUND_TO_PLAN": {
+                "description": "project_id was supplied but is not attached to the plan.",
+                "message": "project_id is not bound to plan",
+                "solution": "Call plan_project_attach first, then retry step_create.",
             },
         },
         "best_practices": [

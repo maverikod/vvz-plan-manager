@@ -22,6 +22,7 @@ from plan_manager.storage.canonical import canonical_json
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.branch import Branch
 from plan_manager.views.dependency_graph import build_edges, load_steps, parent_path, waves
+from plan_manager.domain.plan import get_plan
 from plan_manager.views.prompt_assembly import mrs_excerpt, step_content
 
 
@@ -261,6 +262,7 @@ def assemble_prompt_chain(
         steps.append(
             {
                 "step_id": atomic.step_id,
+                "project_id": atomic.project_id,
                 "target_file": atomic.fields["target_file"],
                 "operation": atomic.fields["operation"],
                 "priority": atomic.fields["priority"],
@@ -293,10 +295,15 @@ def assemble_prompt_chain(
                 ),
             }
         )
+    plan = get_plan(conn, plan_uuid)
     return {
         "plan": plan_name,
         "revision": str(revision_uuid) if revision_uuid is not None else None,
         "scope": scope.label,
+        "projects": {
+            "project_ids": plan.project_ids,
+            "primary_project_id": plan.primary_project_id,
+        },
         "blocks": ordered_blocks,
         "steps": steps,
         "diagnostics": diagnostics,

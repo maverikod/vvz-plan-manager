@@ -55,10 +55,29 @@ def step_content(step: Step) -> str:
             "level": step.level,
             "depends_on": step.depends_on,
             "concepts": step.concepts,
+            "project_id": step.project_id,
             "status": step.status,
             "fields": step.fields,
         }
     )
+
+
+def plan_project_context(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> str:
+    """Render plan-level project bindings for prompt context."""
+    plan = get_plan(conn, plan_uuid)
+    return _canonical_json_text(
+        {
+            "project_ids": plan.project_ids,
+            "primary_project_id": plan.primary_project_id,
+        }
+    )
+
+
+def current_step_project_context(step: Step) -> str:
+    """Render current step project binding for prompt context."""
+    if step.project_id is None:
+        return _canonical_json_text({"project_id": None, "scope": "plan-level"})
+    return _canonical_json_text({"project_id": step.project_id})
 
 
 def mrs_excerpt(conn: psycopg.Connection, plan_uuid: uuid.UUID, concept_ids: list[str]) -> str:
@@ -152,6 +171,8 @@ def assemble_prompt(conn: psycopg.Connection, branch: Branch) -> str:
         The full assembled prompt text.
     """
     parts = [
+        ("# Plan project bindings", plan_project_context(conn, branch.plan_uuid)),
+        ("# Current step project", current_step_project_context(branch.atomic)),
         ("# MRS excerpt", mrs_excerpt(conn, branch.plan_uuid, branch.atomic.concepts)),
         (
             "# HRS slice",

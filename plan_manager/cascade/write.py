@@ -30,7 +30,7 @@ def step_snapshot(step: Step, status: str) -> dict:
     Returns:
         A dict with exactly these keys, in this order: "kind", "uuid",
         "plan_uuid", "parent_step_uuid", "level", "step_id", "slug",
-        "fields", "depends_on", "concepts", "status". "kind" is always
+        "fields", "depends_on", "concepts", "project_id", "status". "kind" is always
         the literal string "step". "uuid" and "plan_uuid" are `str(...)`
         of the corresponding Step uuid fields. "parent_step_uuid" is
         `str(step.parent_step_uuid)` when it is not None, else None.
@@ -49,6 +49,7 @@ def step_snapshot(step: Step, status: str) -> dict:
         "fields": step.fields,
         "depends_on": step.depends_on,
         "concepts": step.concepts,
+        "project_id": step.project_id,
         "status": status,
     }
 

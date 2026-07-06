@@ -4,6 +4,11 @@ INVENTORY: tuple[str, ...] = (
     "plan_create",
     "plan_list",
     "plan_status",
+    "plan_project_attach",
+    "plan_project_detach",
+    "plan_project_list",
+    "plan_project_set_primary",
+    "plan_project_clear_primary",
     "plan_export",
     "plan_import",
     "export_upload_save",
@@ -51,6 +56,10 @@ INVENTORY: tuple[str, ...] = (
 
 MUTATING: frozenset[str] = frozenset({
     "plan_create",
+    "plan_project_attach",
+    "plan_project_detach",
+    "plan_project_set_primary",
+    "plan_project_clear_primary",
     "plan_import",
     "hrs_import",
     "para_label_assign",
