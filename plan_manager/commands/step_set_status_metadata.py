@@ -2,6 +2,19 @@
 
 from typing import Any
 
+from plan_manager.domain.status_model import (
+    ATOMIC_ONLY_STATUSES,
+    LEGAL_TRANSITIONS,
+    STATUSES,
+)
+
+
+def _direct_targets(status: str) -> list[str]:
+    targets = set(LEGAL_TRANSITIONS[status])
+    if status == "frozen":
+        targets.add("in_progress")
+    return sorted(targets)
+
 
 def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
     """Return the extended metadata dictionary for StepSetStatusCommand.
@@ -82,6 +95,44 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
                 "message": "Human-readable error message.",
                 "details": "Additional diagnostic fields when available.",
             },
+        },
+        "legal_transitions": {
+            "description": (
+                "Direct user-requested transitions enforced by the status "
+                "model. needs_review is never a direct target; it is reserved "
+                "for cascade propagation. in_progress and done are atomic-step "
+                "statuses only, and in_progress is reached directly only from "
+                "frozen atomic steps."
+            ),
+            "statuses": {
+                status: {
+                    "direct_targets": _direct_targets(status),
+                    "scope": (
+                        "atomic_steps_only"
+                        if status in ATOMIC_ONLY_STATUSES
+                        else "all_step_artifacts"
+                    ),
+                }
+                for status in sorted(STATUSES | ATOMIC_ONLY_STATUSES)
+            },
+            "cascade_targets": {
+                "needs_review": {
+                    "from": "any_known_status",
+                    "scope": "cascade_propagation_only",
+                    "direct_request": "INVALID_TRANSITION",
+                }
+            },
+            "notes": [
+                "draft -> ready_for_review",
+                "ready_for_review -> draft",
+                "ready_for_review -> frozen",
+                "needs_review -> draft",
+                "needs_review -> frozen",
+                "frozen -> in_progress is direct only for atomic steps",
+                "in_progress -> done is direct only for atomic steps",
+                "done has no direct outgoing transition",
+                "needs_review as a requested target always yields INVALID_TRANSITION",
+            ],
         },
         "usage_examples": [
             {
