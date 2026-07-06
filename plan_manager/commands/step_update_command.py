@@ -160,7 +160,8 @@ class StepUpdateCommand(Command):
                     "description": "Open cascade identifier to admit this mutation under; omit for direct-mode mutation on a non-frozen target.",
                 },
                 "project_id": {
-                    "type": ["string", "null"],
+                    "type": "string",
+                    "nullable": True,
                     "description": "Optional top-level analysis-server project UUID; null clears the step binding.",
                 },
             },

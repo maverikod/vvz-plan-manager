@@ -62,14 +62,41 @@ def build_app(config_path: str):
         The ASGI application created by the platform application factory.
     """
     from plan_manager import hooks as _plan_manager_hooks
+    from fastapi import Request
+    from mcp_proxy_adapter.api.handlers import get_commands_list, handle_json_rpc
     from mcp_proxy_adapter.api.app import create_app
     from plan_manager.runtime.config import load_raw
 
     del _plan_manager_hooks
-    return create_app(
+    app = create_app(
         app_config=load_raw(config_path),
         config_path=config_path,
     )
+
+    async def _legacy_get_methods_payload():
+        commands_payload = await get_commands_list()
+        commands = commands_payload.get("commands", {})
+        methods = sorted(commands.keys()) if isinstance(commands, dict) else []
+        return {
+            "methods": methods,
+            "commands": commands,
+            "count": len(methods),
+        }
+
+    @app.get("/get_methods")
+    async def legacy_get_methods_get():
+        return await _legacy_get_methods_payload()
+
+    @app.post("/get_methods")
+    async def legacy_get_methods_post():
+        return await _legacy_get_methods_payload()
+
+    @app.post("/jsonrpc")
+    async def legacy_jsonrpc(request: Request, body: dict):
+        request_id = getattr(request.state, "request_id", None)
+        return await handle_json_rpc(body, request_id, request)
+
+    return app
 
 
 def run_app(app, config_path: str) -> None:

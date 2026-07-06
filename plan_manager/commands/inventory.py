@@ -10,6 +10,7 @@ INVENTORY: tuple[str, ...] = (
     "plan_project_set_primary",
     "plan_project_clear_primary",
     "plan_export",
+    "plan_snapshot",
     "plan_import",
     "export_upload_save",
     "hrs_import",

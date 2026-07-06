@@ -9,6 +9,8 @@ from plan_manager.domain.concept_store import list_concepts
 from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.domain.plan import get_plan
 from plan_manager.domain.relation_store import list_relations
+from plan_manager.cascade.record import get_open_cascade
+from plan_manager.storage.version_store import get_ref
 from plan_manager.storage.version_ops import checkout_read, state_at
 from plan_manager.views.dependency_graph import load_steps
 
@@ -138,6 +140,7 @@ def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
     state["relations"].sort(
         key=lambda item: (item["from_concept"], item["to_concept"], item["type"])
     )
+    state["paragraphs"] = _dedupe_paragraphs_by_label(state["paragraphs"])
     state["paragraphs"].sort(key=lambda item: item["position"])
     return state
 
@@ -145,7 +148,32 @@ def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
 def render_hrs_text(paragraphs: list[dict]) -> str:
     """Render paragraph dictionaries into HRS Markdown text."""
     ordered = sorted(paragraphs, key=lambda p: p["position"])
-    return "\n\n".join("{" + p["label"] + "} " + p["text"] for p in ordered) + "\n"
+    return "\n\n".join(
+        "{" + p["label"] + "} " + _paragraph_text_without_label(p)
+        for p in ordered
+    ) + "\n"
+
+
+def _paragraph_text_without_label(paragraph: dict) -> str:
+    """Return paragraph text without a leading rendered label prefix."""
+    text = paragraph["text"]
+    prefix = "{" + paragraph["label"] + "} "
+    if isinstance(text, str) and text.startswith(prefix):
+        return text[len(prefix):]
+    return text
+
+
+def _dedupe_paragraphs_by_label(paragraphs: list[dict]) -> list[dict]:
+    """Keep the first paragraph snapshot for each label."""
+    seen: set[str] = set()
+    result: list[dict] = []
+    for paragraph in paragraphs:
+        label = paragraph["label"]
+        if label in seen:
+            continue
+        seen.add(label)
+        result.append(paragraph)
+    return result
 
 
 def step_descriptor(step: dict) -> dict:
@@ -229,3 +257,39 @@ def export_plan(conn, plan_uuid, export_root, revision_uuid=None) -> dict:
             files += 1
 
     return {"root": str(root), "files": files}
+
+
+def export_working_snapshot(conn, plan_uuid, export_root) -> dict:
+    """Export the effective live working state to the standard layout.
+
+    If a cascade is open, the cascade ref's tip revision is exported. If no
+    cascade is open, this preserves the existing head export behavior by
+    delegating to export_plan without an explicit revision.
+    """
+    plan = get_plan(conn, plan_uuid)
+    cascade = get_open_cascade(conn, plan_uuid)
+    if cascade is None:
+        summary = export_plan(conn, plan_uuid, export_root)
+        return {
+            **summary,
+            "based_on_revision": (
+                str(plan.head_revision_uuid) if plan.head_revision_uuid is not None else None
+            ),
+            "cascade_uuid": None,
+            "snapshot_revision": (
+                str(plan.head_revision_uuid) if plan.head_revision_uuid is not None else None
+            ),
+        }
+
+    tip = get_ref(conn, plan_uuid, cascade.name)
+    summary = export_plan(conn, plan_uuid, export_root, revision_uuid=tip)
+    return {
+        **summary,
+        "based_on_revision": (
+            str(cascade.base_revision_uuid)
+            if cascade.base_revision_uuid is not None
+            else None
+        ),
+        "cascade_uuid": str(cascade.uuid),
+        "snapshot_revision": str(tip),
+    }

@@ -19,7 +19,7 @@ def get_plan_export_metadata(cls) -> Dict[str, Any]:
         "category": cls.category,
         "author": cls.author,
         "email": cls.email,
-        "detailed_description": "Renders one resolved plan into the standard file layout under the server-configured export root. Read-only over plan truth: no plan data is modified. The export root directory is taken exclusively from server configuration (AppConfig.export_root); request parameters never carry filesystem paths. When the optional revision parameter is omitted, the plan head revision is exported; when supplied, it must be a valid revision UUID belonging to the plan's version history, otherwise the command returns REVISION_NOT_FOUND. This command is queue-bound (use_queue = True) because rendering a full plan layout to disk can take longer than an interactive request budget.",
+        "detailed_description": "Renders one resolved plan into the standard file layout under the server-configured export root. Read-only over plan truth: no plan data is modified. The export root directory is taken exclusively from server configuration (AppConfig.export_root); request parameters never carry filesystem paths. When the optional revision parameter is omitted, the plan head revision is exported; when supplied, it must be a valid revision UUID belonging to the plan's version history, otherwise the command returns REVISION_NOT_FOUND. Revision export renders one coherent state: HRS labels are emitted exactly once, including for open-cascade tip revisions. This command is queue-bound (use_queue = True) because rendering a full plan layout to disk can take longer than an interactive request budget.",
         "parameters": {
             "plan": {
                 "description": "Plan identifier resolved against the catalog.",
@@ -65,7 +65,7 @@ def get_plan_export_metadata(cls) -> Dict[str, Any]:
                     "plan": "my-plan",
                     "revision": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 },
-                "explanation": "Writes the standard layout as it existed at the given revision.",
+                "explanation": "Writes the standard layout as it existed at the given revision, including open-cascade tip revisions.",
             },
         ],
         "error_cases": {
@@ -84,5 +84,6 @@ def get_plan_export_metadata(cls) -> Dict[str, Any]:
             "This command is read-only: it never mutates plan data or the version store.",
             "The export root is fixed by server configuration; no dry-run is needed because nothing in the database changes.",
             "Verify the export by reading the written layout files at the returned root path.",
+            "Use plan_snapshot when the caller wants the live working state without first resolving revision ids.",
         ],
     }

@@ -70,7 +70,8 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             },
             "project_id": {
                 "description": "Optional top-level analysis-server project UUID; null clears the step binding.",
-                "type": ["string", "null"],
+                "type": "string",
+                "nullable": True,
                 "required": False,
             },
         },
