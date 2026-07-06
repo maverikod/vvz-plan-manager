@@ -190,3 +190,26 @@ def update_step_fields(conn: psycopg.Connection, step_uuid: uuid.UUID, fields: d
         "UPDATE step SET fields = %s WHERE uuid = %s",
         (Jsonb(fields), step_uuid),
     )
+
+
+def update_step_fields_and_concepts(
+    conn: psycopg.Connection,
+    step_uuid: uuid.UUID,
+    fields: dict,
+    concepts: list[str],
+) -> None:
+    """Overwrite one step's fields dict and top-level concept bindings.
+
+    Args:
+        conn: Open database connection.
+        step_uuid: Immutable primary identity of the step to update.
+        fields: The new level-specific fields dict to store as JSON.
+        concepts: The new top-level concept_id bindings to store.
+
+    Returns:
+        None.
+    """
+    conn.execute(
+        "UPDATE step SET fields = %s, concepts = %s WHERE uuid = %s",
+        (Jsonb(fields), concepts, step_uuid),
+    )

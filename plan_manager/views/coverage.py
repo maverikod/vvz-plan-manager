@@ -188,7 +188,18 @@ def relation_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Coverag
     for row in gs_cur.fetchall():
         fields = row[0]
         if fields:
-            for entry in fields.get("relations", []):
+            relations = fields.get("relations", [])
+            if not isinstance(relations, list):
+                gs_relations.add("INVALID_RELATION_SHAPE")
+                continue
+            for entry in relations:
+                if not isinstance(entry, dict) or not {
+                    "from_concept",
+                    "to_concept",
+                    "type",
+                } <= set(entry):
+                    gs_relations.add("INVALID_RELATION_SHAPE")
+                    continue
                 gs_relations.add(
                     f"{entry['from_concept']}|{entry['to_concept']}|{entry['type']}"
                 )
@@ -203,4 +214,3 @@ def relation_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Coverag
         missing=sorted(mrs_relations - gs_relations),
         extra=sorted(gs_relations - mrs_relations),
     )
-

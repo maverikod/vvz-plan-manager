@@ -85,6 +85,8 @@ def reference_estimator(conn, branch: Branch, concept_rows) -> float:
 
     for relation in branch.gs.fields.get("relations", []):
         total += 1
+        if not isinstance(relation, dict):
+            continue
         from_concept = relation.get("from_concept")
         to_concept = relation.get("to_concept")
         relation_type = relation.get("type")
