@@ -54,7 +54,7 @@ def project_binding_capabilities() -> dict[str, Any]:
         },
         "read_surfaces": {
             "plan_status": "Returns projects.count, projects.project_ids, and projects.primary_project_id.",
-            "plan_list": "Returns project_count and primary_project_id for each plan.",
+            "plan_list": "Returns project_ids, project_count, and primary_project_id for each plan.",
             "step_get": "Returns top-level project_id.",
             "step_tree": "Returns project_id for every tree entry.",
             "branch_prompt": "Includes plan project bindings and the current atomic step project context.",
@@ -276,6 +276,74 @@ def step_lifecycle_capabilities() -> dict[str, Any]:
             "CASCADE_REQUIRED": "A frozen step would be reopened without cascade_uuid.",
             "CASCADE_CONFLICT": "cascade_uuid does not admit the mutation.",
             "GATE_RED": "Freezing was refused because the requested scope gate is red.",
+        },
+    }
+
+
+def plan_lifecycle_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for plan deletion and catalog visibility."""
+    return {
+        "purpose": (
+            "Plan-level removal and catalog visibility. A plan can be "
+            "soft-deleted (hidden from the default catalog but preserved and "
+            "reversible) or hard-deleted (removed permanently with all its "
+            "artifacts). Soft-deletion state lives in plan.deleted_at."
+        ),
+        "plan_fields": {
+            "deleted_at": (
+                "Soft-deletion timestamp; null for a live plan, non-null "
+                "when soft-deleted."
+            ),
+        },
+        "commands": {
+            "plan_delete": {
+                "mutates": True,
+                "modes": {
+                    "soft": (
+                        "Default (hard=false). Marks the plan deleted and "
+                        "hides it from the default plan_list; the plan and "
+                        "all artifacts are preserved and it stays resolvable "
+                        "by uuid or name. Idempotent: repeating it reports "
+                        "already_deleted=true without changing the original "
+                        "deletion time."
+                    ),
+                    "hard": (
+                        "hard=true. Permanently and irreversibly removes the "
+                        "plan row and every child artifact (revisions, "
+                        "paragraphs, concepts, relations, steps, node "
+                        "versions, refs, cascades, step runtime, context "
+                        "blocks) via ON DELETE CASCADE; applies whether or "
+                        "not the plan was previously soft-deleted."
+                    ),
+                },
+                "summary": (
+                    "Soft- or hard-delete a plan resolved by uuid or name; "
+                    "verifies the result by re-reading the plan row."
+                ),
+            },
+            "plan_list": {
+                "mutates": False,
+                "summary": (
+                    "Lists plans with their bound projects and a deleted "
+                    "flag; soft-deleted plans are hidden unless "
+                    "show_deleted=true."
+                ),
+            },
+        },
+        "read_surfaces": {
+            "plan_list": (
+                "Each row includes deleted (bool); pass show_deleted=true to "
+                "include soft-deleted plans."
+            ),
+        },
+        "invariants": [
+            "Soft delete only hides a plan from the default catalog; every other command keeps operating on it unchanged.",
+            "Soft delete is idempotent and never overwrites the original deletion time.",
+            "A soft-deleted plan keeps its name reserved by the plan-name uniqueness constraint until it is hard-deleted.",
+            "Hard delete is irreversible and cascades to every artifact belonging to the plan.",
+        ],
+        "domain_errors": {
+            "PLAN_NOT_FOUND": "The plan identifier does not resolve; a soft-deleted plan still resolves and can be deleted again.",
         },
     }
 

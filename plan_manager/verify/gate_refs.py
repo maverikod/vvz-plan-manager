@@ -101,11 +101,19 @@ def check_uniqueness_priority(tree: GateTree, steps: list[Step]) -> list[Finding
 
 
 def check_references_depends_on(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """Resolve depends_on entries to sibling steps."""
+    """Resolve depends_on entries to sibling steps.
+
+    ``depends_on`` is an ordering edge between siblings (same level, same
+    parent), so its resolution universe is the full plan tree, not the
+    scoped subset. Resolving against ``steps`` would make a branch-scoped
+    run falsely report a sibling target as unresolved (the sibling is not
+    in the branch triplet), yielding a scope-dependent verdict for one
+    revision. Report only on ``steps`` but resolve against ``tree.steps``.
+    """
     findings: list[Finding] = []
     scoped = {
         (step.level, step.parent_step_uuid, step.step_id)
-        for step in steps
+        for step in tree.steps.values()
     }
     for step in steps:
         for dep_step_id in step.depends_on:

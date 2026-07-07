@@ -136,7 +136,11 @@ Start, stop, and restart are systemd operations:
     systemctl restart planmgr
 
 Readiness and liveness are both reported by the /health endpoint, polled by
-both the container healthcheck and the systemd service supervision.
+both the container healthcheck and the systemd service supervision. The
+health command reports overall status as error when the required PostgreSQL
+database is unreachable and ok otherwise, and additionally reports the
+availability of the optional embedding service for observability without
+letting it change the overall status.
 
 Logs are written under /var/log/planmgr, mounted read-write from the host;
 the service wrapper's own output is additionally visible through
@@ -159,23 +163,36 @@ alongside it for configuration continuity.
 
 # COMMAND SURFACE
 
-The server exposes 52 commands over JSON-RPC, grouped into eleven families.
+The server exposes 60 domain commands over JSON-RPC, grouped into thirteen
+families, alongside the platform introspection commands info and health.
 The mutating subset within each family requires either an explicit open
 cascade (for machine-specification-level changes) or draft status on the
 target artifact (for global-step, tactical-step, and atomic-step-level
-changes); no mutation bypasses both.
+changes); no mutation bypasses both. Per-command parameters, return values,
+usage examples, and stable domain error codes are available at runtime from
+the info command (info section=capabilities) and the platform help command,
+so this overview never diverges from per-command detail.
 
-  plan                — catalog, create, project bindings, status, prompt-chain assembly (8 commands).
-  exchange            — export a plan at a revision, snapshot live working state, import a plan from files as the sole file-to-truth path, promote completed uploads into export_root (4 commands).
-  paragraph           — list, get, assign a label, toggle non-binding markup (4 commands).
-  mrs                 — list concepts, get concept, list relations, add concept, update concept, delete concept; every mutation runs inside a cascade (6 commands).
-  concept coverage    — concept coverage report, label coverage report (2 commands).
-  step                — create, get, update, delete, move, list, runtime get/report/list, uniform across levels 3-5 (9 commands).
-  graph               — dependency order, parallel execution waves, cycle report, impact report (4 commands).
-  branch              — branch view, branch verify (2 commands).
-  validation/scoring  — mechanical gate run, semantic index run, trust estimate (3 commands).
-  cascade             — begin, commit, abort, status (4 commands).
+  plan                — catalog (showing each plan's bound projects), create, status, soft/hard delete, and project bindings (9 commands).
+  exchange            — export a plan at a revision, snapshot live working state, import a plan from files as the sole file-to-truth path, promote completed uploads into export_root, and import/export the human requirement specification (6 commands).
+  paragraph           — list, get, assign a label, toggle non-binding markup on requirement paragraphs (4 commands).
+  mrs                 — list/get/add/update/delete concepts and list/add/delete relations; every mutation runs inside a cascade (8 commands).
+  coverage            — concept coverage report (1 command).
+  step                — create, get, tree, update, move, delete, set status, lifecycle transition, and runtime get/report/list, uniform across levels 3-5 (11 commands).
+  graph               — dependency edges, execution order, parallel execution waves, and impact report (4 commands).
+  prompt              — assemble a branch execution prompt and the whole-plan prompt chain (2 commands).
+  context             — compile, common, specific, and bundle context blocks, plus block get/list (6 commands).
+  branch              — branch dump view and branch weak-point report (2 commands).
+  validation/scoring  — mechanical gate run and semantic index score (2 commands).
+  cascade             — begin, preview, commit, abort (4 commands).
   info                — self-description: identity, build metadata, runtime summary, capabilities, planning standards glossary, embedded operator documentation (1 command).
+
+The platform health command is overridden so that, alongside process and
+platform liveness, it reports the availability of the services the server
+depends on: the required PostgreSQL database and the optional embedding
+service, under components.services. Its overall status is error when the
+required database is unreachable and ok otherwise; the optional embedding
+service is reported for observability and never changes the overall status.
 
 # FILES
 

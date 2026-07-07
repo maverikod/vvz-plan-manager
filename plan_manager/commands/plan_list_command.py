@@ -16,7 +16,10 @@ class PlanListCommand(Command):
 
     name: ClassVar[str] = "plan_list"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "List all plans in the catalog."
+    descr: ClassVar[str] = (
+        "List plans in the catalog with their bound projects; soft-deleted "
+        "plans are hidden unless show_deleted is true."
+    )
     category: ClassVar[str] = "plan"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -28,12 +31,22 @@ class PlanListCommand(Command):
         """Return the machine-readable input schema for plan_list.
 
         Returns:
-            dict: JSON-schema-like dict with no properties and no
-                required parameters.
+            dict: JSON-schema-like dict with one optional boolean
+                ``show_deleted`` parameter (default False).
         """
         return {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "show_deleted": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, include soft-deleted plans in the "
+                        "catalog; when false (the default), soft-deleted "
+                        "plans are omitted."
+                    ),
+                    "default": False,
+                },
+            },
             "required": [],
             "additionalProperties": False,
         }
@@ -48,32 +61,45 @@ class PlanListCommand(Command):
         return get_plan_list_metadata(cls)
 
     def validate_params(self, params: dict) -> dict:
-        """Validate plan_list parameters (none beyond the base schema check).
+        """Validate and normalize plan_list parameters.
 
         Args:
             params: Raw parameters as received by the adapter.
 
         Returns:
-            dict: The parameters unchanged (after base validation).
+            dict: Normalized parameters with ``show_deleted`` defaulted to
+                False when absent.
+
+        Raises:
+            ValueError: When ``show_deleted`` is present but not a boolean;
+                a parameter-shape violation, not a domain condition.
         """
         params = super().validate_params(params)
+        show_deleted = params.get("show_deleted", False)
+        if not isinstance(show_deleted, bool):
+            raise ValueError("show_deleted must be a boolean")
+        params["show_deleted"] = show_deleted
         return params
 
     async def execute(self, **kwargs) -> SuccessResult | ErrorResult:
-        """List all plans in the catalog.
+        """List plans in the catalog with their bound projects.
 
         Args:
-            **kwargs: Unused; plan_list takes no parameters.
+            **kwargs: Validated parameters: ``show_deleted`` (bool). When
+                False (the default) soft-deleted plans are omitted.
 
         Returns:
             SuccessResult | ErrorResult: On success, data has "plans": a
                 list of dicts with "uuid", "name", "status",
-                "context_budget", "has_head". On unexpected failure, an
+                "context_budget", "has_head", the bound projects
+                ("project_ids", "project_count", "primary_project_id"), and
+                the soft-deletion flag "deleted". On unexpected failure, an
                 ErrorResult produced by map_exception.
         """
+        show_deleted = kwargs.get("show_deleted", False)
         try:
             with db_connection() as conn:
-                plans = list_plans(conn)
+                plans = list_plans(conn, show_deleted=show_deleted)
                 return SuccessResult(
                     data={
                         "plans": [
@@ -83,8 +109,10 @@ class PlanListCommand(Command):
                                 "status": pl.status,
                                 "context_budget": pl.context_budget,
                                 "has_head": pl.head_revision_uuid is not None,
+                                "project_ids": list(pl.project_ids),
                                 "project_count": len(pl.project_ids),
                                 "primary_project_id": pl.primary_project_id,
+                                "deleted": pl.deleted_at is not None,
                             }
                             for pl in plans
                         ]

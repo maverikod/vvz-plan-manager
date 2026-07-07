@@ -9,14 +9,15 @@ from plan_manager.commands.errors import map_exception
 from plan_manager.commands.info_metadata import get_info_metadata
 from plan_manager.commands.info_reference import (
     context_block_capabilities,
+    plan_lifecycle_capabilities,
     planning_standards_reference,
     prompt_chain_capabilities,
     project_binding_capabilities,
     step_lifecycle_capabilities,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
-from plan_manager.runtime.context import app_config, db_connection
-from plan_manager.scoring.embedding import EmbeddingUnavailable, fetch_vector
+from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.probes import probe_database, probe_embedding
 
 
 _SECTIONS = (
@@ -115,6 +116,7 @@ class InfoCommand(Command):
                 "context_blocks": context_block_capabilities(),
                 "prompt_chain": prompt_chain_capabilities(),
                 "step_lifecycle": step_lifecycle_capabilities(),
+                "plan_lifecycle": plan_lifecycle_capabilities(),
             }
         if section == "planning_standards":
             return planning_standards_reference()
@@ -124,14 +126,7 @@ class InfoCommand(Command):
 
     @staticmethod
     def _runtime_summary() -> dict[str, Any]:
-        database_connected = True
-        try:
-            with db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    cur.fetchone()
-        except Exception:
-            database_connected = False
+        database_connected = probe_database()
 
         open_cascades = 0
         if database_connected:
@@ -141,20 +136,10 @@ class InfoCommand(Command):
                     row = cur.fetchone()
                     open_cascades = row[0] if row is not None else 0
 
-        cfg = app_config()
-        if cfg.embedding_url is None:
-            embedding_service = "unconfigured"
-        else:
-            try:
-                fetch_vector(cfg.embedding_url, "probe", timeout=3.0)
-                embedding_service = "reachable"
-            except EmbeddingUnavailable:
-                embedding_service = "unreachable"
-
         return {
             "database_connected": database_connected,
             "open_cascades": open_cascades,
-            "embedding_service": embedding_service,
+            "embedding_service": probe_embedding(),
         }
 
     @classmethod

@@ -151,6 +151,9 @@ class AppConfig:
     Attributes:
         embedding_url: The configured embedding service URL, or None when
             the embedding service is not configured.
+        embedding_timeout: The configured per-request embedding timeout in
+            seconds, governing every embed call (scoring and the info/health
+            reachability probe).
         export_root: The default export root directory used when a caller
             passes a relative export path.
         scoring_threshold: The configured scoring pass/fail threshold.
@@ -163,6 +166,7 @@ class AppConfig:
     """
 
     embedding_url: str | None
+    embedding_timeout: float
     export_root: str
     scoring_threshold: float
     scoring_aggregation: str
@@ -177,6 +181,7 @@ def app_config() -> AppConfig:
         AppConfig: The flat projection built from the validated
             configuration section returned by ``_require_section()``:
             ``embedding_url`` from ``section.embedding.url``,
+            ``embedding_timeout`` from ``section.embedding.timeout``,
             ``export_root`` from ``section.export_root``,
             ``scoring_threshold`` from ``section.scoring.threshold``,
             ``scoring_aggregation`` from ``section.scoring.aggregation``,
@@ -189,6 +194,7 @@ def app_config() -> AppConfig:
     section = _require_section()
     return AppConfig(
         embedding_url=section.embedding.url,
+        embedding_timeout=section.embedding.timeout,
         export_root=section.export_root,
         scoring_threshold=section.scoring.threshold,
         scoring_aggregation=section.scoring.aggregation,

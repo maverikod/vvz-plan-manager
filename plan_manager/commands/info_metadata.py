@@ -40,7 +40,8 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "capabilities section is intended for models and agents that "
             "need a compact, machine-readable map of available workflows, "
             "including project binding commands, step lifecycle transitions, "
-            "bulk freeze behavior, prompt-chain compilation, read surfaces, "
+            "bulk freeze behavior, plan_lifecycle soft/hard deletion and "
+            "catalog visibility, prompt-chain compilation, read surfaces, "
             "invariants, and stable domain error codes. The step_lifecycle "
             "capability group explicitly documents step_transition, its "
             "whole_plan/G-NNN/G-NNN/T-NNN scopes, dry_run behavior, "
@@ -108,9 +109,10 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                         "Machine-readable workflow notes for agents, "
                         "including command families, project-binding "
                         "invariants, step lifecycle transition and bulk freeze "
-                        "semantics, prompt-chain compilation, read surfaces, "
-                        "import/export behavior, prompt behavior, and stable "
-                        "domain error codes."
+                        "semantics, plan_lifecycle soft/hard deletion and "
+                        "catalog visibility, prompt-chain compilation, read "
+                        "surfaces, import/export behavior, prompt behavior, "
+                        "and stable domain error codes."
                     ),
                     "planning_standards": (
                         "Structured glossary of planning standards concepts: "

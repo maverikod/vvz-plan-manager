@@ -63,12 +63,13 @@ def compute_trust(
     base_url: str,
     concept_definitions: list[str],
     trust_floor: float,
+    timeout: float = 60.0,
 ) -> TrustReport:
     """Compute the TrustEstimate for a set of concept definitions."""
     vectors: list[list[float]] = []
     for definition in concept_definitions:
         try:
-            vectors.append(embed_text(conn, base_url, definition))
+            vectors.append(embed_text(conn, base_url, definition, timeout=timeout))
         except EmbeddingUnavailable:
             return TrustReport(
                 trust=trust_floor,

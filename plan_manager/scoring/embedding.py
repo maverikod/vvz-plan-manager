@@ -210,7 +210,12 @@ def fetch_vector(base_url: str, text: str, timeout: float = 60.0) -> list[float]
         raise EmbeddingUnavailable(str(exc)) from exc
 
 
-def embed_text(conn: psycopg.Connection, base_url: str, text: str) -> list[float]:
+def embed_text(
+    conn: psycopg.Connection,
+    base_url: str,
+    text: str,
+    timeout: float = 60.0,
+) -> list[float]:
     """Return the embedding vector for ``text``, using the cache first.
 
     Parameters
@@ -222,6 +227,9 @@ def embed_text(conn: psycopg.Connection, base_url: str, text: str) -> list[float
         ``fetch_vector`` on a cache miss.
     text:
         The text whose embedding vector is requested.
+    timeout:
+        Per-request timeout in seconds passed to ``fetch_vector`` on a
+        cache miss; the operator-configured embedding timeout.
 
     Returns
     -------
@@ -245,6 +253,6 @@ def embed_text(conn: psycopg.Connection, base_url: str, text: str) -> list[float
     cached = get_cached_vector(conn, text)
     if cached is not None:
         return cached
-    vector = fetch_vector(base_url, text)
+    vector = fetch_vector(base_url, text, timeout=timeout)
     store_vector(conn, text, vector)
     return vector

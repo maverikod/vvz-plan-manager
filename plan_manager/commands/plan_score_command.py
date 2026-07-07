@@ -183,6 +183,7 @@ class PlanScoreCommand(Command):
                     concept_weight=cfg.concept_weight,
                     trust_floor=cfg.trust_floor,
                     embedding_url=cfg.embedding_url,
+                    embedding_timeout=cfg.embedding_timeout,
                 )
                 if scope == "plan":
                     score = score_plan(conn, p.uuid, config)

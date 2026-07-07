@@ -24,20 +24,41 @@ def get_plan_list_metadata(cls: Any) -> dict:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Returns the database catalog of all plans (C-001). Each "
-            "row carries plan identity, name, status, context budget, "
-            "and whether the plan has a head revision. This command is "
-            "read-only: it never mutates the database and takes no "
-            "parameters."
+            "Returns the database catalog of plans (C-001), ordered by "
+            "name. Each row carries plan identity, name, status, context "
+            "budget, whether the plan has a head revision, the analysis "
+            "projects the plan is bound to (the full project_ids list, "
+            "their count, and the primary project id), and a deleted flag. "
+            "By default the catalog omits soft-deleted plans; pass "
+            "show_deleted=true to include them (each such row has "
+            "deleted=true). Soft-deleted plans remain fully operable and "
+            "resolvable by uuid or name; they are only hidden from this "
+            "default listing. This command is read-only: it never mutates "
+            "the database."
         ),
-        "parameters": {},
+        "parameters": {
+            "show_deleted": {
+                "description": (
+                    "When true, include soft-deleted plans in the catalog. "
+                    "When false or omitted, soft-deleted plans are hidden."
+                ),
+                "type": "boolean",
+                "required": False,
+                "default": False,
+                "examples": [False, True],
+            },
+        },
         "return_value": {
             "success": {
-                "description": "The catalog of all plans.",
+                "description": (
+                    "The plan catalog, each row including the plan's bound "
+                    "projects and soft-deletion flag."
+                ),
                 "data": {
                     "plans": (
-                        "List of plan rows, each with uuid, name, "
-                        "status, context_budget, and has_head."
+                        "List of plan rows, each with uuid, name, status, "
+                        "context_budget, has_head, project_ids, "
+                        "project_count, primary_project_id, and deleted."
                     ),
                 },
                 "example": {
@@ -48,6 +69,14 @@ def get_plan_list_metadata(cls: Any) -> dict:
                             "status": "draft",
                             "context_budget": 4000,
                             "has_head": False,
+                            "project_ids": [
+                                "4acd4be1-d166-417d-81c6-76bf77b4a392"
+                            ],
+                            "project_count": 1,
+                            "primary_project_id": (
+                                "4acd4be1-d166-417d-81c6-76bf77b4a392"
+                            ),
+                            "deleted": False,
                         }
                     ]
                 },
@@ -67,10 +96,21 @@ def get_plan_list_metadata(cls: Any) -> dict:
         },
         "usage_examples": [
             {
-                "description": "List all plans in the catalog.",
+                "description": "List the live plan catalog with bound projects.",
                 "command": {},
-                "explanation": "Returns every plan row currently stored.",
-            }
+                "explanation": (
+                    "Returns every plan that is not soft-deleted, each with "
+                    "its bound project_ids and primary_project_id."
+                ),
+            },
+            {
+                "description": "Include soft-deleted plans in the listing.",
+                "command": {"show_deleted": True},
+                "explanation": (
+                    "Returns all plans; soft-deleted rows are marked with "
+                    "deleted=true."
+                ),
+            },
         ],
         "error_cases": {
             "none": {
@@ -84,5 +124,7 @@ def get_plan_list_metadata(cls: Any) -> dict:
         },
         "best_practices": [
             "Call plan_list to discover valid plan identifiers before calling plan_status or other plan-scoped commands.",
+            "Read each row's primary_project_id and project_ids to see which analysis projects a plan is bound to.",
+            "Use show_deleted=true to audit or recover soft-deleted plans; a row with deleted=true was removed from the default catalog by plan_delete.",
         ],
     }

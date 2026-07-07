@@ -86,6 +86,7 @@ def attach_project(
             head_revision_uuid=plan.head_revision_uuid,
             project_ids=project_ids,
             primary_project_id=primary_project_id,
+            deleted_at=plan.deleted_at,
         ),
         already_exists,
     )
@@ -109,6 +110,7 @@ def set_primary_project(
         head_revision_uuid=plan.head_revision_uuid,
         project_ids=list(plan.project_ids),
         primary_project_id=normalized,
+        deleted_at=plan.deleted_at,
     )
 
 
@@ -122,6 +124,7 @@ def clear_primary_project(conn: psycopg.Connection, plan: Plan) -> Plan:
         head_revision_uuid=plan.head_revision_uuid,
         project_ids=list(plan.project_ids),
         primary_project_id=None,
+        deleted_at=plan.deleted_at,
     )
 
 

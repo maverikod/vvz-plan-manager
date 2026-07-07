@@ -131,6 +131,7 @@ def embedding_estimator(
     concept_rows,
     required: set[str],
     concept_weight: float,
+    timeout: float = 60.0,
 ) -> float:
     """Embedding-cosine estimator computed in the concept basis."""
 
@@ -142,12 +143,12 @@ def embedding_estimator(
             return 0.0
         return dot / (norm_a * norm_b)
 
-    v = embed_text(conn, base_url, branch_text(branch))
+    v = embed_text(conn, base_url, branch_text(branch), timeout=timeout)
 
     c_required: list[float] = []
     c_actual: list[float] = []
     for concept_id, definition, _source_labels in concept_rows:
-        e_i = embed_text(conn, base_url, definition)
+        e_i = embed_text(conn, base_url, definition, timeout=timeout)
         c_required.append(concept_weight if concept_id in required else 0.0)
         c_actual.append(max(0.0, _cosine(v, e_i)))
 

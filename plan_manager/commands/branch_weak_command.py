@@ -119,6 +119,7 @@ class BranchWeakCommand(Command):
                         concept_weight=cfg.concept_weight,
                         trust_floor=cfg.trust_floor,
                         embedding_url=cfg.embedding_url,
+                        embedding_timeout=cfg.embedding_timeout,
                     ),
                 )
                 return SuccessResult(

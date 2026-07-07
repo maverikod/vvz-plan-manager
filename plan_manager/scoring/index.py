@@ -40,6 +40,8 @@ class ScoringConfig:
             is unavailable. Published default 0.2.
         embedding_url: the embedding service base URL, or None when the
             embedding service is not configured.
+        embedding_timeout: per-request embedding timeout in seconds,
+            published default 60.0.
 
     Raises:
         ValueError: raised by __post_init__ when aggregation is not
@@ -51,6 +53,7 @@ class ScoringConfig:
     concept_weight: float = 1.0
     trust_floor: float = 0.2
     embedding_url: str | None = None
+    embedding_timeout: float = 60.0
 
     def __post_init__(self) -> None:
         if self.aggregation not in ("minimum", "fraction_above_threshold"):
@@ -135,6 +138,7 @@ def score_branch(
                 concept_rows,
                 required,
                 config.concept_weight,
+                config.embedding_timeout,
             )
         except EmbeddingUnavailable:
             pair_values.pop("embedding", None)
@@ -162,6 +166,7 @@ def score_branch(
             config.embedding_url,
             [definition for _, definition, _source_labels in concept_rows],
             config.trust_floor,
+            config.embedding_timeout,
         )
         trust = trust_report.trust
     else:

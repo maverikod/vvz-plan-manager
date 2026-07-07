@@ -9,6 +9,7 @@ this module never emits DDL.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 import uuid
 
 import psycopg
@@ -38,6 +39,10 @@ class Plan:
         head_revision_uuid: Identity of the current head revision in the
             version store (C-018), or None if no revision has been
             recorded yet.
+        deleted_at: Soft-deletion timestamp, or None for a live plan. A
+            soft-deleted plan is hidden from the default plan catalog but
+            otherwise behaves normally and stays resolvable by uuid or
+            name.
     """
 
     uuid: uuid.UUID
@@ -47,6 +52,7 @@ class Plan:
     head_revision_uuid: uuid.UUID | None
     project_ids: list[str]
     primary_project_id: str | None
+    deleted_at: datetime | None = None
 
 
 def create_plan(
@@ -113,7 +119,7 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
     """
     cur = conn.execute(
         "SELECT uuid, name, status, context_budget, head_revision_uuid, "
-        "project_ids, primary_project_id "
+        "project_ids, primary_project_id, deleted_at "
         "FROM plan WHERE uuid = %s",
         (plan_uuid,),
     )
@@ -128,24 +134,32 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
         head_revision_uuid=row[4],
         project_ids=list(row[5]) if row[5] else [],
         primary_project_id=row[6],
+        deleted_at=row[7],
     )
 
 
-def list_plans(conn: psycopg.Connection) -> list[Plan]:
-    """Return the plan catalog: every Plan row ordered by name.
+def list_plans(conn: psycopg.Connection, show_deleted: bool = False) -> list[Plan]:
+    """Return the plan catalog ordered by name.
 
     Args:
         conn: Open psycopg 3 database connection to use for the query.
+        show_deleted: When False (the default), soft-deleted plans (those
+            with a non-NULL ``deleted_at``) are excluded. When True, every
+            plan is returned, including soft-deleted ones.
 
     Returns:
-        A list of Plan objects, one per row in the plan table, ordered
-        ascending by name. Empty list if no plans exist.
+        A list of Plan objects ordered ascending by name. Empty list if no
+        plans match.
     """
-    cur = conn.execute(
+    sql = (
         "SELECT uuid, name, status, context_budget, head_revision_uuid, "
-        "project_ids, primary_project_id "
-        "FROM plan ORDER BY name"
+        "project_ids, primary_project_id, deleted_at "
+        "FROM plan"
     )
+    if not show_deleted:
+        sql += " WHERE deleted_at IS NULL"
+    sql += " ORDER BY name"
+    cur = conn.execute(sql)
     return [
         Plan(
             uuid=row[0],
@@ -155,6 +169,7 @@ def list_plans(conn: psycopg.Connection) -> list[Plan]:
             head_revision_uuid=row[4],
             project_ids=list(row[5]) if row[5] else [],
             primary_project_id=row[6],
+            deleted_at=row[7],
         )
         for row in cur.fetchall()
     ]
@@ -211,3 +226,45 @@ def set_head_revision(
         "UPDATE plan SET head_revision_uuid = %s WHERE uuid = %s",
         (revision_uuid, plan_uuid),
     )
+
+
+def soft_delete_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+    """Mark a Plan soft-deleted, hiding it from the default catalog.
+
+    Stamps ``deleted_at`` with the current time only for a live plan; a
+    plan that is already soft-deleted is left untouched, so the operation
+    is idempotent and never overwrites the original deletion time. The plan
+    row and all of its children are preserved; the plan stays resolvable by
+    uuid or name and every other command keeps working on it unchanged.
+
+    Args:
+        conn: Open psycopg 3 database connection to use for the update.
+        plan_uuid: Primary identity of the plan to soft-delete.
+
+    Returns:
+        None.
+    """
+    conn.execute(
+        "UPDATE plan SET deleted_at = now() "
+        "WHERE uuid = %s AND deleted_at IS NULL",
+        (plan_uuid,),
+    )
+
+
+def hard_delete_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
+    """Permanently delete a Plan and every artifact belonging to it.
+
+    Deletes the plan row; all child rows (revisions, paragraphs, concepts,
+    relations, steps, node versions, refs, cascades, step runtime, context
+    blocks) are removed by the ON DELETE CASCADE foreign keys that reference
+    ``plan(uuid)``. This is irreversible and applies regardless of whether
+    the plan was previously soft-deleted.
+
+    Args:
+        conn: Open psycopg 3 database connection to use for the delete.
+        plan_uuid: Primary identity of the plan to delete permanently.
+
+    Returns:
+        None.
+    """
+    conn.execute("DELETE FROM plan WHERE uuid = %s", (plan_uuid,))
