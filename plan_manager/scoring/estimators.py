@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 
-from plan_manager.scoring.embedding import embed_text
 from plan_manager.views.branch import Branch
 
 
@@ -125,15 +124,18 @@ def branch_text(branch: Branch) -> str:
 
 
 def embedding_estimator(
-    conn,
-    base_url: str,
     branch: Branch,
     concept_rows,
     required: set[str],
     concept_weight: float,
-    timeout: float = 60.0,
+    vectors: dict[str, list[float]],
 ) -> float:
-    """Embedding-cosine estimator computed in the concept basis."""
+    """Embedding-cosine estimator computed in the concept basis.
+
+    Consumes a precomputed ``vectors`` map from text to embedding vector
+    (branch text and every concept definition), so it performs no network
+    call: all vectorization happens once, up front, as a single batch.
+    """
 
     def _cosine(a: list[float], b: list[float]) -> float:
         dot = sum(x * y for x, y in zip(a, b))
@@ -143,12 +145,12 @@ def embedding_estimator(
             return 0.0
         return dot / (norm_a * norm_b)
 
-    v = embed_text(conn, base_url, branch_text(branch), timeout=timeout)
+    v = vectors[branch_text(branch)]
 
     c_required: list[float] = []
     c_actual: list[float] = []
     for concept_id, definition, _source_labels in concept_rows:
-        e_i = embed_text(conn, base_url, definition, timeout=timeout)
+        e_i = vectors[definition]
         c_required.append(concept_weight if concept_id in required else 0.0)
         c_actual.append(max(0.0, _cosine(v, e_i)))
 

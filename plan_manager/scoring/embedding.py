@@ -3,6 +3,11 @@
 Provides text embedding retrieval with a database-backed cache keyed by
 content hash, and an explicit typed unavailability condition instead of
 raising on service failure.
+
+The batch layer (cache-first array vectorization through one queued embedding
+job) and the model-readiness probe live in
+:mod:`plan_manager.scoring.embedding_batch`, which builds on the primitives
+here; they are split out to keep this module within the file-size limit.
 """
 
 import json
@@ -17,6 +22,13 @@ from embed_client.exceptions import EmbedClientError, EmbedError
 import psycopg
 
 from plan_manager.storage.canonical import content_hash
+
+
+# Embedding model readiness states (see embedding_batch.embedding_readiness).
+READINESS_UNCONFIGURED = "unconfigured"
+READINESS_READY = "ready"
+READINESS_NOT_READY = "not_ready"
+READINESS_UNREACHABLE = "unreachable"
 
 
 class EmbeddingUnavailable(Exception):

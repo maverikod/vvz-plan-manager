@@ -76,6 +76,12 @@ def get_plan_score_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "required": False,
                 "default": False,
             },
+            "require_embeddings": {
+                "description": "When true, refuse with EMBEDDINGS_UNAVAILABLE if the embedding model is not ready instead of returning a degraded score; when false (default), a not-ready embedding model degrades the score to the deterministic estimators and is reported under the 'embedding' result block.",
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
             "expected_revision": {
                 "description": "The caller's view of the plan head revision, as a UUID string. When supplied and it does not equal the current head revision, the command refuses with VERDICT_STALE instead of scoring against a moving target.",
                 "type": "string",

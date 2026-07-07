@@ -13,6 +13,7 @@ from plan_manager.commands.info_reference import (
     planning_standards_reference,
     prompt_chain_capabilities,
     project_binding_capabilities,
+    step_dependency_capabilities,
     step_lifecycle_capabilities,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
@@ -116,6 +117,7 @@ class InfoCommand(Command):
                 "context_blocks": context_block_capabilities(),
                 "prompt_chain": prompt_chain_capabilities(),
                 "step_lifecycle": step_lifecycle_capabilities(),
+                "step_dependencies": step_dependency_capabilities(),
                 "plan_lifecycle": plan_lifecycle_capabilities(),
             }
         if section == "planning_standards":

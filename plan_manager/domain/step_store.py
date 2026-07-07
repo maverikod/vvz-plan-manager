@@ -231,3 +231,29 @@ def update_step_fields_concepts_project(
         "UPDATE step SET fields = %s, concepts = %s, project_id = %s WHERE uuid = %s",
         (Jsonb(fields), concepts, project_id, step_uuid),
     )
+
+
+def update_step_depends_on(
+    conn: psycopg.Connection,
+    step_uuid: uuid.UUID,
+    depends_on: list[str],
+) -> None:
+    """Overwrite one step's top-level depends_on sibling references.
+
+    depends_on is the real top-level graph column, not part of the JSON
+    fields dict; this writes it directly so the dependency graph (C-009),
+    plan_validate, and graph_order/graph_parallel_map see the new edges.
+
+    Args:
+        conn: Open database connection.
+        step_uuid: Immutable primary identity of the step to update.
+        depends_on: The complete new list of sibling step_id references
+            (same parent, same level), replacing the row's current value.
+
+    Returns:
+        None.
+    """
+    conn.execute(
+        "UPDATE step SET depends_on = %s WHERE uuid = %s",
+        (depends_on, step_uuid),
+    )

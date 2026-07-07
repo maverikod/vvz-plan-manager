@@ -6,16 +6,29 @@ the in-container PostgreSQL database (required) and the optional embedding
 service. Centralizing the probes here keeps the two commands' verdicts
 identical for one runtime state and ensures both honor the operator's
 configured embedding timeout rather than an ad-hoc constant.
+
+The embedding probe distinguishes a transport-reachable service from an
+initialized model: it queries the embedding service health and inspects the
+model status, so a service that answers but whose model is ``not_initialized``
+is reported as ``not_ready`` rather than available. This is the same signal
+semantic scoring uses to fail fast instead of blocking on an uninitialized
+model.
 """
 
 from plan_manager.runtime.context import app_config, db_connection
-from plan_manager.scoring.embedding import EmbeddingUnavailable, fetch_vector
+from plan_manager.scoring.embedding import (
+    READINESS_NOT_READY,
+    READINESS_READY,
+    READINESS_UNCONFIGURED,
+    READINESS_UNREACHABLE,
+)
+from plan_manager.scoring.embedding_batch import embedding_health, embedding_readiness
 
-EMBEDDING_UNCONFIGURED = "unconfigured"
-EMBEDDING_REACHABLE = "reachable"
-EMBEDDING_UNREACHABLE = "unreachable"
-
-_PROBE_TEXT = "probe"
+# Backward-compatible aliases (info/health import these names).
+EMBEDDING_UNCONFIGURED = READINESS_UNCONFIGURED
+EMBEDDING_READY = READINESS_READY
+EMBEDDING_NOT_READY = READINESS_NOT_READY
+EMBEDDING_UNREACHABLE = READINESS_UNREACHABLE
 
 
 def probe_database() -> bool:
@@ -31,20 +44,21 @@ def probe_database() -> bool:
 
 
 def probe_embedding() -> str:
-    """Return the embedding service reachability state.
+    """Return the coarse embedding readiness state.
 
-    Returns ``"unconfigured"`` when no embedding URL is set, ``"reachable"``
-    when a probe embedding is returned within the configured timeout, and
-    ``"unreachable"`` when the service cannot be reached in time or returns
-    a malformed response. The probe uses the operator-configured
-    ``embedding.timeout`` so a healthy-but-not-instant service (a cold model
-    load or a multi-second async job) is not misreported as unreachable.
+    One of ``"unconfigured"``, ``"ready"``, ``"not_ready"``, or
+    ``"unreachable"``, using the operator-configured embedding timeout.
     """
     cfg = app_config()
-    if cfg.embedding_url is None:
-        return EMBEDDING_UNCONFIGURED
-    try:
-        fetch_vector(cfg.embedding_url, _PROBE_TEXT, timeout=cfg.embedding_timeout)
-        return EMBEDDING_REACHABLE
-    except EmbeddingUnavailable:
-        return EMBEDDING_UNREACHABLE
+    return embedding_readiness(cfg.embedding_url, cfg.embedding_timeout)
+
+
+def probe_embedding_detail() -> dict:
+    """Return detailed embedding readiness for the health surface.
+
+    ``{"state", "transport_available", "model_ready", "model_status"}`` —
+    separating whether the service answered (``transport_available``) from
+    whether its model is initialized (``model_ready``).
+    """
+    cfg = app_config()
+    return embedding_health(cfg.embedding_url, cfg.embedding_timeout)

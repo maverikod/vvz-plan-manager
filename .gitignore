@@ -238,3 +238,4 @@ old_code/
 *.tree
 mtls-certs/
 
+.env

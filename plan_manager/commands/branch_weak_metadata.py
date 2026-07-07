@@ -46,6 +46,12 @@ def get_branch_weak_metadata(cls: type) -> Dict[str, Any]:
                 "required": False,
                 "default": False,
             },
+            "require_embeddings": {
+                "description": "When true, refuse with EMBEDDINGS_UNAVAILABLE if the embedding model is not ready instead of returning a degraded ranking; when false (default), a not-ready model degrades to the deterministic estimators and is reported under the 'embedding' result block.",
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
         },
         "return_value": {
             "success": {

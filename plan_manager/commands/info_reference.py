@@ -280,6 +280,83 @@ def step_lifecycle_capabilities() -> dict[str, Any]:
     }
 
 
+def step_dependency_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for the step dependency command family."""
+    return {
+        "purpose": (
+            "Safe editing of a step's execution dependencies. depends_on is the "
+            "real top-level graph column of a step, never fields.depends_on; "
+            "these commands are the supported way to change it so plan_validate, "
+            "graph_order, and graph_parallel_map see the new edges."
+        ),
+        "edge_model": {
+            "direction": "current_step depends_on dependency_step: dependency_step runs before current_step.",
+            "storage": "depends_on holds bare sibling step_ids; commands accept and return canonical paths.",
+            "scope": (
+                "Dependencies are sibling-scoped: same parent and level. Allowed "
+                "shapes are GS->GS, TS->TS under one GS, and AS->AS under one TS. "
+                "Cross-level or cross-parent references are refused with "
+                "INVALID_DEPENDENCY_SCOPE; model cross-level ordering at the leaf "
+                "(AS) level."
+            ),
+        },
+        "commands": {
+            "step_dependency_list": {
+                "mutates": False,
+                "summary": "List one step's depends_on and its dependents.",
+            },
+            "step_dependency_add": {
+                "mutates": True,
+                "summary": "Add one sibling dependency; idempotent (already_present) and cycle-safe.",
+            },
+            "step_dependency_remove": {
+                "mutates": True,
+                "summary": "Remove one dependency; idempotent (already_absent); tolerates stale ids.",
+            },
+            "step_dependency_set": {
+                "mutates": True,
+                "summary": "Replace the whole depends_on list; deduped, cycle-checked; returns old and new.",
+            },
+            "step_dependency_clear": {
+                "mutates": True,
+                "summary": "Clear all dependencies of a step.",
+            },
+            "step_dependency_preview": {
+                "mutates": False,
+                "summary": "Dry-run a batch of changes; report validity, cycle risk, and before/after order/waves.",
+            },
+            "step_dependency_apply": {
+                "mutates": True,
+                "summary": "Apply a batch all-or-nothing as one revision (dry_run default true).",
+            },
+        },
+        "admission": (
+            "Every mutation runs under the same regime as step_update: draft and "
+            "ready_for_review steps are edited directly; a frozen step (or a step "
+            "frozen at or below) requires an open cascade via cascade_uuid."
+        ),
+        "invariants": [
+            "depends_on is a top-level step field; it is never written under fields.depends_on.",
+            "A dependency must reference an existing sibling step (same parent and level).",
+            "Self-dependencies and cycles are refused (SELF_DEPENDENCY, DEPENDENCY_CYCLE).",
+            "add and remove are idempotent and do not duplicate or fail on repeats.",
+            "A non-empty change set produces exactly one revision; step_dependency_apply is all-or-nothing.",
+            "Every mutating command re-reads the step and returns its actual depends_on.",
+        ],
+        "domain_errors": {
+            "STEP_NOT_FOUND": "The edited step reference does not resolve.",
+            "AMBIGUOUS_STEP_ID": "A bare step id resolves to more than one step; use a canonical path.",
+            "DEPENDENCY_STEP_NOT_FOUND": "The referenced dependency step does not resolve.",
+            "SELF_DEPENDENCY": "A step was asked to depend on itself.",
+            "INVALID_DEPENDENCY_SCOPE": "The dependency is not a sibling (different parent or level).",
+            "DEPENDENCY_CYCLE": "The change would create a cycle in the dependency graph.",
+            "CASCADE_REQUIRED": "A frozen target requires an open cascade.",
+            "CASCADE_CONFLICT": "cascade_uuid does not match the plan's open cascade.",
+            "FROZEN_ARTIFACT": "The target step or a descendant is frozen.",
+        },
+    }
+
+
 def plan_lifecycle_capabilities() -> dict[str, Any]:
     """Return machine-readable notes for plan deletion and catalog visibility."""
     return {

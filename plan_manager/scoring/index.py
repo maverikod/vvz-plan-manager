@@ -6,11 +6,15 @@ Implements the normative fold and refusal discipline of NormativeAlgorithmSet
 
 from __future__ import annotations
 
-import dataclasses
-import uuid
-
-from plan_manager.scoring.embedding import EmbeddingUnavailable
+from plan_manager.scoring.embedding import (
+    EmbeddingUnavailable,
+    READINESS_READY,
+    READINESS_UNCONFIGURED,
+    READINESS_UNREACHABLE,
+)
+from plan_manager.scoring.embedding_batch import embed_texts, embedding_readiness
 from plan_manager.scoring.estimators import (
+    branch_text,
     coverage_estimator,
     declared_concepts,
     embedding_estimator,
@@ -20,102 +24,83 @@ from plan_manager.scoring.estimators import (
 )
 from plan_manager.scoring.simulation import simulation_vote
 from plan_manager.scoring.trust import compute_trust
+from plan_manager.scoring.types import (
+    BranchScore,
+    PlanScore,
+    ScoreRefusedError,
+    ScoringConfig,
+)
 from plan_manager.verify.gate import run_gate
 from plan_manager.verify.verdict import current_head_revision
 from plan_manager.views.branch import resolve_branch
 from plan_manager.views.dependency_graph import load_steps
 
 
-@dataclasses.dataclass
-class ScoringConfig:
-    """Published-default configuration consumed by the SemanticIndex fold.
+def _branch_required_texts(branch, concept_rows) -> list[str]:
+    """Every text one branch needs vectorized: its text plus concept definitions."""
+    return [branch_text(branch)] + [
+        definition for _concept_id, definition, _source_labels in concept_rows
+    ]
 
-    Attributes:
-        threshold: branch/plan index threshold, published default 85.0.
-        aggregation: plan-level aggregation mode, "minimum" or
-            "fraction_above_threshold". Published default "minimum".
-        concept_weight: per-concept weight applied to required concepts in
-            embedding_estimator. Published default 1.0.
-        trust_floor: declared trust floor used when the embedding service
-            is unavailable. Published default 0.2.
-        embedding_url: the embedding service base URL, or None when the
-            embedding service is not configured.
-        embedding_timeout: per-request embedding timeout in seconds,
-            published default 60.0.
 
-    Raises:
-        ValueError: raised by __post_init__ when aggregation is not
-            "minimum" or "fraction_above_threshold".
+def _resolve_vectors(
+    conn,
+    config: ScoringConfig,
+    texts: list[str],
+    progress=None,
+    require_embeddings: bool = False,
+) -> tuple[dict[str, list[float]], str]:
+    """Preflight the embedding model once and batch-vectorize ``texts``.
+
+    Returns the text->vector map and the embedding readiness state. The
+    preflight distinguishes a transport-reachable service from an
+    initialized model, so an uninitialized model is detected before any
+    scoring work instead of stalling one embed per branch:
+
+    * unconfigured embedding URL -> ({}, "unconfigured"), always degrade;
+    * model not ready / unreachable -> raise EmbeddingUnavailable when
+      ``require_embeddings`` is set, otherwise ({}, state) to degrade fast;
+    * model ready -> one queued batch resolves every cache miss at once.
     """
+    if config.embedding_url is None:
+        return {}, READINESS_UNCONFIGURED
 
-    threshold: float = 85.0
-    aggregation: str = "minimum"
-    concept_weight: float = 1.0
-    trust_floor: float = 0.2
-    embedding_url: str | None = None
-    embedding_timeout: float = 60.0
+    if progress is not None:
+        progress(message="Проверка готовности embedding-модели")
+    state = embedding_readiness(config.embedding_url, config.embedding_timeout)
+    if state != READINESS_READY:
+        if require_embeddings:
+            raise EmbeddingUnavailable(f"embedding model {state}")
+        return {}, state
 
-    def __post_init__(self) -> None:
-        if self.aggregation not in ("minimum", "fraction_above_threshold"):
-            raise ValueError(
-                "aggregation must be 'minimum' or 'fraction_above_threshold', "
-                f"got {self.aggregation!r}"
-            )
-
-
-class ScoreRefusedError(Exception):
-    """Raised when a branch or plan scope's mechanical gate is not green.
-
-    A scope whose gate is not green at the current revision is never
-    measured (C-012 precedes C-013): score_branch and score_plan raise
-    this error instead of computing an index.
-    """
-
-
-@dataclasses.dataclass
-class BranchScore:
-    """The 0..100 completeness index of one branch (C-008) with its color.
-
-    Attributes:
-        branch_path: the branch's path, e.g. "G-001/T-002/A-003".
-        index: the 0..100 ensemble index.
-        color: "green" iff index >= threshold, else "red".
-        estimator_vector: mapping of estimator name to its vote value.
-        trust: the TrustEstimate (C-014) value accompanying this score.
-        revision_uuid: the plan revision the score was computed on.
-        below_threshold: True iff color == "red".
-    """
-
-    branch_path: str
-    index: float
-    color: str
-    estimator_vector: dict[str, float]
-    trust: float
-    revision_uuid: uuid.UUID | None
-    below_threshold: bool
+    try:
+        vectors = embed_texts(
+            conn,
+            config.embedding_url,
+            texts,
+            timeout=config.embedding_timeout,
+            progress=progress,
+        )
+    except EmbeddingUnavailable:
+        if require_embeddings:
+            raise
+        return {}, READINESS_UNREACHABLE
+    return vectors, READINESS_READY
 
 
-def score_branch(
+def _score_one(
     conn,
     plan_uuid,
-    gs_step_id: str,
-    ts_step_id: str,
-    as_step_id: str,
+    branch,
+    branch_path: str,
+    concept_rows,
     config: ScoringConfig,
+    vectors: dict[str, list[float]],
+    embedding_state: str,
+    revision_uuid,
     model_output: str | None = None,
 ) -> BranchScore:
-    """Compute the 0..100 SemanticIndex (C-013) score of one branch."""
-    branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
-    branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
-
-    report, _verdict = run_gate(conn, plan_uuid, branch=branch)
-    if not report.green:
-        raise ScoreRefusedError(
-            f"{branch_path} refused: mechanical gate not green "
-            f"({sum(len(c.findings) for c in report.checks)} findings)"
-        )
-
-    concept_rows = load_concept_rows(conn, plan_uuid)
+    """Pure SemanticIndex fold for one already-resolved branch (no network)."""
     required = required_concepts(branch, concept_rows)
     declared = declared_concepts(branch)
 
@@ -129,19 +114,11 @@ def score_branch(
 
     pair_values: dict[str, float] = {}
 
-    if config.embedding_url is not None:
-        try:
-            pair_values["embedding"] = embedding_estimator(
-                conn,
-                config.embedding_url,
-                branch,
-                concept_rows,
-                required,
-                config.concept_weight,
-                config.embedding_timeout,
-            )
-        except EmbeddingUnavailable:
-            pair_values.pop("embedding", None)
+    embedding_available = embedding_state == READINESS_READY
+    if embedding_available:
+        pair_values["embedding"] = embedding_estimator(
+            branch, concept_rows, required, config.concept_weight, vectors
+        )
 
     sim_vote = simulation_vote(model_output, branch.atomic.fields.get("prompt", ""))
     if sim_vote is not None:
@@ -162,17 +139,13 @@ def score_branch(
 
     if "embedding" in pair_values:
         trust_report = compute_trust(
-            conn,
-            config.embedding_url,
             [definition for _, definition, _source_labels in concept_rows],
+            vectors,
             config.trust_floor,
-            config.embedding_timeout,
         )
         trust = trust_report.trust
     else:
         trust = config.trust_floor
-
-    revision_uuid = current_head_revision(conn, plan_uuid)
 
     return BranchScore(
         branch_path=branch_path,
@@ -182,37 +155,90 @@ def score_branch(
         trust=trust,
         revision_uuid=revision_uuid,
         below_threshold=below_threshold,
+        embedding_state=embedding_state,
     )
 
 
-@dataclasses.dataclass
-class PlanScore:
-    """The conservative plan-level aggregation of every branch's index.
+def score_branch(
+    conn,
+    plan_uuid,
+    gs_step_id: str,
+    ts_step_id: str,
+    as_step_id: str,
+    config: ScoringConfig,
+    model_output: str | None = None,
+    progress=None,
+    require_embeddings: bool = False,
+) -> BranchScore:
+    """Compute the 0..100 SemanticIndex (C-013) score of one branch."""
+    branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
+    branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
 
-    Attributes:
-        index: the aggregated 0..100 plan index.
-        color: "green" iff index >= threshold, else "red".
-        aggregation: the aggregation mode used, "minimum" or
-            "fraction_above_threshold".
-        weakest: up to 3 BranchScore entries, ascending by index.
-        revision_uuid: the plan revision the score was computed on.
+    if progress is not None:
+        progress(pct=0, message=f"Scoring branch {branch_path}")
+
+    report, _verdict = run_gate(conn, plan_uuid, branch=branch)
+    if not report.green:
+        raise ScoreRefusedError(
+            f"{branch_path} refused: mechanical gate not green "
+            f"({sum(len(c.findings) for c in report.checks)} findings)"
+        )
+    if progress is not None:
+        progress(pct=10, message="Mechanical gate green")
+
+    concept_rows = load_concept_rows(conn, plan_uuid)
+    texts = _branch_required_texts(branch, concept_rows)
+    vectors, embedding_state = _resolve_vectors(
+        conn, config, texts, progress, require_embeddings
+    )
+    if progress is not None:
+        progress(pct=70, message="Estimators")
+
+    revision_uuid = current_head_revision(conn, plan_uuid)
+    score = _score_one(
+        conn,
+        plan_uuid,
+        branch,
+        branch_path,
+        concept_rows,
+        config,
+        vectors,
+        embedding_state,
+        revision_uuid,
+        model_output,
+    )
+    if progress is not None:
+        progress(pct=100, message="Done")
+    return score
+
+
+def score_plan(
+    conn,
+    plan_uuid,
+    config: ScoringConfig,
+    progress=None,
+    require_embeddings: bool = False,
+) -> PlanScore:
+    """Compute the plan-level SemanticIndex (C-013) aggregation.
+
+    Vectorizes the whole plan once: a single embedding readiness preflight
+    and a single queued batch resolve every branch text and concept
+    definition, then each branch is folded from the in-memory vector map
+    with no further network calls. Progress is reported through ``progress``
+    (pct/message) so the queued job shows what it is doing instead of
+    sitting at 0.
     """
+    if progress is not None:
+        progress(pct=0, message="Semantic scoring started")
 
-    index: float
-    color: str
-    aggregation: str
-    weakest: list[BranchScore]
-    revision_uuid: uuid.UUID | None
-
-
-def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore:
-    """Compute the plan-level SemanticIndex (C-013) aggregation."""
     report, _verdict = run_gate(conn, plan_uuid, branch=None)
     if not report.green:
         raise ScoreRefusedError(
             f"plan {plan_uuid} refused: mechanical gate not green "
             f"({sum(len(c.findings) for c in report.checks)} findings)"
         )
+    if progress is not None:
+        progress(pct=5, message="Mechanical gate green")
 
     steps = load_steps(conn, plan_uuid)
 
@@ -233,12 +259,46 @@ def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore:
 
     triples.sort(key=lambda t: (t[0].step_id, t[1].step_id, t[2].step_id))
 
-    branch_scores = [
-        score_branch(
-            conn, plan_uuid, gs.step_id, ts.step_id, as_step.step_id, config, None
-        )
+    branches = [
+        resolve_branch(conn, plan_uuid, gs.step_id, ts.step_id, as_step.step_id)
         for gs, ts, as_step in triples
     ]
+    total = len(branches)
+    if progress is not None:
+        progress(pct=10, message=f"{total} branches enumerated")
+
+    concept_rows = load_concept_rows(conn, plan_uuid)
+    texts = [branch_text(b) for b in branches] + [
+        definition for _concept_id, definition, _source_labels in concept_rows
+    ]
+    vectors, embedding_state = _resolve_vectors(
+        conn, config, texts, progress, require_embeddings
+    )
+
+    revision_uuid = current_head_revision(conn, plan_uuid)
+
+    branch_scores: list[BranchScore] = []
+    for i, ((gs, ts, as_step), branch) in enumerate(zip(triples, branches)):
+        branch_path = f"{gs.step_id}/{ts.step_id}/{as_step.step_id}"
+        branch_scores.append(
+            _score_one(
+                conn,
+                plan_uuid,
+                branch,
+                branch_path,
+                concept_rows,
+                config,
+                vectors,
+                embedding_state,
+                revision_uuid,
+                None,
+            )
+        )
+        if progress is not None and total:
+            progress(
+                pct=10 + int(80 * (i + 1) / total),
+                message=f"Scored branch {i + 1}/{total}",
+            )
 
     if not branch_scores:
         index = 100.0
@@ -250,7 +310,8 @@ def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore:
 
     color = "green" if index >= config.threshold else "red"
     weakest = sorted(branch_scores, key=lambda score: score.index)[:3]
-    revision_uuid = current_head_revision(conn, plan_uuid)
+    if progress is not None:
+        progress(pct=95, message="Aggregation complete")
 
     return PlanScore(
         index=index,
@@ -258,6 +319,7 @@ def score_plan(conn, plan_uuid, config: ScoringConfig) -> PlanScore:
         aggregation=config.aggregation,
         weakest=weakest,
         revision_uuid=revision_uuid,
+        embedding_state=embedding_state,
     )
 
 

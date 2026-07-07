@@ -163,7 +163,7 @@ alongside it for configuration continuity.
 
 # COMMAND SURFACE
 
-The server exposes 60 domain commands over JSON-RPC, grouped into thirteen
+The server exposes 67 domain commands over JSON-RPC, grouped into fourteen
 families, alongside the platform introspection commands info and health.
 The mutating subset within each family requires either an explicit open
 cascade (for machine-specification-level changes) or draft status on the
@@ -180,6 +180,7 @@ so this overview never diverges from per-command detail.
   coverage            — concept coverage report (1 command).
   step                — create, get, tree, update, move, delete, set status, lifecycle transition, and runtime get/report/list, uniform across levels 3-5 (11 commands).
   graph               — dependency edges, execution order, parallel execution waves, and impact report (4 commands).
+  step dependency     — list, add, remove, set, clear, preview, and batch-apply a step's top-level depends_on edges (sibling-scoped, cycle-safe) (7 commands).
   prompt              — assemble a branch execution prompt and the whole-plan prompt chain (2 commands).
   context             — compile, common, specific, and bundle context blocks, plus block get/list (6 commands).
   branch              — branch dump view and branch weak-point report (2 commands).

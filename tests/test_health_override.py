@@ -64,9 +64,21 @@ def test_health_metadata_is_complete() -> None:
     assert hc.HealthCommand.descr.strip()
 
 
+def _detail(state: str) -> dict:
+    """Build an embedding readiness detail dict for a given coarse state."""
+    ready = state == "ready"
+    reachable = state in ("ready", "not_ready")
+    return {
+        "state": state,
+        "transport_available": reachable,
+        "model_ready": ready,
+        "model_status": ("ready" if ready else ("not_initialized" if reachable else None)),
+    }
+
+
 def _run_health(monkeypatch, *, db: bool, embedding: str) -> dict:
     monkeypatch.setattr(hc, "probe_database", lambda: db)
-    monkeypatch.setattr(hc, "probe_embedding", lambda: embedding)
+    monkeypatch.setattr(hc, "probe_embedding_detail", lambda: _detail(embedding))
     result = asyncio.run(hc.HealthCommand().execute())
     return result.data
 
@@ -79,6 +91,7 @@ def test_status_error_only_when_required_database_down(monkeypatch) -> None:
     assert services["embedding"]["required"] is False
     assert services["embedding"]["available"] is False
     assert services["embedding"]["state"] == "unreachable"
+    assert services["embedding"]["transport_available"] is False
 
 
 def test_optional_embedding_never_flips_status(monkeypatch) -> None:
@@ -90,10 +103,23 @@ def test_optional_embedding_never_flips_status(monkeypatch) -> None:
     assert "commands" in data["components"]
 
 
-def test_reachable_embedding_marked_available(monkeypatch) -> None:
-    data = _run_health(monkeypatch, db=True, embedding="reachable")
+def test_reachable_but_not_ready_is_unavailable(monkeypatch) -> None:
+    # Transport reachable but model not initialized -> available is False.
+    data = _run_health(monkeypatch, db=True, embedding="not_ready")
+    embedding = data["components"]["services"]["embedding"]
     assert data["status"] == "ok"
-    assert data["components"]["services"]["embedding"]["available"] is True
+    assert embedding["available"] is False
+    assert embedding["transport_available"] is True
+    assert embedding["model_ready"] is False
+    assert embedding["state"] == "not_ready"
+
+
+def test_ready_embedding_marked_available(monkeypatch) -> None:
+    data = _run_health(monkeypatch, db=True, embedding="ready")
+    embedding = data["components"]["services"]["embedding"]
+    assert data["status"] == "ok"
+    assert embedding["available"] is True
+    assert embedding["model_ready"] is True
 
 
 def test_probe_embedding_uses_configured_timeout(monkeypatch) -> None:
@@ -103,15 +129,15 @@ def test_probe_embedding_uses_configured_timeout(monkeypatch) -> None:
         embedding_url = "https://embed.example:8001"
         embedding_timeout = 42.0
 
-    def _fake_fetch(base_url, text, timeout):
+    def _fake_readiness(base_url, timeout):
         captured["base_url"] = base_url
         captured["timeout"] = timeout
-        return [0.0, 1.0]
+        return probes.EMBEDDING_READY
 
     monkeypatch.setattr(probes, "app_config", lambda: _Cfg())
-    monkeypatch.setattr(probes, "fetch_vector", _fake_fetch)
+    monkeypatch.setattr(probes, "embedding_readiness", _fake_readiness)
 
-    assert probes.probe_embedding() == probes.EMBEDDING_REACHABLE
+    assert probes.probe_embedding() == probes.EMBEDDING_READY
     assert captured["base_url"] == "https://embed.example:8001"
     assert captured["timeout"] == 42.0  # configured timeout, not a hardcoded constant
 
@@ -125,14 +151,21 @@ def test_probe_embedding_unconfigured(monkeypatch) -> None:
     assert probes.probe_embedding() == probes.EMBEDDING_UNCONFIGURED
 
 
-def test_probe_embedding_unreachable(monkeypatch) -> None:
+def test_probe_embedding_not_ready(monkeypatch) -> None:
     class _Cfg:
         embedding_url = "https://embed.example:8001"
         embedding_timeout = 5.0
 
-    def _raise(base_url, text, timeout):
-        raise probes.EmbeddingUnavailable("boom")
-
     monkeypatch.setattr(probes, "app_config", lambda: _Cfg())
-    monkeypatch.setattr(probes, "fetch_vector", _raise)
-    assert probes.probe_embedding() == probes.EMBEDDING_UNREACHABLE
+    monkeypatch.setattr(
+        probes, "embedding_health",
+        lambda base_url, timeout: {
+            "state": probes.EMBEDDING_NOT_READY,
+            "transport_available": True,
+            "model_ready": False,
+            "model_status": "not_initialized",
+        },
+    )
+    detail = probes.probe_embedding_detail()
+    assert detail["state"] == probes.EMBEDDING_NOT_READY
+    assert detail["model_ready"] is False

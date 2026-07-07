@@ -8,9 +8,6 @@ falling back to a declared floor when the embedding service is unavailable.
 from dataclasses import dataclass
 
 import numpy as np
-import psycopg
-
-from plan_manager.scoring.embedding import EmbeddingUnavailable, embed_text
 
 
 @dataclass
@@ -59,18 +56,21 @@ def trust_from_geometry(gram_determinant: float, n: int) -> float:
 
 
 def compute_trust(
-    conn: psycopg.Connection,
-    base_url: str,
     concept_definitions: list[str],
+    vectors_by_text: dict[str, list[float]],
     trust_floor: float,
-    timeout: float = 60.0,
 ) -> TrustReport:
-    """Compute the TrustEstimate for a set of concept definitions."""
+    """Compute the TrustEstimate for a set of concept definitions.
+
+    Consumes the precomputed ``vectors_by_text`` map (the same one-shot
+    batch used by the estimators). When any definition is absent from the
+    map — the embedding model was unavailable and scoring degraded — the
+    report falls back to the declared ``trust_floor``.
+    """
     vectors: list[list[float]] = []
     for definition in concept_definitions:
-        try:
-            vectors.append(embed_text(conn, base_url, definition, timeout=timeout))
-        except EmbeddingUnavailable:
+        vector = vectors_by_text.get(definition)
+        if vector is None:
             return TrustReport(
                 trust=trust_floor,
                 available=False,
@@ -78,6 +78,15 @@ def compute_trust(
                 gram_determinant=0.0,
                 spectrum=[],
             )
+        vectors.append(vector)
+    if not vectors:
+        return TrustReport(
+            trust=trust_floor,
+            available=False,
+            pairwise_cosines=[],
+            gram_determinant=0.0,
+            spectrum=[],
+        )
     cosines, determinant, spectrum = basis_geometry(vectors)
     trust = trust_from_geometry(determinant, len(vectors))
     return TrustReport(

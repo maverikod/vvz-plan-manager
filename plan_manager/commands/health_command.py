@@ -33,9 +33,8 @@ from mcp_proxy_adapter.commands.health_command import (
 
 from plan_manager.commands.health_metadata import get_health_metadata
 from plan_manager.runtime.probes import (
-    EMBEDDING_REACHABLE,
     probe_database,
-    probe_embedding,
+    probe_embedding_detail,
 )
 
 
@@ -62,7 +61,7 @@ class HealthCommand(_BuiltinHealthCommand):
         components = dict(data.get("components", {}))
 
         database_available = probe_database()
-        embedding_state = probe_embedding()
+        embedding = probe_embedding_detail()
         components["services"] = {
             "database": {
                 "required": True,
@@ -70,8 +69,14 @@ class HealthCommand(_BuiltinHealthCommand):
             },
             "embedding": {
                 "required": False,
-                "available": embedding_state == EMBEDDING_REACHABLE,
-                "state": embedding_state,
+                # available reflects genuine model readiness, not mere
+                # transport reachability; a reachable-but-uninitialized model
+                # is available=false with state "not_ready".
+                "available": embedding["model_ready"],
+                "transport_available": embedding["transport_available"],
+                "model_ready": embedding["model_ready"],
+                "model_status": embedding["model_status"],
+                "state": embedding["state"],
             },
         }
         status = "ok" if database_available else "error"

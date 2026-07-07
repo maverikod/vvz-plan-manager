@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
+from plan_manager.commands.progress import progress_from_context
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.scoring.index import ScoringConfig, branch_summary, score_branch, score_plan
@@ -64,6 +65,11 @@ class PlanScoreCommand(Command):
                     "type": "boolean",
                     "default": False,
                     "description": "Force per-estimator internals into the result even when the score is above threshold.",
+                },
+                "require_embeddings": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When true, fail fast with EMBEDDINGS_UNAVAILABLE if the embedding model is not ready instead of returning a degraded score; when false (default), a not-ready embedding model degrades the score to the deterministic estimators and is reported under 'embedding'.",
                 },
                 "expected_revision": {
                     "type": "string",
@@ -161,7 +167,9 @@ class PlanScoreCommand(Command):
         ts_step_id = kwargs.get("ts_step_id")
         as_step_id = kwargs.get("as_step_id")
         verbose = kwargs.get("verbose", False)
+        require_embeddings = kwargs.get("require_embeddings", False)
         expected_revision = kwargs.get("expected_revision")
+        progress = progress_from_context(kwargs.get("context"))
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
@@ -186,7 +194,13 @@ class PlanScoreCommand(Command):
                     embedding_timeout=cfg.embedding_timeout,
                 )
                 if scope == "plan":
-                    score = score_plan(conn, p.uuid, config)
+                    score = score_plan(
+                        conn,
+                        p.uuid,
+                        config,
+                        progress=progress,
+                        require_embeddings=require_embeddings,
+                    )
                     data = {
                         "scope": "plan",
                         "index": score.index,
@@ -195,18 +209,33 @@ class PlanScoreCommand(Command):
                         "weakest": [
                             branch_summary(b, verbose) for b in score.weakest
                         ],
+                        "embedding": {
+                            "available": score.embedding_state == "ready",
+                            "state": score.embedding_state,
+                        },
                         "revision_uuid": str(score.revision_uuid),
                     }
                     return SuccessResult(data=data)
                 try:
                     bs = score_branch(
-                        conn, p.uuid, gs_step_id, ts_step_id, as_step_id, config
+                        conn,
+                        p.uuid,
+                        gs_step_id,
+                        ts_step_id,
+                        as_step_id,
+                        config,
+                        progress=progress,
+                        require_embeddings=require_embeddings,
                     )
                 except ValueError as exc:
                     return domain_error("STEP_NOT_FOUND", str(exc))
                 data = {
                     "scope": "branch",
                     **branch_summary(bs, verbose),
+                    "embedding": {
+                        "available": bs.embedding_state == "ready",
+                        "state": bs.embedding_state,
+                    },
                     "revision_uuid": str(bs.revision_uuid),
                 }
                 return SuccessResult(data=data)

@@ -6,6 +6,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.branch_weak_metadata import get_branch_weak_metadata
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.progress import progress_from_context
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
@@ -24,7 +25,7 @@ class BranchWeakCommand(Command):
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
     result_class = SuccessResult
-    use_queue: ClassVar[bool] = False
+    use_queue: ClassVar[bool] = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -47,6 +48,17 @@ class BranchWeakCommand(Command):
                     "description": (
                         "When true, include per-estimator internals "
                         "in each weakest-branch summary."
+                    ),
+                    "default": False,
+                },
+                "require_embeddings": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, fail fast with EMBEDDINGS_UNAVAILABLE if the "
+                        "embedding model is not ready instead of returning a "
+                        "degraded ranking; when false (default), a not-ready model "
+                        "degrades to the deterministic estimators and is reported "
+                        "under 'embedding'."
                     ),
                     "default": False,
                 },
@@ -84,6 +96,7 @@ class BranchWeakCommand(Command):
         self,
         plan: str,
         verbose: bool = False,
+        require_embeddings: bool = False,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Rank the plan's branches by ascending semantic index.
@@ -106,6 +119,7 @@ class BranchWeakCommand(Command):
             code EMBEDDINGS_UNAVAILABLE when the embedding service is
             unreachable.
         """
+        progress = progress_from_context(context)
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
@@ -121,6 +135,8 @@ class BranchWeakCommand(Command):
                         embedding_url=cfg.embedding_url,
                         embedding_timeout=cfg.embedding_timeout,
                     ),
+                    progress=progress,
+                    require_embeddings=require_embeddings,
                 )
                 return SuccessResult(
                     data={
@@ -130,6 +146,10 @@ class BranchWeakCommand(Command):
                         "weakest": [
                             branch_summary(b, verbose) for b in score.weakest
                         ],
+                        "embedding": {
+                            "available": score.embedding_state == "ready",
+                            "state": score.embedding_state,
+                        },
                         "revision_uuid": str(score.revision_uuid),
                     }
                 )
