@@ -15,6 +15,7 @@ from plan_manager.scoring.embedding import (
 from plan_manager.scoring.embedding_batch import embed_texts, embedding_health
 from plan_manager.scoring.estimators import (
     branch_text,
+    coverage_diagnostics,
     coverage_estimator,
     declared_concepts,
     embedding_estimator,
@@ -137,6 +138,7 @@ def _score_one(
     """Pure SemanticIndex fold for one already-resolved branch (no network)."""
     required = required_concepts(branch, concept_rows)
     declared = declared_concepts(branch)
+    coverage = coverage_diagnostics(branch, concept_rows, required, declared)
 
     estimator_vector: dict[str, float] = {}
     weights: dict[str, float] = {}
@@ -191,6 +193,7 @@ def _score_one(
         below_threshold=below_threshold,
         embedding_state=embedding_state,
         embedding_detail=embedding_detail,
+        coverage=coverage,
     )
 
 
@@ -389,4 +392,9 @@ def branch_summary(score: BranchScore, verbose: bool = False) -> dict:
     if score.below_threshold or verbose:
         summary["estimator_vector"] = score.estimator_vector
         summary["trust"] = score.trust
+        if score.coverage is not None:
+            summary["coverage"] = {
+                "value": score.estimator_vector.get("coverage"),
+                **score.coverage,
+            }
     return summary

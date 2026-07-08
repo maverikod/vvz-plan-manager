@@ -23,8 +23,8 @@ def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:
         return [(row[0], row[1], list(row[2])) for row in cur.fetchall()]
 
 
-def required_concepts(branch: Branch, concept_rows) -> set[str]:
-    """Compute the concept_ids required by the branch's HRS slice."""
+def concepts_from_hrs_slice(branch: Branch, concept_rows) -> set[str]:
+    """Compute legacy required concept_ids from the branch's HRS slice labels."""
     slice_labels = {p.label for p in branch.hrs_slice if p.label is not None}
     required: set[str] = set()
     for concept_id, _definition, source_labels in concept_rows:
@@ -32,6 +32,37 @@ def required_concepts(branch: Branch, concept_rows) -> set[str]:
         if stripped & slice_labels:
             required.add(concept_id)
     return required
+
+
+def branch_scope_concepts(branch: Branch) -> tuple[set[str], str]:
+    """Return the branch's declared responsibility scope and its source."""
+    as_scope = set(branch.atomic.concepts)
+    if as_scope:
+        return as_scope, "as_or_ts_declared_scope"
+
+    ts_scope = set(branch.ts.concepts)
+    if ts_scope:
+        return ts_scope, "as_or_ts_declared_scope"
+
+    gs_scope = set(branch.gs.concepts)
+    if gs_scope:
+        return gs_scope, "gs_declared_scope"
+
+    return set(), "legacy_gs_source_labels"
+
+
+def required_concepts(branch: Branch, concept_rows) -> set[str]:
+    """Compute scope-aware concept_ids required by the branch.
+
+    Branch scoring is responsibility-scoped: concepts explicitly declared
+    by AS, then TS, then GS define the required scope. Legacy HRS label
+    expansion remains only as a fallback for old or incomplete plans that
+    declare no scope at any branch level.
+    """
+    scoped, _source = branch_scope_concepts(branch)
+    if scoped:
+        return scoped
+    return concepts_from_hrs_slice(branch, concept_rows)
 
 
 def declared_concepts(branch: Branch) -> set[str]:
@@ -48,6 +79,32 @@ def coverage_estimator(required: set[str], declared: set[str]) -> float:
     if not required:
         return 1.0
     return len(required & declared) / len(required)
+
+
+def coverage_diagnostics(
+    branch: Branch, concept_rows, required: set[str], declared: set[str]
+) -> dict:
+    """Build the verbose diagnostic block for deterministic coverage."""
+    _scoped, scope_source = branch_scope_concepts(branch)
+    source_labels_used = sorted(
+        p.label for p in branch.hrs_slice if p.label is not None
+    )
+
+    covered = required & declared
+    if required:
+        formula = f"{len(covered)} / {len(required)}"
+    else:
+        formula = "1.0 (no required concepts)"
+
+    return {
+        "required_concepts": sorted(required),
+        "declared_concepts": sorted(declared),
+        "missing_concepts": sorted(required - declared),
+        "extra_declared_concepts": sorted(declared - required),
+        "source_labels_used": source_labels_used,
+        "scope_source": scope_source,
+        "formula": formula,
+    }
 
 
 def reference_estimator(conn, branch: Branch, concept_rows) -> float:

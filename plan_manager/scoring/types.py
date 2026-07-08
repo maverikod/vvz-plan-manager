@@ -81,6 +81,10 @@ class BranchScore:
             carries the real reason a batch vectorization failed even though
             the embedding health endpoint reported ready, so scoring never
             collapses to an unexplained "unreachable".
+        coverage: verbose deterministic coverage breakdown: required
+            concepts, declared concepts, missing concepts, extra declared
+            concepts, source labels used for traceability, scope source,
+            and the coverage formula.
     """
 
     branch_path: str
@@ -92,6 +96,7 @@ class BranchScore:
     below_threshold: bool
     embedding_state: str = READINESS_UNCONFIGURED
     embedding_detail: str | None = None
+    coverage: dict | None = None
 
 
 @dataclasses.dataclass
