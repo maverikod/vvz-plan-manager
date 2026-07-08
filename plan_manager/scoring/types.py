@@ -75,6 +75,12 @@ class BranchScore:
             "ready" when the embedding estimator contributed, otherwise one
             of "unconfigured", "not_ready", or "unreachable" (score degraded
             to the deterministic estimators with trust at the floor).
+        embedding_detail: a precise diagnostic explaining why the embedding
+            estimator did not contribute when ``embedding_state`` is not
+            "ready"; ``None`` when the embedding estimator contributed. This
+            carries the real reason a batch vectorization failed even though
+            the embedding health endpoint reported ready, so scoring never
+            collapses to an unexplained "unreachable".
     """
 
     branch_path: str
@@ -85,6 +91,7 @@ class BranchScore:
     revision_uuid: uuid.UUID | None
     below_threshold: bool
     embedding_state: str = READINESS_UNCONFIGURED
+    embedding_detail: str | None = None
 
 
 @dataclasses.dataclass
@@ -101,6 +108,9 @@ class PlanScore:
         embedding_state: the embedding model readiness used for the whole
             plan aggregation (one preflight, one batch), "ready" when the
             embedding estimator contributed to every branch.
+        embedding_detail: a precise diagnostic explaining why the embedding
+            estimator did not contribute when ``embedding_state`` is not
+            "ready"; ``None`` when the embedding estimator contributed.
     """
 
     index: float
@@ -109,3 +119,4 @@ class PlanScore:
     weakest: list[BranchScore]
     revision_uuid: uuid.UUID | None
     embedding_state: str = READINESS_UNCONFIGURED
+    embedding_detail: str | None = None

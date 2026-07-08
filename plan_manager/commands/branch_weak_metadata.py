@@ -61,6 +61,7 @@ def get_branch_weak_metadata(cls: type) -> Dict[str, Any]:
                     "color": "The color verdict derived from the index and trust.",
                     "aggregation": "The aggregation method used across branches (e.g. minimum).",
                     "weakest": "List of up to 3 branch summaries ascending by semantic index.",
+                    "embedding": "Embedding readiness block: {available: bool, state: one of 'ready'|'unconfigured'|'not_ready'|'unreachable', detail: precise reason the embedding estimator did not contribute, present only when state is not 'ready'}. When health reports the model ready but the scoring batch vectorization fails, state is 'unreachable' and detail carries the real failure reason.",
                     "revision_uuid": "The plan revision the score was computed for.",
                 },
                 "example": {

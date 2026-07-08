@@ -12,7 +12,13 @@ from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
 from plan_manager.commands.progress import progress_from_context
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import app_config, db_connection
-from plan_manager.scoring.index import ScoringConfig, branch_summary, score_branch, score_plan
+from plan_manager.scoring.index import (
+    ScoringConfig,
+    branch_summary,
+    embedding_block,
+    score_branch,
+    score_plan,
+)
 from plan_manager.verify.verdict import current_head_revision
 
 
@@ -209,10 +215,9 @@ class PlanScoreCommand(Command):
                         "weakest": [
                             branch_summary(b, verbose) for b in score.weakest
                         ],
-                        "embedding": {
-                            "available": score.embedding_state == "ready",
-                            "state": score.embedding_state,
-                        },
+                        "embedding": embedding_block(
+                            score.embedding_state, score.embedding_detail
+                        ),
                         "revision_uuid": str(score.revision_uuid),
                     }
                     return SuccessResult(data=data)
@@ -232,10 +237,9 @@ class PlanScoreCommand(Command):
                 data = {
                     "scope": "branch",
                     **branch_summary(bs, verbose),
-                    "embedding": {
-                        "available": bs.embedding_state == "ready",
-                        "state": bs.embedding_state,
-                    },
+                    "embedding": embedding_block(
+                        bs.embedding_state, bs.embedding_detail
+                    ),
                     "revision_uuid": str(bs.revision_uuid),
                 }
                 return SuccessResult(data=data)

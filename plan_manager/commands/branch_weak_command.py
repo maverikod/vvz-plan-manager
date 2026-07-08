@@ -9,7 +9,12 @@ from plan_manager.commands.errors import map_exception
 from plan_manager.commands.progress import progress_from_context
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import app_config, db_connection
-from plan_manager.scoring.index import ScoringConfig, branch_summary, score_plan
+from plan_manager.scoring.index import (
+    ScoringConfig,
+    branch_summary,
+    embedding_block,
+    score_plan,
+)
 
 
 class BranchWeakCommand(Command):
@@ -146,10 +151,9 @@ class BranchWeakCommand(Command):
                         "weakest": [
                             branch_summary(b, verbose) for b in score.weakest
                         ],
-                        "embedding": {
-                            "available": score.embedding_state == "ready",
-                            "state": score.embedding_state,
-                        },
+                        "embedding": embedding_block(
+                            score.embedding_state, score.embedding_detail
+                        ),
                         "revision_uuid": str(score.revision_uuid),
                     }
                 )

@@ -32,6 +32,18 @@ from plan_manager.scoring.embedding import (
 )
 
 
+# The embedding service rejects an embed request whose text array is larger
+# than a fixed server-side maximum (observed limit: 20 texts per job; over it
+# every result item comes back with a null embedding and a ``batch_limit_
+# exceeded`` / ``encode_error`` per-item error, while the job itself still
+# "completes"). A whole plan routinely needs far more than that vectorized in
+# one scoring pass, so the cache-miss array is split into sub-batches of at
+# most this many texts, each submitted as its own queued job, and the vectors
+# are stitched back together in order. Kept safely under the observed 20 so a
+# tightened server limit does not silently break scoring again.
+MAX_EMBED_BATCH = 16
+
+
 def get_cached_vectors(
     conn: psycopg.Connection, texts: list[str]
 ) -> dict[str, list[float]]:
@@ -88,22 +100,18 @@ def store_vectors(
         )
 
 
-async def _fetch_vectors_async(
-    base_url: str, texts: list[str], timeout: float
+def _extract_chunk_vectors(
+    results: object, chunk: list[str]
 ) -> list[list[float]]:
-    client = _client_from_url(base_url, timeout=timeout)
-    try:
-        submitted = await client.embed(texts, wait=False, error_policy="fail_fast")
-        job_id = submitted.get("job_id")
-        if job_id:
-            completed = await client.wait_for_job(job_id, timeout=timeout)
-            results = completed.get("results")
-        else:
-            results = submitted.get("results")
-    finally:
-        with contextlib.suppress(Exception):
-            await client.close()
-    if not isinstance(results, list) or len(results) != len(texts):
+    """Validate one sub-batch response and return its vectors in order.
+
+    Raises ``EmbeddingUnavailable`` with a precise reason when the response is
+    malformed or an item carries no vector — surfacing the service's per-item
+    ``error`` (e.g. ``batch_limit_exceeded``) instead of a generic message, so
+    the real failure reaches the scoring diagnostic rather than being hidden
+    behind "missing embedding list".
+    """
+    if not isinstance(results, list) or len(results) != len(chunk):
         raise EmbeddingUnavailable(
             "embed batch returned a results list that does not match the "
             "number of requested texts"
@@ -114,35 +122,64 @@ async def _fetch_vectors_async(
             raise EmbeddingUnavailable("embed batch result item is not an object")
         embedding = item.get("embedding")
         if not isinstance(embedding, list):
+            item_error = item.get("error")
+            if item_error:
+                raise EmbeddingUnavailable(
+                    f"embed batch result item has no embedding vector: {item_error}"
+                )
             raise EmbeddingUnavailable("embed batch result item missing embedding list")
         vectors.append(embedding)
+    return vectors
+
+
+async def _fetch_vectors_async(
+    base_url: str, texts: list[str], timeout: float
+) -> list[list[float]]:
+    client = _client_from_url(base_url, timeout=timeout)
+    vectors: list[list[float]] = []
+    try:
+        for start in range(0, len(texts), MAX_EMBED_BATCH):
+            chunk = texts[start : start + MAX_EMBED_BATCH]
+            submitted = await client.embed(chunk, wait=False, error_policy="fail_fast")
+            job_id = submitted.get("job_id")
+            if job_id:
+                completed = await client.wait_for_job(job_id, timeout=timeout)
+                results = completed.get("results")
+            else:
+                results = submitted.get("results")
+            vectors.extend(_extract_chunk_vectors(results, chunk))
+    finally:
+        with contextlib.suppress(Exception):
+            await client.close()
     return vectors
 
 
 def fetch_vectors(
     base_url: str, texts: list[str], timeout: float = 60.0
 ) -> list[list[float]]:
-    """Vectorize a whole array of texts through one queued embedding batch.
+    """Vectorize a whole array of texts through queued embedding sub-batches.
 
-    The batch is submitted with ``wait=False`` so it runs through the
-    embedding service queue and its job can be observed, per the queue-only
-    vectorization contract. The whole batch is one queued job, so the
-    effective wait is bounded by ``max(timeout, 60.0)``. Returns the vectors
-    aligned one-to-one to ``texts``.
+    Each sub-batch of at most :data:`MAX_EMBED_BATCH` texts is submitted with
+    ``wait=False`` so it runs through the embedding service queue and its job
+    can be observed, per the queue-only vectorization contract, honoring the
+    server-side maximum batch size. Every sub-batch job is bounded by
+    ``max(timeout, 60.0)`` and the sub-batches run in order over one client
+    session; the vectors are returned aligned one-to-one to ``texts``.
 
     Raises
     ------
     EmbeddingUnavailable
-        When the batch cannot be reached, the job fails or times out, or the
+        When the batch cannot be reached, a job fails or times out, or the
         response does not carry one embedding per requested text.
     """
     if not texts:
         return []
     batch_timeout = max(timeout, 60.0)
+    n_chunks = (len(texts) + MAX_EMBED_BATCH - 1) // MAX_EMBED_BATCH
     try:
         return _run_async_blocking(
             _fetch_vectors_async(base_url, texts, batch_timeout),
-            timeout=batch_timeout + 5.0,
+            timeout=batch_timeout * n_chunks + 5.0,
         )
     except (
         asyncio.TimeoutError,

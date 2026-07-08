@@ -12,7 +12,7 @@ from plan_manager.scoring.embedding import (
     READINESS_UNCONFIGURED,
     READINESS_UNREACHABLE,
 )
-from plan_manager.scoring.embedding_batch import embed_texts, embedding_readiness
+from plan_manager.scoring.embedding_batch import embed_texts, embedding_health
 from plan_manager.scoring.estimators import (
     branch_text,
     coverage_estimator,
@@ -43,35 +43,61 @@ def _branch_required_texts(branch, concept_rows) -> list[str]:
     ]
 
 
+def _readiness_detail(health: dict) -> str:
+    """Explain, for a not-ready health verdict, why scoring cannot embed.
+
+    ``health`` is the detail dict returned by ``embedding_health`` (the same
+    probe the platform ``health`` command uses), so the scoring diagnostic and
+    the health surface always agree on why the model is unusable.
+    """
+    state = health.get("state")
+    if state == READINESS_UNCONFIGURED:
+        return "embedding service is not configured"
+    if state == READINESS_UNREACHABLE:
+        return "embedding health endpoint did not answer within the configured timeout"
+    status = health.get("model_status")
+    return (
+        "embedding transport reachable but model is not ready "
+        f"(model_status={status!r})"
+    )
+
+
 def _resolve_vectors(
     conn,
     config: ScoringConfig,
     texts: list[str],
     progress=None,
     require_embeddings: bool = False,
-) -> tuple[dict[str, list[float]], str]:
+) -> tuple[dict[str, list[float]], str, str | None]:
     """Preflight the embedding model once and batch-vectorize ``texts``.
 
-    Returns the text->vector map and the embedding readiness state. The
-    preflight distinguishes a transport-reachable service from an
-    initialized model, so an uninitialized model is detected before any
-    scoring work instead of stalling one embed per branch:
+    Returns the text->vector map, the embedding readiness state, and a precise
+    diagnostic string (``None`` when the model was ready and vectorization
+    succeeded). The preflight uses the same ``embedding_health`` probe the
+    platform ``health`` command uses, so both paths share one client and one
+    readiness verdict, and it distinguishes a transport-reachable service from
+    an initialized model:
 
-    * unconfigured embedding URL -> ({}, "unconfigured"), always degrade;
+    * unconfigured embedding URL -> ({}, "unconfigured", detail), always degrade;
     * model not ready / unreachable -> raise EmbeddingUnavailable when
-      ``require_embeddings`` is set, otherwise ({}, state) to degrade fast;
+      ``require_embeddings`` is set, otherwise ({}, state, detail) to degrade fast;
+    * model ready but the batch vectorization fails -> ({}, "unreachable",
+      detail) carrying the real embed exception, so health-ready-yet-scoring-
+      unreachable is never reported without an explanation;
     * model ready -> one queued batch resolves every cache miss at once.
     """
     if config.embedding_url is None:
-        return {}, READINESS_UNCONFIGURED
+        return {}, READINESS_UNCONFIGURED, "embedding service is not configured"
 
     if progress is not None:
         progress(message="Проверка готовности embedding-модели")
-    state = embedding_readiness(config.embedding_url, config.embedding_timeout)
+    health = embedding_health(config.embedding_url, config.embedding_timeout)
+    state = health["state"]
     if state != READINESS_READY:
+        detail = _readiness_detail(health)
         if require_embeddings:
-            raise EmbeddingUnavailable(f"embedding model {state}")
-        return {}, state
+            raise EmbeddingUnavailable(detail)
+        return {}, state, detail
 
     try:
         vectors = embed_texts(
@@ -81,11 +107,18 @@ def _resolve_vectors(
             timeout=config.embedding_timeout,
             progress=progress,
         )
-    except EmbeddingUnavailable:
+    except EmbeddingUnavailable as exc:
         if require_embeddings:
             raise
-        return {}, READINESS_UNREACHABLE
-    return vectors, READINESS_READY
+        # The health endpoint reported the model ready, yet the actual batch
+        # vectorization failed (a distinct transport: the embed job round-trip,
+        # not the health probe). Surface the real reason instead of collapsing
+        # to an unexplained "unreachable".
+        return {}, READINESS_UNREACHABLE, (
+            "embedding health reported ready but batch vectorization failed: "
+            f"{exc}"
+        )
+    return vectors, READINESS_READY, None
 
 
 def _score_one(
@@ -97,6 +130,7 @@ def _score_one(
     config: ScoringConfig,
     vectors: dict[str, list[float]],
     embedding_state: str,
+    embedding_detail: str | None,
     revision_uuid,
     model_output: str | None = None,
 ) -> BranchScore:
@@ -156,6 +190,7 @@ def _score_one(
         revision_uuid=revision_uuid,
         below_threshold=below_threshold,
         embedding_state=embedding_state,
+        embedding_detail=embedding_detail,
     )
 
 
@@ -188,7 +223,7 @@ def score_branch(
 
     concept_rows = load_concept_rows(conn, plan_uuid)
     texts = _branch_required_texts(branch, concept_rows)
-    vectors, embedding_state = _resolve_vectors(
+    vectors, embedding_state, embedding_detail = _resolve_vectors(
         conn, config, texts, progress, require_embeddings
     )
     if progress is not None:
@@ -204,6 +239,7 @@ def score_branch(
         config,
         vectors,
         embedding_state,
+        embedding_detail,
         revision_uuid,
         model_output,
     )
@@ -271,7 +307,7 @@ def score_plan(
     texts = [branch_text(b) for b in branches] + [
         definition for _concept_id, definition, _source_labels in concept_rows
     ]
-    vectors, embedding_state = _resolve_vectors(
+    vectors, embedding_state, embedding_detail = _resolve_vectors(
         conn, config, texts, progress, require_embeddings
     )
 
@@ -290,6 +326,7 @@ def score_plan(
                 config,
                 vectors,
                 embedding_state,
+                embedding_detail,
                 revision_uuid,
                 None,
             )
@@ -320,7 +357,26 @@ def score_plan(
         weakest=weakest,
         revision_uuid=revision_uuid,
         embedding_state=embedding_state,
+        embedding_detail=embedding_detail,
     )
+
+
+def embedding_block(embedding_state: str, embedding_detail: str | None) -> dict:
+    """Build the ``embedding`` block reported by the scoring commands.
+
+    Always carries ``available`` and ``state``; adds ``detail`` with the
+    precise reason whenever the embedding estimator did not contribute, so a
+    degraded score is never reported without an explanation of why — in
+    particular the real batch-vectorization failure when the health endpoint
+    reported the model ready.
+    """
+    block: dict = {
+        "available": embedding_state == READINESS_READY,
+        "state": embedding_state,
+    }
+    if embedding_detail is not None:
+        block["detail"] = embedding_detail
+    return block
 
 
 def branch_summary(score: BranchScore, verbose: bool = False) -> dict:

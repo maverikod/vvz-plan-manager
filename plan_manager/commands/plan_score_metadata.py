@@ -98,6 +98,7 @@ def get_plan_score_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "trust": "Trust value for the measurement (branch scope; and inside each entry of weakest for plan scope).",
                     "aggregation": "The aggregation strategy used to combine branch indexes into the plan index (plan scope only).",
                     "weakest": "List of branch summaries ranked by ascending index (plan scope only).",
+                    "embedding": "Embedding readiness block: {available: bool, state: one of 'ready'|'unconfigured'|'not_ready'|'unreachable', detail: precise reason the embedding estimator did not contribute, present only when state is not 'ready'}. When health reports the model ready but the scoring batch vectorization fails, state is 'unreachable' and detail carries the real failure reason.",
                     "revision_uuid": "String UUID of the exact revision the score was computed for.",
                 },
                 "example": {
