@@ -41,18 +41,26 @@ def _canonical_json_text(value: object) -> str:
 def step_content(step: Step) -> str:
     """Canonical JSON content of one step, used as a fixed part of prompt assembly.
 
+    The serialized ``slug`` is a display slug derived from the step's CURRENT
+    fields.name via display_slug (falling back to the stored immutable slug),
+    matching the slug used for dump filenames. The stored step.slug is
+    immutable after creation, so echoing it into the prompt body would embed a
+    stale value that contradicts the file name and target_file after a semantic
+    rename through step_update; deriving it from fields.name keeps the prompt
+    content internally consistent.
+
     Args:
         step: The step to serialize.
 
     Returns:
         Canonical JSON text of a dict with keys step_id, slug, level, depends_on,
         concepts, status, fields (in that order), taken from the step's
-        matching attributes.
+        matching attributes, with slug replaced by its current display slug.
     """
     return _canonical_json_text(
         {
             "step_id": step.step_id,
-            "slug": step.slug,
+            "slug": display_slug(step.fields.get("name"), step.slug),
             "level": step.level,
             "depends_on": step.depends_on,
             "concepts": step.concepts,
