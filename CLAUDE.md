@@ -16,7 +16,7 @@ lives HERE, not in individual agent packets.
 1. **Plan authoring** — creating or correcting a development plan. Entry
    prompt: `docs/prompts/plan-authoring.yaml` — classify the task phase, read
    the matching standard from `docs/standards/planning/` **in full**, then
-   execute per that YAML. No production code is written while authoring a plan.
+   execute per that YAML.
 2. **Plan execution** — a frozen, gate-green plan is executed: agents DO write
    the production files mandated by its frozen atomic-step prompts (fetched
    read-only from the plan store). Standard:
