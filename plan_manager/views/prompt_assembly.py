@@ -3,6 +3,7 @@ assembly algorithm (C-036).
 """
 
 import os
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -220,6 +221,36 @@ def check_budget(conn: psycopg.Connection, plan_uuid: uuid.UUID, prompt_text: st
     return TokenReport(estimate=estimate, budget=budget, exceeds=estimate > budget)
 
 
+_DISPLAY_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def display_slug(name: object, fallback: str) -> str:
+    """Derive a fresh filename slug from a step's current fields.name.
+
+    The stored step.slug is immutable after creation, while fields.name may be
+    changed by step_update; a filename derived from the stored slug can
+    therefore contradict the step's current semantic name. This helper
+    lowercases name, replaces every run of characters outside [a-z0-9] with a
+    single hyphen, and strips leading/trailing hyphens, yielding a value that
+    matches the step slug pattern. When name is not a non-empty string or
+    nothing remains after normalization, fallback (the stored slug) is
+    returned, so a dump filename never degrades to an empty slug.
+
+    Args:
+        name: The step's current fields.name value (any type; only a
+            non-empty str produces a derived slug).
+        fallback: The stored immutable step.slug to use when name yields
+            no usable slug.
+
+    Returns:
+        The derived display slug, or fallback.
+    """
+    if not isinstance(name, str):
+        return fallback
+    slug = _DISPLAY_SLUG_RE.sub("-", name.lower()).strip("-")
+    return slug or fallback
+
+
 def dump_prompts(conn: psycopg.Connection, plan_uuid: uuid.UUID, dump_dir: str) -> list[str]:
     """Write every atomic step's assembled prompt of the plan to files under dump_dir.
 
@@ -229,10 +260,14 @@ def dump_prompts(conn: psycopg.Connection, plan_uuid: uuid.UUID, dump_dir: str) 
     atomic step step_id). For each row, resolves the branch with
     resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id), assembles
     its prompt with assemble_prompt(conn, branch), and writes the prompt text to
-    the file path os.path.join(dump_dir, f"{gs_step_id}-{gs_slug}",
-    f"{ts_step_id}-{ts_slug}", f"{as_step_id}-{as_slug}.txt"), creating parent
-    directories with os.makedirs(target_dir, exist_ok=True) before writing. The
-    prompt files are written and never read back.
+    the file path os.path.join(dump_dir, f"{gs_step_id}-{gs_display_slug}",
+    f"{ts_step_id}-{ts_display_slug}", f"{as_step_id}-{as_display_slug}.txt"),
+    creating parent directories with os.makedirs(target_dir, exist_ok=True)
+    before writing. Each display slug is derived from the step's CURRENT
+    fields.name via display_slug (falling back to the stored immutable slug),
+    so dump filenames follow semantic renames performed through step_update
+    instead of echoing the stale creation-time slug. The prompt files are
+    written and never read back.
 
     Args:
         conn: Open database connection.
@@ -245,7 +280,9 @@ def dump_prompts(conn: psycopg.Connection, plan_uuid: uuid.UUID, dump_dir: str) 
     written: list[str] = []
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT gs.step_id, gs.slug, ts.step_id, ts.slug, as_.step_id, as_.slug "
+            "SELECT gs.step_id, gs.slug, gs.fields->>'name', "
+            "ts.step_id, ts.slug, ts.fields->>'name', "
+            "as_.step_id, as_.slug, as_.fields->>'name' "
             "FROM step as_ "
             "JOIN step ts ON as_.parent_step_uuid = ts.uuid "
             "JOIN step gs ON ts.parent_step_uuid = gs.uuid "
@@ -254,14 +291,28 @@ def dump_prompts(conn: psycopg.Connection, plan_uuid: uuid.UUID, dump_dir: str) 
             (plan_uuid,),
         )
         rows = cur.fetchall()
-    for gs_step_id, gs_slug, ts_step_id, ts_slug, as_step_id, as_slug in rows:
+    for (
+        gs_step_id,
+        gs_slug,
+        gs_name,
+        ts_step_id,
+        ts_slug,
+        ts_name,
+        as_step_id,
+        as_slug,
+        as_name,
+    ) in rows:
         branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
         prompt_text = assemble_prompt(conn, branch)
         target_dir = os.path.join(
-            dump_dir, f"{gs_step_id}-{gs_slug}", f"{ts_step_id}-{ts_slug}"
+            dump_dir,
+            f"{gs_step_id}-{display_slug(gs_name, gs_slug)}",
+            f"{ts_step_id}-{display_slug(ts_name, ts_slug)}",
         )
         os.makedirs(target_dir, exist_ok=True)
-        target_path = os.path.join(target_dir, f"{as_step_id}-{as_slug}.txt")
+        target_path = os.path.join(
+            target_dir, f"{as_step_id}-{display_slug(as_name, as_slug)}.txt"
+        )
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(prompt_text)
         written.append(target_path)

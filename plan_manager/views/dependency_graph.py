@@ -179,6 +179,7 @@ def build_edges(nodes: dict[uuid.UUID, Step]) -> set[tuple[uuid.UUID, uuid.UUID]
 def topological_order(
     nodes: dict[uuid.UUID, Step],
     edges: set[tuple[uuid.UUID, uuid.UUID]],
+    key_nodes: dict[uuid.UUID, Step] | None = None,
 ) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
     """Compute Kahn's topological order with deterministic tie-break.
 
@@ -187,9 +188,13 @@ def topological_order(
     tie_break_key(nodes, node_uuid) is extracted next.
 
     Args:
-        nodes: All steps of the plan, keyed by uuid.
+        nodes: The steps to order, keyed by uuid.
         edges: The edge set as returned by build_edges: each edge is
             (prerequisite_uuid, dependent_uuid).
+        key_nodes: Optional superset of nodes used only to resolve the
+            tie-break key (parent_path). Pass the full plan node set when
+            nodes is a level-restricted subset whose parent steps live
+            outside nodes. Defaults to nodes.
 
     Returns:
         A 2-tuple (order, cycle_nodes). order is the list of node uuids
@@ -199,6 +204,7 @@ def topological_order(
         holds the remaining (residual) node uuids sorted ascending by
         tie_break_key.
     """
+    resolver = nodes if key_nodes is None else key_nodes
     indegree: dict[uuid.UUID, int] = {u: 0 for u in nodes}
     dependents_map: dict[uuid.UUID, list[uuid.UUID]] = {u: [] for u in nodes}
     for prereq_uuid, dependent_uuid in edges:
@@ -210,7 +216,7 @@ def topological_order(
     remaining_indegree = dict(indegree)
 
     while ready:
-        ready.sort(key=lambda u: tie_break_key(nodes, u))
+        ready.sort(key=lambda u: tie_break_key(resolver, u))
         current = ready.pop(0)
         order.append(current)
         for dependent_uuid in dependents_map[current]:
@@ -222,7 +228,7 @@ def topological_order(
     residual = [u for u in nodes if u not in ordered_set]
     if not residual:
         return order, []
-    residual.sort(key=lambda u: tie_break_key(nodes, u))
+    residual.sort(key=lambda u: tie_break_key(resolver, u))
     return order, residual
 
 
@@ -252,6 +258,7 @@ def cycle_edges(
 def waves(
     nodes: dict[uuid.UUID, Step],
     edges: set[tuple[uuid.UUID, uuid.UUID]],
+    key_nodes: dict[uuid.UUID, Step] | None = None,
 ) -> list[list[uuid.UUID]]:
     """Partition nodes into parallel waves by prerequisite depth.
 
@@ -260,9 +267,13 @@ def waves(
     wave is sorted ascending by tie_break_key.
 
     Args:
-        nodes: All steps of the plan, keyed by uuid.
+        nodes: The steps to partition, keyed by uuid.
         edges: The edge set as returned by build_edges: each edge is
             (prerequisite_uuid, dependent_uuid).
+        key_nodes: Optional superset of nodes used only to resolve the
+            tie-break key (parent_path). Pass the full plan node set when
+            nodes is a level-restricted subset (e.g. atomic steps only)
+            whose parent steps live outside nodes. Defaults to nodes.
 
     Returns:
         The list of waves in order, each wave a list of node uuids
@@ -272,6 +283,7 @@ def waves(
         ValueError: With message "cycle detected", if a pass assigns no
             new node while unassigned nodes remain.
     """
+    resolver = nodes if key_nodes is None else key_nodes
     prereqs_of: dict[uuid.UUID, set[uuid.UUID]] = {u: set() for u in nodes}
     for prereq_uuid, dependent_uuid in edges:
         prereqs_of[dependent_uuid].add(prereq_uuid)
@@ -286,7 +298,7 @@ def waves(
         ]
         if not wave:
             raise ValueError("cycle detected")
-        wave.sort(key=lambda u: tie_break_key(nodes, u))
+        wave.sort(key=lambda u: tie_break_key(resolver, u))
         result.append(wave)
         assigned.update(wave)
         unassigned.difference_update(wave)

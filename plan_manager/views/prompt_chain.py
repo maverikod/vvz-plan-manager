@@ -28,7 +28,13 @@ from plan_manager.domain.step import Step
 from plan_manager.storage.canonical import canonical_json
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.branch import Branch
-from plan_manager.views.dependency_graph import load_steps, parent_path, waves
+from plan_manager.views.dependency_graph import (
+    build_edges,
+    load_steps,
+    parent_path,
+    topological_order,
+    waves,
+)
 from plan_manager.views.prompt_assembly import step_content
 
 
@@ -37,7 +43,6 @@ ROLES = ("coder", "review", "conscience")
 
 _GLOBAL_SCOPE_RE = re.compile(r"^G-\d{3}$")
 _TACTICAL_SCOPE_RE = re.compile(r"^(G-\d{3})/(T-\d{3})$")
-_DEPENDENCY_RELATION_TYPES = {"depends_on", "consumes", "uses"}
 
 
 @dataclass(frozen=True)
@@ -238,77 +243,39 @@ def _tool_instructions(role: str) -> dict[str, Any]:
     return {"content": content, "cache_key": cache_key(content)}
 
 
-def _module_token(path: str) -> str:
-    if path.endswith(".py"):
-        return path[:-3].replace("/", ".")
-    return path
-
-
-def _step_mentions_target(consumer: Step, producer_target: str) -> bool:
-    prompt = str(consumer.fields.get("prompt", ""))
-    return producer_target in prompt or _module_token(producer_target) in prompt
-
-
-def _derived_edges(
-    atomic_steps: list[Step],
-    relations: list[tuple[str, str, str]],
-) -> tuple[set[tuple[uuid.UUID, uuid.UUID]], str]:
-    """Derive atomic-step DAG edges for prompt-chain waves."""
-    by_concept: dict[str, list[Step]] = {}
-    for step in atomic_steps:
-        for concept_id in step.concepts:
-            by_concept.setdefault(concept_id, []).append(step)
-
-    edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
-
-    for from_concept, to_concept, relation_type in relations:
-        if relation_type not in _DEPENDENCY_RELATION_TYPES:
-            continue
-        for consumer in by_concept.get(from_concept, []):
-            for producer in by_concept.get(to_concept, []):
-                if consumer.uuid != producer.uuid:
-                    edges.add((producer.uuid, consumer.uuid))
-
-    producers = [
-        step
-        for step in atomic_steps
-        if step.fields.get("operation") in {"create_file", "rename_file"}
-        and step.fields.get("target_file")
-    ]
-    for producer in producers:
-        target = str(producer.fields["target_file"])
-        for consumer in atomic_steps:
-            if consumer.uuid != producer.uuid and _step_mentions_target(consumer, target):
-                edges.add((producer.uuid, consumer.uuid))
-
-    explicit_added = False
-    by_sibling_key = {
-        (step.parent_step_uuid, step.step_id): step for step in atomic_steps
-    }
-    for dependent in atomic_steps:
-        for dep_step_id in dependent.depends_on:
-            prerequisite = by_sibling_key.get((dependent.parent_step_uuid, dep_step_id))
-            if prerequisite is not None:
-                edges.add((prerequisite.uuid, dependent.uuid))
-                explicit_added = True
-
-    if explicit_added and len(edges) > 0:
-        return edges, "mixed"
-    return edges, "derived: relations+target_file"
-
-
 def _wave_data(
     atomic_steps: list[Step],
     edges: set[tuple[uuid.UUID, uuid.UUID]],
     nodes: dict[uuid.UUID, Step],
 ) -> tuple[list[list[str]], dict[uuid.UUID, int]]:
+    """Partition the scoped atomic steps into execution waves.
+
+    ``edges`` is the full plan edge set (build_edges over every node); it
+    is restricted here to edges whose endpoints are both scoped atomic
+    steps. Wave partitioning ranges over the atomic subset only, but the
+    tie-break key is resolved against the full ``nodes`` so parent paths
+    of repeated local ids (A-001 under different tactical steps) stay
+    canonical. On a genuine cycle the raised message carries the concrete
+    canonical cycle path.
+    """
     atomic_nodes = {step.uuid: step for step in atomic_steps}
     atomic_edges = {
         (prereq, dependent)
         for prereq, dependent in edges
         if prereq in atomic_nodes and dependent in atomic_nodes
     }
-    wave_rows = waves(atomic_nodes, atomic_edges)
+    try:
+        wave_rows = waves(atomic_nodes, atomic_edges, key_nodes=nodes)
+    except ValueError as exc:
+        if str(exc) == "cycle detected":
+            _order, residual = topological_order(
+                atomic_nodes, atomic_edges, key_nodes=nodes
+            )
+            cycle_path = " -> ".join(
+                _step_key(nodes, atomic_nodes[node_uuid]) for node_uuid in residual
+            )
+            raise ValueError(f"cycle detected: {cycle_path}") from exc
+        raise
     wave_index: dict[uuid.UUID, int] = {}
     result: list[list[str]] = []
     for index, row in enumerate(wave_rows):
@@ -353,7 +320,8 @@ def assemble_prompt_chain(
         include_statuses,
     )
 
-    edges, dag_source = _derived_edges(atomic_steps, relations)
+    edges = build_edges(nodes)
+    dag_source = "execution: depends_on+file_priority"
     wave_rows, wave_index = _wave_data(atomic_steps, edges, nodes)
 
     blocks: dict[str, dict[str, dict[str, Any]]] = {

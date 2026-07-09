@@ -204,7 +204,7 @@ class PlanPromptChainCommand(Command):
                         normalized_role,
                     )
                 except ValueError as exc:
-                    if str(exc) == "cycle detected":
+                    if str(exc).startswith("cycle detected"):
                         return domain_error("CYCLE_DETECTED", str(exc))
                     raise
                 return SuccessResult(data=data)
