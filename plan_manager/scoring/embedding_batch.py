@@ -234,7 +234,16 @@ def embed_texts(
             )
         fetched = dict(zip(missing, fetch_vectors(base_url, missing, timeout=timeout)))
         store_vectors(conn, fetched)
-        resolved.update(fetched)
+        # Read the just-stored vectors back out of the cache so this path
+        # returns the same float4 cache representation that a later cache-hit
+        # run would return, rather than the service-fresh float64 vectors.
+        # This keeps first-run and subsequent-run vectors bit-identical, the
+        # same determinism guarantee embed_text provides for the single-text
+        # path. Any text the re-read unexpectedly misses keeps its fetched
+        # vector.
+        reread = get_cached_vectors(conn, missing)
+        for text in missing:
+            resolved[text] = reread.get(text, fetched[text])
     elif progress is not None:
         progress(message=f"Векторы из кэша: {len(resolved)}/{len(unique)}")
     return resolved

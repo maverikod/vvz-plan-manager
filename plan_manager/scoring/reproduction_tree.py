@@ -100,6 +100,8 @@ def build_node(
         node.path, base_url, lambda: embed_fn(node.own_text)
     )
     if own_vector is None:
+        # safe_fetch's contract: a None result always carries a diagnostic.
+        assert own_diag is not None
         return SemanticReproductionTreeNode(
             path=node.path, own_vector=None, coefficients=own_diag, children=children_results
         )
@@ -108,6 +110,8 @@ def build_node(
         node.path, base_url, lambda: embed_fn(node.expected_text)
     )
     if expected_vector is None:
+        # safe_fetch's contract: a None result always carries a diagnostic.
+        assert expected_diag is not None
         return SemanticReproductionTreeNode(
             path=node.path,
             own_vector=own_vector,

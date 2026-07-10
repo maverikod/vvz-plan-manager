@@ -259,12 +259,23 @@ def embed_text(
     Looks up ``text`` in the cache via ``get_cached_vector``. On a cache
     hit, returns the cached vector without contacting the embedding
     service. On a cache miss, calls ``fetch_vector(base_url, text)``,
-    stores the result via ``store_vector(conn, text, vector)``, and
-    returns the vector.
+    stores the result via ``store_vector(conn, text, vector)``, then
+    re-reads the stored vector via ``get_cached_vector`` and returns that
+    read-back value (falling back to the freshly fetched vector only if the
+    re-read unexpectedly returns None).
+
+    The write-then-read-back is what makes ``embed_text`` deterministic
+    across runs: the embedding service returns float64 vectors, while the
+    pgvector cache stores and returns float4, so a first run that returned
+    the service-fresh vector and a later run that returned the cache-read
+    vector produced values that differed at ~1e-9 — enough to change a
+    tree hash and defeat snapshot deduplication. Returning the
+    cache-representation vector on every path removes that divergence.
     """
     cached = get_cached_vector(conn, text)
     if cached is not None:
         return cached
     vector = fetch_vector(base_url, text, timeout=timeout)
     store_vector(conn, text, vector)
-    return vector
+    reread = get_cached_vector(conn, text)
+    return reread if reread is not None else vector

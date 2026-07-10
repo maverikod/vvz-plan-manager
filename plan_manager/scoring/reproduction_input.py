@@ -15,7 +15,7 @@ embedding client.
 from __future__ import annotations
 
 import uuid
-from typing import Callable
+from typing import Callable, cast
 
 import psycopg
 
@@ -23,7 +23,12 @@ from plan_manager.domain.concept import Concept
 from plan_manager.domain.concept_store import list_concepts
 from plan_manager.domain.relation_store import list_relations
 from plan_manager.domain.step import Step
-from plan_manager.scoring.embedding import embed_text
+from plan_manager.scoring.embedding import EmbeddingUnavailable, embed_text
+from plan_manager.scoring.embedding_batch import embed_texts
+from plan_manager.scoring.embedding_chunk import (
+    embed_text_pooled,
+    split_text_for_embedding,
+)
 from plan_manager.scoring.estimators import load_concept_rows
 from plan_manager.scoring.reproduction_scope import (
     aggregated_scope,
@@ -124,7 +129,7 @@ def build_atomic_scoped_node(
 
     node = ScopedNode(
         path=f"{gs.step_id}/{ts.step_id}/{atomic.step_id}",
-        own_text=semantic_summary["summary_text"],
+        own_text=cast(str, semantic_summary["summary_text"]),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -195,7 +200,7 @@ def build_tactical_scoped_node(
 
     node = ScopedNode(
         path=f"{gs.step_id}/{ts.step_id}",
-        own_text=reconstructed["summary_text"],
+        own_text=cast(str, reconstructed["summary_text"]),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -264,7 +269,7 @@ def build_global_scoped_node(
 
     node = ScopedNode(
         path=gs.step_id,
-        own_text=reconstructed["summary_text"],
+        own_text=cast(str, reconstructed["summary_text"]),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -349,7 +354,7 @@ def assemble_reproduction_input(
 
     root = ScopedNode(
         path=ROOT_PATH,
-        own_text=plan_reconstructed["summary_text"],
+        own_text=cast(str, plan_reconstructed["summary_text"]),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -357,6 +362,62 @@ def assemble_reproduction_input(
     )
 
     def embed_fn(text: str) -> list[float]:
-        return embed_text(conn, base_url, text, timeout=timeout)
+        return embed_text_pooled(
+            lambda chunk: embed_text(conn, cast(str, base_url), chunk, timeout=timeout),
+            text,
+        )
 
     return root, embed_fn
+
+
+def _collect_node_chunks(root: ScopedNode) -> list[str]:
+    """Collect every chunk that build_tree will embed for the tree under root.
+
+    Walks the whole ScopedNode hierarchy and, for each node's own_text and
+    expected_text, yields the exact chunks :func:`embed_text_pooled` would send
+    (via :func:`split_text_for_embedding`). Returning the chunks — not the raw,
+    possibly over-long texts — is what lets the warm-cache pre-pass go through
+    the batch embed layer, whose per-text size limit an un-split plan-level text
+    would otherwise exceed.
+    """
+    texts: list[str] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        texts.extend(split_text_for_embedding(node.own_text))
+        texts.extend(split_text_for_embedding(node.expected_text))
+        stack.extend(node.children)
+    return texts
+
+
+def warm_embedding_cache(
+    conn: psycopg.Connection,
+    root: ScopedNode,
+    base_url: str | None,
+    timeout: float = 60.0,
+) -> None:
+    """Pre-populate the pgvector cache for every chunk in the tree, in one batch.
+
+    Collects every own/expected chunk under ``root`` and resolves them through
+    :func:`plan_manager.scoring.embedding_batch.embed_texts`, which resolves the
+    whole cache in one query and vectorizes only the misses in bounded queued
+    sub-batches. After this returns, ``build_tree``'s per-text ``embed_text``
+    calls are cache hits, turning what was ~108 sequential one-text embed jobs
+    (301s cold) into one batched warm-up plus all-cache-hit reads.
+
+    Best-effort: an unreachable or not-ready embedding service raises
+    ``EmbeddingUnavailable`` here, which is swallowed so ``build_tree`` still
+    runs and produces its explicit per-node degraded diagnostics exactly as it
+    did before this pre-pass existed. The cache read-back in ``embed_text`` /
+    ``embed_texts`` keeps the warmed and later-read vectors identical.
+    """
+    if not base_url:
+        return
+    texts = _collect_node_chunks(root)
+    if not texts:
+        return
+    try:
+        embed_texts(conn, base_url, texts, timeout=timeout)
+    except EmbeddingUnavailable:
+        # Leave the cache un-warmed; build_tree degrades per node as before.
+        return

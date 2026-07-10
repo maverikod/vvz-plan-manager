@@ -10,6 +10,7 @@ plan_manager.scoring.estimators and plan_manager.views.expected_scope.
 from __future__ import annotations
 
 import uuid
+from typing import Any, cast
 
 import psycopg
 
@@ -66,7 +67,9 @@ def expected_scope_text(expected_scope: dict[str, object]) -> str:
     """
     sections: list[str] = []
 
-    concepts = expected_scope.get("concepts") or {}
+    concepts = cast(
+        "dict[str, dict[str, Any]]", expected_scope.get("concepts") or {}
+    )
     concept_lines: list[str] = []
     for concept_id in sorted(concepts):
         entry = concepts[concept_id]
@@ -76,16 +79,19 @@ def expected_scope_text(expected_scope: dict[str, object]) -> str:
     if concept_lines:
         sections.append("\n".join(concept_lines))
 
+    relations = cast(
+        "list[tuple[str, str, str]]", expected_scope.get("relations") or []
+    )
     relation_lines = [
         f"{from_concept} {relation_type} {to_concept}"
-        for from_concept, to_concept, relation_type in sorted(
-            expected_scope.get("relations") or []
-        )
+        for from_concept, to_concept, relation_type in sorted(relations)
     ]
     if relation_lines:
         sections.append("\n".join(relation_lines))
 
-    hrs_paragraphs = expected_scope.get("hrs_paragraphs") or {}
+    hrs_paragraphs = cast(
+        "dict[str, str]", expected_scope.get("hrs_paragraphs") or {}
+    )
     paragraph_lines = [hrs_paragraphs[label] for label in sorted(hrs_paragraphs)]
     if paragraph_lines:
         sections.append("\n".join(paragraph_lines))
