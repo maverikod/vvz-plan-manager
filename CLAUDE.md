@@ -64,9 +64,12 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**EXECUTION** (user-authorized 2026-07-09) of the frozen service plan
-`planmgr-semantic-reproduction-tree`
-(uuid `36952edf-fa34-4e87-b627-4edba5b0f8e0`, gate green, all steps frozen).
-Writing the files mandated by its atomic-step prompts is authorized. G-001 is
-already executed into the working tree; remaining branches execute one GS at a
-time (G-002 → G-003 → G-004).
+**PLAN AUTHORING** (user-assigned 2026-07-10) of the service plan
+`planmgr-runtime-work-layer-integration`
+(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`, HRS loaded: 200 binding
+paragraphs, MRS/steps empty). Author the full cascade MRS → GS → TS → AS per
+the standards; study the existing plan_manager internals before designing
+(the HRS mandates it); no production implementation until the MRS
+completeness check passes. The previously executed plan
+`planmgr-semantic-reproduction-tree` is COMPLETE (shipped through 0.1.24) and
+its steps stay frozen.
