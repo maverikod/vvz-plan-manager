@@ -68,10 +68,15 @@ def _index_nodes_by_path(tree_content: dict[str, Any]) -> dict[str, dict[str, An
 def _diff_node_scores(
     base_index: dict[str, dict[str, Any]],
     target_index: dict[str, dict[str, Any]],
+    root_path: str,
 ) -> tuple[list[str], list[str]]:
     improved_nodes: list[str] = []
     degraded_nodes: list[str] = []
     for path, target_node in target_index.items():
+        # The root node's delta is dedicated to root_score_delta; the node
+        # lists speak only about branches, so the root path is excluded here.
+        if path == root_path:
+            continue
         base_node = base_index.get(path)
         if base_node is None:
             continue
@@ -148,8 +153,9 @@ def compute_semantic_diff(
 ) -> SemanticDiffResult:
     base_index = _index_nodes_by_path(base_tree_content)
     target_index = _index_nodes_by_path(target_tree_content)
+    root_path = str(target_tree_content["path"])
     root_score_delta = float(target_tree_content.get("score", 0.0)) - float(base_tree_content.get("score", 0.0))
-    improved_nodes, degraded_nodes = _diff_node_scores(base_index, target_index)
+    improved_nodes, degraded_nodes = _diff_node_scores(base_index, target_index, root_path)
     new_loss, resolved_loss, new_leakage, resolved_leakage = _diff_loss_leakage(base_index, target_index)
     child_contribution_changes = _diff_child_contributions(base_index, target_index)
     return SemanticDiffResult(
