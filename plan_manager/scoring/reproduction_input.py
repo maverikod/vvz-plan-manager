@@ -76,6 +76,31 @@ def _union_scope(nodes: list[ScopedNode]) -> tuple[set[str], set[str]]:
     return required, declared
 
 
+def _embedding_own_text(
+    path: str, summary_text: str, children: list[ScopedNode]
+) -> str:
+    """Return the node's own text for embedding, guaranteed non-empty.
+
+    The deterministic summarizer yields an empty ``summary_text`` for a node
+    with no own prose — notably the PLAN root, whose reconstructed summary is
+    built only from its children and carries no plan-level description of its
+    own. The embedding service returns no results for an empty string (every
+    non-empty text, even a very long one, embeds fine), so an empty own_text
+    would make that node degrade with "embed-client response missing results".
+
+    Fall back deterministically to the "\\n\\n"-join of the children's own
+    texts — the bottom-up ReconstructedSummary content the node stands for —
+    and, for a childless node with no own prose, to the node path. The join can
+    be long, which is exactly what the chunk-and-mean embedding path handles.
+    """
+    if summary_text.strip():
+        return summary_text
+    child_texts = [child.own_text for child in children if child.own_text.strip()]
+    if child_texts:
+        return "\n\n".join(child_texts)
+    return path
+
+
 def build_atomic_scoped_node(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,
@@ -127,9 +152,12 @@ def build_atomic_scoped_node(
     semantic_summary = build_atomic_semantic_summary(atomic_fields, ts.fields)
     scope_text = expected_scope_text(build_expected_scope(coverage, concepts, relations, paragraphs))
 
+    atomic_path = f"{gs.step_id}/{ts.step_id}/{atomic.step_id}"
     node = ScopedNode(
-        path=f"{gs.step_id}/{ts.step_id}/{atomic.step_id}",
-        own_text=cast(str, semantic_summary["summary_text"]),
+        path=atomic_path,
+        own_text=_embedding_own_text(
+            atomic_path, cast(str, semantic_summary["summary_text"]), []
+        ),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -198,9 +226,12 @@ def build_tactical_scoped_node(
         build_expected_scope(aggregated_scope(required), concepts, relations, paragraphs)
     )
 
+    tactical_path = f"{gs.step_id}/{ts.step_id}"
     node = ScopedNode(
-        path=f"{gs.step_id}/{ts.step_id}",
-        own_text=cast(str, reconstructed["summary_text"]),
+        path=tactical_path,
+        own_text=_embedding_own_text(
+            tactical_path, cast(str, reconstructed["summary_text"]), child_nodes
+        ),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -269,7 +300,9 @@ def build_global_scoped_node(
 
     node = ScopedNode(
         path=gs.step_id,
-        own_text=cast(str, reconstructed["summary_text"]),
+        own_text=_embedding_own_text(
+            gs.step_id, cast(str, reconstructed["summary_text"]), child_nodes
+        ),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
@@ -354,7 +387,9 @@ def assemble_reproduction_input(
 
     root = ScopedNode(
         path=ROOT_PATH,
-        own_text=cast(str, plan_reconstructed["summary_text"]),
+        own_text=_embedding_own_text(
+            ROOT_PATH, cast(str, plan_reconstructed["summary_text"]), child_nodes
+        ),
         expected_text=scope_text,
         required_concepts=required,
         declared_concepts=declared,
