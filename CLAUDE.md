@@ -64,12 +64,16 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**PLAN AUTHORING** (user-assigned 2026-07-10) of the service plan
-`planmgr-runtime-work-layer-integration`
-(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`, HRS loaded: 200 binding
-paragraphs, MRS/steps empty). Author the full cascade MRS → GS → TS → AS per
-the standards; study the existing plan_manager internals before designing
-(the HRS mandates it); no production implementation until the MRS
-completeness check passes. The previously executed plan
-`planmgr-semantic-reproduction-tree` is COMPLETE (shipped through 0.1.24) and
-its steps stay frozen.
+**IDLE — awaiting execution authorization** (updated 2026-07-11). The service
+plan `planmgr-runtime-work-layer-integration`
+(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`) is FULLY AUTHORED, reviewed
+(9 read-only reviewers + fix rounds + adversarial re-review), committed
+(cascade ee35a692) and FROZEN at head revision
+`720b2e57-f187-4749-886c-988cbec6870a` (200 steps, gate 20/20 green,
+user-ordered freeze 2026-07-11). No production implementation is authorized
+yet: plan EXECUTION starts only on an explicit user order, which will flip
+this section to the execution phase. The parking-lot plan
+`planmgr-post-runtime-roadmap` (e4a9fd91, HRS only) holds user-ordered
+follow-up work — not for authoring or implementation now. The previously
+executed plan `planmgr-semantic-reproduction-tree` is COMPLETE (shipped
+through 0.1.24) and stays frozen.
