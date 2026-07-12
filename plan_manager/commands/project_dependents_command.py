@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
@@ -70,7 +71,7 @@ class ProjectDependentsCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                records = list_reverse_dependents(conn, uuid.UUID(project_id))
+                records = list_reverse_dependents(conn, validate_uuid(project_id))
                 return SuccessResult(data={"reverse_dependents": [r.to_payload() for r in records]})
         except Exception as exc:
             return map_exception(exc)

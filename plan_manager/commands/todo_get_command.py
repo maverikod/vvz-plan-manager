@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_store import get_todo
@@ -59,7 +60,7 @@ class TodoGetCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                todo_uuid = uuid.UUID(todo)
+                todo_uuid = validate_uuid(todo)
                 record = get_todo(conn, todo_uuid)
                 if record is None:
                     raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")

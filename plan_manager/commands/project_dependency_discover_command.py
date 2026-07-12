@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
@@ -71,7 +72,7 @@ class ProjectDependencyDiscoverCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                targets = discover_suspected_targets(conn, uuid.UUID(source_project_id))
+                targets = discover_suspected_targets(conn, validate_uuid(source_project_id))
                 return SuccessResult(data={"suspected_impact_project_ids": [str(t) for t in targets]})
         except Exception as exc:
             return map_exception(exc)

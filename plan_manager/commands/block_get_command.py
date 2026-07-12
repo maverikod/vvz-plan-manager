@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.context_block_metadata import context_metadata
 from plan_manager.commands.errors import map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.views.context_blocks import get_context_block
@@ -58,7 +59,7 @@ class BlockGetCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                record = get_context_block(conn, p.uuid, uuid.UUID(block_id))
+                record = get_context_block(conn, p.uuid, validate_uuid(block_id))
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:
             return map_exception(exc)

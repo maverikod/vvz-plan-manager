@@ -7,6 +7,7 @@ import psycopg
 
 from plan_manager.cascade.record import CascadeError, CascadeRecord, get_open_cascade, insert_cascade
 from plan_manager.domain.plan import get_plan
+from plan_manager.domain.runtime_validation import FrozenTruthMutationError
 from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
 from plan_manager.storage.version_store import create_ref
 
@@ -32,6 +33,10 @@ def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeReco
         if get_open_cascade(conn, plan_uuid) is not None:
             raise CascadeError("plan already has an open cascade")
         plan = get_plan(conn, plan_uuid)
+        if plan.status == "frozen":
+            raise FrozenTruthMutationError(
+                f"cannot open a cascade on frozen plan {plan_uuid}: frozen plan truth is read-only"
+            )
         if plan.head_revision_uuid is None:
             raise CascadeError("cannot open a cascade on a plan with no head revision")
         cascade_uuid = uuid.uuid4()

@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.review_escalation_command_metadata import review_escalation_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
@@ -75,7 +76,7 @@ class EscalationResolveCommand(Command):
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 record = resolve_escalation(
-                    conn, uuid.UUID(escalation_uuid), resolved_by=resolved_by, resolution=resolution
+                    conn, validate_uuid(escalation_uuid), resolved_by=resolved_by, resolution=resolution
                 )
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:

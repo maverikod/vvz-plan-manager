@@ -305,6 +305,9 @@ def update_todo(
     conn.execute(sql, params)
 
     record_obj = _get_row(conn, todo_uuid)
+    if record_obj is None:
+        from plan_manager.commands.errors import DomainCommandError
+        raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
 
     record_runtime_change(
         conn,
@@ -332,6 +335,9 @@ def resolve_todo(
     conn.execute(sql, ("resolved", now, now, todo_uuid))
 
     record_obj = _get_row(conn, todo_uuid)
+    if record_obj is None:
+        from plan_manager.commands.errors import DomainCommandError
+        raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
 
     record_runtime_change(
         conn,
@@ -359,6 +365,9 @@ def close_todo(
     conn.execute(sql, ("closed", now, todo_uuid))
 
     record_obj = _get_row(conn, todo_uuid)
+    if record_obj is None:
+        from plan_manager.commands.errors import DomainCommandError
+        raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
 
     record_runtime_change(
         conn,

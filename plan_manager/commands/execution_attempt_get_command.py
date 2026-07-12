@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import get_execution_attempt
@@ -66,7 +67,7 @@ class ExecutionAttemptGetCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                attempt = get_execution_attempt(conn, uuid.UUID(attempt_id))
+                attempt = get_execution_attempt(conn, validate_uuid(attempt_id))
                 if attempt is None:
                     raise DomainCommandError(
                         "EXECUTION_ATTEMPT_NOT_FOUND",
