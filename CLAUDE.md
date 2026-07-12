@@ -64,16 +64,17 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**IDLE — awaiting execution authorization** (updated 2026-07-11). The service
-plan `planmgr-runtime-work-layer-integration`
-(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`) is FULLY AUTHORED, reviewed
-(9 read-only reviewers + fix rounds + adversarial re-review), committed
-(cascade ee35a692) and FROZEN at head revision
-`720b2e57-f187-4749-886c-988cbec6870a` (200 steps, gate 20/20 green,
-user-ordered freeze 2026-07-11). No production implementation is authorized
-yet: plan EXECUTION starts only on an explicit user order, which will flip
-this section to the execution phase. The parking-lot plan
-`planmgr-post-runtime-roadmap` (e4a9fd91, HRS only) holds user-ordered
-follow-up work — not for authoring or implementation now. The previously
-executed plan `planmgr-semantic-reproduction-tree` is COMPLETE (shipped
-through 0.1.24) and stays frozen.
+**PLAN EXECUTION (user-authorized 2026-07-12).** The FROZEN service plan
+`planmgr-runtime-work-layer-integration`
+(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`, head revision
+`720b2e57-f187-4749-886c-988cbec6870a`, 200 steps, gate 20/20 green) is now
+being EXECUTED: agents DO write the production files mandated by its frozen
+atomic-step prompts (fetched read-only from the plan store via step_get /
+branch_prompt). Delegation per phase 2 of this file: an Opus agent owns each
+GS branch; a Sonnet agent owns each TS and ALWAYS verifies its writers'
+output; a Haiku agent is the sole writer of each AS target file. Frozen plan
+truth is read-only — no step mutations, no cascades. Execution order follows
+the branch DAG: G-001 → {G-002,G-003} → G-004, G-002 → G-005, {G-004,G-005} →
+G-006 → G-007 → G-008. The parking-lot plan `planmgr-post-runtime-roadmap`
+(e4a9fd91, HRS only) stays untouched. The plan
+`planmgr-semantic-reproduction-tree` is COMPLETE and stays frozen.
