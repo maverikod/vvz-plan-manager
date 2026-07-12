@@ -1,0 +1,95 @@
+schema: codex.command-help-pack/v1
+id: cas_refactoring
+server:
+  server_id: code-analysis-server-vvz
+  copy_number: 1
+  observed_version: 1.6.50
+
+live_capability_boundary:
+  specialized_symbol_refactoring: absent
+  absent:
+    - symbol rename
+    - extract method, function, or class
+    - inline method, function, or variable
+    - change signature
+    - automatic import or reference rewrite
+    - dependency-aware safe delete
+    - refactor preview or apply
+  rule: Use a specialized command only if it appears in fresh live help and its command-specific help was read.
+
+impact_preflight:
+  required_by_scope:
+    definitions: [search_ast_nodes, get_ast, file_structure]
+    usages: [find_usages, find_dependencies]
+    graph: [get_entity_dependencies, get_entity_dependents]
+    imports: [get_imports]
+    inheritance: [get_class_hierarchy]
+    packages_and_cycles: [analyze_tree]
+    broad_graph: [export_graph]
+  rule: Select only the checks relevant to the proposed refactor, but do not mutate before inbound impact is known.
+
+actual_structural_mutators:
+  fs_copy:
+    use: Copy one project file when duplication is explicitly intended.
+    required: [project_id, source_path, dest_path]
+    critical_defaults:
+      overwrite: false
+      backup: true
+    limitations:
+      - immediate mutation; no preview or dry-run
+      - no reference update
+      - no index update
+
+  fs_move:
+    use: Move or rename one file after impact analysis.
+    required: [project_id, source_path, dest_path]
+    critical_defaults:
+      overwrite: false
+      backup: true
+    limitations:
+      - immediate mutation; no preview or dry-run
+      - no import or reference rewrite
+      - no database-row or index update
+
+  fs_remove:
+    use: Remove one file only after dead-code and inbound-reference checks.
+    required: [project_id, file_path]
+    critical_defaults:
+      backup: true
+    limitations:
+      - immediate mutation; no preview or dry-run
+      - not dependency-aware safe delete
+      - no database-row or index update
+    mandatory_preflight:
+      - find_usages
+      - find_dependencies
+      - get_entity_dependents
+      - get_imports
+      - "analyze_tree mode=dead_code"
+
+content_refactoring:
+  route: AI Editor lifecycle
+  use_when:
+    - symbol or content change
+    - import or call-site rewrite
+    - signature change
+    - extract or inline implemented as explicit content edits
+  rule: Use fresh CAS evidence to construct bounded AI Editor operations.
+
+post_mutation:
+  filesystem_structure_changed:
+    - update_indexes
+    - repeat AST, dependency, and import checks
+  Python_content_changed:
+    - lint_code
+    - type_check_code
+  always:
+    - git_diff
+  same_file_operations: serialize
+
+hard_errors:
+  PROJECT_NOT_FOUND: rediscover project_id
+  FILE_NOT_FOUND: confirm project-relative paths with server file listing
+  VALIDATION_ERROR: read exact live command help
+  DATABASE_CORRUPTED: stop and escalate
+  INDEX_UPDATE_ERROR: stop and escalate

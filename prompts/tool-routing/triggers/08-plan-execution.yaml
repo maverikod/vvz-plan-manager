@@ -1,0 +1,18 @@
+schema: codex.tool-trigger/v1
+id: plan_execution
+priority: 20
+match:
+  any:
+    - execute or continue a plan
+    - compute plan execution order or parallel waves
+    - compile executor prompts for a plan branch
+route:
+  server_id: planmgr
+  help_packs:
+    - ../help/plan-core.yaml
+    - ../help/plan-execution.yaml
+entry_requirements:
+  - committed plan revision
+  - green mechanical gate
+  - executable lifecycle status
+hard_rule: Plan Manager compiles execution material; Codex dispatches prompt-assigned duties and does not select or claim child models.

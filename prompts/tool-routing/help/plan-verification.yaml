@@ -1,0 +1,72 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_verification
+server:
+  server_id: planmgr
+  copy_number: 1
+
+mechanical:
+  command: plan_validate
+  use: Deterministic hard gate for parsing, identifiers, references, and structural coverage.
+  required: [plan]
+  scope_params:
+    scope: "plan or branch"
+    gs_step_id: "branch only"
+    ts_step_id: "branch only"
+    as_step_id: "branch only"
+  critical_params:
+    fail_fast: false
+    format: json
+  retain: [revision_uuid, scope, report, green]
+
+semantic:
+  command: plan_score
+  use: Semantic completeness measurement after a green mechanical gate.
+  required: [plan, expected_revision]
+  same_scope_as_validation: true
+  critical_params:
+    verbose: false
+    require_embeddings: false
+  returns:
+    index: "0..100"
+    trust: measurement reliability
+    color: server-authoritative verdict
+    revision_uuid: measured revision
+  rules:
+    - Never reconstruct color locally.
+    - If embeddings are unavailable and require_embeddings=false, report degraded trust.
+
+mandatory_sequence:
+  - run plan_validate
+  - require green=true
+  - run plan_score with expected_revision equal to plan_validate.revision_uuid
+  - require matching revision_uuid
+
+diagnosis:
+  branch_weak:
+    use: Rank weakest plan branches after whole-plan mechanical green.
+    required: [plan]
+    key_optional:
+      verbose: false
+      require_embeddings: false
+    returns: [plan_index, color, weakest, revision_uuid]
+
+  semantic_reproduction_tree:
+    use: Bottom-up semantic reconstruction diagnostics.
+    commands:
+      srt_snapshot_list: read retained snapshots
+      srt_diff: compare two snapshots
+      srt_snapshot_create: mutating; require explicit authorization and live help
+
+restart_rules:
+  GATE_RED: fix findings and restart from plan_validate
+  VERDICT_STALE: restart from plan_validate
+  STEP_NOT_FOUND: refresh step_tree and correct scope
+  EMBEDDINGS_UNAVAILABLE: report degraded mode or retry with require_embeddings=true when strict evidence is required
+
+published_semantic_defaults:
+  threshold: 85
+  plan_aggregation: minimum
+  unavailable_embedding_trust_floor: 0.2
+
+hard_distinction: plan_validate is the server hard gate; plan_score is the mandatory semantic second pass, not a substitute gate.
+

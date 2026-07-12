@@ -1,0 +1,80 @@
+schema: codex.command-help-pack/v1
+id: terminal_host_emergency
+server:
+  server_id: mcp-terminal-vvz
+  copy_number: 1
+  observed_version: 0.1.39
+
+preconditions:
+  - explicit current user authorization
+  - task concerns the host system itself
+  - CAS and project sandbox are insufficient
+  - host execution is enabled and SSH configuration is ready
+  - target user and command are admitted by server policy
+
+terminal_host_exec:
+  use: Emergency or host-system investigation through real-host SSH.
+  required: [execution_kind]
+  conditional:
+    shell: command
+    argv: argv
+  preferred: argv
+  key_optional:
+    target_user: must be in configured target users
+    cwd: "absolute host path in sessionless mode; default /root"
+    timeout_seconds: "default 600; range 1..86400"
+    project_id_and_session_id: "omit both for sessionless host execution; otherwise both required"
+    use_venv: "sessionless default false"
+  returns:
+    - job_id
+    - seq
+    - generated host_run_id
+    - execution_target=host_ssh
+    - target_user
+    - stdout_file
+    - stderr_file
+    - meta_file
+  forbidden:
+    - user-supplied host_run_id
+    - SSH key paths or protected key material
+    - ordinary project execution
+
+poll_and_output:
+  terminal_get_status:
+    required: [host_run_id, seq]
+    success_gate:
+      queue_status: completed
+      terminal_status: success
+      exit_code: 0
+      timed_out: false
+      execution_target: host_ssh
+  terminal_stat:
+    required: [host_run_id, seq]
+  terminal_read:
+    required: [host_run_id, seq, stream]
+  terminal_tail:
+    required: [host_run_id, seq, stream]
+
+policy:
+  restricted:
+    rule: executable must be allowed and forbidden-pattern checks apply
+  full_access:
+    risk: bypasses command allowlist and built-in deny policy
+    remaining_guards: [SSH readiness, target-user validation, key-material protection]
+
+hard_errors:
+  HOST_EXECUTION_DISABLED: stop; do not bypass through another mode
+  HOST_COMMAND_NOT_ALLOWED: request an admitted command or escalate
+  HOST_FORBIDDEN_COMMAND: stop and report exact rejection
+  HOST_KEY_ACCESS_FORBIDDEN: stop; never request key access
+  TARGET_USER_NOT_ALLOWED: use configured user or escalate
+  HOST_SSH_UNREACHABLE: report host connectivity failure
+  HOST_HOST_KEY_MISMATCH: stop; never disable strict checking
+  INVALID_COMMAND: align execution_kind with command or argv
+  INVALID_CWD: correct host path
+
+risks:
+  - modifies the real host outside sandbox controls
+  - can affect services, packages, files, processes, and project trees
+  - sessionless cwd may be /root
+  - terminal_kill is sandbox-only and cannot stop host jobs

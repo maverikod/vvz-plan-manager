@@ -1,0 +1,20 @@
+schema: codex.tool-trigger/v1
+id: code_analysis
+priority: 60
+match:
+  any:
+    - AST or structural code query
+    - usages, dependencies, callers, callees, imports, or inheritance
+    - impact, package boundary, cycle, or dead-code analysis
+    - complexity, duplication, lint, type, or quality analysis
+route:
+  server_id: code-analysis-server-vvz
+  help_packs:
+    - ../help/cas-code-analysis.yaml
+    - ../help/cas-detailed-preview.yaml
+first_action: Select the narrowest AST or code-analysis command.
+fallback:
+  trigger: cross_search
+  only_when: structural commands cannot locate the candidate
+hard_rule: AST and analysis commands precede generic search for structural questions.
+

@@ -1,0 +1,19 @@
+schema: codex.tool-trigger/v1
+id: plan_read
+priority: 40
+match:
+  any:
+    - locate or inspect a plan
+    - read HRS, MRS, concepts, relations, or plan status
+    - inspect planning terminology or current lifecycle state
+exclude:
+  - change plan truth
+  - validate or score a plan
+  - execute a plan
+route:
+  server_id: planmgr
+  help_packs:
+    - ../help/plan-core.yaml
+    - ../help/plan-read.yaml
+hard_rule: Plan Manager database is the only plan source of truth.
+

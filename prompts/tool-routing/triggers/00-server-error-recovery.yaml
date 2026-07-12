@@ -1,0 +1,14 @@
+schema: codex.tool-trigger/v1
+id: server_error_recovery
+priority: 0
+match:
+  any:
+    - invalid, missing, unexpected, or incorrectly typed parameter
+    - validation error caused by command arguments
+    - command not found, unknown command, or command unavailable
+    - server unavailable, unreachable, unregistered, or unhealthy
+route:
+  help_packs:
+    - ../help/server-error-recovery.yaml
+hard_rule: Diagnose from live help or health before retrying, substituting a command, or escalating.
+

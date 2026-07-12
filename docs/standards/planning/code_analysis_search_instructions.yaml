@@ -1,0 +1,250 @@
+meta:
+  title: Code Analysis Server Search Instructions
+  version: '1.0'
+  locale: en
+  source: MCP help inspected for search_commands, search, 
+    search_ast_nodes, get_ast, list_yaml_blocks, list_projects
+  status: active_with_notes
+project_discovery:
+  primary_command: list_projects
+  why: The analysis server contains multiple projects; all project-scoped 
+    commands require a project UUID.
+  fast_lookup:
+    by_name:
+      command: list_projects
+      params:
+        name_contains: <case-insensitive substring>
+    by_comment:
+      command: list_projects
+      params:
+        comment_contains: <case-insensitive substring>
+    by_watch_dir:
+      command: list_projects
+      params:
+        watched_dir_id: <uuid4>
+    include_deleted:
+      command: list_projects
+      params:
+        include_deleted: true
+      use_only_for: trash/deletion lifecycle inspection
+  rules:
+  - Use returned projects[].id as project_id.
+  - Do not pass root_path or project name where project_id is required.
+  - Prefer name_contains first for quick project lookup.
+  - Use list_project_files after project selection to discover project-relative 
+    file paths.
+proxy_command_search:
+  command: search_commands
+  location: MCP proxy
+  purpose: Hybrid search over registered command metadata using BM25 + semantic 
+    RRF.
+  required_params:
+  - query
+  optional_params:
+  - server_key
+  - filter_expr
+  - limit
+  usage:
+  - Use English query text for best lexical match.
+  - Use server_key to restrict results to a downstream server, for example 
+    code-analysis-server_1.
+  - Use it for command discovery, not for project file content search.
+  known_issue:
+    summary: The former project_cross_search command name is stale.
+    observed_behavior:
+    - The current prepared help publishes search with dedicated status, page,
+      cancel, and close commands.
+    - project_cross_search must not be retried or guessed as an alias.
+    mitigation:
+    - Use downstream help for search when exact command lookup matters.
+    - 'Prefer help(server_id=..., command=...) or call_server(command=help, params={cmdname:
+      ...}) for exact command documentation.'
+project_content_cross_search:
+  command: search
+  legacy_command: project_cross_search is removed; never call it
+  example:
+    command: search
+    params:
+      project_id: <project_id>
+      query: universal file edit workflow
+      file_pattern: src/commands
+      enable_semantic: true
+      enable_grep: true
+      grep_patterns:
+      - universal_file_open
+      - universal_file_preview
+      - universal_file_edit
+      page_size: 20
+  important_optional_params:
+    enable_semantic:
+      default: true
+      rule: Enables semantic evidence alongside mandatory BM25 full text.
+    enable_grep:
+      default: false
+      rule: Enable for exact markers or indexed gaps.
+    file_pattern:
+      rule: Optional project-relative path filter.
+      type: string
+    fulltext_limit:
+      default: 30
+    grep_patterns:
+      rule: Defaults to query; prefer explicit exact markers when known.
+      type: array[string]
+    page_size:
+      default: 20
+      rule: Result block size.
+    first_block_wait_seconds:
+      default: 30
+      rule: Inline wait before returning a running search job.
+    semantic_limit:
+      default: 30
+  purpose: Combined project content search using BM25, optional semantic evidence,
+    and optional grep evidence.
+  required_params:
+  - project_id
+  - query
+  rules:
+  - Use search as the primary combined search command for project 
+    files.
+  - Prefer explicit grep_patterns for audits or exact symbol searches.
+  - Treat semantic-only hits as low confidence and verify with 
+    universal_file_preview.
+  - Treat grep-only hits as exact traces but still preview before editing.
+  - Consume inline items, then poll search_get_status while search_still_running.
+  - Read published blocks with search_get_page using increasing 1-based
+    block_position values.
+  - Always release buffers with search_close.
+ast_search:
+  get_ast:
+    behavior:
+    - Reads AST from analysis database.
+    - Path resolution attempts exact, versioned path, and filename strategies.
+    - AST JSON follows Python ast module-style structure.
+    examples:
+      metadata_only:
+        command: get_ast
+        params:
+          file_path: src/main.py
+          include_json: false
+          project_id: <project_id>
+    optional_params:
+      include_json:
+        default: true
+        rule: Set false for metadata-only checks or large files.
+    purpose: Retrieve stored full AST JSON for one Python file.
+    required_params:
+    - project_id
+    - file_path
+    use_cases:
+    - Verify AST exists for a file.
+    - Perform custom traversal in the client/model.
+    - Inspect detailed Python structure not exposed by search_ast_nodes.
+  search_ast_nodes:
+    behavior:
+    - Maps node types to database tables for classes, functions, and methods.
+    - Does not perform arbitrary full AST traversal.
+    - Returns node_type, name, file_path, line, docstring, and class_name for 
+      methods.
+    best_practices:
+    - Use node_type for performance.
+    - Use file_path to narrow scope.
+    - Use get_ast when full AST traversal is required.
+    - Use universal_file_preview with full_text_max_lines=0 after AST search 
+      when an edit target needs a stable CST node_ref.
+    examples:
+      classes:
+        command: search_ast_nodes
+        params:
+          limit: 20
+          node_type: ClassDef
+          project_id: <project_id>
+      functions_in_file:
+        command: search_ast_nodes
+        params:
+          file_path: src/main.py
+          limit: 50
+          node_type: FunctionDef
+          project_id: <project_id>
+    optional_params:
+      file_path: Project-relative Python file path filter.
+      limit:
+        default: 100
+      node_type:
+        accepted_values:
+        - ClassDef
+        - class
+        - FunctionDef
+        - function
+        - method
+        omitted_behavior: Search all mapped node types.
+    purpose: Search indexed Python AST entities by mapped node type.
+    required_params:
+    - project_id
+    use_cases:
+    - Find all classes in a project.
+    - Find all functions in one file.
+    - Find methods across a project.
+    - Locate structural Python entities before preview/edit.
+xpath_like_structural_search:
+  list_yaml_blocks:
+    example:
+      command: list_yaml_blocks
+      params:
+        file_path: config/app.yaml
+        project_id: <project_id>
+    notes:
+    - 'Help was retrievable through call_server(command=help, params={cmdname: list_yaml_blocks}).'
+    - Direct proxy help call for this command was blocked by platform safety 
+      once during inspection; use call_server help form if needed.
+    - Metadata contains contradictory best_practices text mentioning JSON-only 
+      commands; prefer universal_file_preview for current JSON/YAML pointer 
+      drilldown.
+    purpose: List indexed YAML values with node_id, yaml_pointer, and kind for a
+      .yaml/.yml file.
+    required_params:
+    - project_id
+    - file_path
+  model:
+    json_yaml:
+      edit_field: json_pointer
+      node_ref: JSON Pointer string, e.g. /database/host
+      note: This is XPath-like navigation for tree documents.
+    python:
+      node_ref: Stable CST UUID; use search_ast_nodes/get_ast for AST discovery 
+        and preview for editable CST node_ref.
+    text:
+      node_ref: zero-based line index string; convert to 1-based line ranges for
+        editing.
+  primary_mechanism: universal_file_preview node_ref drilldown
+  supported_files:
+  - .json
+  - .yaml
+  - .yml
+  - .md
+  - .txt
+  - .rst
+  - .adoc
+  - .py
+  workflow:
+  - Run search or search_ast_nodes to identify candidate file.
+  - Run universal_file_preview without node_ref to inspect root blocks.
+  - Pass returned node_ref values back to universal_file_preview to drill down.
+  - Use selector to limit large node block sets.
+  - For JSON/YAML edits, pass the JSON Pointer node_ref as json_pointer to 
+    universal_file_edit.
+  - For Python edits, force CST preview with full_text_max_lines=0 and pass 
+    node_ref UUID as node_id.
+runtime_validation:
+  action_on_tool_error:
+    rule: If command/tool error or platform blocking prevents verification, stop
+      relying on the affected result and escalate with exact command, expected 
+      behavior, actual behavior, and next safe command.
+  limitations:
+  - Search is asynchronous after the inline first block; status and pages are
+    read through the dedicated search session commands.
+  performed:
+  - list_projects returned a valid project id for the current target project.
+  - search provides combined full-text, semantic, and optional grep evidence.
+  - search_ast_nodes and get_ast help were retrieved successfully.
+  - list_yaml_blocks help was retrieved successfully via downstream call_server 
+    help form.

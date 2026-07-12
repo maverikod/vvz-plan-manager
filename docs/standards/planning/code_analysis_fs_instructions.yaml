@@ -1,0 +1,110 @@
+meta:
+  title: Code Analysis Server Filesystem Instructions
+  version: '1.0'
+  locale: en
+  status: active
+  source: MCP help inspected for fs_remove, fs_move, fs_copy,
+    list_deleted_files, backup listing, transfer, index, Git, and project-trash
+    commands
+overview:
+  purpose: 'Filesystem-level file operations on a registered project served by code-analysis-server-vvz:
+    create, move, copy, remove, recycle-bin (soft delete), and backup. Complements
+    the universal edit-session standard (structured in-file edits) and the search
+    standard.'
+  scope: Whole-file lifecycle. For in-file structured edits use the universal 
+    edit-session workflow; for content search use the search standard.
+  key_constraint: Content creation is routed through the universal AI Editor
+    session workflow. Whole-file move, copy, and removal remain Code Analysis
+    Server lifecycle operations and do not rewrite imports or references.
+path_rules:
+  relative: All file_path values are project-relative POSIX paths; never pass 
+    host filesystem absolute paths.
+  no_traversal: No .. traversal; paths resolve under project root only.
+  forbidden_targets:
+  - project-local .venv / venv
+  - site-packages
+  - installed packages
+  project_id: Resolve via list_projects for the current project.
+create_commands:
+  structured_create:
+    purpose: Create project files with content.
+    method: universal_file_open with create=true and initial_content, then 
+      universal_file_preview, optional universal_file_edit, and
+      universal_file_write (preview then commit), followed by verification and
+      close.
+    note: Content creation belongs to AI Editor; the current file-lifecycle help
+      pack does not publish create_text_file as the general creation route.
+move_copy:
+  fs_move:
+    purpose: Move/rename a file within the project (mv).
+    required_params:
+    - project_id
+    - source_path
+    - dest_path
+    optional_params:
+      overwrite: default false
+      backup: default true
+    note: Backs up source (and destination when overwriting). Does not update DB
+      file rows; run update_indexes or rely on the watcher.
+  fs_copy:
+    purpose: Copy a file within the project (cp).
+    note: Uses version history (backup before overwrite); does not update the 
+      code index.
+delete_commands:
+  fs_remove:
+    purpose: Hard rm of a single file under project root.
+    required_params:
+    - project_id
+    - file_path
+    optional_params:
+      backup: default true; backup to old_code before unlink
+    note: Does not touch DB rows; use repair_database / update_indexes as 
+      needed. Works without trash_dir configured.
+    use_when: Removing a file outright (e.g. an accidental or empty file) when 
+      recycle-bin semantics are not required or trash_dir is unavailable.
+  unavailable_file_trash_mutations:
+    published: false
+    commands:
+    - delete_file
+    - restore_deleted_file
+    - restore_file_from_trash
+    - undelete_file
+    - permanently_delete_file
+    - purge_deleted_file
+    - clear_deleted_files
+    rule: Do not substitute whole-project trash commands for an individual file.
+recycle_bin:
+  list_deleted_files: Read tombstone rows with path, original_path, in_trash,
+    updated_at, and total; a tombstone does not prove recoverable bytes exist.
+  mutation_rule: File restore and purge commands are not published in the current
+    catalog; escalate rather than guessing a recovery command.
+backup_commands:
+  list_backup_files: List backed-up files in old_code; optional 
+    file_pattern/glob.
+  list_backup_versions: List backup versions for one literal file path.
+  restore_backup_file: Not published in the current catalog; inspect history and
+    escalate the desired restore operation.
+error_handling:
+  rule: 'On any command error or unexpected result, stop and inspect: read the returned
+    error code/message, consult help(cmdname=...) for the exact schema, then choose
+    the next safe command. Do not blind-retry sibling commands or invent parameters.'
+  common_errors:
+    FILE_DELETED: Inspect the tombstone and escalate recovery ambiguity.
+    SERVER_NOT_FOUND for a command: The command does not exist on this server ->
+      re-list via help (no params) and pick an existing command.
+    FILE_NOT_FOUND: Confirm the project-relative path with list_project_files.
+    unknown parameter: Call help(cmdname=...) and pass only schema-defined 
+      parameters.
+verification_policy:
+  required:
+  - Verify every create/move/remove with a separate read (list_project_files or 
+    universal_file_preview).
+  - Queue completed is not success; for queued work inspect 
+    result.command.result.success.
+  forbidden:
+  - Do not edit .venv, site-packages, or installed packages.
+  - Do not run destructive commands without explicit project-relative target 
+    validation.
+artifact_location:
+  path: docs/standards/code_analysis_fs_instructions.yaml
+  rationale: Stored with the other standards in docs/standards.

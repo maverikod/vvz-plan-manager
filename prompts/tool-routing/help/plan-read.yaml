@@ -1,0 +1,49 @@
+schema: codex.command-help-pack/v1
+id: plan_manager_read
+server:
+  server_id: planmgr
+  copy_number: 1
+
+command_cards:
+  plan_list:
+    use: Locate plans and project bindings.
+    key_optional: [show_deleted]
+
+  plan_status:
+    use: Read counts, lifecycle state, projects, head revision, gate, and scoring summary.
+    required: [plan]
+
+  para_list:
+    use: List HRS paragraphs, labels, positions, and binding flags.
+    required: [plan]
+
+  para_get:
+    use: Read one HRS paragraph by stable label.
+    required: [plan, label]
+
+  concept_list:
+    use: List MRS concepts.
+    required: [plan]
+    warning: Use concept_get when full structured concept properties are required.
+
+  concept_get:
+    use: Read one complete MRS concept.
+    required: [plan, concept_id]
+
+  relation_list:
+    use: List typed MRS relations.
+    required: [plan]
+
+  concept_coverage:
+    use: Read HRS paragraph and step justification for one concept.
+    required: [plan, concept_id]
+
+  step_tree:
+    use: Read the complete GS/TS/AS tree and authoritative step.status.
+    required: [plan]
+
+rules:
+  - HRS binding prose is human-owned.
+  - Do not treat concept_list truncation as proof of stored-data loss; use concept_get.
+  - Do not infer lifecycle status from runtime reports.
+

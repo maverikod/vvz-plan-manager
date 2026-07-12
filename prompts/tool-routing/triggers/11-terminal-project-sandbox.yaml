@@ -1,0 +1,25 @@
+schema: codex.tool-trigger/v1
+id: terminal_project_sandbox
+priority: 90
+match:
+  all:
+    - intent: run project behavior, executable, application, CLI, REPL, debugger, or command
+    - fact: required execution capability is absent from Code Analysis Server
+exclude:
+  - host operating-system incident
+  - real-host service, package, daemon, disk, process, or deployment emergency
+route:
+  server_id: mcp-terminal-vvz
+  mode: project_sandbox
+  help_packs:
+    - ../help/terminal-project-sandbox.yaml
+before_action:
+  - identify the missing CAS capability
+  - obtain terminal execution authorization required by the parent contract
+  - create linked CAS and terminal sessions
+hard_rules:
+  - CAS remains first choice.
+  - Ordinary project work never uses terminal_host_exec.
+  - Queue completion is not process success.
+  - Always poll status, inspect output, and clean up both sessions.
+

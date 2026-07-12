@@ -1,0 +1,21 @@
+schema: codex.tool-trigger/v1
+id: plan_verification
+priority: 10
+match:
+  any:
+    - verify, review, accept, freeze, or measure a plan
+    - mechanical plan validation
+    - semantic plan scoring
+    - diagnose semantically weak branches
+    - compare semantic reproduction snapshots
+route:
+  server_id: planmgr
+  help_packs:
+    - ../help/plan-core.yaml
+    - ../help/plan-verification.yaml
+mandatory_order:
+  - plan_validate
+  - plan_score
+  - branch_weak only when diagnosis is requested
+hard_rule: Never run or interpret semantic scoring against a red or stale mechanical gate.
+
