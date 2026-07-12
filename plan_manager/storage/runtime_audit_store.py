@@ -11,7 +11,9 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 
-ALLOWED_ACTIONS: frozenset[str] = frozenset({"create", "update", "soft_delete", "archive", "restore"})
+ALLOWED_ACTIONS: frozenset[str] = frozenset(
+    {"create", "update", "soft_delete", "archive", "restore", "plan_unfreeze"}
+)
 
 
 @dataclass(frozen=True)

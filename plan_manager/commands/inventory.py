@@ -68,6 +68,7 @@ INVENTORY: tuple[str, ...] = (
     "cascade_preview",
     "cascade_commit",
     "cascade_abort",
+    "plan_unfreeze",
     "srt_snapshot_create",
     "srt_snapshot_list",
     "srt_diff",
@@ -169,4 +170,5 @@ MUTATING: frozenset[str] = frozenset({
     "cascade_begin",
     "cascade_commit",
     "cascade_abort",
+    "plan_unfreeze",
 })

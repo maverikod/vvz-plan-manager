@@ -195,6 +195,7 @@ def lifecycle_matrices() -> dict[str, Any]:
                 "open->committed requires a green mechanical gate (cascade_commit); otherwise GATE_RED and the cascade stays open.",
                 "open->aborted is unconditional (cascade_abort).",
                 "committed and aborted are terminal; retrying commit/abort on a closed cascade raises CASCADE_CONFLICT.",
+                "cascade_begin refuses a fully frozen plan (FROZEN_TRUTH_WRITE); plan_unfreeze is the only door out of full freeze — it writes an audit record and opens a cascade under which scoped step_transition frozen->draft may then run.",
             ],
         },
         "escalation": {
@@ -286,6 +287,7 @@ def operational_checklists() -> dict[str, Any]:
         ],
         "cascade_workflow": [
             "cascade_begin on a plan that is not fully frozen (a fully frozen plan raises FROZEN_TRUTH_WRITE).",
+            "For a FULLY frozen plan, call plan_unfreeze(plan, changed_by, reason) instead: it audits the escape and opens the cascade, then transition steps back with a scoped step_transition to_status=draft under the returned cascade_uuid.",
             "Make admitted mutations under the returned cascade_uuid.",
             "cascade_preview to inspect the gate/impact before committing.",
             "cascade_commit (requires a green gate; otherwise GATE_RED and the cascade stays open) or cascade_abort (unconditional; restores base state). Both are terminal.",
@@ -377,7 +379,7 @@ def crud_matrix() -> dict[str, Any]:
             "this states each explicitly so callers do not assume a missing verb."
         ),
         "entities": {
-            "plan": {"create": "plan_create", "read": "plan_list/plan_status", "update": "none (plan.status is fixed at 'draft'; the frozen state is derived from step statuses)", "delete": "plan_delete (soft, hidden-but-preserved; or hard, irreversible cascade)"},
+            "plan": {"create": "plan_create", "read": "plan_list/plan_status", "update": "none (plan.status is fixed at 'draft'; the frozen state is derived from step statuses; plan_unfreeze reopens a fully-frozen plan by opening an audited cascade, not by mutating plan.status)", "delete": "plan_delete (soft, hidden-but-preserved; or hard, irreversible cascade)"},
             "step": {"create": "step_create", "read": "step_get/step_tree", "update": "step_update/step_move; status via step_set_status/step_transition", "delete": "step_delete (also purges the step's step_runtime row via ON DELETE CASCADE)"},
             "concept": {"create": "concept_add", "read": "concept_get/concept_list", "update": "concept_update (concept_id is immutable; no rename)", "delete": "concept_remove (does not clean up relations referencing it; dangling relation endpoints are possible)"},
             "relation": {"create": "relation_add", "read": "relation_list", "update": "none (no relation_update; remove + add to change a type or endpoint)", "delete": "relation_remove"},
@@ -431,7 +433,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "context_specific", "context_bundle", "block_get", "block_list",
         "branch_dump", "branch_weak",
     ],
-    "cascade": ["cascade_begin", "cascade_preview", "cascade_commit", "cascade_abort"],
+    "cascade": ["cascade_begin", "cascade_preview", "cascade_commit", "cascade_abort", "plan_unfreeze"],
     "srt": ["srt_snapshot_create", "srt_snapshot_list", "srt_diff"],
     "system": ["info"],
     "todo": [

@@ -32,7 +32,11 @@ def _all_steps_frozen(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> bool:
     return not has_non_frozen
 
 
-def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord:
+def begin_cascade(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    allow_all_frozen: bool = False,
+) -> CascadeRecord:
     """Open a new cascade on a plan, anchored at its current head revision.
 
     Acquires the per-plan advisory lock for the duration of the operation.
@@ -47,6 +51,14 @@ def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeReco
     returns the inserted record. The per-plan lock is always released
     before returning or raising, whether the operation succeeded or
     raised any of the above conditions.
+
+    ``allow_all_frozen`` is an internal escape hatch reserved for the
+    audited plan_unfreeze command: when True, the all-steps-frozen refusal
+    is bypassed so the ONLY documented door out of full freeze can open a
+    cascade. It does NOT relax the ``plan.status == 'frozen'`` guard, and
+    it defaults to False so every public caller (cascade_begin) keeps the
+    full frozen-truth protection. This is the only sanctioned bypass; the
+    public FROZEN_TRUTH_WRITE guard of cascade_begin is unchanged.
     """
     acquire_plan_lock(conn, plan_uuid)
     try:
@@ -57,7 +69,7 @@ def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeReco
             raise FrozenTruthMutationError(
                 f"cannot open a cascade on frozen plan {plan_uuid}: frozen plan truth is read-only"
             )
-        if _all_steps_frozen(conn, plan_uuid):
+        if not allow_all_frozen and _all_steps_frozen(conn, plan_uuid):
             raise FrozenTruthMutationError(
                 f"cannot open a cascade on plan {plan_uuid}: every step is frozen; frozen plan truth is read-only"
             )
