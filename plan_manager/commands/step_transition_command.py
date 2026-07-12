@@ -40,7 +40,14 @@ class StepTransitionCommand(Command):
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
     result_class: ClassVar[type] = SuccessResult
-    use_queue: ClassVar[bool] = True
+    # Bug 96329ae5 fast-fail: this command runs on the adapter's synchronous
+    # sync-start path (use_queue=False), which returns fast results — including
+    # an immediate INVALID_TRANSITION for an illegal request — to the caller
+    # directly and only auto-falls-back to the queue when a slow freeze gate
+    # exceeds the sync cap. With use_queue=True the adapter enqueued every call
+    # unconditionally (no pre-enqueue validation hook exists), so a definitively
+    # illegal transition returned a job id that merely completed_with_error.
+    use_queue: ClassVar[bool] = False
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
@@ -111,6 +118,14 @@ class StepTransitionCommand(Command):
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
                 selected, scope_label = _select_steps(nodes, step_id, scope)
+                # Fast-fail: validate the requested transition against the
+                # lifecycle matrix BEFORE running the (expensive) freeze gate.
+                # _plan_transitions raises INVALID_TRANSITION (with per-step
+                # legal_targets) as soon as any selected step is illegal, so an
+                # illegal request never triggers the gate and, on the
+                # synchronous sync-start path, is returned to the caller
+                # immediately rather than after a queued gate run.
+                transitioned, skipped = _plan_transitions(nodes, selected, to_status)
                 gate = _unchecked_gate(scope_label, p.head_revision_uuid)
                 if to_status == "frozen" and require_green:
                     gate = _run_transition_gate(conn, p.uuid, nodes, selected, scope_label)
@@ -120,8 +135,6 @@ class StepTransitionCommand(Command):
                             "mechanical gate is red for transition scope",
                             {"gate": gate},
                         )
-
-                transitioned, skipped = _plan_transitions(nodes, selected, to_status)
                 if any(item["from"] == "frozen" and item["to"] != "frozen" for item in transitioned):
                     if cascade_uuid is None:
                         return domain_error(

@@ -5,6 +5,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from plan_manager.cascade.close import CommitRefusedError
 from plan_manager.cascade.record import CascadeError
+from plan_manager.domain.bug_status_transitions import BugStatusTransitionError
 from plan_manager.domain.model_binding import InvalidBindingScopeError, InvalidRuntimeRoleError
 from plan_manager.domain.primary_anchor import InvalidAnchorError
 from plan_manager.domain.runtime_validation import (
@@ -14,6 +15,8 @@ from plan_manager.domain.status_model import StatusTransitionError
 from plan_manager.scoring.embedding import EmbeddingUnavailable
 from plan_manager.scoring.index import ScoreRefusedError
 from plan_manager.storage.version_store import VersionStoreError
+from plan_manager.views.dependency_graph import GraphIntegrityError
+from plan_manager.views.prompt_assembly import PromptAssemblyError
 
 
 DOMAIN_CODES: frozenset[str] = frozenset({
@@ -82,6 +85,10 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "DUPLICATE_PROJECT_DEPENDENCY",
     "INVALID_FILTER",
     "INVALID_PAGINATION",
+    "PROMPT_ASSEMBLY_FAILED",
+    "GRAPH_CORRUPTED_CHAIN",
+    "EXPORT_FILE_NOT_FOUND",
+    "EXPORT_PATH_INVALID",
 })
 
 
@@ -138,6 +145,19 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("INVALID_BINDING_SCOPE", str(exc), {})
     if isinstance(exc, InvalidRuntimeRoleError):
         return domain_error("INVALID_RUNTIME_ROLE", str(exc), {})
+    if isinstance(exc, BugStatusTransitionError):
+        return domain_error(
+            "INVALID_RUNTIME_STATUS_TRANSITION",
+            str(exc),
+            {"current_status": exc.current_status, "legal_targets": exc.legal_targets},
+        )
     if isinstance(exc, RuntimeValidationError):
         return domain_error("RUNTIME_VALIDATION_ERROR", str(exc), {})
+    # Prompt-assembly and graph-integrity failures are typed ValueError subclasses; map them to
+    # documented domain codes instead of leaking a raw -32603 (both are checked before any generic
+    # ValueError fallthrough because there is none — unknown exceptions are re-raised below).
+    if isinstance(exc, PromptAssemblyError):
+        return domain_error("PROMPT_ASSEMBLY_FAILED", str(exc), {})
+    if isinstance(exc, GraphIntegrityError):
+        return domain_error("GRAPH_CORRUPTED_CHAIN", str(exc), {})
     raise exc

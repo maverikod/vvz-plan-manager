@@ -126,7 +126,17 @@ def assemble_state(conn, plan_uuid, revision_uuid) -> dict:
             continue
         snap = _plain(snap)
         kind = snap.get("kind")
-        body = {key: value for key, value in snap.items() if key != "kind"}
+        # A paragraph wrapped non-binding at this revision is recorded as a binding=False
+        # state change (the row is kept); like the live-head path, exports surface only
+        # binding paragraphs, and the flag itself stays out of the exported body so both
+        # paths produce the same paragraph shape.
+        if kind == "paragraph" and snap.get("binding", True) is False:
+            continue
+        body = {
+            key: value
+            for key, value in snap.items()
+            if key != "kind" and not (kind == "paragraph" and key == "binding")
+        }
         if kind == "step":
             state["steps"].append(body)
         elif kind == "concept":

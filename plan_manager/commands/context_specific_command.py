@@ -11,6 +11,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.context_block_metadata import BASE_PARAMETERS, context_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.views.context_blocks import (
     ContextRevision,
@@ -67,7 +68,7 @@ class ContextSpecificCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                common = get_context_block(conn, p.uuid, uuid.UUID(common_block_id))
+                common = get_context_block(conn, p.uuid, validate_uuid(common_block_id))
                 if common.kind != "common":
                     raise DomainCommandError(
                         "COMMON_BLOCK_NOT_FOUND",

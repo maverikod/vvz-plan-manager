@@ -24,9 +24,19 @@ BUG_ERROR_CASES = {
         "solution": "Supply a source_type-consistent set of identifier fields; see the bug_create parameter descriptions for the fields required by each source_type.",
     },
     "INVALID_RUNTIME_STATUS_TRANSITION": {
-        "description": "bug_close was called while the BugClosureDiscipline invariant (C-026) is not satisfied: the source fix is not verified, or a downstream impact or propagation is not fully handled.",
+        "description": (
+            "The requested bug lifecycle transition is illegal from the bug's current status. The shared "
+            "terminal-status guard refuses it: closed/rejected/duplicate are terminal and may be left ONLY "
+            "via bug_reopen, and bug_confirm is legal only from reported/triaged (idempotent from confirmed). "
+            "bug_close additionally requires the BugClosureDiscipline invariant (C-026) to be satisfied: the "
+            "source fix verified, and every downstream impact and propagation fully handled."
+        ),
         "message": "invalid bug status transition: {details}",
-        "solution": "Resolve every blocking condition reported in the error details (verify the source fix, resolve or clear every impact, finish every propagation) before retrying bug_close.",
+        "solution": (
+            "Inspect the error details: current_status and legal_targets name the statuses reachable from here "
+            "(use bug_reopen to leave a terminal status). For bug_close, resolve every blocking condition "
+            "reported (verify the source fix, resolve or clear every impact, finish every propagation) before retrying."
+        ),
     },
 }
 

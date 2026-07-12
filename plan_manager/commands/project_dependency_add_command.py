@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.project_dependency_store import create_project_dependency
@@ -121,8 +122,8 @@ class ProjectDependencyAddCommand(Command):
                 p = resolve_plan(conn, plan)
                 record = create_project_dependency(
                     conn,
-                    dependent_project_id=uuid.UUID(dependent_project_id),
-                    depends_on_project_id=uuid.UUID(depends_on_project_id),
+                    dependent_project_id=validate_uuid(dependent_project_id),
+                    depends_on_project_id=validate_uuid(depends_on_project_id),
                     dependency_type=dependency_type,
                     discovery_source=discovery_source,
                     created_by=actor,

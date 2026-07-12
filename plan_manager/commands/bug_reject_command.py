@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.bug_status_transitions import guard_bug_transition
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import get_bug, set_bug_status
@@ -65,6 +66,7 @@ class BugRejectCommand(Command):
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                guard_bug_transition("bug_reject", existing.status)
                 updated = set_bug_status(conn, bug_uuid, changed_by=changed_by, status="rejected")
                 return SuccessResult(data=updated.to_payload())
         except Exception as exc:

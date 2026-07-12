@@ -147,7 +147,7 @@ def label_coverage(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CoverageRe
         if fields:
             gs_labels.update(fields.get("source_labels", []))
     paragraph_cur = conn.execute(
-        "SELECT label FROM paragraph WHERE plan_uuid = %s",
+        "SELECT label FROM paragraph WHERE plan_uuid = %s AND binding IS TRUE",
         (plan_uuid,),
     )
     hrs_labels: set[str] = {"{" + row[0] + "}" for row in paragraph_cur.fetchall()}

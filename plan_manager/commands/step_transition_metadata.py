@@ -40,7 +40,18 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             "dry_run reports the exact transition and skip sets without "
             "writing rows or revisions. The command changes the authoritative "
             "step.status column; it never stores inert lifecycle data inside "
-            "step fields or fields.status."
+            "step fields or fields.status. Transition legality is validated "
+            "synchronously before any gate run: if any selected step cannot "
+            "legally reach to_status the whole request is refused immediately "
+            "with INVALID_TRANSITION (details.illegal carries each offending "
+            "step's legal_targets) and no gate runs and no rows change — a "
+            "single illegal step and a mixed legal/illegal scope are both "
+            "rejected as one atomic batch. The command executes on the "
+            "adapter's synchronous sync-start path, so fast results (an "
+            "immediate INVALID_TRANSITION, a dry_run report, or a fast "
+            "draft/ready_for_review transition) are returned to the caller "
+            "directly; only a slow freeze gate that exceeds the server sync "
+            "cap is auto-handed to the queue."
         ),
         "parameters": {
             "plan": {
@@ -184,6 +195,7 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             "Use scope='whole_plan' to publish an authored plan for plan_prompt_chain.",
             "Leave require_green=True for freeze operations unless deliberately testing error handling.",
             "Use step_tree or step_get after transition to verify authoritative status values; do not rely on fields.status.",
-            "This command runs on the queue: the step_transition call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
+            "An illegal request (any selected step cannot reach to_status) is rejected synchronously and immediately with INVALID_TRANSITION and never enqueues a job; inspect details.illegal[*].legal_targets to pick a reachable status.",
+            "This command runs synchronously on the adapter's sync-start path. Fast calls return their result directly. Only a slow whole-plan freeze gate that exceeds the server sync cap is auto-handed to the queue, in which case the response carries job_id with poll_with='queue_get_job_status' (never the builtin job_status, which reads a separate in-memory store).",
         ],
     }

@@ -49,7 +49,8 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
     - ``"concept"``: plan_uuid, concept_id, name, definition, properties,
       source_labels.
     - ``"relation"``: plan_uuid, from_concept, to_concept, type.
-    - ``"paragraph"``: plan_uuid, label, text, position.
+    - ``"paragraph"``: plan_uuid, label, text, position, binding
+      (defaulting to True when absent from an older snapshot).
 
     :param conn: open psycopg 3 database connection.
     :param node_uuid: uuid of the node whose working row is being written;
@@ -133,21 +134,26 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
             ),
         )
     elif kind == "paragraph":
+        # ``binding`` defaults to True for historical snapshots recorded before the flag
+        # existed; carrying it through the upsert makes a wrap/unwrap round-trip restorable
+        # by cascade abort (bug f253b08d).
         conn.execute(
             "INSERT INTO paragraph "
-            "(uuid, plan_uuid, label, text, position) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "(uuid, plan_uuid, label, text, position, binding) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (uuid) DO UPDATE SET "
             "plan_uuid = EXCLUDED.plan_uuid, "
             "label = EXCLUDED.label, "
             "text = EXCLUDED.text, "
-            "position = EXCLUDED.position",
+            "position = EXCLUDED.position, "
+            "binding = EXCLUDED.binding",
             (
                 node_uuid,
                 snapshot["plan_uuid"],
                 snapshot["label"],
                 snapshot["text"],
                 snapshot["position"],
+                snapshot.get("binding", True),
             ),
         )
     else:

@@ -14,6 +14,7 @@ INVENTORY: tuple[str, ...] = (
     "plan_snapshot",
     "plan_import",
     "export_upload_save",
+    "export_read",
     "hrs_import",
     "hrs_export",
     "para_list",

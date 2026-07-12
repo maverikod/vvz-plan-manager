@@ -24,7 +24,20 @@ from plan_manager.domain.plan import get_plan
 from plan_manager.storage.version_store import record_revision
 
 
-def _paragraph_snapshot(row_uuid: uuid.UUID, plan_uuid: uuid.UUID, row, deleted: bool = False) -> dict:
+def _paragraph_snapshot(
+    row_uuid: uuid.UUID,
+    plan_uuid: uuid.UUID,
+    row,
+    deleted: bool = False,
+    binding: bool = True,
+) -> dict:
+    """Build a version-graph snapshot of one paragraph row.
+
+    ``binding`` mirrors the physical row's binding flag so the flag round-trips
+    through cascade abort/restore (bug f253b08d): a wrap is recorded as a
+    binding=False STATE CHANGE (the row is kept), never as ``deleted``.
+    ``deleted`` remains for true row removals.
+    """
     snapshot = {
         "kind": "paragraph",
         "uuid": str(row_uuid),
@@ -32,6 +45,7 @@ def _paragraph_snapshot(row_uuid: uuid.UUID, plan_uuid: uuid.UUID, row, deleted:
         "label": row.label,
         "text": row.text,
         "position": row.position,
+        "binding": binding,
     }
     if deleted:
         snapshot["deleted"] = True
@@ -145,22 +159,40 @@ def set_non_binding(
     author: str,
     cascade: CascadeRecord | None,
 ) -> None:
-    """Mark a stored binding paragraph position as non-binding by deleting it."""
-    if not non_binding:
-        raise ValueError(
-            f"no stored block at position {position}: non-binding blocks are not stored"
+    """Wrap or unwrap the non-binding marker around the paragraph at ``position``.
+
+    Toggling the binding flag KEEPS the paragraph row (it is not deleted), so a wrap is fully
+    reversible: unwrap restores the very same paragraph byte-for-byte. wrap (``non_binding`` True)
+    finds the binding row at ``position`` and marks it non-binding; unwrap (``non_binding`` False)
+    finds the non-binding row previously wrapped at ``position`` and restores it to binding.
+
+    Raises:
+        ValueError: when there is no binding row at ``position`` to wrap, or no wrapped
+            (non-binding) row at ``position`` to unwrap.
+    """
+    if non_binding:
+        row = paragraph_store.get_paragraph_at_position(
+            conn, plan_uuid, position, binding=True
         )
+        if row is None:
+            raise ValueError(f"no block at position {position}")
+        # Recorded as a binding=False STATE CHANGE, not a deletion: the physical row is kept,
+        # so cascade abort/restore must be able to flip the flag back rather than re-insert or
+        # hard-delete the row. Coverage/gate stop counting it via their binding filters.
+        snapshot = _paragraph_snapshot(row.uuid, plan_uuid, row, binding=False)
+        message = f"mark paragraph at position {position} non-binding"
+    else:
+        row = paragraph_store.get_paragraph_at_position(
+            conn, plan_uuid, position, binding=False
+        )
+        if row is None:
+            raise ValueError(f"no non-binding block at position {position}")
+        # Restored into the binding set.
+        snapshot = _paragraph_snapshot(row.uuid, plan_uuid, row, binding=True)
+        message = f"restore paragraph at position {position} to binding"
 
-    rows = paragraph_store.list_paragraphs(conn, plan_uuid)
-    row = next((candidate for candidate in rows if candidate.position == position), None)
-    if row is None:
-        raise ValueError(f"no block at position {position}")
+    paragraph_store.set_paragraph_binding(conn, row.uuid, not non_binding)
 
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM paragraph WHERE uuid = %s", (row.uuid,))
-
-    message = f"remove non-binding paragraph at position {position}"
-    snapshot = _paragraph_snapshot(row.uuid, plan_uuid, row, deleted=True)
     if cascade is None:
         plan = get_plan(conn, plan_uuid)
         record_revision(

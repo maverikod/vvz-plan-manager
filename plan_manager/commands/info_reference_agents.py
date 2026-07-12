@@ -205,15 +205,25 @@ def lifecycle_matrices() -> dict[str, Any]:
         "bug": {
             "enforced": False,
             "command_transitions": {
-                "bug_confirm": "-> confirmed",
-                "bug_reject": "-> rejected",
-                "bug_mark_duplicate": "-> duplicate",
-                "bug_reopen": "-> reopened",
-                "bug_close": "-> closed (refused unless BugClosureDiscipline is satisfied)",
+                "bug_confirm": "-> confirmed (legal only from reported/triaged; idempotent from confirmed)",
+                "bug_reject": "-> rejected (legal from any non-terminal status)",
+                "bug_mark_duplicate": "-> duplicate (legal from any non-terminal status)",
+                "bug_reopen": "-> reopened (legal only from a terminal status: closed/rejected/duplicate)",
+                "bug_close": "-> closed (legal from any non-terminal status AND refused unless BugClosureDiscipline is satisfied)",
+            },
+            "terminal_guard": {
+                "terminal_statuses": ["closed", "rejected", "duplicate"],
+                "rule": (
+                    "closed/rejected/duplicate are terminal and may be left ONLY via bug_reopen. "
+                    "Every other bug transition command applied to a terminal status, and bug_confirm "
+                    "applied from any status other than reported/triaged/confirmed, is refused with "
+                    "INVALID_RUNTIME_STATUS_TRANSITION carrying current_status and the reachable legal_targets."
+                ),
+                "enforced_by": "plan_manager.domain.bug_status_transitions.guard_bug_transition (command layer)",
             },
             "unreachable_post_creation": ["triaged", "fixing", "fixed_source", "propagating", "verified"],
             "notes": [
-                "set_bug_status enforces no legality check; the store stamps confirmed_at/closed_at/reopened_at mechanically.",
+                "The store's set_bug_status enforces no legality check and stamps confirmed_at/closed_at/reopened_at mechanically; the shared command-layer terminal_guard is what refuses illegal transitions.",
                 "fixing/fixed_source/propagating/verified/triaged can only be set as the initial status at bug_create; no command advances a bug into them afterward. Track fix progress via the bug_fix/bug_impact/bug_propagation records.",
             ],
         },
@@ -371,7 +381,7 @@ def crud_matrix() -> dict[str, Any]:
             "step": {"create": "step_create", "read": "step_get/step_tree", "update": "step_update/step_move; status via step_set_status/step_transition", "delete": "step_delete (also purges the step's step_runtime row via ON DELETE CASCADE)"},
             "concept": {"create": "concept_add", "read": "concept_get/concept_list", "update": "concept_update (concept_id is immutable; no rename)", "delete": "concept_remove (does not clean up relations referencing it; dangling relation endpoints are possible)"},
             "relation": {"create": "relation_add", "read": "relation_list", "update": "none (no relation_update; remove + add to change a type or endpoint)", "delete": "relation_remove"},
-            "paragraph": {"create": "via hrs_import", "read": "para_list/para_get", "update": "para_label_assign/para_mark_non_binding (direction=wrap)", "delete": "none exposed; para_mark_non_binding direction=unwrap is currently non-functional"},
+            "paragraph": {"create": "via hrs_import", "read": "para_list/para_get", "update": "para_label_assign/para_mark_non_binding (direction=wrap marks a paragraph non-binding; direction=unwrap restores it — a reversible round-trip)", "delete": "none exposed; wrap keeps the row but hides it from para_list, and unwrap restores it"},
             "todo": {"create": "todo_create", "read": "todo_get/todo_list", "update": "todo_update (not status); todo_resolve/todo_close for terminal status", "delete": "none (TODOs have no delete command; terminate via resolve/close)"},
             "todo_link": {"create": "todo_link_add", "read": "via todo_get", "update": "none", "delete": "todo_link_remove (soft, idempotent)"},
             "comment": {"create": "comment_add", "read": "comment_get/comment_list", "update": "none (comments are immutable; comment_supersede appends a new record; comment_resolve toggles resolved)", "delete": "none exposed"},
@@ -399,7 +409,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "plan_project_attach", "plan_project_detach", "plan_project_list",
         "plan_project_set_primary", "plan_project_clear_primary",
     ],
-    "transfer": ["export_upload_save", "hrs_import", "hrs_export"],
+    "transfer": ["export_upload_save", "export_read", "hrs_import", "hrs_export"],
     "paragraph": ["para_list", "para_get", "para_label_assign", "para_mark_non_binding"],
     "concept_relation": [
         "concept_get", "concept_list", "concept_add", "concept_update", "concept_remove",
@@ -462,7 +472,6 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
 _QUEUED_COMMANDS: frozenset[str] = frozenset({
     "plan_export", "plan_snapshot", "plan_import", "hrs_import",
     "plan_prompt_chain", "branch_weak", "plan_validate", "plan_score",
-    "step_transition",
 })
 
 

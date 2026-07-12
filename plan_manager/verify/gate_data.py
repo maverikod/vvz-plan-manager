@@ -74,12 +74,15 @@ def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
         relations = [(row[0], row[1], row[2]) for row in cur.fetchall()]
 
         cur.execute(
-            "SELECT label FROM paragraph WHERE plan_uuid = %s ORDER BY position",
+            "SELECT label FROM paragraph WHERE plan_uuid = %s AND binding IS TRUE ORDER BY position",
             (plan_uuid,),
         )
         labels = [row[0] for row in cur.fetchall()]
 
-        cur.execute("SELECT count(*) FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
+        cur.execute(
+            "SELECT count(*) FROM paragraph WHERE plan_uuid = %s AND binding IS TRUE",
+            (plan_uuid,),
+        )
         paragraph_count = cur.fetchone()[0]
 
     counts = {

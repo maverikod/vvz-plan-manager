@@ -158,7 +158,7 @@ def reference_estimator(conn, branch: Branch, concept_rows) -> float:
         bare_label = source_label[1:-1]
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM paragraph WHERE plan_uuid = %s AND label = %s",
+                "SELECT 1 FROM paragraph WHERE plan_uuid = %s AND label = %s AND binding IS TRUE",
                 (branch.plan_uuid, bare_label),
             )
             if cur.fetchone() is not None:

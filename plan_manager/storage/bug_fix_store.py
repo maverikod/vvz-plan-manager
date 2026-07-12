@@ -140,6 +140,13 @@ def update_bug_fix(conn: psycopg.Connection, fix_uuid: uuid.UUID, *, changed_by:
         validate_fix_status(status)
         updates.append("status = %s")
         params.append(status)
+        if status == "in_progress":
+            # Stamp started_at on the transition into in_progress, mirroring the
+            # implemented_at stamp below and create_bug_fix's started_at stamp;
+            # otherwise a fix that begins life as "proposed" and is later moved
+            # to in_progress would keep a null started_at.
+            updates.append("started_at = %s")
+            params.append(now)
         if status == "implemented":
             updates.append("implemented_at = %s")
             params.append(now)

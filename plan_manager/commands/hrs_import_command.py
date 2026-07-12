@@ -14,6 +14,7 @@ from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.hrs_import_metadata import get_hrs_import_metadata
 from plan_manager.exchange.importer import import_hrs, validate_hrs
 from plan_manager.domain.paragraph_store import list_paragraphs
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.views.dependency_graph import load_steps
 
@@ -109,17 +110,14 @@ class HrsImportCommand(Command):
             The validated parameter dictionary, unchanged beyond the base
             validator's own normalization.
 
-        Raises:
-            ValueError: When exactly one of 'source' and 'source_text' is
-                not present; when 'source' is empty or contains '/', '\\'
-                or '..'; or when 'cascade_uuid' is present but does not
-                parse as a UUID.
+        Note:
+            A malformed ``cascade_uuid`` is NOT parsed here: a bare ValueError
+            raised from validate_params is wrapped by the adapter into a
+            generic -32603 InternalError. execute() validates cascade_uuid
+            through validate_uuid instead, so a malformed value surfaces as a
+            clean RUNTIME_VALIDATION_ERROR domain code.
         """
-        params = super().validate_params(params)
-        cascade_uuid = params.get("cascade_uuid")
-        if cascade_uuid is not None:
-            uuid.UUID(cascade_uuid)
-        return params
+        return super().validate_params(params)
 
     async def execute(
         self,
@@ -151,6 +149,11 @@ class HrsImportCommand(Command):
             failure.
         """
         try:
+            # Validate the optional cascade_uuid up front so a malformed value returns a clean
+            # RUNTIME_VALIDATION_ERROR instead of a raw ValueError (-32603) from the later parse.
+            parsed_cascade_uuid = (
+                validate_uuid(cascade_uuid) if cascade_uuid is not None else None
+            )
             has_source = source is not None
             has_source_text = source_text is not None
             if has_source == has_source_text:
@@ -178,9 +181,6 @@ class HrsImportCommand(Command):
                     )
                 if dry_run:
                     return SuccessResult(data={"dry_run": True, "valid": True})
-                parsed_cascade_uuid = (
-                    uuid.UUID(cascade_uuid) if cascade_uuid is not None else None
-                )
                 try:
                     rec = check_admission(conn, p.uuid, "paragraph", None, parsed_cascade_uuid)
                 except CascadeError as exc:

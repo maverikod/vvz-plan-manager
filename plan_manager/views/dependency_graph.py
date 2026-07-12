@@ -15,6 +15,15 @@ import psycopg
 from plan_manager.domain.step import Step
 
 
+class GraphIntegrityError(ValueError):
+    """Raised when a step's parent_step_uuid chain is corrupted (a referenced parent is absent).
+
+    A ValueError subclass so existing ``except ValueError`` handlers keep catching it, while
+    plan_manager.commands.errors.map_exception can map it to the GRAPH_CORRUPTED_CHAIN domain
+    code instead of leaking a raw -32603.
+    """
+
+
 def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID, Step]:
     """Load every step row of one plan and build Step objects.
 
@@ -88,12 +97,12 @@ def parent_path(nodes: dict[uuid.UUID, Step], step: Step) -> str:
         return ""
     parent = nodes.get(step.parent_step_uuid)
     if parent is None:
-        raise ValueError(f"parent of step {step.step_id} not found in nodes")
+        raise GraphIntegrityError(f"parent of step {step.step_id} not found in nodes")
     if step.level == 4:
         return parent.step_id
     grandparent = nodes.get(parent.parent_step_uuid)
     if grandparent is None:
-        raise ValueError(f"parent of step {step.step_id} not found in nodes")
+        raise GraphIntegrityError(f"parent of step {step.step_id} not found in nodes")
     return f"{grandparent.step_id}/{parent.step_id}"
 
 

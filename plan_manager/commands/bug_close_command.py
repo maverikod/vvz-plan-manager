@@ -10,6 +10,7 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAME
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.domain.bug_closure_discipline import ImpactState, PropagationState, guard_close
+from plan_manager.domain.bug_status_transitions import guard_bug_transition
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
@@ -78,6 +79,10 @@ class BugCloseCommand(Command):
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                # Structural terminal-status guard first: a closed/rejected/duplicate bug can
+                # only be left via bug_reopen, and re-closing an already-closed bug is refused
+                # before the (heavier) BugClosureDiscipline evaluation below.
+                guard_bug_transition("bug_close", existing.status)
                 fixes = list_bug_fixes(conn, bug_uuid=bug_uuid)
                 source_fix_verified = any(fix.status == "verified" and bool(fix.passed) for fix in fixes)
                 impacts = list_bug_impacts(conn, bug_uuid=bug_uuid)

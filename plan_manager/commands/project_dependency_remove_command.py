@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.project_dependency_store import get_project_dependency, remove_project_dependency
@@ -75,13 +76,14 @@ class ProjectDependencyRemoveCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                existing = get_project_dependency(conn, uuid.UUID(dependency_uuid))
+                dep_uuid = validate_uuid(dependency_uuid)
+                existing = get_project_dependency(conn, dep_uuid)
                 if existing is None:
                     raise DomainCommandError(
                         "PROJECT_DEPENDENCY_NOT_FOUND",
                         f"project dependency not found: {dependency_uuid}",
                     )
-                record = remove_project_dependency(conn, uuid.UUID(dependency_uuid), changed_by=actor)
+                record = remove_project_dependency(conn, dep_uuid, changed_by=actor)
                 return SuccessResult(data={"project_dependency": record.to_payload()})
         except Exception as exc:
             return map_exception(exc)

@@ -61,7 +61,7 @@ def test_step_transition_schema_and_metadata_are_help_ready() -> None:
         "step_transition", StepTransitionCommand, "custom"
     )
 
-    assert StepTransitionCommand.use_queue is True
+    assert StepTransitionCommand.use_queue is False
     assert schema["required"] == ["plan", "to_status"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["to_status"]["enum"] == [

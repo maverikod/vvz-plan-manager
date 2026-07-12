@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.context_block_metadata import BASE_PARAMETERS, context_metadata
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.views.context_blocks import list_context_blocks
 
@@ -63,6 +64,13 @@ class BlockListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            # Validate the optional UUID filters up front so a malformed value returns a clean
+            # RUNTIME_VALIDATION_ERROR instead of a raw ValueError (-32603) from the view's
+            # uuid.UUID() parse. The original strings are passed on; the view parses them itself.
+            if revision is not None:
+                validate_uuid(revision)
+            if cascade_uuid is not None:
+                validate_uuid(cascade_uuid)
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 return SuccessResult(data={"blocks": list_context_blocks(conn, p.uuid, node, kind, revision, cascade_uuid)})
