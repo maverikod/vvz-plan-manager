@@ -35,8 +35,9 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "installed man and info pages, so this command's documentation "
             "text and the installed documentation cannot diverge. The "
             "optional section parameter restricts the answer to exactly "
-            "one of identity, build, runtime, capabilities, planning_standards, or "
-            "documentation; omitting it returns all sections. The "
+            "one of identity, build, runtime, capabilities, planning_standards, "
+            "documentation, mechanism_documentation, or "
+            "delegation_method_documentation; omitting it returns all sections. The "
             "capabilities section is intended for models and agents that "
             "need a compact, machine-readable map of available workflows, "
             "including project binding commands, step lifecycle transitions, "
@@ -72,8 +73,10 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "section": {
                 "description": (
                     "Restrict the response to one section: 'identity', "
-                    "'build', 'runtime', 'capabilities', 'planning_standards', or "
-                    "'documentation'. Omit this parameter to receive all sections."
+                    "'build', 'runtime', 'capabilities', 'planning_standards', "
+                    "'documentation', 'mechanism_documentation', or "
+                    "'delegation_method_documentation'. Omit this parameter to "
+                    "receive all sections."
                 ),
                 "type": "string",
                 "required": False,
@@ -84,6 +87,8 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "capabilities",
                     "planning_standards",
                     "documentation",
+                    "mechanism_documentation",
+                    "delegation_method_documentation",
                 ],
             },
         },
