@@ -109,6 +109,11 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
                 "message": "step not found: {step_id}",
                 "solution": "Call step_tree to list valid step_id values for the plan.",
             },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare local step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
+            },
         },
         "best_practices": [
             "Use step_tree first to discover valid step_id values before calling step_get.",

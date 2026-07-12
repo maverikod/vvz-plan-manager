@@ -76,5 +76,6 @@ def get_plan_import_metadata(cls) -> Dict[str, Any]:
             "The layout is always validated before any database write; a malformed layout never touches the database.",
             "After a real import, verify by re-reading the plan with resolve_plan or the plan catalog command.",
             "source is a bare name under server-configured export_root; it is never a filesystem path.",
+            "This command runs on the queue: the plan_import call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

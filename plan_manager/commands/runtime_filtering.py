@@ -117,14 +117,49 @@ class RuntimeFilters:
         return self.values.get(name, default)
 
 
-def filter_schema_properties(fields: list[str]) -> dict[str, Any]:
-    """Return the JSON-schema `properties` fragment for the given list of canonical filter field names."""
-    return {name: FILTER_FIELDS[name][0] for name in fields}
+def _with_enum_vocabulary(
+    base: dict[str, Any], name: str, enum_overrides: dict[str, list[str]] | None, is_schema: bool
+) -> dict[str, Any]:
+    """Return a copy of `base` enriched with an enumerated vocabulary for field `name`.
+
+    When `enum_overrides` supplies an ordered value list for `name`, the returned
+    fragment appends "One of: v1, v2, ..." to the description so the concrete
+    vocabulary is published in both the JSON-schema and the AI metadata surface
+    (metadata params copy the description). For the JSON-schema fragment
+    (is_schema=True) an explicit `enum` array is also attached.
+    """
+    result = dict(base)
+    if enum_overrides and name in enum_overrides:
+        values = list(enum_overrides[name])
+        result["description"] = result["description"].rstrip(".") + ". One of: " + ", ".join(values) + "."
+        if is_schema:
+            result["enum"] = values
+    return result
 
 
-def filter_metadata_params(fields: list[str]) -> dict[str, Any]:
-    """Return the metadata `parameters` fragment for the given list of canonical filter field names."""
-    return {name: FILTER_FIELDS[name][1] for name in fields}
+def filter_schema_properties(
+    fields: list[str], enum_overrides: dict[str, list[str]] | None = None
+) -> dict[str, Any]:
+    """Return the JSON-schema `properties` fragment for the given list of canonical filter field names.
+
+    `enum_overrides` optionally maps a filter field name (e.g. "status", "kind",
+    "severity") to the ordered list of values that field accepts for the calling
+    command's entity; the vocabulary is published in the field description and as
+    an `enum` array so callers never have to discover it via an INVALID_FILTER error.
+    """
+    return {name: _with_enum_vocabulary(FILTER_FIELDS[name][0], name, enum_overrides, True) for name in fields}
+
+
+def filter_metadata_params(
+    fields: list[str], enum_overrides: dict[str, list[str]] | None = None
+) -> dict[str, Any]:
+    """Return the metadata `parameters` fragment for the given list of canonical filter field names.
+
+    `enum_overrides` optionally maps a filter field name to the ordered list of
+    values that field accepts for the calling command's entity; the vocabulary is
+    appended to the field description so it appears in the command's AI metadata.
+    """
+    return {name: _with_enum_vocabulary(FILTER_FIELDS[name][1], name, enum_overrides, False) for name in fields}
 
 
 def pagination_schema_properties() -> dict[str, Any]:

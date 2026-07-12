@@ -244,6 +244,23 @@ def _transition_path(current: str, target: str, is_atomic_step: bool) -> list[tu
     return [(current, target)]
 
 
+def _legal_targets(current: str, is_atomic_step: bool) -> list[str]:
+    """Return the subset of this command's target statuses legally reachable
+    from `current` (including the multi-hop draft -> frozen path), so an
+    INVALID_TRANSITION result can tell the caller which statuses are admissible.
+    """
+    reachable: list[str] = []
+    for target in _TARGET_STATUSES:
+        if target == current:
+            continue
+        try:
+            _transition_path(current, target, is_atomic_step=is_atomic_step)
+        except Exception:
+            continue
+        reachable.append(target)
+    return reachable
+
+
 def _plan_transitions(
     nodes: dict[uuid.UUID, Step],
     selected: list[Step],
@@ -276,6 +293,7 @@ def _plan_transitions(
                     "from": step.status,
                     "to": to_status,
                     "reason": str(exc),
+                    "legal_targets": _legal_targets(step.status, is_atomic_step=(step.level == 5)),
                 }
             )
             continue

@@ -142,5 +142,6 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Use scope='branch' with fail_fast=True for fast iteration while fixing a single branch.",
             "This command is read-only: it never mutates or stores anything, so it is always safe to call.",
             "Record the returned revision_uuid alongside the report; it identifies the exact tree state that was measured.",
+            "This command runs on the queue: the plan_validate call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

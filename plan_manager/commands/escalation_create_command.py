@@ -73,7 +73,7 @@ class EscalationCreateCommand(Command):
             "from_level": {"description": "Owner level the escalation was raised from.", "type": "string", "required": False},
             "to_level": {"description": "Owner level the escalation was raised to.", "type": "string", "required": False},
         }
-        return review_escalation_metadata(
+        meta = review_escalation_metadata(
             cls,
             params,
             {"success": {"description": "The created escalation payload, including escalation_uuid, anchor fields, reason, from_level, to_level, and status open."}},
@@ -94,8 +94,17 @@ class EscalationCreateCommand(Command):
                 "Set from_level and to_level per the owner review ladder (hrs_mrs > gs > ts > as) to record who raised the escalation and who must decide it.",
                 "New escalations start at status open; resolve them with escalation_resolve rather than creating a duplicate.",
                 "Write reason as the concrete blocker (missing context, competence gap, low confidence, or exhausted retries) so the target owner can act without re-deriving it.",
+                "Escalation status vocabulary (EscalationStatus) has exactly two values: open, resolved. "
+                "escalation_resolve is the only transition, and it always moves open -> resolved.",
             ],
         )
+        meta["detailed_description"] = (
+            meta["detailed_description"]
+            + " Escalation status vocabulary (EscalationStatus): open, resolved. An escalation "
+            "is always created in status open; there is no command-level way to create one "
+            "directly in status resolved."
+        )
+        return meta
 
     async def execute(
         self,

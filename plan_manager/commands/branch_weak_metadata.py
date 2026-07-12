@@ -106,5 +106,6 @@ def get_branch_weak_metadata(cls: type) -> Dict[str, Any]:
         "best_practices": [
             "Call this command after a green mechanical gate; a GATE_RED response means the mechanical layer must be fixed first.",
             "Use verbose=True only when investigating a specific weak branch; the default terse output is the published one number and a color discipline.",
+            "This command runs on the queue: the branch_weak call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

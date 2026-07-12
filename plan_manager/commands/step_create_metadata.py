@@ -135,6 +135,11 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "message": "step not found: {parent_step_id}",
                 "solution": "Call step_tree to list valid step_id values for the plan.",
             },
+            "AMBIGUOUS_PARENT_STEP_ID": {
+                "description": "A bare local parent_step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {parent_step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID for parent_step_id.",
+            },
             "DUPLICATE_ID": {
                 "description": "A sibling step with the same slug already exists under the same parent.",
                 "message": "duplicate slug under parent",

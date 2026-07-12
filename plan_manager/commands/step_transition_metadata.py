@@ -2,6 +2,22 @@
 
 from typing import Any
 
+from plan_manager.domain.status_model import ATOMIC_ONLY_STATUSES
+
+
+# Admissible source -> target matrix for the three statuses step_transition can
+# request (draft, ready_for_review, frozen). needs_review is never a
+# step_transition target (cascade-only), and the atomic-execution statuses
+# in_progress/done are reachable only through step_set_status, not this command.
+_LEGAL_TRANSITIONS_BY_SOURCE = {
+    "draft": ["ready_for_review", "frozen"],
+    "ready_for_review": ["draft", "frozen"],
+    "frozen": ["draft"],
+    "needs_review": ["draft", "frozen"],
+    "in_progress": [],
+    "done": [],
+}
+
 
 def get_step_transition_metadata(cls: type) -> dict[str, Any]:
     """Return the extended metadata dictionary for StepTransitionCommand."""
@@ -66,12 +82,33 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
                 "required": False,
             },
         },
+        "legal_transitions": {
+            "description": (
+                "Admissible source->target transitions for this command. to_status "
+                "may be draft, ready_for_review, or frozen. draft->frozen is applied "
+                "as the multi-hop draft->ready_for_review->frozen inside one batch "
+                "revision. frozen->draft (or frozen->ready_for_review) reopens a "
+                "frozen step and requires an admitting cascade_uuid. needs_review is "
+                "never a step_transition target (it is reached only by cascade "
+                "propagation), and the atomic-execution statuses in_progress and done "
+                "are reachable only through step_set_status, not this command."
+            ),
+            "by_source_status": _LEGAL_TRANSITIONS_BY_SOURCE,
+            "target_statuses": ["draft", "ready_for_review", "frozen"],
+            "excluded_targets": {
+                "needs_review": "Cascade-propagation only; never a direct step_transition target.",
+                "in_progress": "Atomic-step execution status; set via step_set_status only.",
+                "done": "Atomic-step execution status; set via step_set_status only.",
+            },
+            "atomic_only_statuses": sorted(ATOMIC_ONLY_STATUSES),
+        },
         "return_value": {
             "success": {
                 "description": "Transition report and revision identity for the whole batch.",
                 "data": {
                     "transitioned": "List of {uuid, step_id, path, from, to}.",
                     "skipped": "List of {uuid, step_id, path, from, reason}. Currently used for already_at_target.",
+                    "illegal": "On INVALID_TRANSITION, details.illegal lists {uuid, step_id, path, from, to, reason, legal_targets} where legal_targets names the statuses actually reachable from that step's current status.",
                     "gate": "Gate summary: green, scope, revision_uuid, required, and checked.",
                     "revision_uuid": "Single resulting revision UUID, or null for dry_run/no-op.",
                     "dry_run": "Whether the command ran without mutation.",
@@ -147,5 +184,6 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             "Use scope='whole_plan' to publish an authored plan for plan_prompt_chain.",
             "Leave require_green=True for freeze operations unless deliberately testing error handling.",
             "Use step_tree or step_get after transition to verify authoritative status values; do not rely on fields.status.",
+            "This command runs on the queue: the step_transition call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

@@ -45,8 +45,23 @@ class ExecutionAttemptListCommand(Command):
                     "required": False,
                 },
                 "status": {
-                    "description": "Optional execution attempt status to filter by.",
+                    "description": (
+                        "Optional execution attempt status to filter by. One of the 8 "
+                        "ExecutionAttemptStatus values, in declared order: queued, running, "
+                        "succeeded, failed, cancelled, timed_out, needs_review, "
+                        "needs_escalation."
+                    ),
                     "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "cancelled",
+                        "timed_out",
+                        "needs_review",
+                        "needs_escalation",
+                    ],
                     "required": False,
                 },
                 "parent_attempt_id": {
@@ -83,6 +98,10 @@ class ExecutionAttemptListCommand(Command):
             "include_deleted defaults to false; set it true only to audit soft-deleted attempts.",
             "Filter by parent_attempt_id to walk a retry lineage originating from a given attempt.",
             "Combine plan and status to check outstanding queued/running attempts before creating new ones.",
+            "No transition matrix is enforced on execution attempt status: execution_attempt_report "
+            "accepts any of the 8 ExecutionAttemptStatus values regardless of the attempt's current "
+            "status, so this filter reflects whatever status was most recently reported, not a "
+            "state-machine-validated progression.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
 

@@ -26,6 +26,7 @@ from plan_manager.commands.info_reference import (
     step_lifecycle_capabilities,
     todo_work_capabilities,
 )
+from plan_manager.commands.info_reference_agents import agent_reference
 from plan_manager.commands.info_reference_delegation import (
     delegated_authoring_method_reference,
 )
@@ -42,6 +43,7 @@ _SECTIONS = (
     "build",
     "runtime",
     "capabilities",
+    "agent_reference",
     "planning_standards",
     "documentation",
     "mechanism_documentation",
@@ -73,9 +75,10 @@ class InfoCommand(Command):
                     "type": "string",
                     "description": (
                         "Restrict the response to one section: identity, build, "
-                        "runtime, capabilities, planning_standards, documentation, "
-                        "mechanism_documentation, or delegation_method_documentation. "
-                        "Omitting this parameter returns all sections."
+                        "runtime, capabilities, agent_reference, planning_standards, "
+                        "documentation, mechanism_documentation, or "
+                        "delegation_method_documentation. Omitting this parameter "
+                        "returns all sections."
                     ),
                     "enum": list(_SECTIONS),
                 },
@@ -149,6 +152,8 @@ class InfoCommand(Command):
                 "overlay": overlay_capabilities(),
                 "runtime_write_invariants": runtime_write_invariants(),
             }
+        if section == "agent_reference":
+            return agent_reference()
         if section == "planning_standards":
             return planning_standards_reference()
         if section == "documentation":

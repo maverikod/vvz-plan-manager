@@ -63,6 +63,10 @@ def create_bug_fix(conn: psycopg.Connection, *, bug_uuid: uuid.UUID, fix_type: s
     fix_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
     started_at = now if status == "in_progress" else None
+    # Stamp implemented_at at creation when a fix is created already in the
+    # implemented state, mirroring update_bug_fix which stamps it on the
+    # transition to "implemented"; otherwise the timestamp would stay null.
+    implemented_at = now if status == "implemented" else None
     sql = """
     INSERT INTO bug_fix (
         uuid, bug_uuid, status, fix_type, summary, implementation_notes,
@@ -84,7 +88,7 @@ def create_bug_fix(conn: psycopg.Connection, *, bug_uuid: uuid.UUID, fix_type: s
         source_project_id, branch, commit_hash, pull_request,
         Jsonb(changed_files) if changed_files is not None else None,
         Jsonb(tests) if tests is not None else None,
-        author, reviewer, started_at, None, None, verification_method,
+        author, reviewer, started_at, implemented_at, None, verification_method,
         expected_result, None, None, None,
         created_by, now, now, None,
     )

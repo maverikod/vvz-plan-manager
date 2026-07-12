@@ -11,9 +11,17 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
-from plan_manager.domain.bug_fix_propagation import PROPAGATION_STATUSES
+from plan_manager.domain.bug_fix_propagation import PROPAGATION_STATUSES, PropagationStatus
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
+
+# Ordered vocabulary published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error. This command
+# does not route filters through plan_manager.commands.runtime_filtering (it
+# builds its schema/metadata by hand), so the vocabulary is spliced into the
+# "status" description/enum inline below rather than via enum_overrides.
+_STATUS_VALUES = [e.value for e in PropagationStatus]
+_STATUS_DESCRIPTION = "Optional status filter. One of: " + ", ".join(_STATUS_VALUES) + "."
 
 
 class BugPropagationListCommand(Command):
@@ -34,7 +42,7 @@ class BugPropagationListCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier."},
                 "bug_fix_id": {"type": "string", "description": "Optional UUID filter: only propagations for this bug fix."},
                 "impact_id": {"type": "string", "description": "Optional UUID filter: only propagations for this impact."},
-                "status": {"type": "string", "description": "Optional status filter (one of the 8 PropagationStatus values)."},
+                "status": {"type": "string", "description": _STATUS_DESCRIPTION, "enum": _STATUS_VALUES},
                 "include_deleted": {"type": "boolean", "description": "Include soft-deleted propagation records. Defaults to false."},
             },
             "required": ["plan"],
@@ -47,7 +55,7 @@ class BugPropagationListCommand(Command):
             **BASE_PARAMETERS,
             "bug_fix_id": {"description": "Optional UUID filter: only propagations for this bug fix.", "type": "string", "required": False},
             "impact_id": {"description": "Optional UUID filter: only propagations for this impact.", "type": "string", "required": False},
-            "status": {"description": "Optional status filter.", "type": "string", "required": False},
+            "status": {"description": _STATUS_DESCRIPTION, "type": "string", "required": False, "enum": _STATUS_VALUES},
             "include_deleted": {"description": "Include soft-deleted propagation records. Defaults to false.", "type": "boolean", "required": False},
         }
         return bug_propagation_metadata(

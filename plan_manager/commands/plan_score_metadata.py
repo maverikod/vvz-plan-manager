@@ -170,5 +170,6 @@ def get_plan_score_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Use verbose=True only when investigating a low score; otherwise leave estimator internals out of the result.",
             "This command is read-only: it never mutates or stores anything, so it is always safe to call.",
             "Treat EMBEDDINGS_UNAVAILABLE as a degraded-trust signal, not a hard failure: retry once the embedding service is reachable.",
+            "This command runs on the queue: the plan_score call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

@@ -48,7 +48,7 @@ class EscalationResolveCommand(Command):
             "resolved_by": {"description": "Actor recorded as resolving this escalation.", "type": "string", "required": True},
             "resolution": {"description": "Resolution text recorded on the escalation.", "type": "string", "required": True},
         }
-        return review_escalation_metadata(
+        meta = review_escalation_metadata(
             cls,
             params,
             {"success": {"description": "The resolved escalation payload, with status resolved, resolution, resolved_by, and resolved_at set."}},
@@ -66,8 +66,21 @@ class EscalationResolveCommand(Command):
                 "resolve_escalation does not check whether the escalation is already resolved, so resolving twice silently overwrites the prior resolution.",
                 "resolved_by should be the owner identity at the escalation's to_level, per the owner review ladder.",
                 "resolution should record the concrete decision taken, not just confirmation of receipt — it becomes the permanent record of the ruling.",
+                "This is the only escalation transition: it always moves an escalation from status open to status "
+                "resolved (EscalationStatus has just these two values). Because resolve_escalation has no "
+                "precondition on the current status column, calling this again on an already-resolved escalation "
+                "does not error -- it unconditionally overwrites resolution, resolved_by, and resolved_at with the "
+                "new call's values.",
             ],
         )
+        meta["detailed_description"] = (
+            meta["detailed_description"]
+            + " Transitions an escalation from status open to status resolved -- the only transition "
+            "EscalationStatus (open, resolved) permits. Resolving an already-resolved escalation is not "
+            "rejected: resolve_escalation has no precondition on the escalation's current status, so a "
+            "second call overwrites the prior resolution, resolved_by, and resolved_at unconditionally."
+        )
+        return meta
 
     async def execute(
         self, plan: str, escalation_uuid: str, resolved_by: str, resolution: str, context: object | None = None

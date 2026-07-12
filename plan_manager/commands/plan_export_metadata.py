@@ -85,5 +85,6 @@ def get_plan_export_metadata(cls) -> Dict[str, Any]:
             "The export root is fixed by server configuration; no dry-run is needed because nothing in the database changes.",
             "Verify the export by reading the written layout files at the returned root path.",
             "Use plan_snapshot when the caller wants the live working state without first resolving revision ids.",
+            "This command runs on the queue: the plan_export call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

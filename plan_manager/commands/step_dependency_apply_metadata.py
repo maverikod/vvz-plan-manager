@@ -113,6 +113,11 @@ def get_step_dependency_apply_metadata(cls) -> dict[str, Any]:
                 "message": "step not found: G-999",
                 "solution": "Use canonical paths or unambiguous ids.",
             },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare id matches more than one step.",
+                "message": "step_id A-001 resolves to multiple steps",
+                "solution": "Use the canonical path such as G-005/T-002/A-001.",
+            },
             "DEPENDENCY_STEP_NOT_FOUND": {
                 "description": "A depends_on reference does not resolve.",
                 "message": "step not found: A-099",

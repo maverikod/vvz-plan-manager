@@ -94,7 +94,7 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
                 "solution": "Call the plan catalog command and retry with a valid plan identifier.",
             },
             "IMPORT_INVALID": {
-                "description": "The HRS Markdown source failed structural validation, or the request supplied neither/both source and source_text.",
+                "description": "The HRS Markdown source failed structural validation (validate_hrs found issues).",
                 "message": "hrs validation failed",
                 "solution": "Inspect the returned issues list, fix the Markdown source, and retry.",
             },
@@ -121,5 +121,7 @@ def get_hrs_import_metadata(cls) -> Dict[str, Any]:
             "source is a bare name under server-configured export_root; it is never a filesystem path.",
             "For small Markdown documents, prefer source_text to avoid an extra transfer staging step.",
             "Supply exactly one of source and source_text; never both.",
+            "Argument errors — supplying neither or both of source/source_text, or a source with a path separator — are returned as a platform JSON-RPC Invalid params error (code -32602) with no domain_code, not as IMPORT_INVALID; they cannot be filtered on details.domain_code.",
+            "This command runs on the queue: the hrs_import call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

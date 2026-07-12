@@ -21,7 +21,7 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
     RuntimeFilters,
 )
-from plan_manager.domain.runtime_comment import COMMENT_KINDS, RuntimeComment
+from plan_manager.domain.runtime_comment import COMMENT_KINDS, CommentKind, RuntimeComment
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_comment_store import list_comments
 
@@ -34,6 +34,15 @@ FILTER_FIELDS: list[str] = [
 # boolean (see _apply_in_command_filters below), not a domain enum column, so it is deliberately
 # NOT wired into the enums check here (escalated, per BUG 8972f59e packet: "do NOT invent one").
 _FILTER_ENUMS = {"kind": COMMENT_KINDS}
+
+# Ordered vocabularies published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error. "status" is the
+# synthetic resolved/unresolved derivation (not a _FILTER_ENUMS validation
+# entry, see note above), so its only two valid values are listed explicitly.
+_ENUM_OVERRIDES = {
+    "status": ["resolved", "unresolved"],
+    "kind": [e.value for e in CommentKind],
+}
 
 
 def _apply_in_command_filters(records: list[RuntimeComment], filters: RuntimeFilters) -> list[RuntimeComment]:
@@ -91,7 +100,7 @@ class CommentListCommand(Command):
             "type": "object",
             "properties": {
                 "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
-                **filter_schema_properties(FILTER_FIELDS),
+                **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
             "required": ["plan"],
@@ -102,7 +111,7 @@ class CommentListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
-            **filter_metadata_params(FILTER_FIELDS),
+            **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
         }
         return comment_metadata(

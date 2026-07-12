@@ -19,7 +19,7 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
-from plan_manager.domain.bug_fix import BUG_FIX_STATUSES
+from plan_manager.domain.bug_fix import BUG_FIX_STATUSES, BugFixStatus
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_store import list_bug_fixes
 from plan_manager.storage.bug_report_store import get_bug
@@ -28,6 +28,10 @@ from plan_manager.storage.bug_report_store import get_bug
 FILTER_FIELDS = ["status", "unverified_fixes", "created_after", "created_before"]
 
 _FILTER_ENUMS = {"status": BUG_FIX_STATUSES}
+
+# Ordered vocabulary published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error.
+_ENUM_OVERRIDES = {"status": [e.value for e in BugFixStatus]}
 
 
 class BugFixListCommand(Command):
@@ -47,7 +51,7 @@ class BugFixListCommand(Command):
             "properties": {
                 **BASE_PARAMETERS,
                 "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed."},
-                **filter_schema_properties(FILTER_FIELDS),
+                **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
             "required": ["plan", "bug"],
@@ -59,7 +63,7 @@ class BugFixListCommand(Command):
         params = {
             **BASE_PARAMETERS,
             "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed.", "type": "string", "required": True},
-            **filter_metadata_params(FILTER_FIELDS),
+            **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
         }
         return bug_fix_metadata(

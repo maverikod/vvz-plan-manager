@@ -108,6 +108,16 @@ def get_step_move_metadata(cls: type) -> dict[str, Any]:
                 "message": "step not found: {step_id}",
                 "solution": "Call step_tree to list valid step_id values for the plan.",
             },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare local step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
+            },
+            "AMBIGUOUS_PARENT_STEP_ID": {
+                "description": "A bare local new_parent_step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {new_parent_step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID for new_parent_step_id.",
+            },
             "CASCADE_REQUIRED": {
                 "description": "The moved step is not directly mutable and no cascade_uuid was supplied.",
                 "message": "cascade required to move this step",

@@ -35,9 +35,16 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "installed man and info pages, so this command's documentation "
             "text and the installed documentation cannot diverge. The "
             "optional section parameter restricts the answer to exactly "
-            "one of identity, build, runtime, capabilities, planning_standards, "
-            "documentation, mechanism_documentation, or "
+            "one of identity, build, runtime, capabilities, agent_reference, "
+            "planning_standards, documentation, mechanism_documentation, or "
             "delegation_method_documentation; omitting it returns all sections. The "
+            "agent_reference section is the exhaustive machine-readable answer key "
+            "for executing agents: the status vocabulary of every stateful entity, "
+            "the legal status-transition matrices and their reachability caveats, "
+            "the per-stage operational checklists (bug-fix, TODO, propagation, "
+            "cascade), the anchor-type tables, comment visibility modes, the "
+            "queue/polling guide, the create/read/update/delete reality per entity, "
+            "and a category index of every command. The "
             "capabilities section is intended for models and agents that "
             "need a compact, machine-readable map of available workflows, "
             "including project binding commands, step lifecycle transitions, "
@@ -73,8 +80,9 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "section": {
                 "description": (
                     "Restrict the response to one section: 'identity', "
-                    "'build', 'runtime', 'capabilities', 'planning_standards', "
-                    "'documentation', 'mechanism_documentation', or "
+                    "'build', 'runtime', 'capabilities', 'agent_reference', "
+                    "'planning_standards', 'documentation', "
+                    "'mechanism_documentation', or "
                     "'delegation_method_documentation'. Omit this parameter to "
                     "receive all sections."
                 ),
@@ -85,6 +93,7 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "build",
                     "runtime",
                     "capabilities",
+                    "agent_reference",
                     "planning_standards",
                     "documentation",
                     "mechanism_documentation",
@@ -118,6 +127,12 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                         "catalog visibility, prompt-chain compilation, read "
                         "surfaces, import/export behavior, prompt behavior, "
                         "and stable domain error codes."
+                    ),
+                    "agent_reference": (
+                        "Exhaustive agent answer key: status_vocabularies, "
+                        "lifecycle_matrices, operational_checklists, anchor_types, "
+                        "visibility_modes, queue_polling, crud_matrix, and "
+                        "command_index."
                     ),
                     "planning_standards": (
                         "Structured glossary of planning standards concepts: "
@@ -233,6 +248,16 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                 ),
             },
             {
+                "description": "Get the exhaustive agent answer key.",
+                "command": {"section": "agent_reference"},
+                "explanation": (
+                    "Returns status vocabularies, legal-transition matrices, "
+                    "operational checklists, anchor-type tables, visibility modes, "
+                    "the queue/polling guide, the CRUD matrix, and the command "
+                    "index so an agent can act without reading source."
+                ),
+            },
+            {
                 "description": "Get the planning standards glossary.",
                 "command": {"section": "planning_standards"},
                 "explanation": (
@@ -269,6 +294,7 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "Call info without a section parameter to get a full health snapshot in one round trip.",
             "Use section='runtime' for lightweight liveness checks instead of fetching the full documentation payload.",
             "Use section='capabilities' when an agent needs the supported project-binding graph, step lifecycle transitions, mutation paths, and domain errors.",
+            "Use section='agent_reference' when an agent needs the full status vocabularies, legal-transition matrices, operational checklists, anchor-type tables, visibility modes, queue/polling guide, CRUD matrix, or command index in one payload.",
             "Use section='planning_standards' when an agent needs exact planning terminology before authoring or verifying artifacts.",
             "A missing documentation payload signals a packaging defect; report it to the release pipeline rather than treating it as an empty answer.",
         ],

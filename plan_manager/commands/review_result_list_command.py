@@ -39,7 +39,11 @@ class ReviewResultListCommand(Command):
                 "status": {
                     "type": "string",
                     "enum": ["accepted", "rejected", "changes_requested", "escalated", "needs_owner_decision"],
-                    "description": "Restrict results to review results with this status.",
+                    "description": (
+                        "Restrict results to review results with this status. One of the 5 "
+                        "ReviewStatus values, in declared order: accepted, rejected, "
+                        "changes_requested, escalated, needs_owner_decision."
+                    ),
                 },
                 "include_deleted": {
                     "type": "boolean",
@@ -55,7 +59,15 @@ class ReviewResultListCommand(Command):
         params = {
             **BASE_PARAMETERS,
             "reviewed_attempt_uuid": {"description": "Restrict results to review results of this execution attempt.", "type": "string", "required": False},
-            "status": {"description": "Restrict results to review results with this status.", "type": "string", "required": False},
+            "status": {
+                "description": (
+                    "Restrict results to review results with this status. One of the 5 "
+                    "ReviewStatus values, in declared order: accepted, rejected, "
+                    "changes_requested, escalated, needs_owner_decision."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "include_deleted": {"description": "Include soft-deleted review results in the listing. Defaults to false.", "type": "boolean", "required": False},
         }
         return review_escalation_metadata(

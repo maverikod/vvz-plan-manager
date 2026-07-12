@@ -37,7 +37,13 @@ def get_cascade_begin_metadata(cls: type) -> dict:
             "opened cascade, or re-read the plan to confirm no head "
             "revision change occurred. The command itself verifies its own "
             "result by re-reading the open cascade record after opening it "
-            "and confirming its identity matches the record just created."
+            "and confirming its identity matches the record just created. "
+            "Cascade status vocabulary: open, committed, aborted. Legal "
+            "transitions: open->committed (cascade_commit, requires a green "
+            "mechanical gate), open->aborted (cascade_abort, unconditional). "
+            "committed and aborted are terminal; the store only closes rows "
+            "in status='open', so neither can be reopened, and retrying "
+            "commit/abort on a closed cascade raises CASCADE_CONFLICT."
         ),
         "parameters": {
             "plan": {
@@ -108,6 +114,24 @@ def get_cascade_begin_metadata(cls: type) -> dict:
                     "Call cascade_preview to inspect the existing open "
                     "cascade, or cascade_abort to discard it before "
                     "opening a new one."
+                ),
+            },
+            "FROZEN_TRUTH_WRITE": {
+                "description": (
+                    "begin_cascade refuses to open a cascade when the "
+                    "resolved plan is frozen (plan.status == 'frozen'), or "
+                    "when the plan has at least one step and every one of "
+                    "its steps is frozen (status != 'frozen' for none of "
+                    "them); frozen plan truth is read-only."
+                ),
+                "message": (
+                    "cannot open a cascade on frozen plan {plan}: frozen "
+                    "plan truth is read-only"
+                ),
+                "solution": (
+                    "Do not open a cascade on a fully frozen plan; frozen "
+                    "plans and plans whose every step is frozen accept no "
+                    "further cascades."
                 ),
             },
         },

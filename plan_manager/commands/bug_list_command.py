@@ -10,7 +10,7 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAME
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import parse_filters, parse_pagination
-from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES
+from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES, BugKind, BugSeverity, BugStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import list_bugs
@@ -19,6 +19,14 @@ from plan_manager.storage.bug_report_store import list_bugs
 BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only"]
 
 _FILTER_ENUMS = {"status": BUG_STATUSES, "kind": BUG_KINDS, "severity": BUG_SEVERITIES}
+
+# Ordered vocabularies published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error.
+_ENUM_OVERRIDES = {
+    "status": [e.value for e in BugStatus],
+    "kind": [e.value for e in BugKind],
+    "severity": [e.value for e in BugSeverity],
+}
 
 # These are the statuses treated as terminal/inactive for the active_only filter
 BUG_TERMINAL_STATUSES = frozenset({"closed", "rejected", "duplicate"})
@@ -40,7 +48,7 @@ class BugListCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
-                **filter_schema_properties(BUG_LIST_FILTER_FIELDS),
+                **filter_schema_properties(BUG_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
             "required": ["plan"],
@@ -51,7 +59,12 @@ class BugListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         schema = cls.get_schema()
         params = {
-            name: {"type": prop["type"], "description": prop["description"], "required": name in schema["required"]}
+            name: {
+                "type": prop["type"],
+                "description": prop["description"],
+                "required": name in schema["required"],
+                **({"enum": prop["enum"]} if "enum" in prop else {}),
+            }
             for name, prop in schema["properties"].items()
         }
         return bug_metadata(

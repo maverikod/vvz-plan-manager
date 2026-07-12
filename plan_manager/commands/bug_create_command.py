@@ -51,7 +51,7 @@ class BugCreateCommand(Command):
                 "duplicate_of_uuid": {"type": "string", "format": "uuid", "description": "UUID of the bug this one duplicates, if any."},
                 "parent_bug_uuid": {"type": "string", "format": "uuid", "description": "UUID of the parent bug, if any."},
                 "source_type": {"type": "string", "description": "Primary source anchor type: project, file, plan, revision, step, command, runtime_service, execution_attempt, or unidentified."},
-                "source_project_id": {"type": "string", "format": "uuid", "description": "Project UUID; required when source_type is project, file, or execution_attempt is not used here but project/file require it."},
+                "source_project_id": {"type": "string", "format": "uuid", "description": "Project UUID; required when source_type is project, file, or execution_attempt."},
                 "source_file_path": {"type": "string", "description": "Project-relative file path; required when source_type is file."},
                 "source_plan_uuid": {"type": "string", "format": "uuid", "description": "Plan UUID; required when source_type is plan or step."},
                 "source_revision_uuid": {"type": "string", "format": "uuid", "description": "Revision UUID; required when source_type is revision, optional for step."},

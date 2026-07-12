@@ -179,5 +179,6 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             "Use review or conscience when the consumer must judge the AS against upper-layer context.",
             "Keep provider-specific wrappers outside this artifact; the output is model-neutral structured data.",
             "Run plan_validate first for a predictable green-gate path.",
+            "This command runs on the queue: the plan_prompt_chain call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

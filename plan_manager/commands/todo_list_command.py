@@ -18,7 +18,7 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
-from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES
+from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES, TodoKind, TodoStatus
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_store import list_todos
 
@@ -29,6 +29,13 @@ TODO_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step",
 _PARSE_FILTER_FIELDS = [name for name in TODO_LIST_FILTER_FIELDS if name != "anchor_plan"]
 
 _FILTER_ENUMS = {"status": TODO_STATUSES, "kind": TODO_KINDS}
+
+# Ordered vocabularies published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error.
+_ENUM_OVERRIDES = {
+    "status": [e.value for e in TodoStatus],
+    "kind": [e.value for e in TodoKind],
+}
 
 _ACTIVE_STATUSES = frozenset({"open", "ready", "in_progress", "blocked"})
 
@@ -46,7 +53,7 @@ class TodoListCommand(Command):
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
         properties = {
-            **filter_schema_properties(TODO_LIST_FILTER_FIELDS),
+            **filter_schema_properties(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_schema_properties(),
         }
         return {
@@ -59,7 +66,7 @@ class TodoListCommand(Command):
     @classmethod
     def metadata(cls) -> dict[str, Any]:
         params = {
-            **filter_metadata_params(TODO_LIST_FILTER_FIELDS),
+            **filter_metadata_params(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
         }
         return todo_metadata(

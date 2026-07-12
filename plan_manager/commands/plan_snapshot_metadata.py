@@ -81,5 +81,6 @@ def get_plan_snapshot_metadata(cls) -> Dict[str, Any]:
             "Use plan_snapshot for backups during active cascade authoring.",
             "Treat snapshot_revision as the exact version-store point rendered to disk.",
             "The command is read-only and does not commit, abort, or score a cascade.",
+            "This command runs on the queue: the plan_snapshot call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

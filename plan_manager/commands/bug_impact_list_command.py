@@ -19,7 +19,7 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
-from plan_manager.domain.bug_impact import BUG_IMPACT_STATUSES
+from plan_manager.domain.bug_impact import BUG_IMPACT_STATUSES, BugImpactStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import list_bug_impacts
@@ -28,6 +28,10 @@ from plan_manager.storage.bug_report_store import get_bug
 _LIST_FILTER_FIELDS = ["status", "unresolved_impacts", "created_after", "created_before"]
 _RESOLVED_IMPACT_STATUSES = frozenset({"resolved", "verified", "unaffected", "skipped"})
 _FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES}
+
+# Ordered vocabulary published in the schema/metadata so the values are
+# discoverable directly, not only via an INVALID_FILTER error.
+_ENUM_OVERRIDES = {"status": [e.value for e in BugImpactStatus]}
 
 
 class BugImpactListCommand(Command):
@@ -46,7 +50,7 @@ class BugImpactListCommand(Command):
             "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
             "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report whose impacts are listed."},
         }
-        properties.update(filter_schema_properties(_LIST_FILTER_FIELDS))
+        properties.update(filter_schema_properties(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         properties.update(pagination_schema_properties())
         return {
             "type": "object",
@@ -61,7 +65,7 @@ class BugImpactListCommand(Command):
             **BASE_PARAMETERS,
             "bug_id": {"description": "UUID of the bug_report whose impacts are listed.", "type": "string", "required": True},
         }
-        params.update(filter_metadata_params(_LIST_FILTER_FIELDS))
+        params.update(filter_metadata_params(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         params.update(pagination_metadata_params())
         return bug_impact_metadata(
             cls,
