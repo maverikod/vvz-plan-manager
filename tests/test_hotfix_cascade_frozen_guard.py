@@ -43,6 +43,7 @@ def test_begin_cascade_allows_non_frozen_plan(monkeypatch) -> None:
     monkeypatch.setattr(begin_mod, "release_plan_lock", lambda conn, pu: None)
     monkeypatch.setattr(begin_mod, "get_open_cascade", lambda conn, pu: None)
     monkeypatch.setattr(begin_mod, "get_plan", lambda conn, pu: draft)
+    monkeypatch.setattr(begin_mod, "_all_steps_frozen", lambda conn, pu: False)
     monkeypatch.setattr(
         begin_mod, "create_ref", lambda conn, pu, name, rev: calls.setdefault("ref", (name, rev))
     )

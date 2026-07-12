@@ -12,6 +12,26 @@ from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
 from plan_manager.storage.version_store import create_ref
 
 
+def _all_steps_frozen(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> bool:
+    """Return True when the plan has at least one step and every step is frozen.
+
+    Plan-level status is never set to 'frozen' by any command surface; a fully
+    frozen plan manifests as a non-empty step set whose every row has
+    step.status = 'frozen'. An empty step set is authoring-stage and not frozen.
+    """
+    has_steps = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM step WHERE plan_uuid = %s)",
+        (plan_uuid,),
+    ).fetchone()[0]
+    if not has_steps:
+        return False
+    has_non_frozen = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM step WHERE plan_uuid = %s AND status != 'frozen')",
+        (plan_uuid,),
+    ).fetchone()[0]
+    return not has_non_frozen
+
+
 def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeRecord:
     """Open a new cascade on a plan, anchored at its current head revision.
 
@@ -36,6 +56,10 @@ def begin_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> CascadeReco
         if plan.status == "frozen":
             raise FrozenTruthMutationError(
                 f"cannot open a cascade on frozen plan {plan_uuid}: frozen plan truth is read-only"
+            )
+        if _all_steps_frozen(conn, plan_uuid):
+            raise FrozenTruthMutationError(
+                f"cannot open a cascade on plan {plan_uuid}: every step is frozen; frozen plan truth is read-only"
             )
         if plan.head_revision_uuid is None:
             raise CascadeError("cannot open a cascade on a plan with no head revision")
