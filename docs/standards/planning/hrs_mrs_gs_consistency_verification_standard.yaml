@@ -35,6 +35,37 @@ core_principle:
   autonomy_criterion: "A reader of (source_spec + machine_spec + one global_step)
     has every piece of information required to execute that step. No reading of sibling
     global_steps is required.\n"
+# ─────────────────────────────────────────────
+# AUTHORING ROLES (2026-07-12, user-mandated)
+# Fixed model-tier assignments for the upper-level (HRS/MRS/GS) stages of the
+# staged authoring model, plus the context-block token economy that feeds the
+# GS writer. See docs/prompts/plan-authoring.yaml for the full pipeline.
+# ─────────────────────────────────────────────
+authoring_roles:
+  normative: true
+  dated_note: 2026-07-12 user-mandated staged model + context-block token economy
+  see_also: docs/prompts/plan-authoring.yaml (staged_authoring_model,
+    context_block_token_economy)
+  stage_1_hrs: "Stage 1. Owned by Fable (L1). HRS prose is human-owned; Fable
+    edits it only on the user's decision.\n"
+  stage_2_mrs: "Stage 2. Owned by Fable. Concept extraction and MRS creation;
+    verified by cycle_1 below.\n"
+  stage_3_gs: "Stage 3. All G-level steps are written by a single Opus instance.
+    Fable hands Opus the plan-level common context block (context_common at
+    node=plan, child_level=3) plus each GS-specific delta (context_specific); the
+    full MRS/HRS is never re-pasted per step.\n"
+  stage_4_g_layer_review: "Stage 4. The preliminary review and check of the G
+    layer (gate + coherence) is owned by Fable and is exactly cycle_1
+    (Source-to-Machine alignment) and cycle_2 (Global Step triple autonomy) of
+    this standard. It must be green before the tactical/atomic (T/A) wave is
+    launched.\n"
+  token_economy: "Fable, as owner of the plan node, extracts what is common to
+    all GS into one context_common block (child_level 3) and writes each
+    GS-specific delta with context_specific; it hands the Opus GS writer
+    references to those stored blocks (resolved via block_get) plus the per-GS
+    delta, never the full parent context inline. This discipline is mandatory at
+    every owning level except the atomic leaf; it also bounds the context handed
+    to any external executor fleet configured for the later T/A wave.\n"
 vocabulary:
   tezis: "A coherent semantic claim in source_spec. May span one sentence or multiple
     sentences. One tezis typically maps to one concept or one relation in machine_spec,

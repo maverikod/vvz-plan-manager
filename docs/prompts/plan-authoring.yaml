@@ -20,7 +20,158 @@ meta:
   deviations_from_stock_standards:
     matrices: computed on the fly from the tree; matrix files are not written
     atomic_layout: atomic_steps/A-NNN-<slug>.yaml files (not inline in TS README)
+# ─────────────────────────────────────────────
+# STAGED AUTHORING MODEL (2026-07-12, user-mandated)
+# Staged plan-development model with FIXED model-tier assignments plus the
+# context-block token economy. NORMATIVE: every plan is authored in these
+# stages, by these tiers, in this order. Supersedes any earlier guidance that
+# assigned a different tier to a stage.
+# ─────────────────────────────────────────────
+staged_authoring_model:
+  normative: true
+  fixed: true
+  dated_note: 2026-07-12 user-mandated staged model + context-block token economy
+  pipeline:
+  - stage: 1
+    name: HRS development
+    artifact: source_spec (HRS)
+    owner_tier: Fable
+    action: "The L1 orchestrator (Fable) develops and refines the human-readable
+      specification. HRS prose is human-owned; Fable edits it only on the user's
+      decision.\n"
+  - stage: 2
+    name: Concept extraction and MRS creation
+    artifact: machine_spec (MRS)
+    owner_tier: Fable
+    action: "Fable extracts and approves the concepts and creates the MRS.
+      Governed by cycle_1 of hrs_mrs_gs_consistency_verification_standard.yaml.\n"
+  - stage: 3
+    name: Global-step (GS) authoring
+    artifact: all G-NNN global steps
+    owner_tier: Opus
+    action: "A single Opus instance writes ALL G-level steps. Fable hands Opus
+      the plan-level common context block plus each GS-specific delta (see
+      context_block_token_economy); Opus never receives the full MRS/HRS
+      re-pasted per step.\n"
+  - stage: 4
+    name: Preliminary G-layer review
+    artifact: G-layer gate + coherence
+    owner_tier: Fable
+    action: "Fable runs the preliminary review and check of the G layer (gate
+      green plus cross-GS coherence) via cycle_1 and cycle_2 of
+      hrs_mrs_gs_consistency_verification_standard.yaml before the T/A wave is
+      launched.\n"
+  - stage: 5
+    name: Tactical/atomic (T/A) wave
+    artifact: all T-NNN and A-NNN steps
+    default_executor_tier: Sonnet (per TS) + Haiku (per AS)
+    action: "The T/A wave launches in parallel. For EACH T-step a SEPARATE
+      context-preparer instance owns that TS, prepares the context for its
+      subordinates, and launches the writing of its A-steps IN PARALLEL. Exactly
+      ONE A-step = ONE writer agent. A-steps are leaves: they have no subordinate
+      executors. DEFAULT executor tier: one Sonnet context-preparer per TS, one
+      Haiku writer per AS. Governed by tactical_step_creation_standard.yaml (TS)
+      and atomic_step_creation_standard.yaml (AS).\n"
+    purpose: "SPEED. After the G-layer decomposition is approved (stage 4), the
+      T/A wave is embarrassingly parallel and may be offloaded to reduce
+      wall-clock authoring time (see executor_tier_option).\n"
+    executor_tier_option:
+      default: "T-step context-preparer = Sonnet, A-step writer = Haiku.\n"
+      resolution_rule: "IF an executor-tier model binding IS SET for the
+        plan/level (model_binding_set, resolved via model_binding_resolve), THEN
+        the bound model (e.g. the latest Qwen on the parallel machine) is used
+        INSTEAD OF Sonnet AND Haiku: the ENTIRE stage-5 T/A wave — both the per-T
+        context preparation and the per-A writing — runs on the bound model. No
+        mixed mode unless distinct bindings explicitly target different
+        scopes/roles.\n"
+      rationale: "Stages 1-4 tiers are FIXED. Stage 5 keeps the native tiers as
+        DEFAULT, but the whole T/A wave MAY be swapped onto an external fleet
+        running in parallel on a separate machine (e.g. the latest Qwen model),
+        to shorten wall-clock authoring after the G layer is approved.\n"
+      configured_via: "The model-binding mechanism, per plan/level/branch:
+        model_binding_set with scope=level (spec_level TS or AS) or scope=branch
+        (branch_step = the GS UUID); each T/A executor resolves its own binding
+        with model_binding_resolve. The swap is configuration, not a code or
+        standard change.\n"
+      contract_preserved: "Whatever tier is bound, the parallelism contract and
+        the context-block token economy are unchanged: T-owners run concurrently,
+        each launches its A-writers concurrently, and every child packet is
+        block references + child delta only.\n"
+      cross_machine_escalation: "The zero-assumption/escalation ladder holds
+        across the machine boundary: an external T/A executor that hits a gap
+        escalates to the Opus GS-branch owner (writer -> TS owner -> Opus GS
+        owner -> orchestrator), and never guesses to fill the gap.\n"
+  tier_assignments:
+    Fable: [HRS authoring, MRS authoring, G-layer preliminary review]
+    Opus: [all GS authoring, ownership of each GS branch during the T/A wave,
+      escalation target for external T/A executors]
+    Sonnet: [DEFAULT owner of one TS, context preparation for its AS writers,
+      verification of its AS writers]
+    Haiku: [DEFAULT sole writer of one AS target]
+    external_fleet_option: [configurable stage-5 executor tier for TS and AS via
+      the model-binding mechanism; e.g. latest Qwen on a parallel machine]
+  deviation_note: "The stage 1-4 tier assignments are FIXED and normative; no
+    stage 1-4 may be authored by a different tier. Stage 5 native tiers are the
+    DEFAULT and may be re-bound to an external executor fleet only through the
+    model-binding mechanism. Any earlier guidance assigning a different tier to a
+    stage is superseded by this section.\n"
+context_block_token_economy:
+  normative: true
+  dated_note: 2026-07-12 user-mandated staged model + context-block token economy
+  mandatory_at: every owning step EXCEPT the atomic (A) leaf, which has no
+    executors below it
+  commands:
+    context_common: "Compile ONE shared context block for a parent node at the
+      child level being authored (child_level 3 = global, 4 = tactical, 5 =
+      atomic). Returns a common_block_id. The owner stores here everything COMMON
+      to all its descendants.\n"
+    context_specific: "Compile the child-specific DELTA over a common block
+      (takes the common_block_id and that child's concepts). Strict subset of the
+      common scope.\n"
+    context_bundle: "Compile the common block AND all per-child specific deltas in
+      one call (node, child_level, children[]). Preferred when all children are
+      known up front.\n"
+    block_get: "Fetch one stored context block by UUID. Executors resolve the
+      references they are handed via block_get; they are never sent the full
+      parent context inline.\n"
+  procedure:
+    on_receiving_task: "The owner of a step EXTRACTS what is COMMON to all its
+      descendants and writes it into the planner's designated place with
+      context_common (or context_bundle) for the parent node at the correct
+      child_level.\n"
+    per_child: "For EACH child the owner extracts ONLY what that child needs and
+      writes it as the child-specific delta with context_specific.\n"
+    handoff: "The task handed to each executor consists of REFERENCES to the
+      stored blocks (common_block_id + specific block UUID, resolved via
+      block_get) plus the child-specific delta — NEVER the full parent context
+      re-pasted into every child packet.\n"
+  ownership_chain:
+  - owner_tier: Fable
+    parent_node: plan
+    child_level: 3
+    executor_tier: Opus
+    hands_down: plan-level common block + per-GS specific delta
+  - owner_tier: Opus
+    parent_node: G-NNN
+    child_level: 4
+    executor_tier: Sonnet
+    hands_down: GS-level common block + per-TS specific delta
+  - owner_tier: Sonnet
+    parent_node: T-NNN
+    child_level: 5
+    executor_tier: Haiku
+    hands_down: TS-level common block reference + per-AS specific delta + the
+      single AS target definition
+  atomic_leaf_exception: "A-step (Haiku) writers receive common-block
+    reference(s) + their specific delta + their single target definition. They
+    author no descendants, so they perform no further extraction.\n"
 procedure:
+- step: apply_staged_model
+  required: true
+  note: "Before classifying the task, apply staged_authoring_model and
+    context_block_token_economy above: they fix the owning tier for each stage
+    and mandate the context-block token economy for every owning step except the
+    atomic leaf.\n"
 - step: classify_task
   options:
     new_plan_or_cascade: read structure_and_cascade

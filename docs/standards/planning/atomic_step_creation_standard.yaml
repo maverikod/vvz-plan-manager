@@ -58,6 +58,45 @@ core_principle:
 # MATRIX-DRIVEN CANONICAL AUTHORING
 # ─────────────────────────────────────────────
     atomic_step: created and modified by this procedure
+# ─────────────────────────────────────────────
+# AUTHORING ROLES (2026-07-12, user-mandated)
+# AS authoring is the atomic (leaf) half of the parallel tactical/atomic (T/A)
+# wave. Fixed default tier plus the leaf exception to the context-block token
+# economy. See docs/prompts/plan-authoring.yaml for the full staged pipeline.
+# ─────────────────────────────────────────────
+authoring_roles:
+  normative: true
+  dated_note: 2026-07-12 user-mandated staged model + context-block token economy
+  see_also: docs/prompts/plan-authoring.yaml (staged_authoring_model,
+    context_block_token_economy)
+  wave: "AS authoring is the atomic half of the tactical/atomic (T/A) wave
+    (stage 5 of the staged model). Exactly ONE A-step = ONE writer agent,
+    launched in parallel by the owner of the parent TS.\n"
+  as_writer_default_tier: Haiku
+  executor_tier_option: "DEFAULT: one Haiku writer per AS. IF an executor-tier
+    model binding IS SET for the plan/level (model_binding_set scope=level
+    spec_level=AS, or scope=branch branch_step=the GS UUID; resolved via
+    model_binding_resolve), THEN the bound model (e.g. the latest Qwen on a
+    parallel machine) is used INSTEAD OF Haiku for the whole AS half of the wave.
+    No mixed mode unless distinct bindings explicitly target different
+    scopes/roles.\n"
+  leaf: "A-steps are leaves: they have no subordinate executors. The AS writer
+    therefore performs NO further context extraction — the context-block token
+    economy is mandatory at every owning level EXCEPT this atomic leaf.\n"
+  handoff_to_as_writer: "Each AS writer receives: the TS-level common-block
+    reference(s) from its TS owner (resolved via block_get), its own AS-specific
+    delta (context_specific), and the single AS target definition. It is never
+    sent the full parent (MRS/GS/TS) context inline.\n"
+  cross_machine_escalation: "The zero-assumption/escalation ladder holds across
+    the machine boundary: an AS writer running on an external fleet that hits a
+    gap escalates to its TS owner and then to the Opus GS-branch owner, and never
+    guesses.\n"
+  authoring_tier_vs_execution_tier: "The AS-author tier here (who WRITES the AS
+    prompt: Haiku by default, or the bound stage-5 executor) is DISTINCT from
+    input_parameters.model_tier below (small/medium/large), which is the
+    capability tier of the downstream CODER model that will later EXECUTE the AS
+    prompt in the execution phase. The two axes are orthogonal and must not be
+    conflated.\n"
 matrix_driven_canonical_authoring:
   status: canonical
   origin: "Added after the first completed HRS(part) -> MRS(part) -> GS -> TS branch
@@ -138,9 +177,11 @@ matrix_driven_canonical_authoring:
       artifact creation uses open with create=true.\n"
 input_parameters:
   model_tier:
-    description: "The capability tier of the coder model that will execute the AS
-      prompts. Determines how much context the model can reliably use and how self-contained
-      each prompt must be.\n"
+    description: "The capability tier of the coder model that will EXECUTE the AS
+      prompts in the execution phase (small/medium/large). Determines how much
+      context the model can reliably use and how self-contained each prompt must
+      be. Distinct from the AS-author tier in authoring_roles (Haiku by default);
+      the two axes must not be conflated.\n"
     values:
       small:
         context_budget_tokens: 4000

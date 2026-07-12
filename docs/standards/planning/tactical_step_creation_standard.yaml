@@ -46,6 +46,53 @@ core_principle:
     global_step: not modified by this procedure; if a finding requires changing 
       a GS, halt and re-enter cycle_2 of the upper-level verification standard
     tactical_step: created and modified by this procedure
+# ─────────────────────────────────────────────
+# AUTHORING ROLES (2026-07-12, user-mandated)
+# TS authoring is the tactical half of the parallel tactical/atomic (T/A) wave.
+# Fixed default tiers plus the context-block token economy that feeds the AS
+# writers. See docs/prompts/plan-authoring.yaml for the full staged pipeline.
+# ─────────────────────────────────────────────
+authoring_roles:
+  normative: true
+  dated_note: 2026-07-12 user-mandated staged model + context-block token economy
+  see_also: docs/prompts/plan-authoring.yaml (staged_authoring_model,
+    context_block_token_economy)
+  wave: "TS authoring is the tactical half of the tactical/atomic (T/A) wave
+    (stage 5 of the staged model). The wave launches only after the G layer is
+    green (stage 4). Its purpose is SPEED: the wave is parallel and may be
+    offloaded to shorten wall-clock authoring.\n"
+  gs_branch_owner_tier: Opus
+  ts_owner_default_tier: Sonnet
+  executor_tier_option: "DEFAULT: one Sonnet context-preparer per TS. IF an
+    executor-tier model binding IS SET for the plan/level (model_binding_set
+    scope=level spec_level=TS, or scope=branch branch_step=the GS UUID; resolved
+    via model_binding_resolve), THEN the bound model (e.g. the latest Qwen on a
+    parallel machine) is used INSTEAD OF Sonnet for the whole TS half of the
+    wave. No mixed mode unless distinct bindings explicitly target different
+    scopes/roles.\n"
+  parallelism: "For EACH T-step a SEPARATE context-preparer instance owns that
+    TS. The Opus owner of the parent GS branch launches these TS instances; TS
+    instances of one GS run concurrently. Each TS owner ALWAYS verifies the work
+    of its subordinate AS writers.\n"
+  cross_machine_escalation: "The zero-assumption/escalation ladder holds across
+    the machine boundary: a TS owner or AS writer running on an external fleet
+    that hits a gap escalates to the Opus GS-branch owner (writer -> TS owner ->
+    Opus GS owner -> orchestrator) and never guesses.\n"
+  token_economy:
+    motivation: "External executors have bounded context windows and are
+      billed/throttled separately; every child packet must be minimal (block
+      references + child delta only), never re-pasted full parent text.\n"
+    gs_to_ts: "The Opus GS-branch owner extracts what is common to all TS of the
+      GS into one context_common block (node=G-NNN, child_level 4) and writes
+      each TS-specific delta with context_specific (or uses context_bundle for
+      the whole child set). It hands each TS instance references to those stored
+      blocks (resolved via block_get) plus that TS's specific delta — never the
+      full GS/MRS context re-pasted per TS.\n"
+    ts_to_as: "Each TS owner in turn extracts what is common to all its AS into
+      one context_common block (node=T-NNN, child_level 5) and writes each
+      AS-specific delta with context_specific, then hands its AS writers
+      references plus the per-AS delta (see atomic_step_creation_standard.yaml).\n"
+    mandatory_at: every owning level except the atomic leaf
 vocabulary:
   tactical_step: "Level-4 artifact (per plan_standard_machine.yaml). A refinement
     of one global step into concrete entities and operations on them. Still conceptual
