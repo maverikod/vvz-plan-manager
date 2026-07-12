@@ -8,11 +8,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import create_bug_fix_propagation
+from plan_manager.storage.bug_fix_store import get_bug_fix
+from plan_manager.storage.bug_impact_store import get_bug_impact
 
 
 class BugPropagationCreateCommand(Command):
@@ -92,10 +94,16 @@ class BugPropagationCreateCommand(Command):
         try:
             with db_connection() as conn:
                 resolve_plan(conn, plan)
+                bug_fix_uuid_val = uuid.UUID(bug_fix_id)
+                impact_uuid_val = uuid.UUID(impact_id)
+                if get_bug_fix(conn, bug_fix_uuid_val) is None:
+                    raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {bug_fix_id}")
+                if get_bug_impact(conn, impact_uuid_val) is None:
+                    raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_id}")
                 record = create_bug_fix_propagation(
                     conn,
-                    bug_fix_uuid=uuid.UUID(bug_fix_id),
-                    impact_uuid=uuid.UUID(impact_id),
+                    bug_fix_uuid=bug_fix_uuid_val,
+                    impact_uuid=impact_uuid_val,
                     action=action,
                     created_by=created_by,
                     target_type=target_type,

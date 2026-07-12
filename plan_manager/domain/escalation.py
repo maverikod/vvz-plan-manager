@@ -41,6 +41,7 @@ class Escalation:
 
     def to_payload(self) -> dict[str, Any]:
         return {
+            "uuid": str(self.escalation_uuid),
             "escalation_uuid": str(self.escalation_uuid),
             "primary_anchor_type": self.primary_anchor_type,
             "anchor_project_id": str(self.anchor_project_id) if self.anchor_project_id else None,

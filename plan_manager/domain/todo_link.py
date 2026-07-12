@@ -40,6 +40,7 @@ class TodoLink:
     def to_payload(self) -> dict[str, Any]:
         """Render this TodoLink as a JSON-serializable dict, with every uuid.UUID field rendered as str and all other fields passed through unchanged."""
         return {
+            "uuid": str(self.link_uuid),
             "link_uuid": str(self.link_uuid),
             "from_todo_uuid": str(self.from_todo_uuid),
             "to_todo_uuid": str(self.to_todo_uuid),

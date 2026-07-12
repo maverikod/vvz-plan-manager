@@ -19,12 +19,15 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
+from plan_manager.domain.bug_fix import BUG_FIX_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_store import list_bug_fixes
 from plan_manager.storage.bug_report_store import get_bug
 
 
 FILTER_FIELDS = ["status", "unverified_fixes", "created_after", "created_before"]
+
+_FILTER_ENUMS = {"status": BUG_FIX_STATUSES}
 
 
 class BugFixListCommand(Command):
@@ -93,7 +96,7 @@ class BugFixListCommand(Command):
                     "limit": limit,
                     "offset": offset,
                 }
-                filters = parse_filters(raw_params, FILTER_FIELDS)
+                filters = parse_filters(raw_params, FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination(raw_params)
                 records = list_bug_fixes(conn, bug_uuid=bug_uuid, status=filters.get("status"))
                 if filters.get("unverified_fixes"):

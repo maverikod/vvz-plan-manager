@@ -13,6 +13,10 @@ class FrozenTruthMutationError(RuntimeValidationError):
     """Raised when a candidate runtime write targets a frozen-truth table (C-002)."""
 
 
+class InvalidNicePriorityError(RuntimeValidationError):
+    """Raised when a candidate priority_nice value fails validate_priority_nice's type/range check (maps to INVALID_NICE_PRIORITY)."""
+
+
 FROZEN_TRUTH_TABLES: frozenset[str] = frozenset(
     {
         "plan",
@@ -82,9 +86,9 @@ def validate_priority_nice(value: int) -> int:
         RuntimeValidationError: If value is not an int or out of range.
     """
     if not isinstance(value, int):
-        raise RuntimeValidationError(f"priority_nice must be an int, got {type(value).__name__}")
+        raise InvalidNicePriorityError(f"priority_nice must be an int, got {type(value).__name__}")
     if value < PRIORITY_NICE_MIN or value > PRIORITY_NICE_MAX:
-        raise RuntimeValidationError(f"priority_nice {value} out of range [{PRIORITY_NICE_MIN}, {PRIORITY_NICE_MAX}]")
+        raise InvalidNicePriorityError(f"priority_nice {value} out of range [{PRIORITY_NICE_MIN}, {PRIORITY_NICE_MAX}]")
     return value
 
 

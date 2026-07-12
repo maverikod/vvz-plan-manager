@@ -157,12 +157,20 @@ def _is_valid_iso8601(value: str) -> bool:
     return True
 
 
-def parse_filters(params: dict[str, Any], fields: list[str]) -> RuntimeFilters:
+def parse_filters(
+    params: dict[str, Any],
+    fields: list[str],
+    enums: dict[str, frozenset[str]] | None = None,
+) -> RuntimeFilters:
     """Parse and validate filter parameters.
 
     Args:
         params: The raw command parameters dict as received by the command's execute.
         fields: The canonical filter field names this command supports (a subset of FILTER_FIELDS keys).
+        enums: Optional mapping of filter field name to the frozenset of values that field may take.
+            For any name in fields that is also a key of enums, after normal type validation the
+            parsed string value must be a member of enums[name] or INVALID_FILTER is raised.
+            Defaults to None, which preserves prior behavior (no vocabulary check).
 
     Returns:
         A RuntimeFilters holding only the fields from fields that are present (not None) in params,
@@ -170,7 +178,8 @@ def parse_filters(params: dict[str, Any], fields: list[str]) -> RuntimeFilters:
 
     Raises:
         ValueError: If any name in fields is not a key of FILTER_FIELDS (a programming error).
-        DomainCommandError: With code "INVALID_FILTER" if a provided filter value fails validation.
+        DomainCommandError: With code "INVALID_FILTER" if a provided filter value fails validation,
+        including failing an enums membership check when one is configured for that field.
     """
     for name in fields:
         if name not in FILTER_FIELDS:
@@ -205,6 +214,14 @@ def parse_filters(params: dict[str, Any], fields: list[str]) -> RuntimeFilters:
             if not isinstance(raw, str):
                 raise DomainCommandError("INVALID_FILTER", f"{name!r} must be a string, got {raw!r}")
             values[name] = raw
+
+        if enums is not None and name in enums and name in values:
+            allowed = enums[name]
+            if values[name] not in allowed:
+                raise DomainCommandError(
+                    "INVALID_FILTER",
+                    f"{name!r} must be one of {sorted(allowed)}; got {values[name]!r}",
+                )
     return RuntimeFilters(values=values)
 
 

@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.todo_command_metadata import todo_metadata
 from plan_manager.commands.runtime_filtering import (
     filter_schema_properties,
@@ -17,10 +18,17 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
+from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_store import list_todos
 
 TODO_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "priority", "owner", "assignee", "model", "created_after", "created_before", "active_only", "unanchored_only"]
+
+# anchor_plan is resolved separately (name-or-UUID via resolve_plan), not through parse_filters'
+# uuid-format validation, which would reject a plan name.
+_PARSE_FILTER_FIELDS = [name for name in TODO_LIST_FILTER_FIELDS if name != "anchor_plan"]
+
+_FILTER_ENUMS = {"status": TODO_STATUSES, "kind": TODO_KINDS}
 
 _ACTIVE_STATUSES = frozenset({"open", "ready", "in_progress", "blocked"})
 
@@ -92,14 +100,19 @@ class TodoListCommand(Command):
         try:
             with db_connection() as conn:
                 raw_params: dict[str, Any] = {
-                    "project": project, "file": file, "anchor_plan": anchor_plan,
+                    "project": project, "file": file,
                     "revision": revision, "step": step, "status": status, "kind": kind,
                     "priority": priority, "owner": owner, "assignee": assignee, "model": model,
                     "created_after": created_after, "created_before": created_before,
                     "active_only": active_only, "unanchored_only": unanchored_only,
                 }
-                filters = parse_filters(raw_params, TODO_LIST_FILTER_FIELDS)
+                filters = parse_filters(raw_params, _PARSE_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
+                # anchor_plan accepts a plan name or UUID (siblings resolve the same way via resolve_plan);
+                # a well-formed but nonexistent name/uuid raises PLAN_NOT_FOUND from resolve_plan itself.
+                resolved_anchor_plan_uuid: str | None = None
+                if anchor_plan is not None:
+                    resolved_anchor_plan_uuid = str(resolve_plan(conn, anchor_plan).uuid)
                 records = list_todos(conn, status=filters.get("status"), kind=filters.get("kind"))
                 filtered = []
                 for item in records:
@@ -107,7 +120,7 @@ class TodoListCommand(Command):
                         continue
                     if "file" in filters.values and item.anchor_file_path != filters.get("file"):
                         continue
-                    if "anchor_plan" in filters.values and str(item.anchor_plan_uuid) != filters.get("anchor_plan"):
+                    if resolved_anchor_plan_uuid is not None and str(item.anchor_plan_uuid) != resolved_anchor_plan_uuid:
                         continue
                     if "revision" in filters.values and str(item.anchor_revision_uuid) != filters.get("revision"):
                         continue

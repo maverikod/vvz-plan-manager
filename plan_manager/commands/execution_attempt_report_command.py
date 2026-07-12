@@ -8,10 +8,10 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.execution_attempt_store import report_execution_attempt
+from plan_manager.storage.execution_attempt_store import get_execution_attempt, report_execution_attempt
 
 
 ATTEMPT_STATUS_VALUES = [
@@ -149,9 +149,14 @@ class ExecutionAttemptReportCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
+                attempt_uuid_val = uuid.UUID(attempt_id)
+                if get_execution_attempt(conn, attempt_uuid_val) is None:
+                    raise DomainCommandError(
+                        "EXECUTION_ATTEMPT_NOT_FOUND", f"execution attempt not found: {attempt_id}"
+                    )
                 attempt = report_execution_attempt(
                     conn,
-                    uuid.UUID(attempt_id),
+                    attempt_uuid_val,
                     changed_by=changed_by,
                     status=status,
                     used_provider=used_provider,

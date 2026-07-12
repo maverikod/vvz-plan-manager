@@ -60,6 +60,7 @@ class ExecutionAttempt:
         jsonb-backed fields (changed_files, command_test_results, resource_accounting)
         pass through unchanged, and timestamp fields are already ISO strings."""
         return {
+            "uuid": str(self.attempt_uuid),
             "attempt_uuid": str(self.attempt_uuid),
             "plan_uuid": str(self.plan_uuid),
             "revision_uuid": str(self.revision_uuid) if self.revision_uuid is not None else None,

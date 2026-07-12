@@ -8,9 +8,10 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
+from plan_manager.domain.bug_fix_propagation import PROPAGATION_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
 
@@ -74,6 +75,11 @@ class BugPropagationListCommand(Command):
         try:
             with db_connection() as conn:
                 resolve_plan(conn, plan)
+                if status is not None and status not in PROPAGATION_STATUSES:
+                    raise DomainCommandError(
+                        "INVALID_FILTER",
+                        f"'status' must be one of {sorted(PROPAGATION_STATUSES)}; got {status!r}",
+                    )
                 records = list_bug_fix_propagations(
                     conn,
                     bug_fix_uuid=uuid.UUID(bug_fix_id) if bug_fix_id is not None else None,

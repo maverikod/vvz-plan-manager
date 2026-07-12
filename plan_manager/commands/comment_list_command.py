@@ -21,7 +21,7 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
     RuntimeFilters,
 )
-from plan_manager.domain.runtime_comment import RuntimeComment
+from plan_manager.domain.runtime_comment import COMMENT_KINDS, RuntimeComment
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_comment_store import list_comments
 
@@ -29,6 +29,11 @@ FILTER_FIELDS: list[str] = [
     "project", "file", "anchor_plan", "revision", "step", "status", "kind", "owner",
     "created_after", "created_before", "active_only",
 ]
+
+# "status" here is a synthetic resolved/unresolved derivation from the RuntimeComment.resolved
+# boolean (see _apply_in_command_filters below), not a domain enum column, so it is deliberately
+# NOT wired into the enums check here (escalated, per BUG 8972f59e packet: "do NOT invent one").
+_FILTER_ENUMS = {"kind": COMMENT_KINDS}
 
 
 def _apply_in_command_filters(records: list[RuntimeComment], filters: RuntimeFilters) -> list[RuntimeComment]:
@@ -140,7 +145,7 @@ class CommentListCommand(Command):
                     "created_after": created_after, "created_before": created_before,
                     "active_only": active_only, "limit": limit, "offset": offset,
                 }
-                filters = parse_filters(raw_params, FILTER_FIELDS)
+                filters = parse_filters(raw_params, FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination(raw_params)
                 anchor_plan_uuid = uuid.UUID(filters.get("anchor_plan")) if filters.get("anchor_plan") is not None else None
                 anchor_step_uuid = uuid.UUID(filters.get("step")) if filters.get("step") is not None else None

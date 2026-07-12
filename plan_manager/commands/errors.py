@@ -5,7 +5,11 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from plan_manager.cascade.close import CommitRefusedError
 from plan_manager.cascade.record import CascadeError
-from plan_manager.domain.runtime_validation import FrozenTruthMutationError, RuntimeValidationError
+from plan_manager.domain.model_binding import InvalidBindingScopeError, InvalidRuntimeRoleError
+from plan_manager.domain.primary_anchor import InvalidAnchorError
+from plan_manager.domain.runtime_validation import (
+    FrozenTruthMutationError, InvalidNicePriorityError, RuntimeValidationError,
+)
 from plan_manager.domain.status_model import StatusTransitionError
 from plan_manager.scoring.embedding import EmbeddingUnavailable
 from plan_manager.scoring.index import ScoreRefusedError
@@ -123,6 +127,17 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("DUPLICATE_ID", str(exc), {})
     if isinstance(exc, FrozenTruthMutationError):
         return domain_error("FROZEN_TRUTH_WRITE", str(exc), {})
+    # Most-specific RuntimeValidationError subclasses must be checked before the generic
+    # RuntimeValidationError branch below, so a documented code is reported instead of the
+    # generic RUNTIME_VALIDATION_ERROR fallback.
+    if isinstance(exc, InvalidAnchorError):
+        return domain_error("INVALID_ANCHOR", str(exc), {})
+    if isinstance(exc, InvalidNicePriorityError):
+        return domain_error("INVALID_NICE_PRIORITY", str(exc), {})
+    if isinstance(exc, InvalidBindingScopeError):
+        return domain_error("INVALID_BINDING_SCOPE", str(exc), {})
+    if isinstance(exc, InvalidRuntimeRoleError):
+        return domain_error("INVALID_RUNTIME_ROLE", str(exc), {})
     if isinstance(exc, RuntimeValidationError):
         return domain_error("RUNTIME_VALIDATION_ERROR", str(exc), {})
     raise exc

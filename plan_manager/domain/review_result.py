@@ -47,6 +47,7 @@ class ReviewResult:
         evidence and verification_commands are passed through unchanged (already JSON-compatible);
         timestamp fields are already ISO-format strings and are passed through unchanged."""
         return {
+            "uuid": str(self.review_uuid),
             "review_uuid": str(self.review_uuid),
             "object_type": self.object_type,
             "reviewed_attempt_uuid": str(self.reviewed_attempt_uuid) if self.reviewed_attempt_uuid is not None else None,

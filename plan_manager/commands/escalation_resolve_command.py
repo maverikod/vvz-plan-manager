@@ -8,12 +8,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.review_escalation_command_metadata import review_escalation_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.escalation_store import resolve_escalation
+from plan_manager.storage.escalation_store import get_escalation, resolve_escalation
 
 
 class EscalationResolveCommand(Command):
@@ -75,8 +75,11 @@ class EscalationResolveCommand(Command):
         try:
             with db_connection() as conn:
                 resolve_plan(conn, plan)
+                escalation_uuid_val = validate_uuid(escalation_uuid)
+                if get_escalation(conn, escalation_uuid_val) is None:
+                    raise DomainCommandError("ESCALATION_NOT_FOUND", f"escalation not found: {escalation_uuid}")
                 record = resolve_escalation(
-                    conn, validate_uuid(escalation_uuid), resolved_by=resolved_by, resolution=resolution
+                    conn, escalation_uuid_val, resolved_by=resolved_by, resolution=resolution
                 )
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:

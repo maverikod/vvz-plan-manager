@@ -10,6 +10,20 @@ from typing import Any
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
+class InvalidBindingScopeError(RuntimeValidationError):
+    """Raised when a candidate binding scope value, or the companion fields required by that
+    scope, are inconsistent with the six-level model-binding inheritance scope vocabulary
+    (C-010); maps to INVALID_BINDING_SCOPE."""
+
+
+class InvalidRuntimeRoleError(RuntimeValidationError):
+    """Raised when a candidate runtime role value is not one of the recognized RuntimeRole
+    values (C-011); maps to INVALID_RUNTIME_ROLE. Defined here (rather than in
+    domain/runtime_role.py, which owns the role vocabulary itself) so model-binding write
+    commands can translate that module's generic RuntimeValidationError into this specific
+    subclass at the command boundary."""
+
+
 class BindingScope(str, Enum):
     SYSTEM = "system"
     PLAN = "plan"
@@ -78,7 +92,7 @@ def validate_binding_scope(value: str) -> str:
     """Validate and return a binding scope value."""
     if value in BINDING_SCOPES:
         return value
-    raise RuntimeValidationError(f"Invalid binding scope: {value}")
+    raise InvalidBindingScopeError(f"Invalid binding scope: {value}")
 
 
 def validate_scope_fields(
@@ -93,35 +107,35 @@ def validate_scope_fields(
     """Validate scope-field combinations for consistency."""
     if scope == "system":
         if plan_uuid is not None or spec_level is not None or branch_step_uuid is not None or step_uuid is not None:
-            raise RuntimeValidationError("scope='system' requires plan_uuid, spec_level, branch_step_uuid, step_uuid to be None")
+            raise InvalidBindingScopeError("scope='system' requires plan_uuid, spec_level, branch_step_uuid, step_uuid to be None")
     elif scope == "plan":
         if plan_uuid is None:
-            raise RuntimeValidationError("scope='plan' requires plan_uuid")
+            raise InvalidBindingScopeError("scope='plan' requires plan_uuid")
         if spec_level is not None or branch_step_uuid is not None or step_uuid is not None:
-            raise RuntimeValidationError("scope='plan' requires spec_level, branch_step_uuid, step_uuid to be None")
+            raise InvalidBindingScopeError("scope='plan' requires spec_level, branch_step_uuid, step_uuid to be None")
     elif scope == "level":
         if plan_uuid is None:
-            raise RuntimeValidationError("scope='level' requires plan_uuid")
+            raise InvalidBindingScopeError("scope='level' requires plan_uuid")
         if spec_level is None:
-            raise RuntimeValidationError("scope='level' requires spec_level")
+            raise InvalidBindingScopeError("scope='level' requires spec_level")
         if spec_level not in SPEC_LEVELS:
-            raise RuntimeValidationError(f"spec_level '{spec_level}' must be in {SPEC_LEVELS}")
+            raise InvalidBindingScopeError(f"spec_level '{spec_level}' must be in {SPEC_LEVELS}")
         if branch_step_uuid is not None or step_uuid is not None:
-            raise RuntimeValidationError("scope='level' requires branch_step_uuid, step_uuid to be None")
+            raise InvalidBindingScopeError("scope='level' requires branch_step_uuid, step_uuid to be None")
     elif scope == "branch":
         if plan_uuid is None or branch_step_uuid is None:
-            raise RuntimeValidationError("scope='branch' requires plan_uuid and branch_step_uuid")
+            raise InvalidBindingScopeError("scope='branch' requires plan_uuid and branch_step_uuid")
         if spec_level is not None or step_uuid is not None:
-            raise RuntimeValidationError("scope='branch' requires spec_level, step_uuid to be None")
+            raise InvalidBindingScopeError("scope='branch' requires spec_level, step_uuid to be None")
     elif scope == "step":
         if plan_uuid is None or step_uuid is None:
-            raise RuntimeValidationError("scope='step' requires plan_uuid and step_uuid")
+            raise InvalidBindingScopeError("scope='step' requires plan_uuid and step_uuid")
         if spec_level is not None or branch_step_uuid is not None:
-            raise RuntimeValidationError("scope='step' requires spec_level, branch_step_uuid to be None")
+            raise InvalidBindingScopeError("scope='step' requires spec_level, branch_step_uuid to be None")
     elif scope == "role":
         if role is None:
-            raise RuntimeValidationError("scope='role' requires role")
+            raise InvalidBindingScopeError("scope='role' requires role")
         if spec_level is not None or branch_step_uuid is not None or step_uuid is not None:
-            raise RuntimeValidationError("scope='role' requires spec_level, branch_step_uuid, step_uuid to be None")
+            raise InvalidBindingScopeError("scope='role' requires spec_level, branch_step_uuid, step_uuid to be None")
     else:
-        raise RuntimeValidationError(f"Invalid scope: {scope}")
+        raise InvalidBindingScopeError(f"Invalid scope: {scope}")

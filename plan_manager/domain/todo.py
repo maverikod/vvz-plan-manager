@@ -66,6 +66,7 @@ class TodoItem:
     def to_payload(self) -> dict[str, Any]:
         """Render this TodoItem as a JSON-safe dict: every uuid.UUID field becomes str (or stays None); timestamp fields are already ISO strings and pass through unchanged."""
         return {
+            "uuid": str(self.todo_uuid),
             "todo_uuid": str(self.todo_uuid),
             "title": self.title,
             "description": self.description,

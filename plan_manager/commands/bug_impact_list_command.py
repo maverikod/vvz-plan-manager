@@ -9,7 +9,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_impact_command_metadata import BASE_PARAMETERS, bug_impact_metadata
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import (
     filter_metadata_params,
@@ -19,12 +19,15 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
+from plan_manager.domain.bug_impact import BUG_IMPACT_STATUSES
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import list_bug_impacts
+from plan_manager.storage.bug_report_store import get_bug
 
 _LIST_FILTER_FIELDS = ["status", "unresolved_impacts", "created_after", "created_before"]
 _RESOLVED_IMPACT_STATUSES = frozenset({"resolved", "verified", "unaffected", "skipped"})
+_FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES}
 
 
 class BugImpactListCommand(Command):
@@ -96,13 +99,16 @@ class BugImpactListCommand(Command):
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
+                bug_record = get_bug(conn, bug_uuid)
+                if bug_record is None:
+                    raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
                 raw_params = {
                     "status": status,
                     "unresolved_impacts": unresolved_impacts,
                     "created_after": created_after,
                     "created_before": created_before,
                 }
-                filters = parse_filters(raw_params, _LIST_FILTER_FIELDS)
+                filters = parse_filters(raw_params, _LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 records = list_bug_impacts(conn, bug_uuid=bug_uuid, status=filters.get("status"), include_deleted=False)
                 if filters.get("unresolved_impacts"):

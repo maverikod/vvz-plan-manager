@@ -10,12 +10,15 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAME
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import parse_filters, parse_pagination
+from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import list_bugs
 
 # BugReport has no assignee column (only owner), so assignee is deliberately excluded
 BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only"]
+
+_FILTER_ENUMS = {"status": BUG_STATUSES, "kind": BUG_KINDS, "severity": BUG_SEVERITIES}
 
 # These are the statuses treated as terminal/inactive for the active_only filter
 BUG_TERMINAL_STATUSES = frozenset({"closed", "rejected", "duplicate"})
@@ -104,7 +107,7 @@ class BugListCommand(Command):
                     "limit": limit,
                     "offset": offset,
                 }
-                filters = parse_filters(raw_params, BUG_LIST_FILTER_FIELDS)
+                filters = parse_filters(raw_params, BUG_LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination(raw_params)
                 project_value = filters.get("project")
                 source_project_uuid = validate_uuid(project_value) if project_value is not None else None

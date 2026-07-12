@@ -8,9 +8,10 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.review_escalation_command_metadata import review_escalation_metadata, BASE_PARAMETERS
+from plan_manager.domain.review_result import REVIEW_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.review_result_store import list_review_results
 
@@ -88,6 +89,11 @@ class ReviewResultListCommand(Command):
         try:
             with db_connection() as conn:
                 resolve_plan(conn, plan)
+                if status is not None and status not in REVIEW_STATUSES:
+                    raise DomainCommandError(
+                        "INVALID_FILTER",
+                        f"'status' must be one of {sorted(REVIEW_STATUSES)}; got {status!r}",
+                    )
                 records = list_review_results(
                     conn,
                     reviewed_attempt_uuid=uuid.UUID(reviewed_attempt_uuid) if reviewed_attempt_uuid else None,

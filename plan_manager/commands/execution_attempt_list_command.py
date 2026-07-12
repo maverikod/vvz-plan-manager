@@ -8,9 +8,10 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
+from plan_manager.domain.execution_attempt import ATTEMPT_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import list_execution_attempts
 
@@ -100,6 +101,11 @@ class ExecutionAttemptListCommand(Command):
                 if plan is not None:
                     p = resolve_plan(conn, plan)
                     plan_uuid = p.uuid
+                if status is not None and status not in ATTEMPT_STATUSES:
+                    raise DomainCommandError(
+                        "INVALID_FILTER",
+                        f"'status' must be one of {sorted(ATTEMPT_STATUSES)}; got {status!r}",
+                    )
                 attempts = list_execution_attempts(
                     conn,
                     plan_uuid=plan_uuid,

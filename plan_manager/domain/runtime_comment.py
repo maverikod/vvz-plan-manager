@@ -87,6 +87,7 @@ class RuntimeComment:
         Timestamps are already ISO-format strings.
         """
         return {
+            "uuid": str(self.comment_uuid) if self.comment_uuid is not None else None,
             "comment_uuid": str(self.comment_uuid) if self.comment_uuid is not None else None,
             "primary_anchor_type": self.primary_anchor_type,
             "anchor_project_id": str(self.anchor_project_id) if self.anchor_project_id is not None else None,
