@@ -1,0 +1,86 @@
+"""Command: list bug fix propagation records filtered by bug fix or impact (C-025, C-029, C-031)."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any, ClassVar
+
+from mcp_proxy_adapter.commands.base import Command
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
+from plan_manager.runtime.context import db_connection
+from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
+
+
+class BugPropagationListCommand(Command):
+    name: ClassVar[str] = "bug_propagation_list"
+    version: ClassVar[str] = "1.0.0"
+    descr: ClassVar[str] = "List bug fix propagation records filtered by bug fix or impact (read-only)."
+    category: ClassVar[str] = "propagation"
+    author: ClassVar[str] = "Vasiliy Zdanovskiy"
+    email: ClassVar[str] = "vasilyvz@gmail.com"
+    result_class = SuccessResult
+    use_queue: ClassVar[bool] = False
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan": {"type": "string", "description": "Plan identifier."},
+                "bug_fix_id": {"type": "string", "description": "Optional UUID filter: only propagations for this bug fix."},
+                "impact_id": {"type": "string", "description": "Optional UUID filter: only propagations for this impact."},
+                "status": {"type": "string", "description": "Optional status filter (one of the 8 PropagationStatus values)."},
+                "include_deleted": {"type": "boolean", "description": "Include soft-deleted propagation records. Defaults to false."},
+            },
+            "required": ["plan"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls) -> dict[str, Any]:
+        params = {
+            **BASE_PARAMETERS,
+            "bug_fix_id": {"description": "Optional UUID filter: only propagations for this bug fix.", "type": "string", "required": False},
+            "impact_id": {"description": "Optional UUID filter: only propagations for this impact.", "type": "string", "required": False},
+            "status": {"description": "Optional status filter.", "type": "string", "required": False},
+            "include_deleted": {"description": "Include soft-deleted propagation records. Defaults to false.", "type": "boolean", "required": False},
+        }
+        return bug_propagation_metadata(
+            cls,
+            params,
+            {"success": {"description": "List of bug fix propagation record payloads, ordered oldest first, with every UUID field rendered as a string."}},
+            [{"description": "List propagations for a bug fix.", "command": {"plan": "plan_manager", "bug_fix_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}}],
+            best_practices=[
+                "Filter by bug_fix_id to see every downstream action required by one fix.",
+                "Filter by impact_id to see all propagation actions for a single impact target.",
+                "Use status to isolate propagations that are still pending or blocked.",
+                "Set include_deleted=true only when auditing soft-deleted propagation history.",
+            ],
+        )
+
+    async def execute(
+        self,
+        plan: str,
+        bug_fix_id: str | None = None,
+        impact_id: str | None = None,
+        status: str | None = None,
+        include_deleted: bool = False,
+        context: object | None = None,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            with db_connection() as conn:
+                resolve_plan(conn, plan)
+                records = list_bug_fix_propagations(
+                    conn,
+                    bug_fix_uuid=uuid.UUID(bug_fix_id) if bug_fix_id is not None else None,
+                    impact_uuid=uuid.UUID(impact_id) if impact_id is not None else None,
+                    status=status,
+                    include_deleted=include_deleted,
+                )
+                return SuccessResult(data={"propagations": [r.to_payload() for r in records]})
+        except Exception as exc:
+            return map_exception(exc)

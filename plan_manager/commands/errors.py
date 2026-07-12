@@ -5,6 +5,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from plan_manager.cascade.close import CommitRefusedError
 from plan_manager.cascade.record import CascadeError
+from plan_manager.domain.runtime_validation import FrozenTruthMutationError, RuntimeValidationError
 from plan_manager.domain.status_model import StatusTransitionError
 from plan_manager.scoring.embedding import EmbeddingUnavailable
 from plan_manager.scoring.index import ScoreRefusedError
@@ -23,6 +24,7 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "RELATION_NOT_FOUND",
     "PARAGRAPH_NOT_FOUND",
     "REVISION_NOT_FOUND",
+    "SNAPSHOT_NOT_FOUND",
     "CASCADE_REQUIRED",
     "CASCADE_CONFLICT",
     "FROZEN_ARTIFACT",
@@ -48,6 +50,34 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "PROJECT_NOT_ATTACHED_TO_PLAN",
     "PRIMARY_PROJECT_NOT_BOUND",
     "DUPLICATE_PROJECT_BINDING",
+    "TODO_NOT_FOUND",
+    "TODO_LINK_NOT_FOUND",
+    "COMMENT_NOT_FOUND",
+    "MODEL_BINDING_NOT_FOUND",
+    "EXECUTION_ATTEMPT_NOT_FOUND",
+    "REVIEW_RESULT_NOT_FOUND",
+    "ESCALATION_NOT_FOUND",
+    "SELF_CERTIFICATION_FORBIDDEN",
+    "BUG_NOT_FOUND",
+    "BUG_IMPACT_NOT_FOUND",
+    "BUG_FIX_NOT_FOUND",
+    "BUG_PROPAGATION_NOT_FOUND",
+    "PROJECT_DEPENDENCY_NOT_FOUND",
+    "RUNTIME_VALIDATION_ERROR",
+    "FROZEN_TRUTH_WRITE",
+    "INVALID_ANCHOR",
+    "ANCHOR_NOT_FOUND",
+    "INVALID_NICE_PRIORITY",
+    "DUPLICATE_LINK",
+    "LINK_CYCLE",
+    "INVALID_VISIBILITY",
+    "INVALID_BINDING_SCOPE",
+    "INVALID_RUNTIME_ROLE",
+    "INVALID_RUNTIME_STATUS_TRANSITION",
+    "PROJECT_DEPENDENCY_CYCLE",
+    "DUPLICATE_PROJECT_DEPENDENCY",
+    "INVALID_FILTER",
+    "INVALID_PAGINATION",
 })
 
 
@@ -91,4 +121,8 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("EMBEDDINGS_UNAVAILABLE", str(exc), {})
     if isinstance(exc, psycopg.errors.UniqueViolation):
         return domain_error("DUPLICATE_ID", str(exc), {})
+    if isinstance(exc, FrozenTruthMutationError):
+        return domain_error("FROZEN_TRUTH_WRITE", str(exc), {})
+    if isinstance(exc, RuntimeValidationError):
+        return domain_error("RUNTIME_VALIDATION_ERROR", str(exc), {})
     raise exc

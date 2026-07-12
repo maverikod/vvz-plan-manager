@@ -8,13 +8,29 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.info_metadata import get_info_metadata
 from plan_manager.commands.info_reference import (
+    bug_lifecycle_capabilities,
     context_block_capabilities,
+    execution_attempt_capabilities,
+    model_binding_capabilities,
+    overlay_capabilities,
     plan_lifecycle_capabilities,
     planning_standards_reference,
-    prompt_chain_capabilities,
     project_binding_capabilities,
+    project_dependency_capabilities,
+    prompt_chain_capabilities,
+    review_escalation_capabilities,
+    runtime_comment_capabilities,
+    runtime_filtering_capabilities,
+    runtime_write_invariants,
     step_dependency_capabilities,
     step_lifecycle_capabilities,
+    todo_work_capabilities,
+)
+from plan_manager.commands.info_reference_delegation import (
+    delegated_authoring_method_reference,
+)
+from plan_manager.commands.info_reference_mechanism import (
+    semantic_reproduction_mechanism_reference,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
 from plan_manager.runtime.context import db_connection
@@ -28,6 +44,8 @@ _SECTIONS = (
     "capabilities",
     "planning_standards",
     "documentation",
+    "mechanism_documentation",
+    "delegation_method_documentation",
 )
 
 
@@ -55,7 +73,8 @@ class InfoCommand(Command):
                     "type": "string",
                     "description": (
                         "Restrict the response to one section: identity, build, "
-                        "runtime, capabilities, planning_standards, or documentation. "
+                        "runtime, capabilities, planning_standards, documentation, "
+                        "mechanism_documentation, or delegation_method_documentation. "
                         "Omitting this parameter returns all sections."
                     ),
                     "enum": list(_SECTIONS),
@@ -119,11 +138,25 @@ class InfoCommand(Command):
                 "step_lifecycle": step_lifecycle_capabilities(),
                 "step_dependencies": step_dependency_capabilities(),
                 "plan_lifecycle": plan_lifecycle_capabilities(),
+                "todo_work": todo_work_capabilities(),
+                "runtime_comments": runtime_comment_capabilities(),
+                "execution_attempts": execution_attempt_capabilities(),
+                "review_escalations": review_escalation_capabilities(),
+                "model_bindings": model_binding_capabilities(),
+                "bug_lifecycle": bug_lifecycle_capabilities(),
+                "project_dependencies": project_dependency_capabilities(),
+                "runtime_filtering": runtime_filtering_capabilities(),
+                "overlay": overlay_capabilities(),
+                "runtime_write_invariants": runtime_write_invariants(),
             }
         if section == "planning_standards":
             return planning_standards_reference()
         if section == "documentation":
             return {"text": operator_doc()}
+        if section == "mechanism_documentation":
+            return semantic_reproduction_mechanism_reference()
+        if section == "delegation_method_documentation":
+            return delegated_authoring_method_reference()
         raise ValueError(f"Invalid section: {section!r}.")
 
     @staticmethod
