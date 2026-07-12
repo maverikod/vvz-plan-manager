@@ -64,17 +64,26 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**PLAN EXECUTION (user-authorized 2026-07-12).** The FROZEN service plan
-`planmgr-runtime-work-layer-integration`
-(uuid `fcc11f8e-7d1a-4adb-9175-d765ac10e753`, head revision
-`720b2e57-f187-4749-886c-988cbec6870a`, 200 steps, gate 20/20 green) is now
-being EXECUTED: agents DO write the production files mandated by its frozen
-atomic-step prompts (fetched read-only from the plan store via step_get /
-branch_prompt). Delegation per phase 2 of this file: an Opus agent owns each
-GS branch; a Sonnet agent owns each TS and ALWAYS verifies its writers'
-output; a Haiku agent is the sole writer of each AS target file. Frozen plan
-truth is read-only — no step mutations, no cascades. Execution order follows
-the branch DAG: G-001 → {G-002,G-003} → G-004, G-002 → G-005, {G-004,G-005} →
-G-006 → G-007 → G-008. The parking-lot plan `planmgr-post-runtime-roadmap`
-(e4a9fd91, HRS only) stays untouched. The plan
-`planmgr-semantic-reproduction-tree` is COMPLETE and stays frozen.
+**ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
+plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
+`planmgr-runtime-work-layer-integration`, fcc11f8e, stays FROZEN and read-only,
+as does `planmgr-semantic-reproduction-tree`). The working plan is now
+**`planmgr-post-runtime-roadmap`** (uuid
+`e4a9fd91-151e-4e11-bc98-423142d9298a`, 34 HRS paragraphs; its runtime overlay
+holds the live work queue: prioritized todos, bugs, comments).
+
+**Startup procedure (user order: "запускаю утром — смотришь на план и
+работаешь"):** when the user launches a session and tells the orchestrator to
+work, it MUST (1) read the roadmap plan's live state — `todo_queue`
+(anchor_plan=e4a9fd91…) and `bug_list` (active_only=true) — plus the WORK-PLAN
+paragraph of its HRS (the last paragraph: group order CR-1 command-surface →
+CR-2 export/transfer → CR-3 verification/observability → CR-4 structure
+integrity → CR-5 agent configuration); (2) take the highest-priority open
+group; (3) author its change-request plan per phase 1 and the staged authoring
+model hard-wired in `docs/prompts/plan-authoring.yaml` (Fable HRS → Fable
+concepts+MRS → Opus GS → Fable preview → parallel Sonnet/Haiku T/A wave,
+executor tier swappable via model binding); (4) proceed through gate, freeze,
+execution (phase 2), and delivery (phase 3). HARD CHECKPOINTS that always
+require the user's explicit order: plan freeze, production deploy, and the
+role-model RATINGS design discussion before CR-5. Close the roadmap plan's
+todos/bugs (todo_resolve/close, bug lifecycle) as the work ships.
