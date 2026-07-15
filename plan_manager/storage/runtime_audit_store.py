@@ -5,10 +5,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 import psycopg
 from psycopg.types.json import Jsonb
+
+from plan_manager.domain.entity import DataclassEntity
 
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset(
@@ -17,11 +19,48 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
 
 
 @dataclass(frozen=True)
-class RuntimeAuditRecord:
+class RuntimeAuditRecord(DataclassEntity):
+    """One append-only runtime audit-log row, seated on the shared entity base.
+
+    The DataclassEntity base contributes the ``entity_type()`` classmethod and
+    the ``entity_id()`` instance method (the identity of THIS audit record,
+    i.e. ``audit_uuid``). To avoid colliding with those methods, the two data
+    fields that describe WHICH entity a mutation targeted are named
+    ``target_type``/``target_id`` in this class; they map back to the unchanged
+    DB columns ``entity_type``/``entity_id`` and to the unchanged outward
+    payload keys ``entity_type``/``entity_id`` at the boundaries below.
+
+    Append-only: the table has no soft-delete/updated-at columns, so
+    ``SOFT_DELETE_COLUMN``/``UPDATED_AT_COLUMN`` are ``None`` (which makes the
+    base's soft_delete/delete/hard_delete/purge helpers raise instead of
+    mutating), and ``crud_update`` is overridden to refuse. Records are created
+    only through ``record_runtime_change`` (a raw INSERT); identity is
+    registered by a DB trigger.
+    """
+
+    ENTITY_TYPE: ClassVar[str] = "runtime_audit"
+    ENTITY_ID_FIELD: ClassVar[str] = "audit_uuid"
+    TABLE_NAME: ClassVar[str] = "runtime_audit_log"
+    COLUMNS: ClassVar[tuple[str, ...]] = (
+        "uuid",
+        "plan_uuid",
+        "entity_type",
+        "entity_id",
+        "action",
+        "changed_by",
+        "change_reason",
+        "changed_fields",
+        "linked_attempt_id",
+        "linked_review_id",
+        "created_at",
+    )
+    SOFT_DELETE_COLUMN: ClassVar[str | None] = None
+    UPDATED_AT_COLUMN: ClassVar[str | None] = None
+
     audit_uuid: uuid.UUID
     plan_uuid: uuid.UUID | None
-    entity_type: str
-    entity_id: uuid.UUID
+    target_type: str
+    target_id: uuid.UUID
     action: str
     changed_by: str
     change_reason: str | None
@@ -30,12 +69,16 @@ class RuntimeAuditRecord:
     linked_review_id: uuid.UUID | None
     created_at: str
 
+    @classmethod
+    def crud_update(cls, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("runtime_audit_log is append-only; records cannot be updated")
+
     def to_payload(self) -> dict[str, Any]:
         return {
             "uuid": str(self.audit_uuid),
             "plan_uuid": str(self.plan_uuid) if self.plan_uuid is not None else None,
-            "entity_type": self.entity_type,
-            "entity_id": str(self.entity_id),
+            "entity_type": self.target_type,
+            "entity_id": str(self.target_id),
             "action": self.action,
             "changed_by": self.changed_by,
             "change_reason": self.change_reason,
@@ -50,8 +93,8 @@ def _row_to_record(row: tuple[Any, ...]) -> RuntimeAuditRecord:
     return RuntimeAuditRecord(
         audit_uuid=row[0],
         plan_uuid=row[1],
-        entity_type=row[2],
-        entity_id=row[3],
+        target_type=row[2],
+        target_id=row[3],
         action=row[4],
         changed_by=row[5],
         change_reason=row[6],
@@ -138,8 +181,8 @@ def record_runtime_change(
     return RuntimeAuditRecord(
         audit_uuid=audit_uuid,
         plan_uuid=plan_uuid,
-        entity_type=entity_type,
-        entity_id=entity_id,
+        target_type=entity_type,
+        target_id=entity_id,
         action=action,
         changed_by=changed_by,
         change_reason=change_reason,
