@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -38,7 +39,11 @@ SPEC_LEVELS: frozenset[str] = frozenset({"HRS", "MRS", "GS", "TS", "AS"})
 
 
 @dataclass(frozen=True)
-class ModelBinding:
+class ModelBinding(DataclassEntity):
+    ENTITY_TYPE = "model_binding"
+    ENTITY_ID_FIELD = "binding_uuid"
+    TABLE_NAME = "model_binding"
+
     binding_uuid: uuid.UUID
     scope: str
     role: str | None

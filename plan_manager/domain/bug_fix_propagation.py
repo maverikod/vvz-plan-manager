@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -40,7 +41,11 @@ PROPAGATION_STATUSES: frozenset[str] = frozenset(s.value for s in PropagationSta
 
 
 @dataclass(frozen=True)
-class BugFixPropagation:
+class BugFixPropagation(DataclassEntity):
+    ENTITY_TYPE = "bug_fix_propagation"
+    ENTITY_ID_FIELD = "propagation_uuid"
+    TABLE_NAME = "bug_fix_propagation"
+
     propagation_uuid: uuid.UUID
     bug_fix_uuid: uuid.UUID
     impact_uuid: uuid.UUID

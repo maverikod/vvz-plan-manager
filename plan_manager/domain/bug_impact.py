@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 class BugImpactTargetType(str, Enum):
@@ -29,7 +30,14 @@ BUG_IMPACT_TYPES: frozenset[str] = frozenset(t.value for t in BugImpactType)
 BUG_IMPACT_STATUSES: frozenset[str] = frozenset(s.value for s in BugImpactStatus)
 
 @dataclass(frozen=True)
-class BugImpact:
+class BugImpact(DataclassEntity):
+    ENTITY_TYPE = "bug_impact"
+    ENTITY_ID_FIELD = "impact_uuid"
+    TABLE_NAME = "bug_impact"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("bug_fix_propagation", "impact_uuid", "impact_uuid", live_column="deleted_at"),
+    )
+
     impact_uuid: uuid.UUID
     bug_uuid: uuid.UUID
     target_type: str

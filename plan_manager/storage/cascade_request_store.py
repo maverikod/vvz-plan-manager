@@ -9,11 +9,17 @@ from typing import Any
 
 import psycopg
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
 @dataclass(frozen=True)
-class CascadeRequestRecord:
+class CascadeRequestRecord(DataclassEntity):
+    ENTITY_TYPE = "cascade_request"
+    ENTITY_ID_FIELD = "request_uuid"
+    TABLE_NAME = "cascade_request"
+    SOFT_DELETE_COLUMN = None
+
     request_uuid: uuid.UUID
     plan_uuid: uuid.UUID
     revision_uuid: uuid.UUID | None

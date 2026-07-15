@@ -9,9 +9,11 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from plan_manager.domain.entity import DataclassEntity, EntityIdentifier
+
 
 @dataclass
-class Paragraph:
+class Paragraph(DataclassEntity):
     """A binding paragraph of an HRS document (MRS concept C-002).
 
     Attributes:
@@ -25,9 +27,16 @@ class Paragraph:
             paragraphs only (non-binding paragraphs, heading lines, and
             fenced code block lines are not counted).
     """
+
+    ENTITY_TYPE = "paragraph"
+    TABLE_NAME = None
+
     label: Optional[str]
     text: str
     position: int
+
+    def entity_id(self) -> EntityIdentifier:
+        return self.label if self.label is not None else f"position:{self.position}"
 
 
 _LABEL_PATTERN = re.compile(r"^\{[0-9a-z]{4}\} ")

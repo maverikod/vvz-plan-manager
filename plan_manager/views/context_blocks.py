@@ -14,6 +14,7 @@ from plan_manager.cascade.record import get_open_cascade
 from plan_manager.commands.errors import DomainCommandError
 from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
 from plan_manager.domain.concept_store import list_concepts
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.domain.plan import Plan
 from plan_manager.domain.plan_schema import default_plan_schema
@@ -43,7 +44,12 @@ class ContextRevision:
 
 
 @dataclass(frozen=True)
-class ContextBlockRecord:
+class ContextBlockRecord(DataclassEntity):
+    ENTITY_TYPE = "context_block"
+    ENTITY_ID_FIELD = "block_id"
+    TABLE_NAME = "context_block"
+    SOFT_DELETE_COLUMN = None
+
     block_id: uuid.UUID
     plan_uuid: uuid.UUID
     revision_uuid: uuid.UUID | None

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from typing import List
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
+
 
 CONCEPT_ID_PATTERN = re.compile(r"^C-\d{3}$")
 
@@ -24,7 +26,7 @@ class ConceptValidationError(ValueError):
 
 
 @dataclass
-class Concept:
+class Concept(DataclassEntity):
     """A single MRS concept entry.
 
     Attributes:
@@ -37,6 +39,18 @@ class Concept:
             the concept, each formatted as a four-character base36 string
             wrapped in curly braces, e.g. "{k2p7}".
     """
+
+    ENTITY_TYPE = "concept"
+    ENTITY_ID_FIELD = "concept_id"
+    TABLE_NAME = "concept"
+    ID_COLUMN = None
+    ID_COLUMNS = ("plan_uuid", "concept_id")
+    SOFT_DELETE_COLUMN = None
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("relation", "from_concept", "concept_id", scope_columns=(("plan_uuid", "plan_uuid"),)),
+        ReferenceCheck("relation", "to_concept", "concept_id", scope_columns=(("plan_uuid", "plan_uuid"),)),
+        ReferenceCheck("step", "concepts", "concept_id", scope_columns=(("plan_uuid", "plan_uuid"),), array=True),
+    )
 
     concept_id: str
     name: str

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
+
 
 class TodoKind(str, Enum):
     TASK = "task"
@@ -37,7 +39,17 @@ TODO_STATUSES: frozenset[str] = frozenset(s.value for s in TodoStatus)
 
 
 @dataclass(frozen=True)
-class TodoItem:
+class TodoItem(DataclassEntity):
+    ENTITY_TYPE = "todo"
+    ENTITY_ID_FIELD = "todo_uuid"
+    TABLE_NAME = "todo_item"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("todo_link", "from_todo_uuid", "todo_uuid", live_column="deleted_at"),
+        ReferenceCheck("todo_link", "to_todo_uuid", "todo_uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "todo_uuid", "todo_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_fix_propagation", "linked_todo_uuid", "todo_uuid", live_column="deleted_at"),
+    )
+
     todo_uuid: uuid.UUID
     title: str
     description: str

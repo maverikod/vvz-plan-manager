@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
+
 
 LEVEL_PREFIXES: dict[int, str] = {3: "G", 4: "T", 5: "A"}
 
@@ -35,7 +37,7 @@ class StepValidationError(ValueError):
 
 
 @dataclass
-class Step:
+class Step(DataclassEntity):
     """Unified stored entity for plan levels 3, 4, and 5 (C-005).
 
     Attributes:
@@ -57,6 +59,23 @@ class Step:
             this step, or None for plan-level work.
         status: Lifecycle status string (e.g. "draft").
     """
+
+    ENTITY_TYPE = "step"
+    ENTITY_ID_FIELD = "uuid"
+    TABLE_NAME = "step"
+    SOFT_DELETE_COLUMN = None
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("step", "parent_step_uuid"),
+        ReferenceCheck("node_version", "entity_uuid"),
+        ReferenceCheck("todo_item", "anchor_step_uuid", live_column="deleted_at"),
+        ReferenceCheck("model_binding", "branch_step_uuid", live_column="deleted_at"),
+        ReferenceCheck("model_binding", "step_uuid", live_column="deleted_at"),
+        ReferenceCheck("runtime_comment", "anchor_step_uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "step_uuid", live_column="deleted_at"),
+        ReferenceCheck("escalation", "anchor_step_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_report", "source_step_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_impact", "target_step_uuid", live_column="deleted_at"),
+    )
 
     uuid: UUID
     plan_uuid: UUID

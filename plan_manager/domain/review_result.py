@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -26,7 +27,14 @@ REVIEW_STATUSES: frozenset[str] = frozenset(s.value for s in ReviewStatus)
 
 
 @dataclass(frozen=True)
-class ReviewResult:
+class ReviewResult(DataclassEntity):
+    ENTITY_TYPE = "review_result"
+    ENTITY_ID_FIELD = "review_uuid"
+    TABLE_NAME = "review_result"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("runtime_audit_log", "linked_review_id", "review_uuid"),
+    )
+
     review_uuid: uuid.UUID
     object_type: str
     reviewed_attempt_uuid: uuid.UUID | None

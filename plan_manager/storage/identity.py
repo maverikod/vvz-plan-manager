@@ -1,6 +1,8 @@
 """UUID/name identity mechanism for plan_manager storage."""
 
 import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 import psycopg
 
@@ -34,6 +36,43 @@ ALLOWED_TABLES = frozenset(
 )
 
 ALLOWED_NAME_COLUMNS = frozenset({"concept_id", "step_id", "label", "name"})
+
+
+def register_entity_identity(
+    conn: psycopg.Connection,
+    *,
+    entity_id: uuid.UUID,
+    table_name: str,
+    entity_type: str,
+    created_at: datetime | None = None,
+) -> None:
+    """Record the global UUID-to-table mapping for one entity row."""
+    conn.execute(
+        "INSERT INTO entity_identity (id, table_name, entity_type, created_at) "
+        "VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+        (entity_id, table_name, entity_type, created_at or datetime.now(timezone.utc)),
+    )
+
+
+def unregister_entity_identity(conn: psycopg.Connection, entity_id: uuid.UUID) -> None:
+    """Remove one global identity mapping after the entity row is physically deleted."""
+    conn.execute("DELETE FROM entity_identity WHERE id = %s", (entity_id,))
+
+
+def resolve_entity_identity(conn: psycopg.Connection, entity_id: uuid.UUID) -> dict[str, Any]:
+    """Resolve an entity UUID to its registered table and entity type."""
+    row = conn.execute(
+        "SELECT id, table_name, entity_type, created_at FROM entity_identity WHERE id = %s",
+        (entity_id,),
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(f"entity identity not found: {entity_id}")
+    return {
+        "id": row[0],
+        "table_name": row[1],
+        "entity_type": row[2],
+        "created_at": row[3],
+    }
 
 
 def resolve_scoped_name(

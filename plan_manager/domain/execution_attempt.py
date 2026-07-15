@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -24,7 +25,16 @@ TERMINAL_ATTEMPT_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "c
 
 
 @dataclass(frozen=True)
-class ExecutionAttempt:
+class ExecutionAttempt(DataclassEntity):
+    ENTITY_TYPE = "execution_attempt"
+    ENTITY_ID_FIELD = "attempt_uuid"
+    TABLE_NAME = "execution_attempt"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("runtime_comment", "anchor_ref_id", "attempt_uuid", live_column="deleted_at"),
+        ReferenceCheck("review_result", "reviewed_attempt_uuid", "attempt_uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "parent_attempt_uuid", "attempt_uuid", live_column="deleted_at"),
+    )
+
     attempt_uuid: uuid.UUID
     plan_uuid: uuid.UUID
     revision_uuid: uuid.UUID | None

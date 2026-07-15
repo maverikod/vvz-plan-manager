@@ -10,11 +10,17 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.storage.canonical import content_hash
 
 
 @dataclass(frozen=True)
-class SrtSnapshotRecord:
+class SrtSnapshotRecord(DataclassEntity):
+    ENTITY_TYPE = "srt_snapshot"
+    ENTITY_ID_FIELD = "snapshot_uuid"
+    TABLE_NAME = "srt_snapshot"
+    SOFT_DELETE_COLUMN = None
+
     snapshot_uuid: uuid.UUID
     plan_uuid: uuid.UUID
     revision_uuid: uuid.UUID

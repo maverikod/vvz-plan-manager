@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -17,7 +18,11 @@ ESCALATION_STATUSES: frozenset[str] = frozenset(s.value for s in EscalationStatu
 
 
 @dataclass(frozen=True)
-class Escalation:
+class Escalation(DataclassEntity):
+    ENTITY_TYPE = "escalation"
+    ENTITY_ID_FIELD = "escalation_uuid"
+    TABLE_NAME = "escalation"
+
     escalation_uuid: uuid.UUID
     primary_anchor_type: str
     anchor_project_id: uuid.UUID | None

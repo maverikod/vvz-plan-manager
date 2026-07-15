@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -49,7 +50,7 @@ COMMENT_ANCHOR_TYPES: frozenset[str] = frozenset(t.value for t in CommentAnchorT
 
 
 @dataclass(frozen=True)
-class RuntimeComment:
+class RuntimeComment(DataclassEntity):
     """
     Domain record for a runtime comment (C-014).
 
@@ -58,6 +59,10 @@ class RuntimeComment:
     A comment is never a field of another object — it is always a separate persisted entity
     referencing its subject via anchor identifiers.
     """
+
+    ENTITY_TYPE = "comment"
+    ENTITY_ID_FIELD = "comment_uuid"
+    TABLE_NAME = "runtime_comment"
 
     comment_uuid: uuid.UUID
     primary_anchor_type: str

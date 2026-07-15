@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.domain.runtime_integrity import detect_cycle
 from plan_manager.domain.external_project_reference import is_valid_external_project_id
@@ -40,7 +41,11 @@ DISCOVERY_SOURCES: frozenset[str] = frozenset(s.value for s in DiscoverySource)
 DEPENDENCY_CONFIDENCES: frozenset[str] = frozenset(c.value for c in DependencyConfidence)
 
 @dataclass(frozen=True)
-class ProjectDependency:
+class ProjectDependency(DataclassEntity):
+    ENTITY_TYPE = "project_dependency"
+    ENTITY_ID_FIELD = "dependency_uuid"
+    TABLE_NAME = "project_dependency"
+
     dependency_uuid: uuid.UUID
     dependent_project_id: uuid.UUID
     depends_on_project_id: uuid.UUID

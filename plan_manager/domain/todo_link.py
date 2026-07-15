@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.domain.runtime_integrity import detect_cycle, ensure_no_duplicate
 
@@ -27,7 +28,11 @@ BLOCKING_LINK_TYPES: frozenset[str] = frozenset({"blocks", "blocked_by"})
 
 
 @dataclass(frozen=True)
-class TodoLink:
+class TodoLink(DataclassEntity):
+    ENTITY_TYPE = "todo_link"
+    ENTITY_ID_FIELD = "link_uuid"
+    TABLE_NAME = "todo_link"
+
     link_uuid: uuid.UUID
     from_todo_uuid: uuid.UUID
     to_todo_uuid: uuid.UUID

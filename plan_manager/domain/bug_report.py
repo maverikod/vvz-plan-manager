@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
@@ -53,7 +54,18 @@ BUG_STATUSES: frozenset[str] = frozenset(s.value for s in BugStatus)
 
 
 @dataclass(frozen=True)
-class BugReport:
+class BugReport(DataclassEntity):
+    ENTITY_TYPE = "bug"
+    ENTITY_ID_FIELD = "bug_uuid"
+    TABLE_NAME = "bug_report"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("runtime_comment", "anchor_ref_id", "bug_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_report", "duplicate_of_uuid", "bug_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_report", "parent_bug_uuid", "bug_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_impact", "bug_uuid", "bug_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_fix", "bug_uuid", "bug_uuid", live_column="deleted_at"),
+    )
+
     bug_uuid: uuid.UUID
     title: str
     short_description: str

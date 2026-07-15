@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import List
 
 from plan_manager.domain.concept import CONCEPT_ID_PATTERN
+from plan_manager.domain.entity import DataclassEntity
 
 
 RELATION_TYPES = frozenset(
@@ -28,7 +29,7 @@ class RelationValidationError(ValueError):
 
 
 @dataclass
-class Relation:
+class Relation(DataclassEntity):
     """A single typed directed edge between two concepts.
 
     Attributes:
@@ -36,6 +37,13 @@ class Relation:
         to_concept: concept_id (pattern C-NNN) of the target concept.
         type: Relation type; must be one of RELATION_TYPES.
     """
+
+    ENTITY_TYPE = "relation"
+    ENTITY_ID_FIELDS = ("from_concept", "type", "to_concept")
+    TABLE_NAME = "relation"
+    ID_COLUMN = None
+    ID_COLUMNS = ("plan_uuid", "from_concept", "to_concept", "type")
+    SOFT_DELETE_COLUMN = None
 
     from_concept: str
     to_concept: str

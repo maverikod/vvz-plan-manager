@@ -14,6 +14,8 @@ import uuid
 
 import psycopg
 
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
+
 
 DEFAULT_CONTEXT_BUDGET = 4000
 
@@ -23,7 +25,7 @@ class PlanNotFoundError(ValueError):
 
 
 @dataclass
-class Plan:
+class Plan(DataclassEntity):
     """Domain representation of the Plan aggregate (C-001).
 
     Attributes:
@@ -44,6 +46,20 @@ class Plan:
             otherwise behaves normally and stays resolvable by uuid or
             name.
     """
+
+    ENTITY_TYPE = "plan"
+    ENTITY_ID_FIELD = "uuid"
+    TABLE_NAME = "plan"
+    HARD_DELETE_REFERENCE_CHECKS = (
+        ReferenceCheck("todo_item", "anchor_plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("model_binding", "plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("runtime_comment", "anchor_plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("escalation", "anchor_plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_report", "source_plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_impact", "target_plan_uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_fix_propagation", "linked_plan_uuid", live_column="deleted_at"),
+    )
 
     uuid: uuid.UUID
     name: str
