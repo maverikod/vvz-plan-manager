@@ -29,6 +29,16 @@ lives HERE, not in individual agent packets.
    `pyproject.toml` (single version source), `./build.sh`, deploy per the
    documented pipeline.
 
+**TWO-LEVEL ladder for maintenance/debug and review (user order 2026-07-16):**
+for bug fixes, maintenance rounds, and review/verification work the hierarchy
+is exactly two levels — the L1 orchestrator plus SONNET executors spawned
+directly by L1 (one per work unit; parallel on disjoint scopes). The executor
+implements AND verifies its own unit zero-trust (tests, re-reads); L1 accepts
+by report. No intermediate Opus owners, no Haiku writers for these phases.
+The full 5-stage staged model (docs/prompts/plan-authoring.yaml) and the
+Opus/Sonnet/Haiku execution ladder apply ONLY to plan authoring and to the
+execution of frozen plans.
+
 ## Plan stores
 
 - The AUTHORITATIVE plan store is the **planmgr service** (reached via the MCP
