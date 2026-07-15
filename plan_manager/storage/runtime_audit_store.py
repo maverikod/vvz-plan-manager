@@ -10,8 +10,6 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from plan_manager.domain.entity import DataclassEntity
-
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset(
     {"create", "update", "soft_delete", "archive", "restore", "plan_unfreeze"}
@@ -19,12 +17,7 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
 
 
 @dataclass(frozen=True)
-class RuntimeAuditRecord(DataclassEntity):
-    ENTITY_TYPE = "runtime_audit"
-    ENTITY_ID_FIELD = "audit_uuid"
-    TABLE_NAME = "runtime_audit_log"
-    SOFT_DELETE_COLUMN = None
-
+class RuntimeAuditRecord:
     audit_uuid: uuid.UUID
     plan_uuid: uuid.UUID | None
     entity_type: str

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from plan_manager.domain.entity import DataclassEntity
+from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 
 
 class TodoKind(str, Enum):
