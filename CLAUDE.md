@@ -25,15 +25,17 @@ lives HERE, not in individual agent packets.
    work of its writers; Haiku is the sole writer of each AS. Every level hands
    its result upward for verification.
    **Writer packets account for existing code (user order 2026-07-16):** the
-   Haiku writer makes NO integration judgments. Before dispatching, the
-   Sonnet TS-owner checks the target's on-disk state and issues a
-   deterministic packet in one of three modes: CREATE (target absent — write
-   from the mandate), INTEGRATE (target exists and stays — packet carries
-   the current content/exact anchors, what to add or change, what to
-   preserve byte-for-byte), or REPLACE (packet states what is replaced, why
-   that is safe, and with what). Reality-vs-mandate divergence is resolved
-   by the Sonnet owner (escalating upward when unresolvable), never by the
-   writer.
+   Haiku writer makes NO integration judgments. After fetching the frozen
+   prompts, the Sonnet TS-owner reviews EACH subordinate AS against the
+   current repo state and APPENDS a per-step reality supplement to the
+   packet before handing it to the writer model (the frozen prompt itself
+   is never altered — it is mandate; the supplement is dispatch context).
+   The supplement fixes one of three modes: CREATE (target absent — write
+   from the mandate), INTEGRATE (target exists and stays — supplement
+   carries the current content/exact anchors, what to add or change, what
+   to preserve byte-for-byte), or REPLACE (what is replaced, why that is
+   safe, and with what). Reality-vs-mandate divergence is resolved by the
+   Sonnet owner (escalating upward when unresolvable), never by the writer.
 3. **Product maintenance** — direct bug fixes or features on plan_manager
    source by explicit user instruction: tests, version bump in
    `pyproject.toml` (single version source), `./build.sh`, deploy per the
