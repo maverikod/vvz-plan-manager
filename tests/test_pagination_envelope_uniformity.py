@@ -18,6 +18,12 @@ from plan_manager.commands import (
     step_search_command,
     step_xref_command,
 )
+from plan_manager.commands import command_timing_stats_command
+from plan_manager.commands.command_timing_stats_command import CommandTimingStatsCommand
+from plan_manager.storage.command_metrics_store import CommandMetricRecord
+from plan_manager.commands import audit_list_command
+from plan_manager.commands.audit_list_command import AuditListCommand
+from plan_manager.storage.runtime_audit_store import RuntimeAuditRecord
 from plan_manager.commands.files_report_command import FilesReportCommand
 from plan_manager.commands.runtime_link_list_command import RuntimeLinkListCommand
 from plan_manager.commands.step_list_command import StepListCommand
@@ -195,3 +201,59 @@ def test_runtime_link_list_envelope_uses_total_limit_offset(monkeypatch) -> None
     assert data["limit"] == 50
     assert data["offset"] == 0
     assert len(data["runtime_links"]) == 1
+
+
+def test_command_timing_stats_envelope_uses_total_limit_offset(monkeypatch) -> None:
+    metric = CommandMetricRecord(
+        metric_uuid=uuid.UUID("00000000-0000-0000-0000-000000000061"),
+        command_name="step_get",
+        duration_ms=5.0,
+        mode="direct",
+        outcome="success",
+        created_at="2026-07-16T00:00:00+00:00",
+    )
+    monkeypatch.setattr(command_timing_stats_command, "db_connection", _fake_db)
+    monkeypatch.setattr(command_timing_stats_command, "list_command_metrics", lambda conn, **kwargs: [metric])
+
+    result = asyncio.run(CommandTimingStatsCommand().execute(limit=50, offset=0))
+    payload = result.to_dict()
+
+    assert payload["success"] is True
+    data = payload["data"]
+    assert set(data.keys()) == {"commands"} | ENVELOPE_KEYS
+    assert "total_count" not in data
+    assert data["total"] == 1
+    assert data["limit"] == 50
+    assert data["offset"] == 0
+    assert len(data["commands"]) == 1
+
+
+def test_audit_list_envelope_uses_total_limit_offset(monkeypatch) -> None:
+    record = RuntimeAuditRecord(
+        audit_uuid=uuid.UUID("00000000-0000-0000-0000-000000000071"),
+        plan_uuid=None,
+        target_type="step",
+        target_id=uuid.UUID("00000000-0000-0000-0000-000000000072"),
+        action="update",
+        changed_by="tester",
+        change_reason=None,
+        changed_fields=None,
+        linked_attempt_id=None,
+        linked_review_id=None,
+        created_at="2026-07-16T00:00:00+00:00",
+    )
+    monkeypatch.setattr(audit_list_command, "db_connection", _fake_db)
+    monkeypatch.setattr(audit_list_command, "list_runtime_audit", lambda conn, **kwargs: [record])
+    monkeypatch.setattr(audit_list_command, "count_runtime_audit", lambda conn, **kwargs: 1)
+
+    result = asyncio.run(AuditListCommand().execute(limit=50, offset=0))
+    payload = result.to_dict()
+
+    assert payload["success"] is True
+    data = payload["data"]
+    assert set(data.keys()) == {"items"} | ENVELOPE_KEYS
+    assert "total_count" not in data
+    assert data["total"] == 1
+    assert data["limit"] == 50
+    assert data["offset"] == 0
+    assert len(data["items"]) == 1

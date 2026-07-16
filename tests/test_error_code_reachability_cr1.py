@@ -188,6 +188,7 @@ _ERROR_CASE_ALLOWLIST: dict[str, frozenset[str]] = {
         "TransferChecksumMismatchError",
     }),
     "info": frozenset({"none"}),
+    "ops_status": frozenset({"none"}),
 }
 
 

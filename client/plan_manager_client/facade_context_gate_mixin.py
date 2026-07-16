@@ -106,5 +106,21 @@ class ContextGateCommandsMixin:
         """Return the complete machine-readable command catalog, generated from the live command inventory."""
         return await self._call("command_catalog_dump", params)
 
+    async def ops_status(self, **params: Any) -> Any:
+        """Return the deployed version, health state, and applied schema_migration rows in one read-only call."""
+        return await self._call("ops_status", params)
+
+    async def command_timing_stats(self, **params: Any) -> Any:
+        """Aggregate the command_metric store into per-command call counts and p50/p95/max latency percentiles (read-only, paginated)."""
+        return await self._call("command_timing_stats", params)
+
+    async def step_prompt_verify(self, **params: Any) -> Any:
+        """Compare candidate artifact content against a frozen step's content, field, or fenced code block, returning a match verdict (read-only, never mutates)."""
+        return await self._call("step_prompt_verify", params)
+
+    async def audit_list(self, **params: Any) -> Any:
+        """List runtime audit log entries newest-first, filterable by actor, action, entity, and time window (read-only, paginated)."""
+        return await self._call("audit_list", params)
+
 
 __all__ = ["ContextGateCommandsMixin"]

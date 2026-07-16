@@ -14,7 +14,9 @@ import pytest
 
 from plan_manager.commands.runtime_filtering import pagination_schema_properties
 
+from plan_manager.commands.audit_list_command import AuditListCommand
 from plan_manager.commands.block_list_command import BlockListCommand
+from plan_manager.commands.command_timing_stats_command import CommandTimingStatsCommand
 from plan_manager.commands.bug_propagation_list_command import BugPropagationListCommand
 from plan_manager.commands.concept_list_command import ConceptListCommand
 from plan_manager.commands.execution_attempt_list_command import ExecutionAttemptListCommand
@@ -36,8 +38,10 @@ from plan_manager.commands.todo_queue_command import TodoQueueCommand
 # Every command this CR retrofits (or, for todo_list, whose envelope shape
 # this CR fixed) onto the uniform C-001 pagination contract.
 _RETROFITTED_COMMANDS = [
+    AuditListCommand,
     BlockListCommand,
     BugPropagationListCommand,
+    CommandTimingStatsCommand,
     ConceptListCommand,
     ExecutionAttemptListCommand,
     GraphOrderCommand,

@@ -161,6 +161,10 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "project_dependents",
         "command_catalog_dump",
         "graph_dependents",
+        "ops_status",
+        "command_timing_stats",
+        "step_prompt_verify",
+        "audit_list",
     )
 )
 

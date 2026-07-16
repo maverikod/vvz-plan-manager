@@ -325,6 +325,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "project_dependency_update", "project_dependency_confirm",
     ],
     "observability": ["command_timing_stats"],
+    "verification": ["step_prompt_verify"],
 }
 
 # The queue-bound commands (use_queue=True); consumed by queue_polling_guide().

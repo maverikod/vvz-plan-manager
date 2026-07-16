@@ -52,9 +52,14 @@ def test_omitting_subsection_preserves_whole_section_behavior() -> None:
     # A-002 mandate legitimately added export_delivery (via
     # export_delivery_agent_reference()) to the same section, a second
     # sanctioned augmentation on top of the whole-section payload.
+    # assertion adjusted per L1 ruling 2026-07-16 — frozen CR-3 G-.../T-.../
+    # A-... mandate legitimately added verification_observability (via
+    # verification_observability_agent_reference()) to the same section, a
+    # third sanctioned augmentation on top of the whole-section payload.
     section = result.data["agent_reference"]
     assert "crud_deletion_posture" in section
     assert "export_delivery" in section
-    excluded = ("crud_deletion_posture", "export_delivery")
+    assert "verification_observability" in section
+    excluded = ("crud_deletion_posture", "export_delivery", "verification_observability")
     assert {k: v for k, v in section.items() if k not in excluded} == agent_reference()
     assert "status_vocabularies" in result.data["agent_reference"]
