@@ -13,11 +13,12 @@ from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.step_create_metadata import get_step_create_metadata
-from plan_manager.commands.step_ref import resolve_step_ref
+from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
 from plan_manager.domain.project_binding import require_project_bound
 from plan_manager.domain.step_store import create_step, get_step
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.version_store import record_revision
+from plan_manager.views.context_blocks import current_working_state, has_current_common_block
 from plan_manager.views.dependency_graph import load_steps
 
 
@@ -180,6 +181,17 @@ class StepCreateCommand(Command):
                     if any(step.status == "frozen" for step in nodes.values()):
                         return domain_error("FROZEN_ARTIFACT", str(exc))
                     return domain_error("CASCADE_REQUIRED", str(exc))
+                if parent is not None:
+                    parent_path = canonical_step_path(nodes, parent)
+                    working_revision, working_cascade = current_working_state(conn, p)
+                    if not has_current_common_block(
+                        conn, p.uuid, parent_path, level, working_revision, working_cascade,
+                    ):
+                        return domain_error(
+                            "CONTEXT_BLOCKS_MISSING",
+                            f"parent {parent_path} has no current context_common block for child_level {level}",
+                            {"node": parent_path, "child_level": level},
+                        )
                 step_fields = dict(SKELETON_FIELDS[level])
                 if level == 5:
                     step_fields["verification"] = dict(step_fields["verification"])

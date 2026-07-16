@@ -44,6 +44,41 @@ def frozen_at_or_below(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> 
     return False
 
 
+def frozen_ancestor(nodes: dict[uuid.UUID, Step], origin_uuid: uuid.UUID) -> bool:
+    """Return True iff any STRICT ancestor of the step at `origin_uuid` (its
+    parent, grandparent, and so on up the parent_step_uuid chain, excluding
+    the step itself) has status "frozen".
+
+    This closes the gap left by `frozen_at_or_below`, which only inspects
+    `origin_uuid` itself and its DESCENDANTS: neither function alone detects
+    a step whose ANCESTOR (not itself, not a descendant) is frozen while the
+    step's own subtree is not.
+
+    Args:
+        nodes: mapping of step uuid to Step, as returned by `load_steps`.
+        origin_uuid: uuid of the step whose ancestor chain to check.
+
+    Returns:
+        True if any ancestor of `nodes[origin_uuid]` has status "frozen";
+        False when no ancestor is frozen, including when the step has no
+        parent (a level-3 global step).
+
+    Raises:
+        CascadeError: if `origin_uuid` is not a key of `nodes`.
+    """
+    if origin_uuid not in nodes:
+        raise CascadeError(f"step {origin_uuid} not found among the loaded nodes")
+    parent_uuid = nodes[origin_uuid].parent_step_uuid
+    while parent_uuid is not None:
+        parent = nodes.get(parent_uuid)
+        if parent is None:
+            break
+        if parent.status == "frozen":
+            return True
+        parent_uuid = parent.parent_step_uuid
+    return False
+
+
 def check_admission(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,
@@ -86,7 +121,9 @@ def check_admission(
               `target_uuid` is not found among the plan's steps.
             - `cascade_uuid` is None, `target_kind` is "step", and the
               target step's status is not in DIRECT_STATUSES, or the
-              target step is frozen_at_or_below.
+              target step is frozen_at_or_below, or the target step has
+              a frozen_ancestor (an ancestor step, strictly above the
+              target, with status "frozen").
             - `cascade_uuid` is None, `target_kind` is "paragraph", and
               any step of the plan has status "frozen".
     """
@@ -107,7 +144,11 @@ def check_admission(
         nodes = load_steps(conn, plan_uuid)
         if target_uuid not in nodes:
             raise CascadeError(f"step {target_uuid} not found in plan {plan_uuid}")
-        if nodes[target_uuid].status not in DIRECT_STATUSES or frozen_at_or_below(nodes, target_uuid):
+        if (
+            nodes[target_uuid].status not in DIRECT_STATUSES
+            or frozen_at_or_below(nodes, target_uuid)
+            or frozen_ancestor(nodes, target_uuid)
+        ):
             raise CascadeError(f"step {target_uuid} is not directly mutable")
         return None
     nodes = load_steps(conn, plan_uuid)

@@ -170,6 +170,15 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "message": "project_id is not bound to plan",
                 "solution": "Call plan_project_attach first, then retry step_create.",
             },
+            "CONTEXT_BLOCKS_MISSING": {
+                "description": (
+                    "The parent (a global step or tactical step) has no CURRENT compiled "
+                    "context_common block for the child level being created. A block "
+                    "compiled against a superseded revision counts as absent."
+                ),
+                "message": "parent {parent_path} has no current context_common block for child_level {level}",
+                "solution": "Call context_common for the exact parent node and child_level, then retry step_create.",
+            },
         },
         "best_practices": [
             "Call step_tree first to confirm the parent_step_id exists and to avoid slug collisions.",

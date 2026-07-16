@@ -31,13 +31,18 @@ def get_step_move_metadata(cls: type) -> dict[str, Any]:
             "operation; the step's uuid identity never changes, but its "
             "step_id after the move may differ from the step_id before the "
             "move. This is a mutating command that runs under the mutation "
-            "admission regime: direct execution is admitted only when the moved step "
-            "is not frozen; otherwise the command returns CASCADE_REQUIRED, "
-            "or CASCADE_CONFLICT when a cascade_uuid was supplied but does "
-            "not admit the mutation, or FROZEN_ARTIFACT when the moved step "
-            "is frozen at or below the change point. The command verifies "
-            "its own result by re-reading the moved step after writing the "
-            "revision."
+            "admission regime and enforces the frozen-subtree membership "
+            "invariant on BOTH ends of the move: direct execution is "
+            "admitted only when the moved step is not frozen at or below "
+            "the change point, has no frozen ancestor, and the new parent "
+            "is likewise not frozen at or below the change point and has "
+            "no frozen ancestor; otherwise the command returns "
+            "CASCADE_REQUIRED, or CASCADE_CONFLICT when a cascade_uuid was "
+            "supplied but does not admit the mutation, or FROZEN_ARTIFACT "
+            "when the moved step OR the new parent is frozen at or below "
+            "the change point or has a frozen ancestor. The command "
+            "verifies its own result by re-reading the moved step after "
+            "writing the revision."
         ),
         "parameters": {
             "plan": {
@@ -129,9 +134,9 @@ def get_step_move_metadata(cls: type) -> dict[str, Any]:
                 "solution": "Verify the cascade is open, targets this plan, and retry with the correct cascade_uuid.",
             },
             "FROZEN_ARTIFACT": {
-                "description": "The moved step is frozen at or below the change point and no admitting cascade was supplied.",
+                "description": "The moved step OR the new parent is frozen at or below the change point, or has a frozen ancestor, and no admitting cascade was supplied.",
                 "message": "target is frozen at or below the change point",
-                "solution": "Begin a cascade to move a frozen step.",
+                "solution": "Begin a cascade to move a step into, out of, or within a frozen subtree.",
             },
         },
         "best_practices": [
@@ -139,5 +144,6 @@ def get_step_move_metadata(cls: type) -> dict[str, Any]:
             "Omit cascade_uuid for direct-mode moves on non-frozen steps; supply it only when working inside an open cascade.",
             "Re-read the moved step and its former and new parents with step_get to confirm the move's effect.",
             "Use the returned new_step_id, not the pre-move step_id, for any subsequent step_get, step_update, step_move, step_delete, or step_set_status call against the moved step.",
+            "The frozen-subtree membership invariant is checked on both the moved step and new_parent_step_id: moving a step into or out of a frozen subtree, or within one, requires an admitting cascade_uuid.",
         ],
     }

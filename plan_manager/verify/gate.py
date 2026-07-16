@@ -9,6 +9,10 @@ import psycopg
 
 from plan_manager.verify.finding import Finding, Report, build_report, render_json
 from plan_manager.verify.gate_code import check_embedded_code_parses
+from plan_manager.verify.gate_context import (
+    check_context_coverage_common_current,
+    check_context_coverage_specific_subset,
+)
 from plan_manager.verify.gate_data import artifact_path_of, load_tree, scope_steps
 from plan_manager.verify.gate_refs import (
     check_references_concepts,
@@ -39,7 +43,7 @@ from plan_manager.views.coverage import (
     relation_coverage,
 )
 
-GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage", "embedded_code"]
+GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage", "embedded_code", "context_coverage"]
 
 CHECK_IDS: dict[str, list[str]] = {
     "parse": [
@@ -74,6 +78,10 @@ CHECK_IDS: dict[str, list[str]] = {
     ],
     "embedded_code": [
         "embedded_code.parses",
+    ],
+    "context_coverage": [
+        "context_coverage.common_current",
+        "context_coverage.specific_subset",
     ],
 }
 
@@ -228,6 +236,13 @@ def run_gate(
                 )
         elif group == "embedded_code":
             group_findings.extend(check_embedded_code_parses(tree, steps))
+        elif group == "context_coverage":
+            group_findings.extend(
+                check_context_coverage_common_current(conn, plan_uuid, tree, steps)
+            )
+            group_findings.extend(
+                check_context_coverage_specific_subset(conn, plan_uuid, tree, steps)
+            )
         run_check_ids.extend(group_check_ids)
         findings.extend(group_findings)
         if fail_fast and group_findings:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, ClassVar
 
 from mcp_proxy_adapter.commands.base import Command
@@ -17,7 +18,7 @@ from plan_manager.commands.runtime_filtering import (
 )
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
-from plan_manager.views.context_blocks import list_context_blocks
+from plan_manager.views.context_blocks import current_working_state, list_context_blocks
 
 class BlockListCommand(Command):
     name: ClassVar[str] = "block_list"
@@ -92,7 +93,15 @@ class BlockListCommand(Command):
             pagination = parse_pagination({"limit": limit, "offset": offset})
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                working_revision, working_cascade = current_working_state(conn, p)
                 blocks = list_context_blocks(conn, p.uuid, node, kind, revision, cascade_uuid)
+                for entry in blocks:
+                    entry_revision = uuid.UUID(entry["revision_uuid"]) if entry["revision_uuid"] else None
+                    entry_cascade = uuid.UUID(entry["cascade_uuid"]) if entry["cascade_uuid"] else None
+                    entry["is_live"] = (
+                        entry_revision == working_revision
+                        and entry_cascade == working_cascade
+                    )
                 total = len(blocks)
                 page = blocks[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={

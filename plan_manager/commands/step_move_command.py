@@ -7,7 +7,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.cascade.record import CascadeError
-from plan_manager.cascade.regime import check_admission, frozen_at_or_below
+from plan_manager.cascade.regime import check_admission, frozen_ancestor, frozen_at_or_below
 from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.cascade.propagation import step_invalidation
 from plan_manager.commands.errors import domain_error, map_exception
@@ -127,6 +127,25 @@ class StepMoveCommand(Command):
                     if frozen_at_or_below(nodes, target.uuid):
                         return domain_error("FROZEN_ARTIFACT", str(exc))
                     return domain_error("CASCADE_REQUIRED", str(exc))
+                # Membership invariant (C-007): moving a step INTO a frozen
+                # subtree was previously unchecked entirely -- only the
+                # moved step's own admission was verified above, never the
+                # new parent's. A step is frozen_at_or_below (frozen itself
+                # or has a frozen descendant) or has a frozen_ancestor
+                # (a frozen step strictly above it) only under an
+                # already-admitted cascade (rec is not None here whenever
+                # cascade_uuid legitimately matched the plan's open cascade,
+                # since the try/except above would otherwise have returned
+                # CASCADE_CONFLICT before this line is reached).
+                if rec is None and (
+                    frozen_at_or_below(nodes, new_parent.uuid)
+                    or frozen_ancestor(nodes, new_parent.uuid)
+                ):
+                    return domain_error(
+                        "FROZEN_ARTIFACT",
+                        f"new parent {new_parent.step_id} is frozen at or below the "
+                        "change point, or has a frozen ancestor",
+                    )
                 old_step_id = target.step_id
                 moved = move_step(conn, target.uuid, new_parent.uuid)
                 nodes_after = load_steps(conn, p.uuid)

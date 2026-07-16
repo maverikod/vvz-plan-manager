@@ -19,6 +19,7 @@ from plan_manager.domain.status_model import validate_transition
 from plan_manager.domain.step import Step
 from plan_manager.cascade.write import step_snapshot
 from plan_manager.runtime.context import db_connection
+from plan_manager.storage.runtime_audit_store import record_runtime_change
 from plan_manager.storage.version_store import get_ref, record_revision
 from plan_manager.verify.gate import run_gate
 from plan_manager.views.branch import Branch
@@ -85,6 +86,14 @@ class StepTransitionCommand(Command):
                     "type": "string",
                     "description": "Open cascade identifier required when reopening frozen steps.",
                 },
+                "changed_by": {
+                    "type": "string",
+                    "description": "Actor identity recorded in the audit trail; required only when this call performs a scoped frozen-to-draft transition (subtree unfreeze) and dry_run is false.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason recorded in the audit trail; required only when this call performs a scoped frozen-to-draft transition (subtree unfreeze) and dry_run is false.",
+                },
             },
             "required": ["plan", "to_status"],
             "additionalProperties": False,
@@ -111,6 +120,8 @@ class StepTransitionCommand(Command):
         require_green: bool = True,
         dry_run: bool = False,
         cascade_uuid: str | None = None,
+        changed_by: str | None = None,
+        reason: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
@@ -135,7 +146,10 @@ class StepTransitionCommand(Command):
                             "mechanical gate is red for transition scope",
                             {"gate": gate},
                         )
-                if any(item["from"] == "frozen" and item["to"] != "frozen" for item in transitioned):
+                is_unfreeze = any(
+                    item["from"] == "frozen" and item["to"] != "frozen" for item in transitioned
+                )
+                if is_unfreeze:
                     if cascade_uuid is None:
                         return domain_error(
                             "CASCADE_REQUIRED",
@@ -159,8 +173,41 @@ class StepTransitionCommand(Command):
                         except CascadeError as exc:
                             return domain_error("CASCADE_CONFLICT", str(exc))
 
+                if is_unfreeze and not dry_run:
+                    if not changed_by or not changed_by.strip():
+                        return domain_error(
+                            "RUNTIME_VALIDATION_ERROR",
+                            "changed_by must be a non-empty string for a subtree unfreeze",
+                        )
+                    if not reason or not reason.strip():
+                        return domain_error(
+                            "RUNTIME_VALIDATION_ERROR",
+                            "reason must be a non-empty string for a subtree unfreeze",
+                        )
+
                 revision_uuid: uuid.UUID | None = None
                 if transitioned and not dry_run:
+                    if is_unfreeze:
+                        record_runtime_change(
+                            conn,
+                            plan_uuid=p.uuid,
+                            entity_type="plan",
+                            entity_id=p.uuid,
+                            action="subtree_unfreeze",
+                            changed_by=changed_by,
+                            change_reason=reason,
+                            changed_fields={
+                                "scope": scope_label,
+                                "unfrozen_steps": [
+                                    item["step_id"]
+                                    for item in transitioned
+                                    if item["from"] == "frozen" and item["to"] != "frozen"
+                                ],
+                                "head_revision_uuid": (
+                                    str(p.head_revision_uuid) if p.head_revision_uuid else None
+                                ),
+                            },
+                        )
                     for item in transitioned:
                         conn.execute(
                             "UPDATE step SET status = %s WHERE uuid = %s",

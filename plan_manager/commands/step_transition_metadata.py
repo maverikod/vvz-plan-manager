@@ -51,7 +51,13 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             "immediate INVALID_TRANSITION, a dry_run report, or a fast "
             "draft/ready_for_review transition) are returned to the caller "
             "directly; only a slow freeze gate that exceeds the server sync "
-            "cap is auto-handed to the queue."
+            "cap is auto-handed to the queue. A scoped frozen-to-draft "
+            "transition (a subtree unfreeze) additionally writes one "
+            "immutable runtime audit record naming changed_by, reason, the "
+            "unfrozen scope, and the head revision at the moment of unfreeze, "
+            "equivalent in rigor to the plan_unfreeze audit; changed_by and "
+            "reason are required only for that case and only when dry_run is "
+            "false."
         ),
         "parameters": {
             "plan": {
@@ -89,6 +95,16 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             },
             "cascade_uuid": {
                 "description": "Open cascade identifier required when reopening frozen steps.",
+                "type": "string",
+                "required": False,
+            },
+            "changed_by": {
+                "description": "Actor identity recorded in the runtime audit trail. Required only when this call performs a scoped frozen-to-draft transition (subtree unfreeze) and dry_run is false; ignored otherwise.",
+                "type": "string",
+                "required": False,
+            },
+            "reason": {
+                "description": "Reason recorded in the runtime audit trail. Required only when this call performs a scoped frozen-to-draft transition (subtree unfreeze) and dry_run is false; ignored otherwise.",
                 "type": "string",
                 "required": False,
             },
@@ -189,6 +205,11 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
                 "message": "mechanical gate is red for transition scope",
                 "solution": "Run plan_validate, fix the findings, then retry.",
             },
+            "RUNTIME_VALIDATION_ERROR": {
+                "description": "A real (non-dry-run) scoped frozen-to-draft transition (subtree unfreeze) was requested without a non-empty changed_by or reason.",
+                "message": "changed_by must be a non-empty string for a subtree unfreeze",
+                "solution": "Retry with non-empty changed_by and reason strings identifying the actor and the reason for the unfreeze.",
+            },
         },
         "best_practices": [
             "Use dry_run=True before bulk transitions on large plans.",
@@ -197,5 +218,6 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
             "Use step_tree or step_get after transition to verify authoritative status values; do not rely on fields.status.",
             "An illegal request (any selected step cannot reach to_status) is rejected synchronously and immediately with INVALID_TRANSITION and never enqueues a job; inspect details.illegal[*].legal_targets to pick a reachable status.",
             "This command runs synchronously on the adapter's sync-start path. Fast calls return their result directly. Only a slow whole-plan freeze gate that exceeds the server sync cap is auto-handed to the queue, in which case the response carries job_id with poll_with='queue_get_job_status' (never the builtin job_status, which reads a separate in-memory store).",
+            "Supply changed_by and reason whenever a scoped frozen-to-draft transition is not a dry_run; read the written record back with audit_list(action='subtree_unfreeze') to confirm actor, reason, scope, and head revision.",
         ],
     }

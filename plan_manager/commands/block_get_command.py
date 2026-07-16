@@ -13,7 +13,7 @@ from plan_manager.commands.errors import map_exception
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import db_connection
-from plan_manager.views.context_blocks import get_context_block
+from plan_manager.views.context_blocks import current_working_state, get_context_block
 
 
 class BlockGetCommand(Command):
@@ -60,6 +60,12 @@ class BlockGetCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 record = get_context_block(conn, p.uuid, validate_uuid(block_id))
-                return SuccessResult(data=record.to_payload())
+                working_revision, working_cascade = current_working_state(conn, p)
+                payload = record.to_payload()
+                payload["is_current"] = (
+                    record.revision_uuid == working_revision
+                    and record.cascade_uuid == working_cascade
+                )
+                return SuccessResult(data=payload)
         except Exception as exc:
             return map_exception(exc)

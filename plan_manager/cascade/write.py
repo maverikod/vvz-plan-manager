@@ -142,3 +142,58 @@ def cascade_write(
     snaps = apply_status_updates(conn, status_updates)
     changes = [(node_uuid, node_snapshot)] + snaps
     return record_revision(conn, plan_uuid, author, message, changes, parent, ref_name=cascade.name)
+
+
+def cascade_write_many(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    cascade: CascadeRecord,
+    node_changes: list[tuple[uuid.UUID, dict]],
+    status_updates: list[tuple[uuid.UUID, str]],
+    author: str,
+    message: str,
+) -> uuid.UUID:
+    """Record one revision in the version store (C-018) for an admitted
+    in-cascade mutation that changes MULTIPLE nodes atomically (C-008
+    recursive subtree delete), attributed to the cascade under its own
+    reference, without moving the plan head.
+
+    Generalizes `cascade_write` to more than one directly-mutated node:
+    where `cascade_write` records exactly one node_snapshot alongside its
+    status_updates, this function records an arbitrary list of
+    `(node_uuid, node_snapshot)` pairs, each produced verbatim by the
+    owning domain operation (each already carries its own "kind" key;
+    this function records them as-is, without modification). The
+    revision's change set is `node_changes` followed by the
+    `(step_uuid, snapshot)` pairs returned by applying `status_updates`
+    via `apply_status_updates`. The revision is recorded against the
+    cascade's own ref (`cascade.name`), whose current target is used as
+    the new revision's parent; the plan's head reference is never
+    touched by this function. `cascade_write` itself is left completely
+    unmodified by this addition; its other three callers (step_move,
+    step_set_status, step_update) are unaffected.
+
+    Args:
+        conn: open database connection.
+        plan_uuid: identity of the plan the cascade belongs to.
+        cascade: the plan's open CascadeRecord.
+        node_changes: list of (node_uuid, node_snapshot) pairs, one per
+            directly-mutated node, each snapshot produced by the owning
+            domain operation.
+        status_updates: (step_uuid, new_status) pairs to apply alongside
+            the node mutations, in the order they must be applied.
+        author: revision author.
+        message: revision message.
+
+    Returns:
+        The uuid of the newly recorded revision.
+
+    Raises:
+        CascadeError: if `cascade.status != "open"`.
+    """
+    if cascade.status != "open":
+        raise CascadeError(f"cascade {cascade.uuid} is not open")
+    parent = get_ref(conn, plan_uuid, cascade.name)
+    snaps = apply_status_updates(conn, status_updates)
+    changes = list(node_changes) + snaps
+    return record_revision(conn, plan_uuid, author, message, changes, parent, ref_name=cascade.name)

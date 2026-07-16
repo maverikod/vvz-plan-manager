@@ -28,19 +28,32 @@ def get_step_delete_metadata(cls: type) -> dict[str, Any]:
             "Removes an existing step. This is a destructive, mutating "
             "command that defaults to a dry run: dry_run is True unless "
             "explicitly set to False, and a dry run returns the impact set "
-            "without writing anything. A real run is refused with "
-            "INVALID_TRANSITION — deletion refused for a step that still "
-            "has children — when the target step still has children; "
-            "delete or move them first. Otherwise a real run runs under the "
-            "mutation admission regime: direct execution is admitted only "
-            "when the target step is not frozen; otherwise the command "
-            "returns CASCADE_REQUIRED, or CASCADE_CONFLICT when a "
-            "cascade_uuid was supplied but does not admit the mutation, or "
+            "without writing anything. By default (recursive is False), a "
+            "real run is refused with INVALID_TRANSITION — deletion "
+            "refused for a step that still has children — when the "
+            "target step still has children; delete or move them first. "
+            "Set recursive to True to delete the target step's entire "
+            "subtree (the target and every transitive descendant) as one "
+            "atomic revision instead: the refuse-when-children check is "
+            "skipped, every step of the subtree is deleted, and a "
+            "tombstone snapshot (the pre-delete step snapshot with an "
+            "added \"deleted\": true key) is recorded for every deleted "
+            "step as part of a single version-store revision. A dry run "
+            "with recursive True previews the entire doomed subtree: "
+            "would_delete becomes a list covering the target followed by "
+            "every transitive descendant, alongside the existing impact "
+            "list. A real run, recursive or not, runs under the mutation "
+            "admission regime: direct execution is admitted only when the "
+            "target step is not frozen at or below the change point (a "
+            "frozen descendant anywhere in the subtree counts, exactly as "
+            "for a frozen target itself); otherwise the command returns "
+            "CASCADE_REQUIRED, or CASCADE_CONFLICT when a cascade_uuid "
+            "was supplied but does not admit the mutation, or "
             "FROZEN_ARTIFACT when the target is frozen at or below the "
-            "change point. A real run records a tombstone snapshot (the "
-            "pre-delete step snapshot with an added \"deleted\": true key) "
-            "as the revision change, then deletes the step, then verifies "
-            "the deletion by confirming the step is absent on re-read."
+            "change point. A real run then records the tombstone(s) as "
+            "the revision change, deletes the step (or the whole "
+            "subtree), then verifies the deletion by confirming the "
+            "target is absent on re-read."
         ),
         "parameters": {
             "plan": {
@@ -64,19 +77,28 @@ def get_step_delete_metadata(cls: type) -> dict[str, Any]:
                 "required": False,
                 "default": True,
             },
+            "recursive": {
+                "description": "When true, delete the target step's entire subtree (the target and every transitive descendant) as one atomic revision instead of refusing when children exist. Defaults to false, which preserves the refuse-when-children behavior.",
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
         },
         "return_value": {
             "success": {
                 "description": "A dry-run impact report, or the confirmed deletion result.",
                 "data": {
                     "dry_run": "True for a dry-run report, False for a completed deletion.",
-                    "would_delete": "Artifact path of the step that would be deleted (dry run only).",
+                    "recursive": "Echoes the recursive flag used for this call.",
+                    "would_delete": "Artifact path of the step that would be deleted (dry run, non-recursive), or a list of artifact paths covering the target plus every transitive descendant (dry run, recursive).",
                     "impact": "List of artifact paths of steps that would be invalidated by the delete (dry run only).",
-                    "deleted_step_id": "The step_id that was deleted (real run only).",
-                    "revision_uuid": "UUID of the version-store revision that recorded the tombstone, as a string (real run only).",
+                    "deleted_step_id": "The step_id that was deleted (real run only; the target's own step_id even for a recursive delete).",
+                    "deleted_step_ids": "List of every deleted step's step_id, target and descendants, in deletion order: leaves first, target last (real run, recursive only).",
+                    "revision_uuid": "UUID of the version-store revision that recorded the tombstone(s), as a string (real run only).",
                 },
                 "example": {
                     "dry_run": True,
+                    "recursive": False,
                     "would_delete": "docs/plans/example/G-005-api-surface/T-006-step-commands/README.yaml",
                     "impact": ["docs/plans/example/G-005-api-surface/README.yaml"],
                 },
@@ -99,6 +121,16 @@ def get_step_delete_metadata(cls: type) -> dict[str, Any]:
                 "command": {"plan": "plan_manager", "step_id": "T-006", "dry_run": False},
                 "explanation": "Writes the tombstone revision, deletes the step, and verifies its absence by re-read.",
             },
+            {
+                "description": "Preview deleting a step and its entire subtree.",
+                "command": {"plan": "plan_manager", "step_id": "G-005", "recursive": True},
+                "explanation": "dry_run defaults to true; would_delete lists the target plus every transitive descendant, and nothing is written.",
+            },
+            {
+                "description": "Delete a step and its entire subtree as one atomic revision.",
+                "command": {"plan": "plan_manager", "step_id": "G-005", "dry_run": False, "recursive": True},
+                "explanation": "Skips the refuse-when-children refusal, deletes the target and every descendant, and records one revision with a tombstone snapshot per deleted step.",
+            },
         ],
         "error_cases": {
             "PLAN_NOT_FOUND": {
@@ -117,12 +149,12 @@ def get_step_delete_metadata(cls: type) -> dict[str, Any]:
                 "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
             },
             "INVALID_TRANSITION": {
-                "description": "deletion refused for a step that still has children",
+                "description": "deletion refused for a step that still has children (recursive is false)",
                 "message": "step {step_id} has children; delete or move them first",
-                "solution": "Delete or move the step's children first, or move this step to a leaf position, then retry.",
+                "solution": "Delete or move the step's children first, move this step to a leaf position, or retry with recursive true to delete the whole subtree in one call.",
             },
             "CASCADE_REQUIRED": {
-                "description": "The target step is not directly mutable and no cascade_uuid was supplied.",
+                "description": "The target step, or for a recursive delete some step of its subtree, is not directly mutable and no cascade_uuid was supplied.",
                 "message": "cascade required to delete this step",
                 "solution": "Begin a cascade and retry with its cascade_uuid.",
             },
@@ -132,14 +164,15 @@ def get_step_delete_metadata(cls: type) -> dict[str, Any]:
                 "solution": "Verify the cascade is open, targets this plan, and retry with the correct cascade_uuid.",
             },
             "FROZEN_ARTIFACT": {
-                "description": "The target step is frozen at or below the change point and no admitting cascade was supplied.",
+                "description": "The target step, or for a recursive delete some step of its subtree, is frozen at or below the change point and no admitting cascade was supplied.",
                 "message": "target is frozen at or below the change point",
-                "solution": "Begin a cascade to delete a frozen step.",
+                "solution": "Begin a cascade to delete a frozen step or subtree.",
             },
         },
         "best_practices": [
             "Always call with dry_run true (or omit dry_run) first to review the impact set before deleting.",
             "Omit cascade_uuid for direct-mode deletion on non-frozen steps; supply it only when working inside an open cascade.",
             "This command deletes plan data irreversibly outside the version store's tombstone snapshot; use only on plans you intend to change.",
+            "Set recursive true only after reviewing a recursive dry run's would_delete list: it deletes the target's entire subtree in one irreversible revision.",
         ],
     }

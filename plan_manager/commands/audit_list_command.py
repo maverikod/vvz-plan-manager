@@ -69,7 +69,7 @@ class AuditListCommand(Command):
                 {"description": "List audit records for a specific actor and action.", "command": {"actor": "orchestrator", "action": "update"}},
             ],
             best_practices=[
-                "action must be one of the closed ALLOWED_ACTIONS vocabulary: create, update, soft_delete, hard_delete, archive, restore, plan_unfreeze.",
+                "action must be one of the closed ALLOWED_ACTIONS vocabulary: create, update, soft_delete, hard_delete, archive, restore, plan_unfreeze, subtree_unfreeze.",
                 "Records are returned newest-first; compare offset+limit against total to detect additional pages.",
                 "entity_id and plan must be well-formed UUID strings when supplied.",
                 "The runtime audit log is append-only and read-only through this command; there is no corresponding write command.",

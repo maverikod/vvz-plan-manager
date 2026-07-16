@@ -56,10 +56,15 @@ def test_omitting_subsection_preserves_whole_section_behavior() -> None:
     # A-... mandate legitimately added verification_observability (via
     # verification_observability_agent_reference()) to the same section, a
     # third sanctioned augmentation on top of the whole-section payload.
+    # assertion adjusted per L1 ruling 2026-07-16 — CR-4 structure_integrity
+    # wiring legitimately added structure_integrity (via
+    # structure_integrity_agent_reference()) to the same section, a fourth
+    # sanctioned augmentation on top of the whole-section payload.
     section = result.data["agent_reference"]
     assert "crud_deletion_posture" in section
     assert "export_delivery" in section
     assert "verification_observability" in section
-    excluded = ("crud_deletion_posture", "export_delivery", "verification_observability")
+    assert "structure_integrity" in section
+    excluded = ("crud_deletion_posture", "export_delivery", "verification_observability", "structure_integrity")
     assert {k: v for k, v in section.items() if k not in excluded} == agent_reference()
     assert "status_vocabularies" in result.data["agent_reference"]

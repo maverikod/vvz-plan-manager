@@ -36,6 +36,10 @@ from plan_manager.commands.info_reference_delivery import (
     export_delivery_agent_reference,
     export_delivery_capabilities,
 )
+from plan_manager.commands.info_reference_integrity import (
+    structure_integrity_agent_reference,
+    structure_integrity_capabilities,
+)
 from plan_manager.commands.info_reference_mechanism import (
     semantic_reproduction_mechanism_reference,
 )
@@ -193,12 +197,14 @@ class InfoCommand(Command):
                 "export_delivery": export_delivery_capabilities(),
                 "runtime_audit": runtime_audit_capabilities(),
                 "verification_observability": verification_observability_capabilities(),
+                "structure_integrity": structure_integrity_capabilities(),
             }
         if section == "agent_reference":
             data = agent_reference()
             data["crud_deletion_posture"] = crud_deletion_posture_reference()
             data["export_delivery"] = export_delivery_agent_reference()
             data["verification_observability"] = verification_observability_agent_reference()
+            data["structure_integrity"] = structure_integrity_agent_reference()
             return data
         if section == "planning_standards":
             return planning_standards_reference()

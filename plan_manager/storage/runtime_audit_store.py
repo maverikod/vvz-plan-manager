@@ -14,7 +14,16 @@ from plan_manager.domain.entity import DataclassEntity
 
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset(
-    {"create", "update", "soft_delete", "hard_delete", "archive", "restore", "plan_unfreeze"}
+    {
+        "create",
+        "update",
+        "soft_delete",
+        "hard_delete",
+        "archive",
+        "restore",
+        "plan_unfreeze",
+        "subtree_unfreeze",
+    }
 )
 
 
@@ -131,7 +140,8 @@ def record_runtime_change(
         entity_id: uuid.UUID
             The runtime record changed.
         action: str
-            One of "create", "update", "soft_delete", "hard_delete", "archive", "restore".
+            One of "create", "update", "soft_delete", "hard_delete", "archive",
+            "restore", "plan_unfreeze", "subtree_unfreeze".
         changed_by: str
             Who performed the change.
         change_reason: str | None

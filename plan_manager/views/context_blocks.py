@@ -519,3 +519,49 @@ def list_context_blocks(
         }
         for row in rows
     ]
+
+
+def current_working_state(
+    conn: psycopg.Connection,
+    plan: Plan,
+) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+    """Return the plan's current working revision and cascade identity (C-003).
+
+    When the plan has an open cascade, the working state is the revision
+    uuid the cascade's own ref currently points to, paired with the
+    cascade's uuid. Otherwise the working state is the plan's head
+    revision uuid, paired with None. This is the same (revision_uuid,
+    cascade_uuid) pair resolve_context_revision produces when a context
+    block is compiled, so a stored block matches this pair exactly when
+    and only when it is current for the plan's live working state.
+    """
+    cascade = get_open_cascade(conn, plan.uuid)
+    if cascade is not None:
+        return get_ref(conn, plan.uuid, cascade.name), cascade.uuid
+    return plan.head_revision_uuid, None
+
+
+def has_current_common_block(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    node_path: str,
+    child_level: int,
+    working_revision: uuid.UUID | None,
+    working_cascade: uuid.UUID | None,
+) -> bool:
+    """Return True iff a current common context block exists (C-002, C-003).
+
+    A kind='common' context_block row for (node_path, child_level) counts
+    as current only when its stored revision_uuid and cascade_uuid both
+    match working_revision and working_cascade exactly, compared
+    NULL-safely with IS NOT DISTINCT FROM. A block compiled against any
+    other revision or cascade -- a stale block -- counts as absent.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM context_block WHERE plan_uuid = %s AND node_path = %s "
+        "AND child_level = %s AND kind = 'common' "
+        "AND revision_uuid IS NOT DISTINCT FROM %s AND cascade_uuid IS NOT DISTINCT FROM %s "
+        "LIMIT 1",
+        (plan_uuid, node_path, child_level, working_revision, working_cascade),
+    ).fetchone()
+    return row is not None

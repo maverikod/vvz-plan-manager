@@ -146,6 +146,71 @@ def delete_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> None:
     conn.execute("DELETE FROM step WHERE uuid = %s", (step_uuid,))
 
 
+def _subtree_uuids_root_first(conn: psycopg.Connection, step_uuid: uuid.UUID) -> list[uuid.UUID]:
+    """Collect step_uuid and every transitive descendant, root-first (C-008).
+
+    Performs a breadth-first traversal of the parent_step_uuid chain
+    starting at step_uuid: one SELECT per frontier level, each scoped to
+    the previous level's uuids via ``parent_step_uuid = ANY(%s)``.
+
+    Args:
+        conn: Open database connection.
+        step_uuid: Immutable primary identity of the subtree root.
+
+    Returns:
+        A list starting with step_uuid, followed by its children, their
+        children, and so on (breadth-first, root-first order).
+    """
+    order: list[uuid.UUID] = [step_uuid]
+    frontier: list[uuid.UUID] = [step_uuid]
+    while frontier:
+        cur = conn.execute(
+            "SELECT uuid FROM step WHERE parent_step_uuid = ANY(%s)",
+            (frontier,),
+        )
+        next_frontier = [row[0] for row in cur.fetchall()]
+        order.extend(next_frontier)
+        frontier = next_frontier
+    return order
+
+
+def delete_subtree(conn: psycopg.Connection, step_uuid: uuid.UUID) -> list[Step]:
+    """Delete one step and its entire transitive subtree in one call (C-005, C-008).
+
+    Computes the full subtree via `_subtree_uuids_root_first`, then deletes
+    every member leaves-first (the reverse of root-first order) by calling
+    the existing `delete_step` once per member, unmodified. Deleting
+    leaves first guarantees that, by the time `delete_step` runs on any
+    given member, that member's own children have already been removed,
+    so `delete_step`'s "step has children" refusal never fires for a
+    member of this subtree; its sibling-depends_on-scrub logic is reused
+    verbatim, with zero duplication.
+
+    Args:
+        conn: Open database connection.
+        step_uuid: Immutable primary identity of the subtree root to
+            delete.
+
+    Returns:
+        The list of deleted Step objects (their pre-delete field
+        values), in the order they were deleted: deepest descendants
+        first, the step identified by step_uuid last.
+
+    Raises:
+        ValueError: Propagated from `get_step` if step_uuid, or any
+            uuid collected from the subtree, does not resolve to a
+            stored step.
+    """
+    root_first_order = _subtree_uuids_root_first(conn, step_uuid)
+    deletion_order = list(reversed(root_first_order))
+    deleted: list[Step] = []
+    for member_uuid in deletion_order:
+        step = get_step(conn, member_uuid)
+        deleted.append(step)
+        delete_step(conn, member_uuid)
+    return deleted
+
+
 def set_step_status(
     conn: psycopg.Connection,
     step_uuid: uuid.UUID,
