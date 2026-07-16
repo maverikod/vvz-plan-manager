@@ -260,7 +260,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "plan_project_attach", "plan_project_detach", "plan_project_list",
         "plan_project_set_primary", "plan_project_clear_primary",
     ],
-    "transfer": ["export_upload_save", "export_read", "hrs_import", "hrs_export"],
+    "transfer": ["export_upload_save", "export_read", "export_archive", "hrs_import", "hrs_export", "export_cleanup"],
     "paragraph": ["para_list", "para_get", "para_label_assign", "para_mark_non_binding"],
     "concept_relation": [
         "concept_get", "concept_list", "concept_add", "concept_update", "concept_remove",

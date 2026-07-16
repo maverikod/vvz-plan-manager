@@ -100,3 +100,26 @@ def test_domain_code_entries_exist_and_are_scanned() -> None:
     sections = _no_db_info_sections()
     total = sum(len(_find_domain_code_entries(data)) for data in sections.values())
     assert total > 0, "no DOMAIN_CODE-keyed prose entries found; guard would be vacuous"
+
+
+def test_export_delivery_subsection_present_in_capabilities_and_agent_reference() -> None:
+    """Regression pin for CR-2 C-013: the export-delivery subsection added to the
+    info command's capabilities and agent_reference sections must stay present and
+    must not regress into stale reserved/not-yet-implemented domain-code prose."""
+    sections = _no_db_info_sections()
+    assert "export_delivery" in sections["capabilities"], (
+        "info capabilities section must expose an 'export_delivery' subsection"
+    )
+    assert "export_delivery" in sections["agent_reference"], (
+        "info agent_reference section must expose an 'export_delivery' subsection"
+    )
+    violations: list[str] = []
+    for section_name in ("capabilities", "agent_reference"):
+        subsection = sections[section_name]["export_delivery"]
+        for code, description in _find_domain_code_entries(subsection):
+            if _STALE_PHRASE_RE.search(description):
+                violations.append(f"{section_name}.export_delivery: {code!r} -> {description!r}")
+    assert not violations, (
+        "stale domain-code prose found inside the export_delivery subsection:\n"
+        + "\n".join(violations)
+    )

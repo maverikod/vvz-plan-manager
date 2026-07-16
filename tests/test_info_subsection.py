@@ -48,7 +48,13 @@ def test_omitting_subsection_preserves_whole_section_behavior() -> None:
     # pre-G-004 crud_deletion_posture: InfoCommand._section_data augments the
     # agent_reference section with the crud_deletion_posture table, so the
     # whole-section payload is agent_reference() plus that one extra key.
+    # assertion adjusted per L1 ruling 2026-07-16 — frozen CR-2 G-006/T-001/
+    # A-002 mandate legitimately added export_delivery (via
+    # export_delivery_agent_reference()) to the same section, a second
+    # sanctioned augmentation on top of the whole-section payload.
     section = result.data["agent_reference"]
     assert "crud_deletion_posture" in section
-    assert {k: v for k, v in section.items() if k != "crud_deletion_posture"} == agent_reference()
+    assert "export_delivery" in section
+    excluded = ("crud_deletion_posture", "export_delivery")
+    assert {k: v for k, v in section.items() if k not in excluded} == agent_reference()
     assert "status_vocabularies" in result.data["agent_reference"]

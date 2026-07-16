@@ -31,6 +31,10 @@ from plan_manager.commands.info_reference_crud import crud_deletion_posture_refe
 from plan_manager.commands.info_reference_delegation import (
     delegated_authoring_method_reference,
 )
+from plan_manager.commands.info_reference_delivery import (
+    export_delivery_agent_reference,
+    export_delivery_capabilities,
+)
 from plan_manager.commands.info_reference_mechanism import (
     semantic_reproduction_mechanism_reference,
 )
@@ -181,10 +185,12 @@ class InfoCommand(Command):
                 "runtime_filtering": runtime_filtering_capabilities(),
                 "overlay": overlay_capabilities(),
                 "runtime_write_invariants": runtime_write_invariants(),
+                "export_delivery": export_delivery_capabilities(),
             }
         if section == "agent_reference":
             data = agent_reference()
             data["crud_deletion_posture"] = crud_deletion_posture_reference()
+            data["export_delivery"] = export_delivery_agent_reference()
             return data
         if section == "planning_standards":
             return planning_standards_reference()
