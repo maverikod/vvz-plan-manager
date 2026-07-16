@@ -87,30 +87,33 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**CR-3 EXECUTION (phase 2, user-ordered "при отсутствии блокеров запускай
-выполнение. После - повышай номер версии, деплой, запускай тесты на реальном
-сервере" 2026-07-16).** The plan
-**`planmgr-cr3-verification-observability`** (uuid
-5a06b927-b084-46e6-8f9f-4275ad3434c2, verification/observability group) is
-FROZEN and gate-green (cascade committed head 07245731; whole-plan freeze
-revision 3bd2a9b9, 71 steps draft→frozen, 0 findings). Its five deliverables —
-ops_status, command_timing_stats, step_prompt_verify, the embedded-code gate
-check, and audit_list — are now UNDER EXECUTION per phase 2 and
-`docs/standards/planning/atomic_step_execution_standard.yaml`. Agents DO write
-the production files mandated by the frozen atomic-step prompts (fetched
-read-only from the plan store via step_get/branch_prompt). Delegation
-hierarchy: Opus owns a GS branch; Sonnet owns a TS and ALWAYS verifies its
-writers, appending a per-step CREATE/INTEGRATE/REPLACE reality supplement
-(account for existing code — much of CR-3 touches existing files: registration.py,
-gate.py, info_command.py, pyproject.toml, existing test suites); Haiku is the
-sole writer of each AS. VERIFY THE STORE/FILE, NEVER THE WRITER ECHO. CR-3 adds
-one additive migration (`plan_manager_db/migrations/0017_command_timing_metrics.sql`,
-written but NEVER applied by agents — the entrypoint applies it at deploy) and
-one dependency (`sqlglot>=25` in pyproject, must be pulled into the image at
-build). After execution + green suite: bump version 0.1.36→0.1.37, build, deploy
-(standing-authorized), mandatory MCP smoke via proxy. HARD CHECKPOINTS unchanged:
-the CR-5 ratings discussion requires the user's explicit order. All other plans
-stay frozen/read-only.
+**CR-3 SHIPPED (0.1.37) + MAINTENANCE BUGFIX (phase 3, product maintenance,
+2026-07-16).** CR-3 `planmgr-cr3-verification-observability` (uuid
+5a06b927-b084-46e6-8f9f-4275ad3434c2) was authored, frozen (rev 3bd2a9b9),
+executed, and SHIPPED as 0.1.37 on 192.168.254.26 (migration 0017 applied,
+sqlglot>=25 in image; commit 972b8e4; full suite 935 passed). Live MCP smoke
+confirmed ops_status, command_timing_stats, step_prompt_verify, audit_list
+(happy+negative). The fifth deliverable — the embedded-code gate check
+(concept C-008, `plan_manager/verify/gate_code.py`) — shipped but has a
+defect (bug 2f568497): its regex fence extractor mis-detects code-block
+boundaries when block/prose text contains backticks. **User ruling
+2026-07-16 (binary/strict, phase-3 bugfix now):** a fenced block tagged with
+a recognized code language (```python/```py → ast, ```sql/```postgresql →
+sqlglot) MUST contain valid code — parse failure is an ERROR (no
+fragment-leniency, no warnings middle-ground); an untagged/non-code fence is
+NOT checked (drop the old "unrecognized language → warning"). Example code in
+prompts must be written correctly ("либо пиши, либо не пиши"). So the ONLY
+gate-code fix is the boundary parser: replace the greedy regex with a
+line-based fence scanner robust to backticks inside content. This runs on the
+TWO-LEVEL maintenance ladder (L1 + one Sonnet executor who implements AND
+verifies). Ships as 0.1.38 (deploy standing-authorized, mandatory MCP smoke).
+Cleaning CR-3's own invalid ```python example fragments is deferred to the
+CR-3 store reconciliation (rewrite them as valid code), which also fixes the
+two known plan gaps (truncated digest G-006/T-004/A-001; missing
+step_prompt_verify catalog step) — that reconciliation is BLOCKED until the
+gate boundary fix ships. HARD CHECKPOINTS unchanged: the CR-5 ratings
+discussion requires the user's explicit order. All plan stores stay
+frozen/read-only.
 
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
