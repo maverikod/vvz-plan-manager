@@ -87,33 +87,32 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**CR-4 AUTHORING (phase 1, user-ordered "Нужно сделать остальное"
-2026-07-16).** CR-3 is SHIPPED and CLOSED: 0.1.37 (all five deliverables,
-migration 0017, sqlglot) + 0.1.38 (embedded-code gate boundary-parser fix,
-bug 2f568497 — line-based fence scanner, binary-strict: code-tagged fence
-MUST parse or error, untagged fences not checked) both live and
-smoke-verified on 192.168.254.26; the CR-3 plan store was reconciled via
-audited plan_unfreeze (15 illustrative fragments untagged, digest fixed) and
-re-frozen GREEN at revision 8308a560. Plan
-`planmgr-cr3-verification-observability` (5a06b927) stays FROZEN and
-read-only. The working group is now **CR-4 structure integrity** (roadmap
-todos: mechanical stopper 31a88efd priority -10 — refuse child-step creation
-until the parent's CURRENT context blocks are compiled, staleness counts as
-absent; subtree freeze/unfreeze 9d519a62; atomic recursive subtree deletion
-68b3559e). A new plan will be created and authored per phase 1 and
-`docs/prompts/plan-authoring.yaml` (Fable HRS → Fable concepts+MRS → Opus GS
-→ Fable preview → parallel Sonnet T/A wave; the byte-precise-mandates
-exception lets the Sonnet TS-author write exact prompts directly; compile
-context blocks LAST per level; example code inside python/sql-tagged fences
-MUST be valid — the 0.1.38 gate enforces it; illustrative fragments use
-untagged fences). Agents author PLAN STEPS only — no production files in
-phase 1.
-CR-5 pre-work is SETTLED (2026-07-16): ratings automation DEFERRED (todo
-cf86d2c3 holds the design sketch), role↔model table ships MANUAL (88d4e7c5),
-per-step invocation profile is informational-only (b247bc9d) — the old
-CR-5-ratings checkpoint is cleared. HARD CHECKPOINTS: plan freeze requires
-the user's explicit order; deploy is standing-authorized. All other plans
-stay frozen/read-only.
+**CR-4 EXECUTION (phase 2, user-ordered "Замораживай, создавай промпты,
+проверь промпты ... и запускай исполнение" 2026-07-16).** The plan
+**`planmgr-cr4-structure-integrity`** (uuid
+af1ecb08-c44c-4c91-b165-41f3c40425a1) is FROZEN and gate-green (cascade
+8cdb1c74 committed head bf84ba1a; whole-plan freeze revision 6f0a5774, 50
+steps frozen, 21/21 checks, 0 findings). Its deliverables — the context-block
+admission stopper (CONTEXT_BLOCKS_MISSING guard + read-time currency, NO
+migration), the context_coverage gate group, the audited subtree unfreeze +
+frozen-ancestor admission fixes (three real gaps: frozen_ancestor missing in
+check_admission, step_move unchecked new parent, unaudited scoped unfreeze),
+the recursive flag on step_delete (delete_subtree leaves-first,
+cascade_write_many single-revision tombstones), and the closure docs/tests —
+are UNDER EXECUTION per phase 2 and
+`docs/standards/planning/atomic_step_execution_standard.yaml`. Executors
+fetch the frozen atomic-step prompts READ-ONLY from the store (step_get) and
+DO write the mandated production files; prompts are byte/hash-verified via
+step_prompt_verify before dispatch. Reality supplements: prompts are
+grounded on repo commit dbfe200 — re-verify current disk before each write
+(CREATE/INTEGRATE/REPLACE). VERIFY THE FILE, NEVER THE WRITER ECHO.
+⛔ ABSOLUTE: no destructive git (stash/checkout--/reset/restore/clean) in the
+shared tree — a prior agent's git stash destroyed sibling work; L1 commits.
+After execution + green suite: bump 0.1.38→0.1.39, build, deploy
+(standing-authorized), mandatory MCP smoke via proxy. NO new migrations and
+NO new dependencies in CR-4. CR-5 pre-work stays settled (ratings deferred
+cf86d2c3; manual role↔model 88d4e7c5; invocation profile b247bc9d). All
+other plans stay frozen/read-only.
 
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
