@@ -87,33 +87,33 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**CR-3 SHIPPED (0.1.37) + MAINTENANCE BUGFIX (phase 3, product maintenance,
-2026-07-16).** CR-3 `planmgr-cr3-verification-observability` (uuid
-5a06b927-b084-46e6-8f9f-4275ad3434c2) was authored, frozen (rev 3bd2a9b9),
-executed, and SHIPPED as 0.1.37 on 192.168.254.26 (migration 0017 applied,
-sqlglot>=25 in image; commit 972b8e4; full suite 935 passed). Live MCP smoke
-confirmed ops_status, command_timing_stats, step_prompt_verify, audit_list
-(happy+negative). The fifth deliverable — the embedded-code gate check
-(concept C-008, `plan_manager/verify/gate_code.py`) — shipped but has a
-defect (bug 2f568497): its regex fence extractor mis-detects code-block
-boundaries when block/prose text contains backticks. **User ruling
-2026-07-16 (binary/strict, phase-3 bugfix now):** a fenced block tagged with
-a recognized code language (```python/```py → ast, ```sql/```postgresql →
-sqlglot) MUST contain valid code — parse failure is an ERROR (no
-fragment-leniency, no warnings middle-ground); an untagged/non-code fence is
-NOT checked (drop the old "unrecognized language → warning"). Example code in
-prompts must be written correctly ("либо пиши, либо не пиши"). So the ONLY
-gate-code fix is the boundary parser: replace the greedy regex with a
-line-based fence scanner robust to backticks inside content. This runs on the
-TWO-LEVEL maintenance ladder (L1 + one Sonnet executor who implements AND
-verifies). Ships as 0.1.38 (deploy standing-authorized, mandatory MCP smoke).
-Cleaning CR-3's own invalid ```python example fragments is deferred to the
-CR-3 store reconciliation (rewrite them as valid code), which also fixes the
-two known plan gaps (truncated digest G-006/T-004/A-001; missing
-step_prompt_verify catalog step) — that reconciliation is BLOCKED until the
-gate boundary fix ships. HARD CHECKPOINTS unchanged: the CR-5 ratings
-discussion requires the user's explicit order. All plan stores stay
-frozen/read-only.
+**CR-4 AUTHORING (phase 1, user-ordered "Нужно сделать остальное"
+2026-07-16).** CR-3 is SHIPPED and CLOSED: 0.1.37 (all five deliverables,
+migration 0017, sqlglot) + 0.1.38 (embedded-code gate boundary-parser fix,
+bug 2f568497 — line-based fence scanner, binary-strict: code-tagged fence
+MUST parse or error, untagged fences not checked) both live and
+smoke-verified on 192.168.254.26; the CR-3 plan store was reconciled via
+audited plan_unfreeze (15 illustrative fragments untagged, digest fixed) and
+re-frozen GREEN at revision 8308a560. Plan
+`planmgr-cr3-verification-observability` (5a06b927) stays FROZEN and
+read-only. The working group is now **CR-4 structure integrity** (roadmap
+todos: mechanical stopper 31a88efd priority -10 — refuse child-step creation
+until the parent's CURRENT context blocks are compiled, staleness counts as
+absent; subtree freeze/unfreeze 9d519a62; atomic recursive subtree deletion
+68b3559e). A new plan will be created and authored per phase 1 and
+`docs/prompts/plan-authoring.yaml` (Fable HRS → Fable concepts+MRS → Opus GS
+→ Fable preview → parallel Sonnet T/A wave; the byte-precise-mandates
+exception lets the Sonnet TS-author write exact prompts directly; compile
+context blocks LAST per level; example code inside python/sql-tagged fences
+MUST be valid — the 0.1.38 gate enforces it; illustrative fragments use
+untagged fences). Agents author PLAN STEPS only — no production files in
+phase 1.
+CR-5 pre-work is SETTLED (2026-07-16): ratings automation DEFERRED (todo
+cf86d2c3 holds the design sketch), role↔model table ships MANUAL (88d4e7c5),
+per-step invocation profile is informational-only (b247bc9d) — the old
+CR-5-ratings checkpoint is cleared. HARD CHECKPOINTS: plan freeze requires
+the user's explicit order; deploy is standing-authorized. All other plans
+stay frozen/read-only.
 
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
