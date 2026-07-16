@@ -47,7 +47,25 @@ ERROR_CASES = {
 }
 
 
-def context_metadata(cls, parameters: dict, return_value: dict, examples: list[dict]) -> dict:
+def context_metadata(
+    cls,
+    parameters: dict,
+    return_value: dict,
+    examples: list[dict],
+    error_cases: dict[str, dict[str, str]] | None = None,
+    extra_best_practices: list[str] | None = None,
+) -> dict:
+    """Build the standard metadata dict for a context-block command, merging optional command-specific error_cases over the shared ERROR_CASES and appending optional extra_best_practices to the default best-practices list. Existing callers passing only the first four positional arguments are unaffected."""
+    merged_error_cases = dict(ERROR_CASES)
+    if error_cases:
+        merged_error_cases.update(error_cases)
+    best_practices = [
+        "Call context_common before context_specific so the shared scope is explicit and reusable.",
+        "Use cascade_uuid when authoring against an open cascade so the compiled context tracks working state.",
+        "Keep child concept sets as subsets of the common scope; widen common only when the parent genuinely owns that material.",
+    ]
+    if extra_best_practices:
+        best_practices.extend(extra_best_practices)
     return {
         "name": cls.name,
         "version": cls.version,
@@ -69,12 +87,8 @@ def context_metadata(cls, parameters: dict, return_value: dict, examples: list[d
         "parameters": parameters,
         "return_value": return_value,
         "usage_examples": examples,
-        "error_cases": ERROR_CASES,
-        "best_practices": [
-            "Call context_common before context_specific so the shared scope is explicit and reusable.",
-            "Use cascade_uuid when authoring against an open cascade so the compiled context tracks working state.",
-            "Keep child concept sets as subsets of the common scope; widen common only when the parent genuinely owns that material.",
-        ],
+        "error_cases": merged_error_cases,
+        "best_practices": best_practices,
     }
 
 

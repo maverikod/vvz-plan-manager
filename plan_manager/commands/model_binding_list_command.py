@@ -1,4 +1,4 @@
-"""Command: list model binding runtime-configuration records filtered by plan, scope, and role (C-009, C-031)."""
+"""Command: list a paginated page of model binding runtime-configuration records filtered by plan, scope, and role (C-009, C-031)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,19 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_filtering import (
+    pagination_metadata_params,
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_binding_store import list_model_bindings
 
-
 class ModelBindingListCommand(Command):
     name: ClassVar[str] = "model_binding_list"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "List model binding records (C-009) filtered by plan, scope, and role."
+    descr: ClassVar[str] = "List a paginated page of model binding records (C-009) filtered by plan, scope, and role."
     category: ClassVar[str] = "model"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -33,6 +37,7 @@ class ModelBindingListCommand(Command):
                 "scope": {"description": "Optional BindingScope value to filter by: system, plan, level, branch, step, or role.", "type": "string"},
                 "role": {"description": "Optional RuntimeRole value to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted bindings. Defaults to false.", "type": "boolean", "default": False},
+                **pagination_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -45,7 +50,11 @@ class ModelBindingListCommand(Command):
         parameters["scope"] = {"description": "Optional BindingScope value to filter by: system, plan, level, branch, step, or role.", "type": "string", "required": False}
         parameters["role"] = {"description": "Optional RuntimeRole value to filter by.", "type": "string", "required": False}
         parameters["include_deleted"] = {"description": "Include soft-deleted bindings. Defaults to false.", "type": "boolean", "required": False}
-        return_value = {"description": "An object with a bindings key holding a list of ModelBinding records.", "type": "object"}
+        parameters.update(pagination_metadata_params())
+        return_value = {
+            "description": "An object with a bindings key holding a page of ModelBinding records, plus total/limit/offset.",
+            "type": "object",
+        }
         examples = [
             {"description": "List all active role-scoped bindings.", "command": {"scope": "role"}},
         ]
@@ -54,6 +63,7 @@ class ModelBindingListCommand(Command):
             "Filter by scope (system, plan, level, branch, step, role) or role to narrow a large binding set.",
             "include_deleted=true surfaces soft-deleted bindings for audit review; the default false hides them.",
             "Results are ordered by created_at, not inheritance specificity; use model_binding_resolve to find the winning binding for a target.",
+            "Compare offset+limit against total to detect additional pages.",
         ]
         return model_binding_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -63,11 +73,14 @@ class ModelBindingListCommand(Command):
         scope: str | None = None,
         role: str | None = None,
         include_deleted: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
                 plan_uuid = validate_uuid(plan) if plan is not None else None
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 bindings = list_model_bindings(
                     conn,
                     plan_uuid=plan_uuid,
@@ -75,6 +88,13 @@ class ModelBindingListCommand(Command):
                     role=role,
                     include_deleted=include_deleted,
                 )
-                return SuccessResult(data={"bindings": [binding.to_payload() for binding in bindings]})
+                total = len(bindings)
+                page = bindings[pagination.offset : pagination.offset + pagination.limit]
+                return SuccessResult(data={
+                    "bindings": [binding.to_payload() for binding in page],
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)

@@ -12,6 +12,7 @@ from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
+from plan_manager.storage.bug_derived_status_store import recompute_bug_status
 from plan_manager.storage.bug_fix_propagation_store import create_bug_fix_propagation
 from plan_manager.storage.bug_fix_store import get_bug_fix
 from plan_manager.storage.bug_impact_store import get_bug_impact
@@ -96,7 +97,8 @@ class BugPropagationCreateCommand(Command):
                 resolve_plan(conn, plan)
                 bug_fix_uuid_val = uuid.UUID(bug_fix_id)
                 impact_uuid_val = uuid.UUID(impact_id)
-                if get_bug_fix(conn, bug_fix_uuid_val) is None:
+                fix_record = get_bug_fix(conn, bug_fix_uuid_val)
+                if fix_record is None:
                     raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {bug_fix_id}")
                 if get_bug_impact(conn, impact_uuid_val) is None:
                     raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_id}")
@@ -110,6 +112,7 @@ class BugPropagationCreateCommand(Command):
                     target_identifier=target_identifier,
                     assigned_to=assigned_to,
                 )
+                recompute_bug_status(conn, fix_record.bug_uuid, changed_by=created_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:
             return map_exception(exc)

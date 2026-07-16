@@ -1,4 +1,4 @@
-"""Command: list execution attempts filtered by anchor, status, and parent lineage (C-016 via C-029, C-031)."""
+"""Command: list a paginated page of execution attempts filtered by anchor, status, and parent lineage (C-016 via C-029, C-031)."""
 
 from __future__ import annotations
 
@@ -11,17 +11,21 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_filtering import (
+    pagination_metadata_params,
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.domain.execution_attempt import ATTEMPT_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import list_execution_attempts
-
 
 class ExecutionAttemptListCommand(Command):
     name: ClassVar[str] = "execution_attempt_list"
     version: ClassVar[str] = "1.0.0"
     descr: ClassVar[str] = (
-        "List execution attempts filtered by plan, step, status, and parent "
-        "attempt lineage."
+        "List a paginated page of execution attempts filtered by plan, step, "
+        "status, and parent attempt lineage."
     )
     category: ClassVar[str] = "execution"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
@@ -74,6 +78,7 @@ class ExecutionAttemptListCommand(Command):
                     "type": "boolean",
                     "required": False,
                 },
+                **pagination_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -82,9 +87,17 @@ class ExecutionAttemptListCommand(Command):
     @classmethod
     def metadata(cls) -> dict[str, Any]:
         params = dict(cls.get_schema()["properties"])
+        params.update(pagination_metadata_params())
         return_value = {
-            "type": "array",
-            "description": "The matching execution attempt records, with all UUID fields rendered as strings.",
+            "success": {
+                "description": "A page of the matching execution attempt records, with all UUID fields rendered as strings, plus total/limit/offset.",
+                "data": {
+                    "execution_attempts": "The requested page of execution attempt payloads.",
+                    "total": "Count of the full matching set before pagination.",
+                    "limit": "The limit actually applied.",
+                    "offset": "The offset actually applied.",
+                },
+            },
         }
         examples = [
             {
@@ -102,6 +115,7 @@ class ExecutionAttemptListCommand(Command):
             "accepts any of the 8 ExecutionAttemptStatus values regardless of the attempt's current "
             "status, so this filter reflects whatever status was most recently reported, not a "
             "state-machine-validated progression.",
+            "Compare offset+limit against total to detect additional pages.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
 
@@ -112,6 +126,8 @@ class ExecutionAttemptListCommand(Command):
         status: str | None = None,
         parent_attempt_id: str | None = None,
         include_deleted: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
@@ -125,6 +141,7 @@ class ExecutionAttemptListCommand(Command):
                         "INVALID_FILTER",
                         f"'status' must be one of {sorted(ATTEMPT_STATUSES)}; got {status!r}",
                     )
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 attempts = list_execution_attempts(
                     conn,
                     plan_uuid=plan_uuid,
@@ -133,6 +150,13 @@ class ExecutionAttemptListCommand(Command):
                     parent_attempt_uuid=uuid.UUID(parent_attempt_id) if parent_attempt_id is not None else None,
                     include_deleted=include_deleted,
                 )
-                return SuccessResult(data=[a.to_payload() for a in attempts])
+                total = len(attempts)
+                page = attempts[pagination.offset : pagination.offset + pagination.limit]
+                return SuccessResult(data={
+                    "execution_attempts": [a.to_payload() for a in page],
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)

@@ -38,7 +38,7 @@ def work_item_from_todo(todo: TodoItem) -> WorkItem:
         source_uuid=todo.todo_uuid,
         title=todo.title,
         priority_nice=todo.priority_nice,
-        ready=(todo.status == "ready"),
+        ready=False,  # C-009: the todo status 'ready' no longer exists; no queue-derived meaning was specified for a todo ready flag
         requires_runtime=False,
         due_at=todo.due_at,
         created_at=todo.created_at,

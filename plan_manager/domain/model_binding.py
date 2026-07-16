@@ -97,7 +97,7 @@ def validate_binding_scope(value: str) -> str:
     """Validate and return a binding scope value."""
     if value in BINDING_SCOPES:
         return value
-    raise InvalidBindingScopeError(f"Invalid binding scope: {value}")
+    raise InvalidBindingScopeError(f"Invalid binding scope: {value}; expected one of {sorted(BINDING_SCOPES)}")
 
 
 def validate_scope_fields(
@@ -124,7 +124,7 @@ def validate_scope_fields(
         if spec_level is None:
             raise InvalidBindingScopeError("scope='level' requires spec_level")
         if spec_level not in SPEC_LEVELS:
-            raise InvalidBindingScopeError(f"spec_level '{spec_level}' must be in {SPEC_LEVELS}")
+            raise InvalidBindingScopeError(f"spec_level '{spec_level}' must be in {SPEC_LEVELS}; expected one of {sorted(SPEC_LEVELS)}")
         if branch_step_uuid is not None or step_uuid is not None:
             raise InvalidBindingScopeError("scope='level' requires branch_step_uuid, step_uuid to be None")
     elif scope == "branch":
@@ -143,4 +143,4 @@ def validate_scope_fields(
         if spec_level is not None or branch_step_uuid is not None or step_uuid is not None:
             raise InvalidBindingScopeError("scope='role' requires spec_level, branch_step_uuid, step_uuid to be None")
     else:
-        raise InvalidBindingScopeError(f"Invalid scope: {scope}")
+        raise InvalidBindingScopeError(f"Invalid scope: {scope}; expected one of {sorted(BINDING_SCOPES)}")

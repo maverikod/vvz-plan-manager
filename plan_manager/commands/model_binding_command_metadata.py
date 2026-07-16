@@ -15,12 +15,12 @@ MODEL_ERROR_CASES = {
     },
     "INVALID_BINDING_SCOPE": {
         "description": "The supplied scope value, or the fields required by that scope, are inconsistent with the six-level model-binding inheritance scope vocabulary (C-010).",
-        "message": "invalid binding scope: {details}",
+        "message": "invalid binding scope: {details}; expected one of [...]",
         "solution": "Supply one of system, plan, level, branch, step, role and only the companion fields that scope requires.",
     },
     "INVALID_RUNTIME_ROLE": {
         "description": "The supplied role value is not one of the twelve recognized runtime roles (C-011).",
-        "message": "invalid runtime role: {role}",
+        "message": "invalid runtime role: {role}; expected one of [...]",
         "solution": "Supply one of the twelve recognized RuntimeRole values.",
     },
 }

@@ -11,8 +11,11 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
+from plan_manager.domain.bug_fix_propagation_status_transitions import guard_propagation_transition
 from plan_manager.runtime.context import db_connection
+from plan_manager.storage.bug_derived_status_store import recompute_bug_status
 from plan_manager.storage.bug_fix_propagation_store import get_bug_fix_propagation, update_bug_fix_propagation
+from plan_manager.storage.bug_fix_store import get_bug_fix
 
 
 class BugPropagationUpdateCommand(Command):
@@ -95,6 +98,8 @@ class BugPropagationUpdateCommand(Command):
                 existing = get_bug_fix_propagation(conn, propagation_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_PROPAGATION_NOT_FOUND", f"bug propagation not found: {propagation_id}")
+                if status is not None:
+                    guard_propagation_transition(existing.status, status)
                 record = update_bug_fix_propagation(
                     conn,
                     propagation_uuid,
@@ -105,6 +110,9 @@ class BugPropagationUpdateCommand(Command):
                     verification_result=verification_result,
                     linked_todo_uuid=uuid.UUID(linked_todo_id) if linked_todo_id is not None else None,
                 )
+                fix_record = get_bug_fix(conn, existing.bug_fix_uuid)
+                if fix_record is not None:
+                    recompute_bug_status(conn, fix_record.bug_uuid, changed_by=changed_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:
             return map_exception(exc)

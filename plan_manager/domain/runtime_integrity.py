@@ -3,6 +3,16 @@
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 
 
+class DuplicateLinkError(RuntimeValidationError):
+    """Raised when a candidate link is already registered (C-031's generic duplicate-link
+    guard); maps to DUPLICATE_LINK at the command boundary."""
+
+
+class LinkCycleError(RuntimeValidationError):
+    """Raised when a directed graph of edges contains a cycle (C-031's generic cycle-detection
+    guard); maps to LINK_CYCLE at the command boundary."""
+
+
 def detect_cycle(edges: list[tuple[str, str]]) -> None:
     """Detect cycles in a directed graph via depth-first search.
 
@@ -33,7 +43,7 @@ def detect_cycle(edges: list[tuple[str, str]]) -> None:
             if color[neighbor] == GRAY:
                 cycle_start = path.index(neighbor)
                 cycle = path[cycle_start:] + [neighbor]
-                raise RuntimeValidationError(f"cycle detected: {' -> '.join(cycle)}")
+                raise LinkCycleError(f"cycle detected: {' -> '.join(cycle)}")
             if color[neighbor] == WHITE:
                 visit(neighbor, path)
         path.pop()
@@ -59,7 +69,7 @@ def ensure_no_duplicate(existing: set[tuple], candidate: tuple) -> None:
         RuntimeValidationError: When candidate is already in existing.
     """
     if candidate in existing:
-        raise RuntimeValidationError(f"duplicate link: {candidate!r}")
+        raise DuplicateLinkError(f"duplicate link: {candidate!r}")
 
 
 def verify_inheritance_chain(levels: list[str], allowed_order: list[str]) -> None:

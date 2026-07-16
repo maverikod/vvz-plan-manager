@@ -9,6 +9,7 @@ from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.domain.runtime_integrity import detect_cycle
 from plan_manager.domain.external_project_reference import is_valid_external_project_id
+from plan_manager.commands.errors import DomainCommandError
 
 class DependencyType(str, Enum):
     LIBRARY = "library"
@@ -78,19 +79,19 @@ class ProjectDependency(DataclassEntity):
 
 def validate_dependency_type(value: str) -> str:
     if value not in DEPENDENCY_TYPES:
-        raise RuntimeValidationError(f"invalid dependency_type: {value!r}")
+        raise RuntimeValidationError(f"invalid dependency_type: {value!r}; expected one of {sorted(DEPENDENCY_TYPES)}")
     return value
 
 
 def validate_discovery_source(value: str) -> str:
     if value not in DISCOVERY_SOURCES:
-        raise RuntimeValidationError(f"invalid discovery_source: {value!r}")
+        raise RuntimeValidationError(f"invalid discovery_source: {value!r}; expected one of {sorted(DISCOVERY_SOURCES)}")
     return value
 
 
 def validate_confidence(value: str) -> str:
     if value not in DEPENDENCY_CONFIDENCES:
-        raise RuntimeValidationError(f"invalid confidence: {value!r}")
+        raise RuntimeValidationError(f"invalid confidence: {value!r}; expected one of {sorted(DEPENDENCY_CONFIDENCES)}")
     return value
 
 
@@ -107,7 +108,15 @@ def guard_discovery_not_silently_confirmed(discovery_source: str, confidence: st
 
 
 def guard_no_dependency_cycle(edges: list[tuple[str, str]]) -> None:
-    detect_cycle(edges)
+    try:
+        detect_cycle(edges)
+    except RuntimeValidationError as exc:
+        raise DomainCommandError("PROJECT_DEPENDENCY_CYCLE", str(exc)) from exc
+
+
+def guard_no_duplicate_dependency(existing: set[tuple], candidate: tuple) -> None:
+    if candidate in existing:
+        raise DomainCommandError("DUPLICATE_PROJECT_DEPENDENCY", f"duplicate project dependency: {candidate!r}")
 
 
 def suspected_impact_targets(edges: list[tuple[str, str]], source_project_id: uuid.UUID) -> list[uuid.UUID]:

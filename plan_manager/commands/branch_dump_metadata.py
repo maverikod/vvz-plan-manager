@@ -30,7 +30,11 @@ def get_branch_dump_metadata(cls: type) -> Dict[str, Any]:
             "reads them back, and they carry no plan truth. When "
             "dry_run is True, branches are counted but no file is "
             "written, so a dry_run=True call never touches disk and "
-            "is always safe to run against a real plan."
+            "is always safe to run against a real plan. Result-set "
+            "pagination is not applicable to this command: its large "
+            "output is the file artifact written under the export "
+            "root and served in byte ranges by export_read; the "
+            "JSON-RPC response itself is a fixed-size scalar summary."
         ),
         "parameters": {
             "plan": {
@@ -86,9 +90,15 @@ def get_branch_dump_metadata(cls: type) -> Dict[str, Any]:
                 "message": "Plan not found: {plan}",
                 "solution": "Call the plan catalog command and retry with a valid plan identifier.",
             },
+            "PROMPT_ASSEMBLY_FAILED": {
+                "description": "While writing the per-branch dump, the prompt assembler could not resolve a concept_id referenced by some branch's content to an existing concept row (dump_prompts delegates to assemble_prompt for every branch).",
+                "message": "no concept row for {concept_id}",
+                "solution": "Fix the dangling concept_id reference in the offending branch's content (or add the missing concept via concept_add) and retry.",
+            },
         },
         "best_practices": [
             "Use dry_run=True first on a large plan to see how many files would be written before committing to the full dump.",
             "Treat the dumped files as a read-only convenience snapshot for humans or external tooling; never feed them back into the server as plan truth.",
+            "Pagination is not applicable here: read large dumped artifacts through export_read byte ranges instead of expecting a paginated JSON-RPC response.",
         ],
     }

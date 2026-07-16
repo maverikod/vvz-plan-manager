@@ -41,7 +41,7 @@ VISIBILITY_CONTEXT_MAP: dict[str, frozenset[str]] = {
 def validate_visibility(value: str) -> str:
     """Return value if it is a known CommentVisibility mode, else raise RuntimeValidationError."""
     if value not in VISIBILITY_MODES:
-        raise RuntimeValidationError(f"invalid comment visibility: {value!r}")
+        raise RuntimeValidationError(f"invalid comment visibility: {value!r}; expected one of {sorted(VISIBILITY_MODES)}")
     return value
 
 

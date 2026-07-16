@@ -1,4 +1,4 @@
-"""Command: return the full step tree of a plan."""
+"""Command: return a paginated page of a plan's full step tree."""
 
 from typing import Any, ClassVar
 
@@ -7,6 +7,10 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.runtime_filtering import (
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.commands.step_ref import (
     canonical_step_path,
     parent_canonical_path,
@@ -18,13 +22,12 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.dependency_graph import load_steps
 
-
 class StepTreeCommand(Command):
-    """Return the plan's full step tree with statuses."""
+    """Return a paginated page of the plan's full step tree with statuses."""
 
     name: ClassVar[str] = "step_tree"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "Return the plan's full step tree as a flat, sorted list with statuses."
+    descr: ClassVar[str] = "Return a paginated page of the plan's full step tree as a flat, sorted list with statuses."
     category: ClassVar[str] = "step"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -51,6 +54,7 @@ class StepTreeCommand(Command):
                     "description": "When true, include each step's runtime parameters in the response.",
                     "default": False,
                 },
+                **pagination_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -73,23 +77,31 @@ class StepTreeCommand(Command):
         self,
         plan: str,
         include_runtime: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
-        """Return the plan's full step tree as a flat, sorted list.
+        """Return one page of the plan's full step tree as a flat, sorted list.
 
         Args:
             plan: Plan identifier (UUID or name).
             include_runtime: Whether to include runtime parameters.
+            limit: Maximum number of tree entries to return (default 50, max 200).
+            offset: Number of tree entries to skip before returning results (default 0).
 
         Returns:
-            SuccessResult with data {"tree": [...]} on success, where each
-            tree entry is {"path", "step_id", "slug", "level", "status"}
-            sorted by (level, path); ErrorResult with a stable domain error
-            code on failure.
+            SuccessResult with data {"tree": [...], "total": int, "limit": int,
+            "offset": int} on success, where tree is the requested page of
+            {"path", "step_id", "slug", "level", "status"} entries drawn from
+            the full tree sorted by (level, path) before pagination is applied,
+            and total is the count of the full tree before pagination;
+            ErrorResult with a stable domain error code (PLAN_NOT_FOUND or
+            INVALID_PAGINATION) on failure.
         """
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 nodes = load_steps(conn, p.uuid)
                 tree = []
                 for s in nodes.values():
@@ -109,7 +121,14 @@ class StepTreeCommand(Command):
                         entry["runtime"] = get_runtime_record(conn, p.uuid, s.uuid)
                     tree.append(entry)
                 tree.sort(key=lambda entry: (entry["level"], entry["path"]))
-                return SuccessResult(data={"tree": tree})
+                total = len(tree)
+                page = tree[pagination.offset : pagination.offset + pagination.limit]
+                return SuccessResult(data={
+                    "tree": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)
 

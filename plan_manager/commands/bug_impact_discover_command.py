@@ -36,7 +36,7 @@ class BugImpactDiscoverCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report the discovered impacts belong to."},
                 "source_project_id": {"type": "string", "format": "uuid", "description": "External project UUID where the bug's source anchor lives; the reverse dependency graph is walked from this project."},
-                "impact_type": {"type": "string", "description": "Impact type applied to every discovered BugImpact record."},
+                "impact_type": {"type": "string", "description": "Impact type applied to every discovered BugImpact record (one of: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, or unknown). Never pass defect_source here: discovery only creates records for dependent projects reached via the reverse graph, never for source_project_id itself."},
                 "created_by": {"type": "string", "description": "Actor identifier recorded as the creator of the discovered impact records."},
                 "discovery_method": {"type": "string", "description": "How these impacts were discovered. Defaults to project_dependency_reverse_graph."},
             },
@@ -50,7 +50,7 @@ class BugImpactDiscoverCommand(Command):
             **BASE_PARAMETERS,
             "bug_id": {"description": "UUID of the bug_report the discovered impacts belong to.", "type": "string", "required": True},
             "source_project_id": {"description": "External project UUID where the bug's source anchor lives.", "type": "string", "required": True},
-            "impact_type": {"description": "Impact type applied to every discovered BugImpact record.", "type": "string", "required": True},
+            "impact_type": {"description": "Impact type applied to every discovered BugImpact record (one of: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, or unknown). Never pass defect_source here: discovery only creates records for dependent projects reached via the reverse graph, never for source_project_id itself.", "type": "string", "required": True},
             "created_by": {"description": "Actor identifier recorded as the creator of the discovered impact records.", "type": "string", "required": True},
             "discovery_method": {"description": "How these impacts were discovered. Defaults to project_dependency_reverse_graph.", "type": "string", "required": False},
         }
@@ -73,6 +73,7 @@ class BugImpactDiscoverCommand(Command):
                 "Choose impact_type carefully: it is applied uniformly to every discovered project.",
                 "Discovered impacts are always created with status suspected; confirm or dismiss them individually afterward.",
                 "Override discovery_method only when the walk source differs from the standard reverse dependency graph.",
+                "Never use impact_type=defect_source with this command: discover only creates suspected records for dependent projects, never for the source project itself; record the defect_source impact of the owning project directly with bug_impact_add instead.",
             ],
         )
 

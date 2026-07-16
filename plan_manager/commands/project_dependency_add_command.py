@@ -97,7 +97,7 @@ class ProjectDependencyAddCommand(Command):
                 },
             }],
             best_practices=[
-                "Re-adding an identical active edge fails with DUPLICATE_ID; call project_dependency_list first to check for an existing edge.",
+                "Re-adding an identical non-deleted (dependent_project_id, depends_on_project_id, dependency_type) edge fails with DUPLICATE_PROJECT_DEPENDENCY; call project_dependency_list first to check for an existing edge.",
                 "An edge that would create a cycle fails with PROJECT_DEPENDENCY_CYCLE; inspect the graph via project_dependency_list before adding.",
                 "Set confidence=confirmed only when discovery_source=manual; automated discovery sources cannot be silently confirmed.",
                 "dependent_project_id and depends_on_project_id must be distinct external analysis-server UUIDs, not plan_manager step or plan ids.",

@@ -24,9 +24,9 @@ ERROR_CASES = {
         "solution": "Call bug_impact_list and retry with an existing impact id.",
     },
     "INVALID_RUNTIME_STATUS_TRANSITION": {
-        "description": "The requested status value is not a valid propagation status.",
+        "description": "The requested propagation status change is illegal from the propagation's current status under the propagation legal-transition table (C-009). This guard applies to bug_propagation_update's status parameter.",
         "message": "invalid runtime status transition: {details}",
-        "solution": "Supply one of: pending, ready, in_progress, done, failed, blocked, skipped, verified.",
+        "solution": "Inspect the error details: current_status and legal_targets name the statuses reachable from here.",
     },
 }
 

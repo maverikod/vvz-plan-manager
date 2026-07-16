@@ -1,4 +1,4 @@
-"""Command: list review results by reviewed object and status (C-018, C-029)."""
+"""Command: list a paginated page of review results by reviewed object and status (C-018, C-029)."""
 
 from __future__ import annotations
 
@@ -11,15 +11,19 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.review_escalation_command_metadata import review_escalation_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_filtering import (
+    pagination_metadata_params,
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.domain.review_result import REVIEW_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.review_result_store import list_review_results
 
-
 class ReviewResultListCommand(Command):
     name: ClassVar[str] = "review_result_list"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "List review results scoped by reviewed execution attempt and status."
+    descr: ClassVar[str] = "List a paginated page of review results scoped by reviewed execution attempt and status."
     category: ClassVar[str] = "review"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -49,6 +53,7 @@ class ReviewResultListCommand(Command):
                     "type": "boolean",
                     "description": "Include soft-deleted review results in the listing. Defaults to false.",
                 },
+                **pagination_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -69,11 +74,12 @@ class ReviewResultListCommand(Command):
                 "required": False,
             },
             "include_deleted": {"description": "Include soft-deleted review results in the listing. Defaults to false.", "type": "boolean", "required": False},
+            **pagination_metadata_params(),
         }
         return review_escalation_metadata(
             cls,
             params,
-            {"success": {"description": "List of review result payloads matching the requested reviewed-attempt/status scope, ordered oldest first."}},
+            {"success": {"description": "A page of review result payloads matching the requested reviewed-attempt/status scope, ordered oldest first, plus total/limit/offset."}},
             [{
                 "description": "List all accepted review results for a given execution attempt.",
                 "command": {
@@ -87,6 +93,7 @@ class ReviewResultListCommand(Command):
                 "include_deleted defaults to false; set it true only when auditing soft-deleted review history.",
                 "Results are ordered oldest first (created_at ASC); reverse client-side for a newest-first view.",
                 "Filter by status escalated or needs_owner_decision to find review results still awaiting an owner decision.",
+                "Compare offset+limit against total to detect additional pages.",
             ],
         )
 
@@ -96,6 +103,8 @@ class ReviewResultListCommand(Command):
         reviewed_attempt_uuid: str | None = None,
         status: str | None = None,
         include_deleted: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
@@ -106,12 +115,20 @@ class ReviewResultListCommand(Command):
                         "INVALID_FILTER",
                         f"'status' must be one of {sorted(REVIEW_STATUSES)}; got {status!r}",
                     )
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 records = list_review_results(
                     conn,
                     reviewed_attempt_uuid=uuid.UUID(reviewed_attempt_uuid) if reviewed_attempt_uuid else None,
                     status=status,
                     include_deleted=include_deleted,
                 )
-                return SuccessResult(data={"review_results": [r.to_payload() for r in records]})
+                total = len(records)
+                page = records[pagination.offset : pagination.offset + pagination.limit]
+                return SuccessResult(data={
+                    "review_results": [r.to_payload() for r in page],
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)

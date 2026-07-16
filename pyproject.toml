@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plan-manager"
-version = "0.1.31"
+version = "0.1.32"
 description = "Plan Manager server: hierarchical development plan storage, verification, and exchange service."
 requires-python = ">=3.12"
 dependencies = [
@@ -20,6 +20,9 @@ dependencies = [
 dev = [
     "pytest>=9",
 ]
+
+[project.scripts]
+plan-manager-catalog-dump = "plan_manager.command_catalog_cli:main"
 
 [tool.setuptools.packages.find]
 include = ["plan_manager*"]

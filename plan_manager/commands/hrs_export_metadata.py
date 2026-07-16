@@ -2,7 +2,6 @@
 
 from typing import Any, Dict
 
-
 def get_hrs_export_metadata(cls) -> Dict[str, Any]:
     """Build the extended documentation metadata for HrsExportCommand.
 
@@ -19,7 +18,23 @@ def get_hrs_export_metadata(cls) -> Dict[str, Any]:
         "category": cls.category,
         "author": cls.author,
         "email": cls.email,
-        "detailed_description": "Returns the byte-identical HRS Markdown text of a resolved plan. Read-only and not queue-bound: the HRS text is read directly from the version store and returned synchronously. No filesystem access occurs; the export root configuration is not used by this command.",
+        "detailed_description": (
+            "Returns a deterministic re-serialization of the plan's binding "
+            "HRS paragraphs: each stored paragraph is rendered as "
+            "'{label} text' and joined with a blank line, in position order. "
+            "Read-only and not queue-bound: the text is built directly from "
+            "the version store and returned synchronously. No filesystem "
+            "access occurs; the export root configuration is not used by "
+            "this command. This reconstruction is NOT necessarily "
+            "byte-identical to the originally imported document: headings, "
+            "non-binding regions (the text wrapped by <!-- non-binding --> "
+            "markers), and fenced code blocks outside binding paragraphs are "
+            "not stored and so do not reappear, and inter-paragraph spacing "
+            "is normalized to exactly one blank line regardless of the "
+            "original document's spacing. Only the labeled binding-paragraph "
+            "text itself round-trips exactly through hrs_import -> "
+            "hrs_export."
+        ),
         "parameters": {
             "plan": {
                 "description": "Plan identifier resolved against the catalog.",
@@ -29,11 +44,11 @@ def get_hrs_export_metadata(cls) -> Dict[str, Any]:
         },
         "return_value": {
             "success": {
-                "description": "The byte-identical HRS Markdown text.",
+                "description": "The re-serialized HRS Markdown text of the binding paragraphs.",
                 "data": {
-                    "markdown": "The full HRS Markdown text of the plan.",
+                    "markdown": "The plan's binding paragraphs re-serialized as HRS Markdown text.",
                 },
-                "example": {"markdown": "# Plan Title\n\n..."},
+                "example": {"markdown": "{0001} Paragraph text.\n\n{0002} Next paragraph text.\n"},
             },
             "error": {
                 "description": "Domain error result.",
@@ -46,7 +61,7 @@ def get_hrs_export_metadata(cls) -> Dict[str, Any]:
             {
                 "description": "Export the HRS Markdown of a plan.",
                 "command": {"plan": "my-plan"},
-                "explanation": "Returns the plan's HRS text unchanged.",
+                "explanation": "Returns the plan's binding paragraphs re-serialized as HRS Markdown text.",
             }
         ],
         "error_cases": {
@@ -58,6 +73,6 @@ def get_hrs_export_metadata(cls) -> Dict[str, Any]:
         },
         "best_practices": [
             "This command is read-only and safe to call at any time.",
-            "The returned text is byte-identical to the stored HRS; do not post-process it before round-tripping through hrs_import.",
+            "Do not assume the returned text is byte-identical to an originally imported document; headings, non-binding regions, and code fences outside binding paragraphs are not preserved. Only the labeled binding-paragraph text round-trips exactly through hrs_import.",
         ],
     }

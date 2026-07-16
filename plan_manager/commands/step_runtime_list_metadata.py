@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from plan_manager.commands.runtime_filtering import pagination_metadata_params
 
 def get_step_runtime_list_metadata(cls) -> dict:
     return {
@@ -12,10 +13,14 @@ def get_step_runtime_list_metadata(cls) -> dict:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Lists runtime records for every step in a whole plan, one "
-            "G-NNN scope, or one G-NNN/T-NNN scope. The command returns an "
-            "entry for every step in scope, including steps that have no "
-            "runtime row yet; those receive an empty runtime record."
+            "Lists one paginated page of runtime records for every step in a "
+            "whole plan, one G-NNN scope, or one G-NNN/T-NNN scope, using the "
+            "uniform offset/limit convention (default limit 50, max 200). "
+            "SHAPE CHANGE: the response is an artifact_path-sorted list of "
+            "{artifact_path, step_id, runtime} items plus total/limit/offset; "
+            "it replaced the former map keyed by artifact path. The command "
+            "returns an entry for every step in scope, including steps that "
+            "have no runtime row yet; those receive an empty runtime record."
         ),
         "parameters": {
             "plan": {
@@ -28,16 +33,21 @@ def get_step_runtime_list_metadata(cls) -> dict:
                 "type": "string",
                 "required": False,
             },
+            **pagination_metadata_params(),
         },
         "return_value": {
             "success": {
-                "description": "Runtime records keyed by step artifact path.",
+                "description": "A page of runtime records as an artifact_path-sorted item list, plus total/limit/offset.",
                 "data": {
-                    "runtime": "Map from artifact path to {step_id, runtime}.",
+                    "runtime": "List of {artifact_path, step_id, runtime} items sorted by artifact_path.",
+                    "total": "Count of the full in-scope step set before pagination.",
+                    "limit": "The limit actually applied.",
+                    "offset": "The offset actually applied.",
                 },
                 "example": {
-                    "runtime": {
-                        "G-001/T-001/A-001": {
+                    "runtime": [
+                        {
+                            "artifact_path": "G-001/T-001/A-001",
                             "step_id": "A-001",
                             "runtime": {
                                 "activations": [],
@@ -46,12 +56,15 @@ def get_step_runtime_list_metadata(cls) -> dict:
                                 "authoring": None,
                             },
                         }
-                    }
+                    ],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
-                "description": "Plan or scope could not be resolved.",
-                "code": "PLAN_NOT_FOUND | STEP_NOT_FOUND",
+                "description": "Plan or scope could not be resolved, or pagination is invalid.",
+                "code": "PLAN_NOT_FOUND | STEP_NOT_FOUND | INVALID_PAGINATION",
                 "message": "Human-readable error message.",
                 "details": "Domain error details when available.",
             },
@@ -60,7 +73,7 @@ def get_step_runtime_list_metadata(cls) -> dict:
             {
                 "description": "List runtime records for one tactical branch.",
                 "command": {"plan": "plan_manager", "scope": "G-001/T-001"},
-                "explanation": "Returns the tactical step and its atomic children.",
+                "explanation": "Returns the first page (default limit 50) covering the tactical step and its atomic children.",
             }
         ],
         "error_cases": {
@@ -74,9 +87,16 @@ def get_step_runtime_list_metadata(cls) -> dict:
                 "message": "scope not found: {scope}",
                 "solution": "Call step_tree to discover valid scope identifiers.",
             },
+            "INVALID_PAGINATION": {
+                "description": "limit or offset is out of range or not an integer.",
+                "message": "limit must be between 1 and 200, got {limit}",
+                "solution": "Retry with limit in [1, 200] and offset >= 0.",
+            },
         },
         "best_practices": [
             "Use scope for dashboards focused on one branch.",
             "Do not treat absence of runtime rows as absence of steps; empty records are intentional.",
+            "The response shape changed from a map keyed by artifact path to a paginated, artifact_path-sorted list of {artifact_path, step_id, runtime} items; update consumers accordingly.",
+            "Compare offset+limit against total to detect additional pages.",
         ],
     }

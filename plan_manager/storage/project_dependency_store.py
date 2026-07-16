@@ -8,7 +8,7 @@ from plan_manager.domain.project_dependency import (
     ProjectDependency, DEPENDENCY_TYPES, DISCOVERY_SOURCES, DEPENDENCY_CONFIDENCES,
     validate_dependency_type, validate_discovery_source, validate_confidence,
     validate_dependency_project_ids, guard_discovery_not_silently_confirmed,
-    guard_no_dependency_cycle, suspected_impact_targets,
+    guard_no_dependency_cycle, guard_no_duplicate_dependency, suspected_impact_targets,
 )
 from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.storage.runtime_audit_store import record_runtime_change
@@ -62,6 +62,16 @@ def create_project_dependency(
     validate_confidence(confidence)
     validate_dependency_project_ids(dependent_project_id, depends_on_project_id)
     guard_discovery_not_silently_confirmed(discovery_source, confidence)
+
+    existing_triples_cur = conn.execute(
+        "SELECT dependent_project_id, depends_on_project_id, dependency_type FROM project_dependency "
+        "WHERE deleted_at IS NULL",
+    )
+    existing_triples = {(str(r[0]), str(r[1]), r[2]) for r in existing_triples_cur.fetchall()}
+    guard_no_duplicate_dependency(
+        existing_triples,
+        (str(dependent_project_id), str(depends_on_project_id), dependency_type),
+    )
 
     edges = _load_active_edges(conn)
     edges.append((str(dependent_project_id), str(depends_on_project_id)))
@@ -182,4 +192,71 @@ def remove_project_dependency(conn: psycopg.Connection, dependency_uuid: uuid.UU
     record = get_project_dependency(conn, dependency_uuid)
     if record is None:
         raise RuntimeValidationError(f"project_dependency {dependency_uuid} not found after soft delete")
+    return record
+
+
+def update_project_dependency(
+    conn: psycopg.Connection,
+    dependency_uuid: uuid.UUID,
+    *,
+    changed_by: str,
+    dependency_type: str | None = None,
+    version_constraint: str | None = None,
+    active: bool | None = None,
+) -> ProjectDependency:
+    """Patch the mutable fields (dependency_type, version_constraint, active) of an
+    existing project_dependency edge, leaving confidence untouched (use
+    confirm_project_dependency to move confidence off suspected).
+
+    Args:
+        conn: Open psycopg database connection.
+        dependency_uuid: UUID of the project_dependency edge to patch.
+        changed_by: Actor recorded as making this change in the audit trail.
+        dependency_type: New dependency_type value, or None to leave unchanged.
+        version_constraint: New version_constraint value, or None to leave unchanged.
+        active: New active flag, or None to leave unchanged.
+
+    Returns:
+        The patched ProjectDependency record, re-read from storage after the update.
+
+    Raises:
+        RuntimeValidationError: If dependency_type is supplied but invalid, if no row
+            with dependency_uuid exists, or if the record cannot be re-read after update.
+    """
+    if dependency_type is not None:
+        validate_dependency_type(dependency_type)
+
+    set_clauses: list[str] = []
+    params: list[Any] = []
+
+    if dependency_type is not None:
+        set_clauses.append("dependency_type = %s")
+        params.append(dependency_type)
+
+    if version_constraint is not None:
+        set_clauses.append("version_constraint = %s")
+        params.append(version_constraint)
+
+    if active is not None:
+        set_clauses.append("active = %s")
+        params.append(active)
+
+    now = datetime.now(timezone.utc)
+    set_clauses.append("updated_at = %s")
+    params.append(now)
+    params.append(dependency_uuid)
+
+    sql = "UPDATE project_dependency SET " + ", ".join(set_clauses) + " WHERE uuid = %s"
+    result = conn.execute(sql, params)
+
+    if result.rowcount == 0:
+        raise RuntimeValidationError(f"no project_dependency with uuid={dependency_uuid}")
+
+    record_runtime_change(
+        conn, plan_uuid=None, entity_type="project_dependency", entity_id=dependency_uuid,
+        action="update", changed_by=changed_by,
+    )
+    record = get_project_dependency(conn, dependency_uuid)
+    if record is None:
+        raise RuntimeValidationError(f"project_dependency {dependency_uuid} not found after update")
     return record

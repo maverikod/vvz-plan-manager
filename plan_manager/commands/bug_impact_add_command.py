@@ -33,7 +33,7 @@ class BugImpactAddCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report this impact belongs to."},
                 "target_type": {"type": "string", "description": "Type of the affected object: project, file, plan, revision, step, command, runtime_service, container_image, deployment, dependency, or documentation."},
-                "impact_type": {"type": "string", "description": "How the target is affected, e.g. uses_broken_api, needs_dependency_update, unknown."},
+                "impact_type": {"type": "string", "description": "How the target is affected: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, defect_source, or unknown. Use defect_source for the single project that owns the underlying defect of a cross-project bug; use the other values for projects that are merely affected as dependents."},
                 "created_by": {"type": "string", "description": "Actor identifier recorded as the creator of this impact record."},
                 "status": {"type": "string", "description": "Initial impact status: suspected, confirmed, unaffected, pending_resolution, resolved, verified, or skipped (skipped requires reason and skip_decided_by). Defaults to suspected."},
                 "reason": {"type": "string", "description": "Explanation for the impact status; mandatory when status is skipped."},
@@ -58,7 +58,7 @@ class BugImpactAddCommand(Command):
             **BASE_PARAMETERS,
             "bug_id": {"description": "UUID of the bug_report this impact belongs to.", "type": "string", "required": True},
             "target_type": {"description": "Type of the affected object.", "type": "string", "required": True},
-            "impact_type": {"description": "How the target is affected.", "type": "string", "required": True},
+            "impact_type": {"description": "How the target is affected: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, defect_source, or unknown. Use defect_source for the single project that owns the underlying defect of a cross-project bug; use the other values for projects that are merely affected as dependents.", "type": "string", "required": True},
             "created_by": {"description": "Actor identifier recorded as the creator of this impact record.", "type": "string", "required": True},
             "status": {"description": "Initial impact status. Defaults to suspected.", "type": "string", "required": False},
             "reason": {"description": "Explanation for the impact status; mandatory when status is skipped.", "type": "string", "required": False},
@@ -87,12 +87,23 @@ class BugImpactAddCommand(Command):
                     "created_by": "alice",
                     "target_project_id": "22222222-2222-2222-2222-222222222222",
                 },
+            }, {
+                "description": "Record the owning project of a cross-project bug as its defect source.",
+                "command": {
+                    "plan": "plan_manager",
+                    "bug_id": "11111111-1111-1111-1111-111111111111",
+                    "target_type": "project",
+                    "impact_type": "defect_source",
+                    "created_by": "alice",
+                    "target_project_id": "33333333-3333-3333-3333-333333333333",
+                },
             }],
             best_practices=[
                 "Match the target_* field to target_type (e.g. target_project_id for project or file, target_step_uuid for step).",
                 "Leave status at the suspected default until the impact is independently confirmed.",
                 "Supply reason and skip_decided_by together whenever status is skipped.",
                 "Record discovery_method to distinguish manual entries from automated discovery.",
+                "Use impact_type=defect_source for the single project that owns the underlying defect of a cross-project bug; use the other impact_type values for projects that are merely affected as dependents.",
             ],
         )
 

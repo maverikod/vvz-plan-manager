@@ -37,7 +37,7 @@ _ENUM_OVERRIDES = {
     "kind": [e.value for e in TodoKind],
 }
 
-_ACTIVE_STATUSES = frozenset({"open", "ready", "in_progress", "blocked"})
+_ACTIVE_STATUSES = frozenset({"open", "in_progress", "blocked"})
 
 
 class TodoListCommand(Command):
@@ -72,14 +72,14 @@ class TodoListCommand(Command):
         return todo_metadata(
             cls,
             params,
-            {"success": {"description": "A page of TodoItem payloads plus the total match count before pagination."}},
+            {"success": {"description": "A page of TodoItem payloads plus total (the full match count before pagination), limit, and offset."}},
             [{"description": "List active TODO items owned by an owner.", "command": {"active_only": True, "owner": "agent-1", "limit": 20}}],
             best_practices=[
-                "active_only restricts results to statuses open, ready, in_progress, blocked, excluding resolved/closed/cancelled — combine with owner or assignee to build a personal work queue.",
+                "active_only restricts results to statuses open, in_progress, blocked, excluding resolved/closed/cancelled — combine with owner or assignee to build a personal work queue.",
                 "unanchored_only restricts to primary_anchor_type == none, useful for finding TODOs still needing a primary anchor assigned.",
                 "status and kind are pushed down to SQL as exact-match filters; all other filters (project, file, anchor_plan, revision, step, priority, owner, assignee, created_after/before) are applied in-memory after fetch.",
                 "The model filter parameter is accepted in the schema but is not currently applied to the result set — passing it has no filtering effect.",
-                "total_count reflects the filtered count before pagination is applied, not the page size — use it to detect additional pages.",
+                "total reflects the filtered count before pagination is applied, not the page size — use it, together with limit and offset, to detect additional pages.",
             ],
         )
 
@@ -148,11 +148,13 @@ class TodoListCommand(Command):
                     if filters.get("unanchored_only") and item.primary_anchor_type != "none":
                         continue
                     filtered.append(item)
-                total_count = len(filtered)
+                total = len(filtered)
                 page = filtered[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
                     "todos": [r.to_payload() for r in page],
-                    "total_count": total_count,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
                 })
         except Exception as exc:
             return map_exception(exc)

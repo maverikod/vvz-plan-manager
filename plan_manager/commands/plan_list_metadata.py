@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from plan_manager.commands.runtime_filtering import pagination_metadata_params
 
 def get_plan_list_metadata(cls: Any) -> dict:
     """Return the full metadata dictionary for PlanListCommand.
@@ -24,17 +25,18 @@ def get_plan_list_metadata(cls: Any) -> dict:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Returns the database catalog of plans (C-001), ordered by "
-            "name. Each row carries plan identity, name, status, context "
-            "budget, whether the plan has a head revision, the analysis "
-            "projects the plan is bound to (the full project_ids list, "
-            "their count, and the primary project id), and a deleted flag. "
-            "By default the catalog omits soft-deleted plans; pass "
-            "show_deleted=true to include them (each such row has "
-            "deleted=true). Soft-deleted plans remain fully operable and "
-            "resolvable by uuid or name; they are only hidden from this "
-            "default listing. This command is read-only: it never mutates "
-            "the database."
+            "Returns one paginated page of the database catalog of plans "
+            "(C-001), ordered by name, using the uniform offset/limit "
+            "convention (default limit 50, max 200). Each row carries plan "
+            "identity, name, status, context budget, whether the plan has a "
+            "head revision, the analysis projects the plan is bound to (the "
+            "full project_ids list, their count, and the primary project "
+            "id), and a deleted flag. By default the catalog omits "
+            "soft-deleted plans; pass show_deleted=true to include them "
+            "(each such row has deleted=true). Soft-deleted plans remain "
+            "fully operable and resolvable by uuid or name; they are only "
+            "hidden from this default listing. This command is read-only: "
+            "it never mutates the database."
         ),
         "parameters": {
             "show_deleted": {
@@ -47,19 +49,23 @@ def get_plan_list_metadata(cls: Any) -> dict:
                 "default": False,
                 "examples": [False, True],
             },
+            **pagination_metadata_params(),
         },
         "return_value": {
             "success": {
                 "description": (
-                    "The plan catalog, each row including the plan's bound "
-                    "projects and soft-deletion flag."
+                    "A page of the plan catalog, each row including the plan's bound "
+                    "projects and soft-deletion flag, plus total/limit/offset."
                 ),
                 "data": {
                     "plans": (
-                        "List of plan rows, each with uuid, name, status, "
+                        "List of plan rows in the requested page, each with uuid, name, status, "
                         "context_budget, has_head, project_ids, "
                         "project_count, primary_project_id, and deleted."
                     ),
+                    "total": "Count of the full plan catalog before pagination.",
+                    "limit": "The limit actually applied.",
+                    "offset": "The offset actually applied.",
                 },
                 "example": {
                     "plans": [
@@ -78,28 +84,29 @@ def get_plan_list_metadata(cls: Any) -> dict:
                             ),
                             "deleted": False,
                         }
-                    ]
+                    ],
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
                 "description": (
-                    "This command declares no domain error codes: "
-                    "list_plans does not raise mapped domain "
-                    "exceptions, so any unexpected failure propagates "
-                    "as a platform-level internal error rather than a "
-                    "domain ErrorResult (map_exception re-raises "
-                    "exceptions it does not recognize)."
+                    "Unexpected failures propagate as a platform-level "
+                    "internal error, except INVALID_PAGINATION which is "
+                    "returned as a domain ErrorResult when limit or offset "
+                    "is out of range or not an integer."
                 ),
-                "code": "",
-                "message": "",
+                "code": "INVALID_PAGINATION",
+                "message": "limit must be between 1 and 200, got {limit}",
             },
         },
         "usage_examples": [
             {
-                "description": "List the live plan catalog with bound projects.",
+                "description": "List the first page of the live plan catalog with bound projects.",
                 "command": {},
                 "explanation": (
-                    "Returns every plan that is not soft-deleted, each with "
+                    "Returns the first page (default limit 50) of plans that are not soft-deleted, each with "
                     "its bound project_ids and primary_project_id."
                 ),
             },
@@ -113,18 +120,16 @@ def get_plan_list_metadata(cls: Any) -> dict:
             },
         ],
         "error_cases": {
-            "none": {
-                "description": (
-                    "No stable domain error is declared for this command; "
-                    "unexpected failures surface as platform-level internal errors."
-                ),
-                "message": "",
-                "solution": "Retry after checking database connectivity and server logs.",
+            "INVALID_PAGINATION": {
+                "description": "limit or offset is out of range or not an integer.",
+                "message": "limit must be between 1 and 200, got {limit}",
+                "solution": "Retry with limit in [1, 200] and offset >= 0.",
             },
         },
         "best_practices": [
             "Call plan_list to discover valid plan identifiers before calling plan_status or other plan-scoped commands.",
             "Read each row's primary_project_id and project_ids to see which analysis projects a plan is bound to.",
             "Use show_deleted=true to audit or recover soft-deleted plans; a row with deleted=true was removed from the default catalog by plan_delete.",
+            "Compare offset+limit against total to detect additional pages.",
         ],
     }

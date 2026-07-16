@@ -69,7 +69,12 @@ def get_plan_import_metadata(cls) -> Dict[str, Any]:
                 "description": "The source layout under the export root failed structural validation.",
                 "message": "layout validation failed",
                 "solution": "Inspect the returned issues list, fix the layout files, and retry.",
-            }
+            },
+            "DUPLICATE_PROJECT_BINDING": {
+                "description": "spec.yaml's project_ids contains duplicate UUIDs. In normal use this is already caught during the pre-import layout validation and reported as IMPORT_INVALID; this code can still surface directly from the plan-creation write path itself (import_plan re-validates project_ids immediately before persisting) if the export root changes between the layout check and the write, or when import_plan is invoked as a library call that bypasses the command's own pre-check.",
+                "message": "plan project_ids must not contain duplicates",
+                "solution": "Deduplicate project_ids in spec.yaml and retry; re-run with dry_run=True first to confirm the layout is clean before writing.",
+            },
         },
         "best_practices": [
             "dry_run defaults to True; callers must explicitly pass dry_run=False to write.",

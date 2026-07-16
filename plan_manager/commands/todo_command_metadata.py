@@ -34,6 +34,11 @@ TODO_ERROR_CASES: dict[str, dict[str, str]] = {
         "message": "invalid priority: {details}",
         "solution": "Supply an integer priority_nice value between -20 and 19 inclusive.",
     },
+    "INVALID_RUNTIME_STATUS_TRANSITION": {
+        "description": "The requested todo_update status change is illegal from the todo's current status. Only in_progress, blocked, and cancelled are reachable through todo_update; resolved and closed remain reachable only via the separate todo_resolve/todo_close commands; open is only the initial todo_create status.",
+        "message": "invalid todo status transition: {details}",
+        "solution": "Inspect the error details: current_status and legal_targets name the statuses reachable from here via todo_update. Use todo_resolve or todo_close for those separate unconditional transitions.",
+    },
 }
 
 

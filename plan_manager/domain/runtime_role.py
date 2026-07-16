@@ -38,4 +38,4 @@ def validate_runtime_role(value: str) -> str:
     """
     if value in RUNTIME_ROLES:
         return value
-    raise RuntimeValidationError(f"{value!r} is not a recognized runtime role")
+    raise RuntimeValidationError(f"{value!r} is not a recognized runtime role; expected one of {sorted(RUNTIME_ROLES)}")

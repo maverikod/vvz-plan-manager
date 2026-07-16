@@ -17,7 +17,7 @@ from plan_manager.storage.execution_attempt_store import list_execution_attempts
 from plan_manager.storage.review_result_store import list_review_results
 from plan_manager.storage.escalation_store import list_escalations
 
-TODO_ACTIVE_STATUSES = frozenset({"open", "ready", "in_progress", "blocked"})
+TODO_ACTIVE_STATUSES = frozenset({"open", "in_progress", "blocked"})
 BUG_OPEN_STATUSES = frozenset({"reported", "triaged", "confirmed", "fixing", "propagating", "reopened"})
 FIX_UNFINISHED_STATUSES = frozenset({"proposed", "in_progress", "implemented", "partial"})
 PROPAGATION_OPEN_STATUSES = frozenset({"pending", "ready", "in_progress", "blocked", "failed"})

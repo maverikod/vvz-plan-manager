@@ -118,3 +118,57 @@ def remove_relation(
             (plan_uuid, from_concept, to_concept, type),
         )
     return row_uuid
+
+
+def update_relation(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    from_concept: str,
+    to_concept: str,
+    type: str,
+    new_type: str,
+) -> uuid.UUID:
+    """Update the type of an existing Relation row matching from_concept, to_concept, and type.
+
+    Note: the parameters named `type` and `new_type` identify, respectively, the
+    relation's current type (used to locate the row) and its replacement type
+    (written to the row). `type` shadows the Python builtin `type`; this is kept
+    because it matches the domain vocabulary (Relation.type in
+    plan_manager.domain.relation).
+
+    Args:
+        conn: Open psycopg database connection.
+        plan_uuid: UUID of the owning plan.
+        from_concept: concept_id of the source concept.
+        to_concept: concept_id of the target concept.
+        type: current Relation type of the row to update.
+        new_type: Relation type to write in place of type.
+
+    Returns:
+        The uuid primary identity of the updated row.
+
+    Raises:
+        RelationValidationError: propagated unmodified from validate_relation if
+            new_type is not one of RELATION_TYPES, or if from_concept or
+            to_concept do not match CONCEPT_ID_PATTERN.
+        ValueError: If no row matches all three of from_concept, to_concept,
+            and type for the given plan_uuid (message is exactly "relation not
+            found").
+    """
+    validate_relation(Relation(from_concept=from_concept, to_concept=to_concept, type=new_type))
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT uuid FROM relation WHERE plan_uuid = %s AND from_concept = %s "
+            "AND to_concept = %s AND type = %s",
+            (plan_uuid, from_concept, to_concept, type),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise ValueError("relation not found")
+    row_uuid = row[0]
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE relation SET type = %s WHERE uuid = %s",
+            (new_type, row_uuid),
+        )
+    return row_uuid

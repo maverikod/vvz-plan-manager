@@ -13,6 +13,10 @@ from plan_manager.commands.plan_prompt_chain_metadata import (
     get_plan_prompt_chain_metadata,
 )
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.runtime_filtering import (
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate import run_gate
 from plan_manager.verify.finding import Report
@@ -38,8 +42,7 @@ class PlanPromptChainCommand(Command):
     name: ClassVar[str] = "plan_prompt_chain"
     version: ClassVar[str] = "1.0.0"
     descr: ClassVar[str] = (
-        "Assemble a deterministic, deduplicated prompt-chain artifact for a "
-        "gate-green plan scope."
+        "Assemble a paginated page of the deterministic, deduplicated prompt-chain artifact for a gate-green plan scope."
     )
     category: ClassVar[str] = "plan"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
@@ -84,6 +87,7 @@ class PlanPromptChainCommand(Command):
                     ),
                     "default": ["frozen", "ready_for_review"],
                 },
+                **pagination_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -109,11 +113,14 @@ class PlanPromptChainCommand(Command):
         scope: str | None = None,
         role: str = "coder",
         include_statuses: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 if revision in {None, "", "head"}:
                     requested_revision = p.head_revision_uuid
                 else:
@@ -207,6 +214,29 @@ class PlanPromptChainCommand(Command):
                     if str(exc).startswith("cycle detected"):
                         return domain_error("CYCLE_DETECTED", str(exc))
                     raise
+                assembly = data.get("assembly", [])
+                total = len(assembly)
+                page = assembly[pagination.offset : pagination.offset + pagination.limit]
+                used_block_keys: dict[str, list[str]] = {}
+                for entry in page:
+                    for level, ref in entry.get("use", {}).items():
+                        refs = ref if isinstance(ref, list) else [ref]
+                        bucket = used_block_keys.setdefault(level, [])
+                        for r in refs:
+                            if r not in bucket:
+                                bucket.append(r)
+                data = {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"assembly", "blocks"}
+                }
+                data["assembly"] = page
+                data["used_block_keys"] = {
+                    level: sorted(refs) for level, refs in used_block_keys.items()
+                }
+                data["total"] = total
+                data["limit"] = pagination.limit
+                data["offset"] = pagination.offset
                 return SuccessResult(data=data)
         except Exception as exc:
             return map_exception(exc)

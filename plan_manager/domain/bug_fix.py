@@ -112,10 +112,10 @@ class BugFix(DataclassEntity):
 def validate_fix_type(value: str) -> str:
     if value in BUG_FIX_TYPES:
         return value
-    raise RuntimeValidationError(f"invalid bug fix type: {value!r}")
+    raise RuntimeValidationError(f"invalid bug fix type: {value!r}; expected one of {sorted(BUG_FIX_TYPES)}")
 
 
 def validate_fix_status(value: str) -> str:
     if value in BUG_FIX_STATUSES:
         return value
-    raise RuntimeValidationError(f"invalid bug fix status: {value!r}")
+    raise RuntimeValidationError(f"invalid bug fix status: {value!r}; expected one of {sorted(BUG_FIX_STATUSES)}")

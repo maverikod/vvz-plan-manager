@@ -106,7 +106,7 @@ class ExecutionAttempt(DataclassEntity):
 def validate_attempt_status(value: str) -> str:
     """Return value if it is a member of ATTEMPT_STATUSES, else raise RuntimeValidationError."""
     if value not in ATTEMPT_STATUSES:
-        raise RuntimeValidationError(f"invalid execution attempt status: {value!r}")
+        raise RuntimeValidationError(f"invalid execution attempt status: {value!r}; expected one of {sorted(ATTEMPT_STATUSES)}")
     return value
 
 

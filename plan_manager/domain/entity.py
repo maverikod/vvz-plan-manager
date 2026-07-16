@@ -49,7 +49,11 @@ class EntityNotSoftDeletedError(RuntimeError):
 
 @dataclass(frozen=True)
 class ReferenceCheck:
-    """One inbound-reference guard used before physical deletion."""
+    """One inbound-reference guard used before physical deletion.
+
+    Each (column, literal) pair in const_filters constrains the probe to
+    referencing-table rows where that column equals the literal value.
+    """
 
     table: str
     column: str
@@ -57,6 +61,7 @@ class ReferenceCheck:
     scope_columns: tuple[tuple[str, str], ...] = ()
     array: bool = False
     live_column: str | None = None
+    const_filters: tuple[tuple[str, str], ...] = ()
 
 
 CENTRAL_REFERENCE_CHECKS: dict[str, tuple[ReferenceCheck, ...]] = {
@@ -90,6 +95,11 @@ CENTRAL_REFERENCE_CHECKS: dict[str, tuple[ReferenceCheck, ...]] = {
     "todo": (
         ReferenceCheck("execution_attempt", "todo_uuid", live_column="deleted_at"),
         ReferenceCheck("bug_fix_propagation", "linked_todo_uuid", live_column="deleted_at"),
+        ReferenceCheck("runtime_comment", "anchor_ref_id", live_column="deleted_at", const_filters=(("primary_anchor_type", "todo"),)),
+        ReferenceCheck("escalation", "anchor_ref_id", live_column="deleted_at", const_filters=(("primary_anchor_type", "todo"),)),
+    ),
+    "comment": (
+        ReferenceCheck("runtime_comment", "supersedes_comment_uuid", live_column="deleted_at"),
     ),
     "execution_attempt": (
         ReferenceCheck("runtime_comment", "anchor_ref_id", live_column="deleted_at"),
@@ -586,6 +596,9 @@ def find_entity_reference_counts(
         for reference_column, id_column in check.scope_columns:
             clauses.append(sql.SQL("{} = %s").format(sql.Identifier(reference_column)))
             params.append(id_values[id_column])
+        for column, literal in check.const_filters:
+            clauses.append(sql.SQL("{} = %s").format(sql.Identifier(column)))
+            params.append(literal)
         if check.live_column is not None:
             clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(check.live_column)))
         query = sql.SQL("SELECT count(*) FROM {} WHERE {}").format(

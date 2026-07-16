@@ -26,7 +26,6 @@ class TodoKind(str, Enum):
 
 class TodoStatus(str, Enum):
     OPEN = "open"
-    READY = "ready"
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
     RESOLVED = "resolved"

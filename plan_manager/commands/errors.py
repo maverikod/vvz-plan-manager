@@ -5,9 +5,14 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from plan_manager.cascade.close import CommitRefusedError
 from plan_manager.cascade.record import CascadeError
+from plan_manager.domain.bug_fix_propagation_status_transitions import BugFixPropagationStatusTransitionError
+from plan_manager.domain.bug_fix_status_transitions import BugFixStatusTransitionError
 from plan_manager.domain.bug_status_transitions import BugStatusTransitionError
+from plan_manager.domain.entity import EntityReferencedError
+from plan_manager.domain.todo_status_transitions import TodoStatusTransitionError
 from plan_manager.domain.model_binding import InvalidBindingScopeError, InvalidRuntimeRoleError
 from plan_manager.domain.primary_anchor import InvalidAnchorError
+from plan_manager.domain.runtime_integrity import DuplicateLinkError, LinkCycleError
 from plan_manager.domain.runtime_validation import (
     FrozenTruthMutationError, InvalidNicePriorityError, RuntimeValidationError,
 )
@@ -36,6 +41,7 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "CASCADE_CONFLICT",
     "PLAN_NOT_FULLY_FROZEN",
     "FROZEN_ARTIFACT",
+    "DELETE_BLOCKED",
     "INVALID_STEP_FIELD_SHAPE",
     "INVALID_LEVEL",
     "INVALID_SCOPE",
@@ -54,12 +60,12 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "IMPORT_INVALID",
     "INVALID_PROJECT_ID",
     "PROJECT_NOT_BOUND_TO_PLAN",
-    "PROJECT_ALREADY_BOUND_TO_PLAN",
     "PROJECT_NOT_ATTACHED_TO_PLAN",
     "PRIMARY_PROJECT_NOT_BOUND",
     "DUPLICATE_PROJECT_BINDING",
     "TODO_NOT_FOUND",
     "TODO_LINK_NOT_FOUND",
+    "RUNTIME_LINK_NOT_FOUND",
     "COMMENT_NOT_FOUND",
     "MODEL_BINDING_NOT_FOUND",
     "EXECUTION_ATTEMPT_NOT_FOUND",
@@ -74,7 +80,6 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "RUNTIME_VALIDATION_ERROR",
     "FROZEN_TRUTH_WRITE",
     "INVALID_ANCHOR",
-    "ANCHOR_NOT_FOUND",
     "INVALID_NICE_PRIORITY",
     "DUPLICATE_LINK",
     "LINK_CYCLE",
@@ -135,6 +140,8 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("DUPLICATE_ID", str(exc), {})
     if isinstance(exc, FrozenTruthMutationError):
         return domain_error("FROZEN_TRUTH_WRITE", str(exc), {})
+    if isinstance(exc, EntityReferencedError):
+        return domain_error("DELETE_BLOCKED", str(exc), {"references": exc.references})
     # Most-specific RuntimeValidationError subclasses must be checked before the generic
     # RuntimeValidationError branch below, so a documented code is reported instead of the
     # generic RUNTIME_VALIDATION_ERROR fallback.
@@ -147,6 +154,28 @@ def map_exception(exc: Exception) -> ErrorResult:
     if isinstance(exc, InvalidRuntimeRoleError):
         return domain_error("INVALID_RUNTIME_ROLE", str(exc), {})
     if isinstance(exc, BugStatusTransitionError):
+        return domain_error(
+            "INVALID_RUNTIME_STATUS_TRANSITION",
+            str(exc),
+            {"current_status": exc.current_status, "legal_targets": exc.legal_targets},
+        )
+    if isinstance(exc, DuplicateLinkError):
+        return domain_error("DUPLICATE_LINK", str(exc), {})
+    if isinstance(exc, LinkCycleError):
+        return domain_error("LINK_CYCLE", str(exc), {})
+    if isinstance(exc, TodoStatusTransitionError):
+        return domain_error(
+            "INVALID_RUNTIME_STATUS_TRANSITION",
+            str(exc),
+            {"current_status": exc.current_status, "legal_targets": exc.legal_targets},
+        )
+    if isinstance(exc, BugFixStatusTransitionError):
+        return domain_error(
+            "INVALID_RUNTIME_STATUS_TRANSITION",
+            str(exc),
+            {"current_status": exc.current_status, "legal_targets": exc.legal_targets},
+        )
+    if isinstance(exc, BugFixPropagationStatusTransitionError):
         return domain_error(
             "INVALID_RUNTIME_STATUS_TRANSITION",
             str(exc),

@@ -19,19 +19,19 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
-from plan_manager.domain.bug_impact import BUG_IMPACT_STATUSES, BugImpactStatus
+from plan_manager.domain.bug_impact import BUG_IMPACT_STATUSES, BUG_IMPACT_TYPES, BugImpactStatus, BugImpactType
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import list_bug_impacts
 from plan_manager.storage.bug_report_store import get_bug
 
-_LIST_FILTER_FIELDS = ["status", "unresolved_impacts", "created_after", "created_before"]
+_LIST_FILTER_FIELDS = ["status", "impact_type", "unresolved_impacts", "created_after", "created_before"]
 _RESOLVED_IMPACT_STATUSES = frozenset({"resolved", "verified", "unaffected", "skipped"})
-_FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES}
+_FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES, "impact_type": BUG_IMPACT_TYPES}
 
 # Ordered vocabulary published in the schema/metadata so the values are
 # discoverable directly, not only via an INVALID_FILTER error.
-_ENUM_OVERRIDES = {"status": [e.value for e in BugImpactStatus]}
+_ENUM_OVERRIDES = {"status": [e.value for e in BugImpactStatus], "impact_type": [e.value for e in BugImpactType]}
 
 
 class BugImpactListCommand(Command):
@@ -92,6 +92,7 @@ class BugImpactListCommand(Command):
         plan: str,
         bug_id: str,
         status: str | None = None,
+        impact_type: str | None = None,
         unresolved_impacts: bool | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
@@ -108,6 +109,7 @@ class BugImpactListCommand(Command):
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
                 raw_params = {
                     "status": status,
+                    "impact_type": impact_type,
                     "unresolved_impacts": unresolved_impacts,
                     "created_after": created_after,
                     "created_before": created_before,
@@ -115,6 +117,9 @@ class BugImpactListCommand(Command):
                 filters = parse_filters(raw_params, _LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 records = list_bug_impacts(conn, bug_uuid=bug_uuid, status=filters.get("status"), include_deleted=False)
+                impact_type_filter = filters.get("impact_type")
+                if impact_type_filter is not None:
+                    records = [r for r in records if r.impact_type == impact_type_filter]
                 if filters.get("unresolved_impacts"):
                     records = [r for r in records if r.status not in _RESOLVED_IMPACT_STATUSES]
                 after = filters.get("created_after")

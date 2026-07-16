@@ -83,6 +83,7 @@ def test_agent_reference_exposes_all_subsections() -> None:
         "anchor_types",
         "visibility_modes",
         "queue_polling",
+        "pagination_convention",
         "crud_matrix",
         "command_index",
     }

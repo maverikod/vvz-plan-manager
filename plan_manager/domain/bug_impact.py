@@ -19,7 +19,7 @@ class BugImpactType(str, Enum):
     NEEDS_PULL="needs_pull"; NEEDS_REBUILD="needs_rebuild"; NEEDS_REDEPLOY="needs_redeploy"
     NEEDS_TEST_RERUN="needs_test_rerun"; NEEDS_PLAN_UPDATE="needs_plan_update"; NEEDS_CASCADE="needs_cascade"
     NEEDS_DOCUMENTATION_UPDATE="needs_documentation_update"; RUNTIME_REGRESSION_RISK="runtime_regression_risk"
-    DATA_MIGRATION_REQUIRED="data_migration_required"; SECURITY_REVIEW_REQUIRED="security_review_required"; UNKNOWN="unknown"
+    DATA_MIGRATION_REQUIRED="data_migration_required"; SECURITY_REVIEW_REQUIRED="security_review_required"; DEFECT_SOURCE="defect_source"; UNKNOWN="unknown"
 
 class BugImpactStatus(str, Enum):
     SUSPECTED="suspected"; CONFIRMED="confirmed"; UNAFFECTED="unaffected"; PENDING_RESOLUTION="pending_resolution"
@@ -90,19 +90,19 @@ class BugImpact(DataclassEntity):
 
 def validate_impact_target_type(value: str) -> str:
     if value not in BUG_IMPACT_TARGET_TYPES:
-        raise RuntimeValidationError(f"invalid bug impact target_type: {value!r}")
+        raise RuntimeValidationError(f"invalid bug impact target_type: {value!r}; expected one of {sorted(BUG_IMPACT_TARGET_TYPES)}")
     return value
 
 
 def validate_impact_type(value: str) -> str:
     if value not in BUG_IMPACT_TYPES:
-        raise RuntimeValidationError(f"invalid bug impact impact_type: {value!r}")
+        raise RuntimeValidationError(f"invalid bug impact impact_type: {value!r}; expected one of {sorted(BUG_IMPACT_TYPES)}")
     return value
 
 
 def validate_impact_status(value: str) -> str:
     if value not in BUG_IMPACT_STATUSES:
-        raise RuntimeValidationError(f"invalid bug impact status: {value!r}")
+        raise RuntimeValidationError(f"invalid bug impact status: {value!r}; expected one of {sorted(BUG_IMPACT_STATUSES)}")
     return value
 
 

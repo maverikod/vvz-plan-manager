@@ -11,6 +11,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.bug_fix_status_transitions import guard_fix_transition
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_store import get_bug_fix, update_bug_fix
 
@@ -84,6 +85,8 @@ class BugFixUpdateCommand(Command):
                 existing = get_bug_fix(conn, fix_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {bug_fix}")
+                if status is not None:
+                    guard_fix_transition(existing.status, status)
                 record = update_bug_fix(
                     conn,
                     fix_uuid,

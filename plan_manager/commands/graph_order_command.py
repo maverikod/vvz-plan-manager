@@ -1,4 +1,4 @@
-"""Graph command: topological execution order of a plan's steps (C-009)."""
+"""Graph command: paginated page of the topological execution order of a plan's steps (C-009)."""
 from __future__ import annotations
 
 from mcp_proxy_adapter.commands.base import Command
@@ -7,6 +7,10 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.graph_order_metadata import get_graph_order_metadata
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.runtime_filtering import (
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.dependency_graph import (
@@ -15,13 +19,12 @@ from plan_manager.views.dependency_graph import (
     topological_order,
 )
 
-
 class GraphOrderCommand(Command):
-    """Return the topological execution order of a plan's steps."""
+    """Return a paginated page of the topological execution order of a plan's steps."""
 
     name = "graph_order"
     version = "1.0.0"
-    descr = "Return the topological execution order of a plan's steps."
+    descr = "Return a paginated page of the topological execution order of a plan's steps."
     category = "graph"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -37,6 +40,7 @@ class GraphOrderCommand(Command):
                     "type": "string",
                     "description": "Plan identifier (name or uuid) resolved against the catalog.",
                 },
+                **pagination_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -55,6 +59,7 @@ class GraphOrderCommand(Command):
             plan = kwargs["plan"]
             with db_connection() as conn:
                 plan_obj = resolve_plan(conn, plan)
+                pagination = parse_pagination({"limit": kwargs.get("limit"), "offset": kwargs.get("offset")})
                 nodes = load_steps(conn, plan_obj.uuid)
                 edges = build_edges(nodes)
                 order, residual = topological_order(nodes, edges)
@@ -68,8 +73,14 @@ class GraphOrderCommand(Command):
                             ]
                         },
                     )
+                full_order = [artifact_path_of(nodes, nodes[u]) for u in order]
+                total = len(full_order)
+                page = full_order[pagination.offset : pagination.offset + pagination.limit]
                 data = {
-                    "order": [artifact_path_of(nodes, nodes[u]) for u in order]
+                    "order": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
                 }
             return SuccessResult(data=data)
         except Exception as exc:

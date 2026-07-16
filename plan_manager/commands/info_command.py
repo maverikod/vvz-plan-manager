@@ -27,6 +27,7 @@ from plan_manager.commands.info_reference import (
     todo_work_capabilities,
 )
 from plan_manager.commands.info_reference_agents import agent_reference
+from plan_manager.commands.info_reference_crud import crud_deletion_posture_reference
 from plan_manager.commands.info_reference_delegation import (
     delegated_authoring_method_reference,
 )
@@ -82,6 +83,18 @@ class InfoCommand(Command):
                     ),
                     "enum": list(_SECTIONS),
                 },
+                "subsection": {
+                    "type": "string",
+                    "description": (
+                        "Restrict the response further to one top-level key of "
+                        "the selected section's data, such as a single "
+                        "agent_reference table (for example "
+                        "'status_vocabularies'), instead of the whole section. "
+                        "Valid only together with section, and only for a key "
+                        "that exists in that section's own data. Omit this "
+                        "parameter to receive the whole selected section."
+                    ),
+                },
             },
             "required": [],
             "additionalProperties": False,
@@ -94,19 +107,36 @@ class InfoCommand(Command):
             raise ValueError(
                 f"Invalid section: {section!r}. Must be one of {', '.join(_SECTIONS)}."
             )
+        subsection = params.get("subsection")
+        if subsection is not None:
+            if section is None:
+                raise ValueError(
+                    f"Invalid subsection: {subsection!r} was given without section; "
+                    "subsection is valid only together with section."
+                )
+            section_data = self._section_data(section, build_info())
+            if not isinstance(section_data, dict) or subsection not in section_data:
+                raise ValueError(
+                    f"Invalid subsection: {subsection!r} is not a top-level key of "
+                    f"section {section!r}'s data."
+                )
         return params
 
     async def execute(
         self,
         section: str | None = None,
+        subsection: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             info = build_info()
             if section is not None:
+                section_value = self._section_data(section, info)
+                if subsection is not None:
+                    section_value = section_value[subsection]
                 data: Dict[str, Any] = {
                     "section": section,
-                    section: self._section_data(section, info),
+                    section: section_value,
                 }
             else:
                 data = {
@@ -153,7 +183,9 @@ class InfoCommand(Command):
                 "runtime_write_invariants": runtime_write_invariants(),
             }
         if section == "agent_reference":
-            return agent_reference()
+            data = agent_reference()
+            data["crud_deletion_posture"] = crud_deletion_posture_reference()
+            return data
         if section == "planning_standards":
             return planning_standards_reference()
         if section == "documentation":

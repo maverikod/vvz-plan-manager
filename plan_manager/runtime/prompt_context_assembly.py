@@ -51,7 +51,7 @@ def assemble_runtime_prompt_context(
         todo
         for todo in all_todos
         if (todo.anchor_step_uuid == step_uuid or todo.anchor_plan_uuid == plan_uuid)
-        and todo.status in {"open", "ready", "in_progress", "blocked"}
+        and todo.status in {"open", "in_progress", "blocked"}
     ]
     mapped_todos = [to_context_todo(todo) for todo in kept_todos]
     if len(mapped_todos) > limits.max_todos:

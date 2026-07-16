@@ -23,6 +23,7 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"closed", "rejected", "duplicate"
 
 # The single status each bug transition command drives the bug to.
 COMMAND_TARGET: dict[str, str] = {
+    "bug_triage": "triaged",
     "bug_confirm": "confirmed",
     "bug_reject": "rejected",
     "bug_close": "closed",
@@ -38,6 +39,7 @@ _NON_TERMINAL: frozenset[str] = frozenset(BUG_STATUSES) - TERMINAL_STATUSES
 #     terminal status from another terminal one).
 #   * reopen: only from a terminal status (the sole legal exit from terminal).
 LEGAL_SOURCES: dict[str, frozenset[str]] = {
+    "bug_triage": frozenset({"reported"}),
     "bug_confirm": frozenset({"reported", "triaged", "confirmed"}),
     "bug_reject": _NON_TERMINAL,
     "bug_close": _NON_TERMINAL,

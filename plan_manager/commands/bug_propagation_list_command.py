@@ -1,4 +1,4 @@
-"""Command: list bug fix propagation records filtered by bug fix or impact (C-025, C-029, C-031)."""
+"""Command: list a paginated page of bug fix propagation records filtered by bug fix or impact (C-025, C-029, C-031)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_filtering import (
+    pagination_metadata_params,
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.domain.bug_fix_propagation import PROPAGATION_STATUSES, PropagationStatus
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
@@ -23,11 +28,10 @@ from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagat
 _STATUS_VALUES = [e.value for e in PropagationStatus]
 _STATUS_DESCRIPTION = "Optional status filter. One of: " + ", ".join(_STATUS_VALUES) + "."
 
-
 class BugPropagationListCommand(Command):
     name: ClassVar[str] = "bug_propagation_list"
     version: ClassVar[str] = "1.0.0"
-    descr: ClassVar[str] = "List bug fix propagation records filtered by bug fix or impact (read-only)."
+    descr: ClassVar[str] = "List a paginated page of bug fix propagation records filtered by bug fix or impact (read-only)."
     category: ClassVar[str] = "propagation"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
@@ -44,6 +48,7 @@ class BugPropagationListCommand(Command):
                 "impact_id": {"type": "string", "description": "Optional UUID filter: only propagations for this impact."},
                 "status": {"type": "string", "description": _STATUS_DESCRIPTION, "enum": _STATUS_VALUES},
                 "include_deleted": {"type": "boolean", "description": "Include soft-deleted propagation records. Defaults to false."},
+                **pagination_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -57,17 +62,19 @@ class BugPropagationListCommand(Command):
             "impact_id": {"description": "Optional UUID filter: only propagations for this impact.", "type": "string", "required": False},
             "status": {"description": _STATUS_DESCRIPTION, "type": "string", "required": False, "enum": _STATUS_VALUES},
             "include_deleted": {"description": "Include soft-deleted propagation records. Defaults to false.", "type": "boolean", "required": False},
+            **pagination_metadata_params(),
         }
         return bug_propagation_metadata(
             cls,
             params,
-            {"success": {"description": "List of bug fix propagation record payloads, ordered oldest first, with every UUID field rendered as a string."}},
+            {"success": {"description": "A page of bug fix propagation record payloads, ordered oldest first, with every UUID field rendered as a string, plus total/limit/offset."}},
             [{"description": "List propagations for a bug fix.", "command": {"plan": "plan_manager", "bug_fix_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}}],
             best_practices=[
                 "Filter by bug_fix_id to see every downstream action required by one fix.",
                 "Filter by impact_id to see all propagation actions for a single impact target.",
                 "Use status to isolate propagations that are still pending or blocked.",
                 "Set include_deleted=true only when auditing soft-deleted propagation history.",
+                "Compare offset+limit against total to detect additional pages.",
             ],
         )
 
@@ -78,6 +85,8 @@ class BugPropagationListCommand(Command):
         impact_id: str | None = None,
         status: str | None = None,
         include_deleted: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
@@ -88,6 +97,7 @@ class BugPropagationListCommand(Command):
                         "INVALID_FILTER",
                         f"'status' must be one of {sorted(PROPAGATION_STATUSES)}; got {status!r}",
                     )
+                pagination = parse_pagination({"limit": limit, "offset": offset})
                 records = list_bug_fix_propagations(
                     conn,
                     bug_fix_uuid=uuid.UUID(bug_fix_id) if bug_fix_id is not None else None,
@@ -95,6 +105,13 @@ class BugPropagationListCommand(Command):
                     status=status,
                     include_deleted=include_deleted,
                 )
-                return SuccessResult(data={"propagations": [r.to_payload() for r in records]})
+                total = len(records)
+                page = records[pagination.offset : pagination.offset + pagination.limit]
+                return SuccessResult(data={
+                    "propagations": [r.to_payload() for r in page],
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)

@@ -755,8 +755,7 @@ def todo_work_capabilities() -> dict[str, Any]:
         "domain_errors": {
             "TODO_NOT_FOUND": "The supplied todo identifier does not resolve to an existing TODO item.",
             "TODO_LINK_NOT_FOUND": "The supplied todo link identifier does not resolve to an existing link.",
-            "INVALID_ANCHOR": "The supplied primary anchor is malformed, uses an unsupported anchor_type, or does not reference an existing anchor target.",
-            "ANCHOR_NOT_FOUND": "Reserved domain code for an anchor target lookup miss; not currently raised by any command (anchor existence failures surface as INVALID_ANCHOR or RUNTIME_VALIDATION_ERROR today).",
+            "INVALID_ANCHOR": "The supplied primary anchor is malformed, uses an unsupported anchor_type, or does not reference an existing anchor target (anchor target lookup misses also surface as INVALID_ANCHOR or RUNTIME_VALIDATION_ERROR; no separate ANCHOR_NOT_FOUND code exists).",
             "INVALID_NICE_PRIORITY": "The supplied priority_nice value is outside the valid range [-20, 19].",
             "DUPLICATE_LINK": "Reserved domain code for a duplicate TODO link; not currently raised by any command (todo_link_add surfaces this guard as RUNTIME_VALIDATION_ERROR).",
             "LINK_CYCLE": "Reserved domain code for a blocking-link cycle; not currently raised by any command (todo_link_add surfaces this guard as RUNTIME_VALIDATION_ERROR).",

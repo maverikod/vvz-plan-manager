@@ -30,9 +30,12 @@ def test_parse_pagination_explicit_values() -> None:
     assert pagination == Pagination(limit=10, offset=5)
 
 
-def test_parse_pagination_clamps_limit_to_max() -> None:
-    pagination = parse_pagination({"limit": 500})
-    assert pagination == Pagination(limit=MAX_LIMIT, offset=0)
+def test_parse_pagination_rejects_limit_above_max() -> None:
+    try:
+        parse_pagination({"limit": 500})
+        assert False, "expected DomainCommandError"
+    except DomainCommandError as exc:
+        assert exc.code == "INVALID_PAGINATION"
 
 
 def test_parse_pagination_rejects_limit_below_one() -> None:
@@ -232,7 +235,7 @@ def test_pause_dependent_as_no_pause_without_blocker_or_high_priority() -> None:
 
 
 def test_work_queue_status_frozensets() -> None:
-    assert wq.TODO_ACTIVE_STATUSES == frozenset({"open", "ready", "in_progress", "blocked"})
+    assert wq.TODO_ACTIVE_STATUSES == frozenset({"open", "in_progress", "blocked"})
     assert wq.BUG_OPEN_STATUSES == frozenset(
         {"reported", "triaged", "confirmed", "fixing", "propagating", "reopened"}
     )

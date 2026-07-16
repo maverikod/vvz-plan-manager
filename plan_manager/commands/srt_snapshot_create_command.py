@@ -28,7 +28,7 @@ class SrtSnapshotCreateCommand(Command):
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
     email: ClassVar[str] = "vasilyvz@gmail.com"
     result_class = SuccessResult
-    use_queue: ClassVar[bool] = False
+    use_queue: ClassVar[bool] = True
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:

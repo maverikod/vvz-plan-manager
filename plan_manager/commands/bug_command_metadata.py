@@ -27,9 +27,10 @@ BUG_ERROR_CASES = {
         "description": (
             "The requested bug lifecycle transition is illegal from the bug's current status. The shared "
             "terminal-status guard refuses it: closed/rejected/duplicate are terminal and may be left ONLY "
-            "via bug_reopen, and bug_confirm is legal only from reported/triaged (idempotent from confirmed). "
-            "bug_close additionally requires the BugClosureDiscipline invariant (C-026) to be satisfied: the "
-            "source fix verified, and every downstream impact and propagation fully handled."
+            "via bug_reopen; bug_triage is legal only from reported; and bug_confirm is legal only from "
+            "reported/triaged (idempotent from confirmed). bug_close additionally requires the "
+            "BugClosureDiscipline invariant (C-026) to be satisfied: the source fix verified, and every "
+            "downstream impact and propagation fully handled."
         ),
         "message": "invalid bug status transition: {details}",
         "solution": (

@@ -8,6 +8,10 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.runtime_filtering import (
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.commands.step_dependency_list_metadata import (
     get_step_dependency_list_metadata,
 )
@@ -55,6 +59,7 @@ class StepDependencyListCommand(Command):
                     "description": "Include the reverse dependency (dependents) list.",
                     "default": True,
                 },
+                **pagination_schema_properties(),
             },
             "required": ["plan", "step_id"],
             "additionalProperties": False,
@@ -74,11 +79,18 @@ class StepDependencyListCommand(Command):
             include_dependents = kwargs.get("include_dependents", True)
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
+                pagination = parse_pagination({"limit": kwargs.get("limit"), "offset": kwargs.get("offset")})
                 nodes = load_steps(conn, p.uuid)
                 target = resolve_target(nodes, step_id)
+                full_depends_on = render_depends(nodes, target, list(target.depends_on))
+                total = len(full_depends_on)
+                page = full_depends_on[pagination.offset : pagination.offset + pagination.limit]
                 data: dict[str, Any] = {
                     "step": canonical_step_path(nodes, target),
-                    "depends_on": render_depends(nodes, target, list(target.depends_on)),
+                    "depends_on": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
                     "revision_uuid": head_revision_str(conn, p),
                 }
                 if include_dependents:

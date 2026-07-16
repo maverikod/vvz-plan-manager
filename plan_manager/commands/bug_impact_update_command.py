@@ -73,6 +73,7 @@ class BugImpactUpdateCommand(Command):
                 "Attach resolution_evidence when transitioning an impact to resolved or verified.",
                 "Only pass the fields that changed; omitted fields keep their current value.",
                 "Record changed_by as the actual actor performing the transition, for audit history.",
+                "Impact type, including the defect_source owning-repo value, is fixed when a bug_impact record is created via bug_impact_add and cannot be changed by bug_impact_update; to correct a wrongly-typed record, create a replacement record with bug_impact_add instead.",
             ],
         )
 

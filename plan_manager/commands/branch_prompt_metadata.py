@@ -102,6 +102,11 @@ def get_branch_prompt_metadata(cls: type) -> Dict[str, Any]:
                 "message": "Step not found: {step_id}",
                 "solution": "Call the plan tree command to discover valid step ids and retry.",
             },
+            "PROMPT_ASSEMBLY_FAILED": {
+                "description": "The prompt assembler could not resolve a concept_id referenced by the branch's MRS/GS/TS/AS content to an existing concept row while building the deterministic prompt.",
+                "message": "no concept row for {concept_id}",
+                "solution": "Fix the dangling concept_id reference in the branch's content (or add the missing concept via concept_add) and retry.",
+            },
         },
         "best_practices": [
             "Check within_budget before handing the prompt to a coder model; a False value means the assembled prompt exceeds the plan's context budget and the branch should be split further.",

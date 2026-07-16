@@ -64,6 +64,7 @@ class TodoPromoteToCascadeRequestCommand(Command):
                 "plan accepts either a plan name or a plan UUID (resolved via resolve_plan); todo must be an existing TODO's uuid or TODO_NOT_FOUND is raised.",
                 "This command only files a CascadeRequest (origin_kind fixed to todo, origin_id set to the todo's uuid) — it never mutates the frozen plan/HRS/MRS/GS/TS/AS truth itself; the cascade still goes through the plan-authoring cascade discipline.",
                 "revision is optional and only meaningful when the cascade request targets a specific revision rather than the plan's current head.",
+                "cascade_request has no update or delete command; it is a supersede-immutable audit-trail record of the raised need, created only by this command, and its status is not advanced by any exposed command — the actual normative change is carried out through the ordinary cascade discipline (cascade_begin, cascade_preview, cascade_commit, cascade_abort) against the target HRS/MRS/GS/TS/AS artifact, not by mutating or deleting this record.",
             ],
         )
 

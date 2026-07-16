@@ -37,7 +37,8 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "optional section parameter restricts the answer to exactly "
             "one of identity, build, runtime, capabilities, agent_reference, "
             "planning_standards, documentation, mechanism_documentation, or "
-            "delegation_method_documentation; omitting it returns all sections. The "
+            "delegation_method_documentation; omitting it returns all sections. "
+            "An optional subsection parameter narrows the response further to one top-level key of the selected section's data — for example one agent_reference table such as status_vocabularies — instead of the whole section; subsection is valid only together with section, and only for a key that exists in that section's own data. The "
             "agent_reference section is the exhaustive machine-readable answer key "
             "for executing agents: the status vocabulary of every stateful entity, "
             "the legal status-transition matrices and their reachability caveats, "
@@ -100,6 +101,19 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     "delegation_method_documentation",
                 ],
             },
+            "subsection": {
+                "description": (
+                    "Restrict the response further to one top-level key of "
+                    "the selected section's data, such as a single "
+                    "agent_reference table (for example "
+                    "'status_vocabularies'), instead of the whole section. "
+                    "Valid only together with section, and only for a key "
+                    "that exists in that section's own data. Omit this "
+                    "parameter to receive the whole selected section."
+                ),
+                "type": "string",
+                "required": False,
+            },
         },
         "return_value": {
             "success": {
@@ -147,7 +161,10 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                     ),
                     "section": (
                         "Present only when the section parameter was "
-                        "given; echoes the requested section name."
+                        "given; echoes the requested section name. When "
+                        "subsection is also given, the value nested under "
+                        "that section key is narrowed to just the "
+                        "requested sub-key instead of the whole section."
                     ),
                 },
                 "example": {
@@ -258,6 +275,15 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                 ),
             },
             {
+                "description": "Get a single agent_reference table.",
+                "command": {"section": "agent_reference", "subsection": "status_vocabularies"},
+                "explanation": (
+                    "Returns only the status_vocabularies table nested under "
+                    "'section': 'agent_reference', instead of the full "
+                    "agent_reference payload with all of its tables."
+                ),
+            },
+            {
                 "description": "Get the planning standards glossary.",
                 "command": {"section": "planning_standards"},
                 "explanation": (
@@ -281,12 +307,19 @@ def get_info_metadata(cls) -> Dict[str, Any]:
                 "description": (
                     "No stable domain error is declared for this command; "
                     "unexpected assembly or packaging failures surface as "
-                    "platform-level internal errors."
+                    "platform-level internal errors. An invalid section, an "
+                    "invalid subsection (a value that is not a top-level key "
+                    "of the resolved section's data), or a subsection given "
+                    "without section are all rejected as parameter validation "
+                    "failures before this command's own success/error path "
+                    "runs; none of them carry one of this command's domain "
+                    "error codes either."
                 ),
                 "message": "",
                 "solution": (
                     "Check runtime configuration, embedded documentation packaging, "
-                    "and server logs."
+                    "server logs, and for a rejected subsection, retry with one of "
+                    "the top-level keys of the selected section's data."
                 ),
             },
         },
@@ -295,6 +328,7 @@ def get_info_metadata(cls) -> Dict[str, Any]:
             "Use section='runtime' for lightweight liveness checks instead of fetching the full documentation payload.",
             "Use section='capabilities' when an agent needs the supported project-binding graph, step lifecycle transitions, mutation paths, and domain errors.",
             "Use section='agent_reference' when an agent needs the full status vocabularies, legal-transition matrices, operational checklists, anchor-type tables, visibility modes, queue/polling guide, CRUD matrix, or command index in one payload.",
+            "Add subsection alongside section to fetch one table (for example one agent_reference table) without paying for the whole section's payload.",
             "Use section='planning_standards' when an agent needs exact planning terminology before authoring or verifying artifacts.",
             "A missing documentation payload signals a packaging defect; report it to the release pipeline rather than treating it as an empty answer.",
         ],

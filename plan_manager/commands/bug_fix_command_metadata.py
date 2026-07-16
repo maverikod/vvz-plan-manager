@@ -24,11 +24,6 @@ BUG_FIX_ERROR_CASES: dict[str, dict[str, str]] = {
         "message": "bug not found: {bug}",
         "solution": "Call bug_list and retry with an existing bug uuid.",
     },
-    "INVALID_RUNTIME_STATUS_TRANSITION": {
-        "description": "The requested status value is not one of the eight legal BugFix lifecycle statuses.",
-        "message": "invalid bug fix status: {details}",
-        "solution": "Supply one of: proposed, in_progress, implemented, failed, partial, reverted, rejected, verified.",
-    },
 }
 
 

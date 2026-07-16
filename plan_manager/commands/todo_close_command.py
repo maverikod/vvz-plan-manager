@@ -11,7 +11,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.todo_store import close_todo
+from plan_manager.storage.todo_store import close_todo, update_todo
 
 
 class TodoCloseCommand(Command):
@@ -31,6 +31,7 @@ class TodoCloseCommand(Command):
             "properties": {
                 "todo": {"type": "string", "format": "uuid", "description": "TODO item UUID."},
                 "changed_by": {"type": "string", "description": "Identity of the actor closing this TODO item."},
+                "execution_result": {"type": "string", "description": "Optional execution result to persist on the item in the same close action."},
             },
             "required": ["todo", "changed_by"],
             "additionalProperties": False,
@@ -41,16 +42,21 @@ class TodoCloseCommand(Command):
         params = {
             "todo": {"description": "TODO item UUID.", "type": "string", "required": True},
             "changed_by": {"description": "Identity of the actor closing this TODO item.", "type": "string", "required": True},
+            "execution_result": {"description": "Optional execution result to persist on the item in the same close action.", "type": "string", "required": False},
         }
         return todo_metadata(
             cls,
             params,
             {"success": {"description": "The closed TodoItem payload."}},
-            [{"description": "Close a TODO item.", "command": {"todo": "11111111-1111-1111-1111-111111111111", "changed_by": "agent-1"}}],
+            [
+                {"description": "Close a TODO item.", "command": {"todo": "11111111-1111-1111-1111-111111111111", "changed_by": "agent-1"}},
+                {"description": "Close a TODO item and persist its execution result in one action.", "command": {"todo": "11111111-1111-1111-1111-111111111111", "changed_by": "agent-1", "execution_result": "shipped in 0.1.32"}},
+            ],
             best_practices=[
                 "Sets status unconditionally to closed with no precondition check on the current status — no error if the item is already closed or was never resolved.",
                 "Unlike todo_resolve, todo_close does not stamp resolved_at — use it for TODOs abandoned or made obsolete rather than ones completed.",
                 "changed_by is required and recorded via the runtime audit trail; it is not persisted on the TodoItem payload.",
+                "Pass execution_result to persist the outcome and close in one action; previously this required todo_update followed by todo_close.",
             ],
         )
 
@@ -58,11 +64,14 @@ class TodoCloseCommand(Command):
         self,
         todo: str,
         changed_by: str,
+        execution_result: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
                 todo_uuid = uuid.UUID(todo)
+                if execution_result is not None:
+                    update_todo(conn, todo_uuid, changed_by=changed_by, execution_result=execution_result)
                 record = close_todo(conn, todo_uuid, changed_by=changed_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:

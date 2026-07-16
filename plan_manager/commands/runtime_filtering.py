@@ -41,6 +41,10 @@ FILTER_FIELDS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"type": "string", "description": "Severity to filter by."},
         {"description": "Severity to filter by.", "type": "string", "required": False},
     ),
+    "impact_type": (
+        {"type": "string", "description": "Impact type to filter by."},
+        {"description": "Impact type to filter by.", "type": "string", "required": False},
+    ),
     "priority": (
         {"type": "integer", "description": "Nice-scale priority value to filter by (-20 to 19)."},
         {"description": "Nice-scale priority value to filter by (-20 to 19).", "type": "integer", "required": False},
@@ -267,12 +271,13 @@ def parse_pagination(params: dict[str, Any]) -> Pagination:
         params: The raw command parameters dict.
 
     Returns:
-        A Pagination with limit clamped to [1, MAX_LIMIT] (default DEFAULT_LIMIT when absent)
+        A Pagination with limit in [1, MAX_LIMIT] (default DEFAULT_LIMIT when absent)
         and offset >= 0 (default 0 when absent).
 
     Raises:
         DomainCommandError: With code "INVALID_PAGINATION" if a provided limit or offset is not
-        an integer, or if a provided offset is negative, or if a provided limit is less than 1.
+        an integer, or if a provided offset is negative, or if a provided limit is outside the
+        closed range [1, MAX_LIMIT].
     """
     raw_limit = params.get("limit")
     if raw_limit is None:
@@ -280,9 +285,12 @@ def parse_pagination(params: dict[str, Any]) -> Pagination:
     else:
         if not isinstance(raw_limit, int) or isinstance(raw_limit, bool):
             raise DomainCommandError("INVALID_PAGINATION", f"limit must be an integer, got {raw_limit!r}")
-        if raw_limit < 1:
-            raise DomainCommandError("INVALID_PAGINATION", f"limit must be >= 1, got {raw_limit!r}")
-        limit = min(raw_limit, MAX_LIMIT)
+        if raw_limit < 1 or raw_limit > MAX_LIMIT:
+            raise DomainCommandError(
+                "INVALID_PAGINATION",
+                f"limit must be between 1 and {MAX_LIMIT}, got {raw_limit!r}",
+            )
+        limit = raw_limit
 
     raw_offset = params.get("offset")
     if raw_offset is None:

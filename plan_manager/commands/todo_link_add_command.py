@@ -14,14 +14,14 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_link_store import create_todo_link
 
 
-# NOTE: create_todo_link raises a single generic RuntimeValidationError for every guard
-# violation (invalid link_type, self-reference, missing todo, duplicate active link, or a
-# blocking cycle) — the sibling domain layer does not expose distinct exception subclasses
-# per guard, so the specific guard cannot be attributed at the command level. Every such
-# error flows through the generic try/except Exception -> map_exception(exc) path and is
-# surfaced under the single RUNTIME_VALIDATION_ERROR domain code, whose message is passed
-# through verbatim from the store. No separate per-guard error codes are declared, because
-# the store cannot distinguish those cases.
+# NOTE: create_todo_link's guards route through plan_manager.domain.runtime_integrity's
+# generic ensure_no_duplicate/detect_cycle primitives, which raise typed DuplicateLinkError
+# and LinkCycleError subclasses of RuntimeValidationError. plan_manager.commands.errors.
+# map_exception has dedicated branches for both, checked before the generic
+# RuntimeValidationError branch, so a duplicate active link surfaces DUPLICATE_LINK and a
+# blocking cycle surfaces LINK_CYCLE. The remaining guards (invalid link_type,
+# self-reference, missing todo) still have no dedicated exception subclass and continue to
+# fall through to the generic RUNTIME_VALIDATION_ERROR domain code.
 class TodoLinkAddCommand(Command):
     name: ClassVar[str] = "todo_link_add"
     version: ClassVar[str] = "1.0.0"
@@ -61,16 +61,26 @@ class TodoLinkAddCommand(Command):
             [{"description": "Link one TODO item as blocking another.", "command": {"from_todo": "11111111-1111-1111-1111-111111111111", "to_todo": "22222222-2222-2222-2222-222222222222", "link_type": "blocks", "created_by": "agent-1"}}],
             error_cases={
                 "RUNTIME_VALIDATION_ERROR": {
-                    "description": "A sibling todo-link domain/store guard rejected the request (invalid link_type, self-reference, missing todo, duplicate active link, or a blocking cycle). The store raises a single generic RuntimeValidationError for every such violation and exposes no per-guard subclass, so the specific cause cannot be attributed at the command level.",
+                    "description": "A sibling todo-link domain/store guard rejected the request for a reason with no dedicated exception subclass: invalid link_type, self-reference, or a missing todo.",
                     "message": "{details}",
                     "solution": "Read the returned message, which is passed through verbatim from the domain/store guard, and adjust from_todo, to_todo, or link_type accordingly.",
                 },
+                "DUPLICATE_LINK": {
+                    "description": "An active link with the same (from_todo, to_todo, link_type) triple already exists.",
+                    "message": "duplicate link: {details}",
+                    "solution": "Call todo_link_remove on the existing link first, or skip creating a duplicate.",
+                },
+                "LINK_CYCLE": {
+                    "description": "This blocking link (blocks or blocked_by) would introduce a cycle in the blocking-link graph.",
+                    "message": "cycle detected: {details}",
+                    "solution": "Inspect the existing blocking links between these TODOs and remove or redirect the conflicting edge before retrying.",
+                },
             },
             best_practices=[
-                "Duplicate detection is exact-match on (from_todo, to_todo, link_type) among active links — a second identical call raises RUNTIME_VALIDATION_ERROR rather than being a no-op; unlike step_dependency_add, this is NOT idempotent.",
+                "Duplicate detection is exact-match on (from_todo, to_todo, link_type) among active links — a second identical call raises DUPLICATE_LINK rather than being a no-op; unlike step_dependency_add, this is NOT idempotent.",
                 "Cycle detection only runs for blocking link types (blocks, blocked_by); relates_to, duplicates, caused_by, created_from, requires, and followup_for links are never cycle-checked.",
                 "blocked_by is normalized to a reversed blocks edge when building the cycle graph, so a blocks A-to-B link and a blocked_by B-to-A link are cycle-equivalent.",
-                "All guard failures (bad link_type, self-reference, missing todo, duplicate, cycle) collapse to the single RUNTIME_VALIDATION_ERROR code — read the message text to know which guard fired.",
+                "Duplicate and blocking-cycle guard failures surface as DUPLICATE_LINK and LINK_CYCLE respectively; the remaining guards (bad link_type, self-reference, missing todo) still collapse to RUNTIME_VALIDATION_ERROR — read the message text to know which of those fired.",
                 "Self-links (from_todo == to_todo) are rejected before the existence and duplicate checks even run.",
             ],
         )

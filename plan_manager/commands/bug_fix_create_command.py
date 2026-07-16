@@ -12,6 +12,7 @@ from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import db_connection
+from plan_manager.storage.bug_derived_status_store import recompute_bug_status
 from plan_manager.storage.bug_fix_store import create_bug_fix
 from plan_manager.storage.bug_report_store import get_bug
 
@@ -115,6 +116,7 @@ class BugFixCreateCommand(Command):
                     verification_method=verification_method,
                     expected_result=expected_result,
                 )
+                recompute_bug_status(conn, bug_uuid, changed_by=created_by)
                 return SuccessResult(data={"bug_fix": record.to_payload()})
         except Exception as exc:
             return map_exception(exc)

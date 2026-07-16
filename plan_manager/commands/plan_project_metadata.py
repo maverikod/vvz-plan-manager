@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from plan_manager.commands.runtime_filtering import pagination_metadata_params
+
 
 def _base(cls: Any, detailed: str, parameters: dict, return_data: dict, examples: list[dict], errors: dict) -> dict:
     return {
@@ -118,15 +120,27 @@ def get_plan_project_detach_metadata(cls: Any) -> dict:
 def get_plan_project_list_metadata(cls: Any) -> dict:
     return _base(
         cls,
-        "Return the project UUIDs bound to a plan and the optional primary project UUID.",
-        {"plan": _plan_param()},
+        "Return one page of the project UUIDs bound to a plan, plus the optional "
+        "primary project UUID, paginated with the uniform offset/limit convention "
+        "(default limit 50, max 200).",
+        {"plan": _plan_param(), **pagination_metadata_params()},
         {
             "plan_uuid": "Plan UUID.",
-            "project_ids": "All bound project UUIDs.",
+            "project_ids": "The requested page of bound project UUIDs.",
             "primary_project_id": "Primary project UUID or null.",
+            "total": "Count of all bound project UUIDs before pagination.",
+            "limit": "The limit actually applied.",
+            "offset": "The offset actually applied.",
         },
         [{"description": "List project bindings.", "command": {"plan": "workmgr"}}],
-        {"PLAN_NOT_FOUND": {"description": "Plan cannot be resolved.", "message": "plan not found.", "solution": "Call plan_list and retry."}},
+        {
+            "PLAN_NOT_FOUND": {"description": "Plan cannot be resolved.", "message": "plan not found.", "solution": "Call plan_list and retry."},
+            "INVALID_PAGINATION": {
+                "description": "limit or offset is out of range or not an integer.",
+                "message": "limit must be between 1 and 200, got {limit}",
+                "solution": "Retry with limit in [1, 200] and offset >= 0.",
+            },
+        },
     )
 
 

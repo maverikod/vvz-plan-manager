@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from plan_manager.commands.runtime_filtering import pagination_metadata_params
+
 
 def get_plan_prompt_chain_metadata(cls) -> dict:
     """Return extended AI/documentation metadata for PlanPromptChainCommand."""
@@ -17,9 +19,12 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             "plan revision and scope. The command is read-only and queue-bound. "
             "It validates plan, revision, scope, role, and include_statuses, "
             "runs the mechanical gate before assembly, and returns no partial "
-            "payload when the gate is red. The result is structured data: waves, "
-            "level-keyed deduplicated blocks for hrs, mrs, gs, ts, as, and "
-            "tool_instructions, a role-scoped assembly manifest, and meta. Every "
+            "payload when the gate is red. The result is one paginated page of structured data (uniform "
+            "offset/limit convention, default limit 50, max 200): waves, the "
+            "assembly-manifest page, the per-page used_block_keys reference set, "
+            "and meta; the deduplicated block corpus is not inlined per page — "
+            "resolve referenced blocks via para_get/concept_get/step_get or read "
+            "the full inline artifact through the export path. Every "
             "block carries a stable cache_key over canonical bytes. For role=coder, "
             "assembly.use contains only the AS block and the fixed tool_instructions "
             "block; upper-layer blocks remain available in the corpus for traceability "
@@ -59,6 +64,7 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                 "default": ["frozen", "ready_for_review"],
                 "items": {"type": "string", "enum": ["frozen", "ready_for_review"]},
             },
+            **pagination_metadata_params(),
         },
         "return_value": {
             "success": {
@@ -69,8 +75,11 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                     "scope": "Normalized scope: whole_plan, G-NNN, or G-NNN/T-NNN.",
                     "role": "Assembly role used to build assembly.use.",
                     "waves": "Dependency waves as lists of G-NNN/T-NNN/A-NNN step keys.",
-                    "blocks": "Level-keyed block corpus: hrs, mrs, gs, ts, as, tool_instructions.",
-                    "assembly": "Per-step manifest with wave, branch_path, priority, role, and use.",
+                    "used_block_keys": "Per-page reference set: for each level (hrs, mrs, gs, ts, as, tool_instructions), the sorted block keys used by the assembly entries in this page.",
+                    "total": "Count of the full assembly manifest before pagination.",
+                    "limit": "The limit actually applied.",
+                    "offset": "The offset actually applied.",
+                    "assembly": "The requested page of the per-step manifest with wave, branch_path, priority, role, and use.",
                     "meta": "Counts, dag_source, include_statuses, and project bindings.",
                 },
                 "example": {
@@ -79,24 +88,9 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                     "scope": "G-001/T-001",
                     "role": "coder",
                     "waves": [["G-001/T-001/A-001"]],
-                    "blocks": {
-                        "as": {
-                            "G-001/T-001/A-001": {
-                                "content": {
-                                    "prompt": "Create the file...",
-                                    "operation": "create_file",
-                                    "target_file": "plan_manager/example.py",
-                                    "verification": {"type": "import"},
-                                },
-                                "cache_key": "0123456789abcdef",
-                            }
-                        },
-                        "tool_instructions": {
-                            "coder": {
-                                "content": "Use tool access...",
-                                "cache_key": "abcdef0123456789",
-                            }
-                        },
+                    "used_block_keys": {
+                        "as": ["G-001/T-001/A-001"],
+                        "tool_instructions": ["coder"],
                     },
                     "assembly": [
                         {
@@ -112,11 +106,14 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                         }
                     ],
                     "meta": {"dag_source": "derived: relations+target_file"},
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
                 "description": "Domain error returned when the plan, revision, scope, role, status filter, graph, or gate cannot be accepted.",
-                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | INVALID_SCOPE | INVALID_ROLE | INVALID_STATUS_FILTER | CYCLE_DETECTED | GATE_RED",
+                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | INVALID_SCOPE | INVALID_ROLE | INVALID_STATUS_FILTER | CYCLE_DETECTED | GATE_RED | INVALID_PAGINATION",
                 "message": "Human-readable explanation of the refused request.",
                 "details": "For GATE_RED, includes scope and findings_count.",
             },
@@ -173,6 +170,11 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                 "message": "scope {scope} refused: mechanical gate not green ({findings_count} findings)",
                 "solution": "Fix the gate findings through the normal plan workflow, then call plan_prompt_chain again.",
             },
+            "INVALID_PAGINATION": {
+                "description": "limit or offset is out of range or not an integer.",
+                "message": "limit must be between 1 and 200, got {limit}",
+                "solution": "Retry with limit in [1, 200] and offset >= 0.",
+            },
         },
         "best_practices": [
             "Use role=coder for execution: assembly.use intentionally contains only AS plus tool_instructions.",
@@ -180,5 +182,7 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             "Keep provider-specific wrappers outside this artifact; the output is model-neutral structured data.",
             "Run plan_validate first for a predictable green-gate path.",
             "This command runs on the queue: the plan_prompt_chain call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
+            "Pages carry block-key references only (used_block_keys), never the inlined block corpus; resolve references via para_get/concept_get/step_get, or read the full inline artifact through the export path.",
+            "Compare offset+limit against total to detect additional pages of the assembly manifest.",
         ],
     }
