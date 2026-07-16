@@ -87,6 +87,23 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
+**CR-2 EXECUTION (phase 2, user-ordered "Замораживай и выполняй" 2026-07-16).**
+Plan `planmgr-cr2-export-transfer` (uuid c875af1d-6c39-4b01-91b1-360425d5da0e)
+is FROZEN at head revision df3a3c6a-32a5-4a0b-9f6b-849c46cfecb7 (gate green
+20/20, 6 GS / 26 TS / 55 AS) and is now UNDER EXECUTION per
+`docs/standards/planning/atomic_step_execution_standard.yaml`. Agents DO write
+the production files mandated by its frozen atomic-step prompts (fetched
+read-only from the plan store): Opus owns a GS branch; Sonnet owns a TS and
+ALWAYS verifies its writers, appending per-AS CREATE/INTEGRATE/REPLACE reality
+supplements; Haiku is the sole writer of each AS. CR-2 adds exactly two
+server-side commands (export_archive, export_cleanup) plus the
+`client/plan_manager_client/` package; it modifies NEITHER the code-analysis
+service NOR the adapter, and does NOT touch plan_export/export_read/
+export_upload_save. On green execution: version bump, build, deploy to
+192.168.254.26 (deploy standing-authorized 2026-07-16), mandatory MCP smoke,
+then close roadmap todos 2e070b04 and 76b7ea7e. The frozen roadmap plan and the
+other frozen plans stay read-only.
+
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
 `planmgr-runtime-work-layer-integration`, fcc11f8e, stays FROZEN and read-only,
