@@ -87,22 +87,30 @@ Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
 
 ## Current phase
 
-**CR-3 AUTHORING (phase 1, user-ordered "и после бери CR3" 2026-07-16).**
-CR-2 is SHIPPED and CLOSED (0.1.35 + 0.1.36 on 192.168.254.26, Path A
-live-verified on CA project planmgr-patha-test; its plan
-planmgr-cr2-export-transfer stays FROZEN and read-only). The working plan is
-now **`planmgr-cr3-verification-observability`** (uuid
-5a06b927-b084-46e6-8f9f-4275ad3434c2, verification/observability group): five
-deliverables — ops_status, command_timing_stats, step_prompt_verify, the
-embedded-code gate check, and audit_list. It is UNDER AUTHORING per phase 1 and
-`docs/prompts/plan-authoring.yaml`: Fable HRS → Fable concepts+MRS → Opus GS →
-Fable preview → the parallel Sonnet/Haiku T/A wave (this is the wave now
-running; agents author PLAN STEPS in the open cascade
-ab7c4f8c-fe46-497b-b25d-924b40f04499, they do NOT write production files yet).
-CR-3 will add one additive migration (0017 command-timing metrics) and one
-dependency (sqlglot for the embedded-code gate). HARD CHECKPOINTS unchanged:
-plan freeze and the CR-5 ratings discussion require the user's explicit order;
-deploy is standing-authorized. All other plans stay frozen/read-only.
+**CR-3 EXECUTION (phase 2, user-ordered "при отсутствии блокеров запускай
+выполнение. После - повышай номер версии, деплой, запускай тесты на реальном
+сервере" 2026-07-16).** The plan
+**`planmgr-cr3-verification-observability`** (uuid
+5a06b927-b084-46e6-8f9f-4275ad3434c2, verification/observability group) is
+FROZEN and gate-green (cascade committed head 07245731; whole-plan freeze
+revision 3bd2a9b9, 71 steps draft→frozen, 0 findings). Its five deliverables —
+ops_status, command_timing_stats, step_prompt_verify, the embedded-code gate
+check, and audit_list — are now UNDER EXECUTION per phase 2 and
+`docs/standards/planning/atomic_step_execution_standard.yaml`. Agents DO write
+the production files mandated by the frozen atomic-step prompts (fetched
+read-only from the plan store via step_get/branch_prompt). Delegation
+hierarchy: Opus owns a GS branch; Sonnet owns a TS and ALWAYS verifies its
+writers, appending a per-step CREATE/INTEGRATE/REPLACE reality supplement
+(account for existing code — much of CR-3 touches existing files: registration.py,
+gate.py, info_command.py, pyproject.toml, existing test suites); Haiku is the
+sole writer of each AS. VERIFY THE STORE/FILE, NEVER THE WRITER ECHO. CR-3 adds
+one additive migration (`plan_manager_db/migrations/0017_command_timing_metrics.sql`,
+written but NEVER applied by agents — the entrypoint applies it at deploy) and
+one dependency (`sqlglot>=25` in pyproject, must be pulled into the image at
+build). After execution + green suite: bump version 0.1.36→0.1.37, build, deploy
+(standing-authorized), mandatory MCP smoke via proxy. HARD CHECKPOINTS unchanged:
+the CR-5 ratings discussion requires the user's explicit order. All other plans
+stay frozen/read-only.
 
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
