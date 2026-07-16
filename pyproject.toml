@@ -15,6 +15,7 @@ dependencies = [
     "PyYAML",
     "embed-client>=4.0.1",
     "code-analysis-client>=1.6.51",
+    "sqlglot>=25",
 ]
 
 [project.optional-dependencies]

@@ -85,6 +85,26 @@ FILTER_FIELDS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"type": "boolean", "description": "When true, only bug fixes that are not yet verified are included."},
         {"description": "When true, only bug fixes that are not yet verified are included.", "type": "boolean", "required": False},
     ),
+    "actor": (
+        {"type": "string", "description": "Actor identifier (changed_by) to filter by."},
+        {"description": "Actor identifier (changed_by) to filter by.", "type": "string", "required": False},
+    ),
+    "action": (
+        {"type": "string", "description": "Recorded runtime-audit action to filter by."},
+        {"description": "Recorded runtime-audit action to filter by.", "type": "string", "required": False},
+    ),
+    "entity_type": (
+        {"type": "string", "description": "Audited entity's type to filter by."},
+        {"description": "Audited entity's type to filter by.", "type": "string", "required": False},
+    ),
+    "entity_id": (
+        {"type": "string", "format": "uuid", "description": "Audited entity's identifier (UUID) to filter by."},
+        {"description": "Audited entity's identifier (UUID) to filter by.", "type": "string", "required": False},
+    ),
+    "plan": (
+        {"type": "string", "format": "uuid", "description": "Plan UUID the audit record is anchored to, to filter by."},
+        {"description": "Plan UUID the audit record is anchored to, to filter by.", "type": "string", "required": False},
+    ),
 }
 
 PAGINATION_FIELDS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {

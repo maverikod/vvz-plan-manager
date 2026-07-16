@@ -27,6 +27,7 @@ from plan_manager.commands.info_reference import (
     todo_work_capabilities,
 )
 from plan_manager.commands.info_reference_agents import agent_reference
+from plan_manager.commands.info_reference_audit import runtime_audit_capabilities
 from plan_manager.commands.info_reference_crud import crud_deletion_posture_reference
 from plan_manager.commands.info_reference_delegation import (
     delegated_authoring_method_reference,
@@ -37,6 +38,10 @@ from plan_manager.commands.info_reference_delivery import (
 )
 from plan_manager.commands.info_reference_mechanism import (
     semantic_reproduction_mechanism_reference,
+)
+from plan_manager.commands.info_reference_verification import (
+    verification_observability_agent_reference,
+    verification_observability_capabilities,
 )
 from plan_manager.runtime.build_info import build_info, operator_doc
 from plan_manager.runtime.context import db_connection
@@ -186,11 +191,14 @@ class InfoCommand(Command):
                 "overlay": overlay_capabilities(),
                 "runtime_write_invariants": runtime_write_invariants(),
                 "export_delivery": export_delivery_capabilities(),
+                "runtime_audit": runtime_audit_capabilities(),
+                "verification_observability": verification_observability_capabilities(),
             }
         if section == "agent_reference":
             data = agent_reference()
             data["crud_deletion_posture"] = crud_deletion_posture_reference()
             data["export_delivery"] = export_delivery_agent_reference()
+            data["verification_observability"] = verification_observability_agent_reference()
             return data
         if section == "planning_standards":
             return planning_standards_reference()

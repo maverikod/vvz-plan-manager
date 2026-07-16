@@ -193,31 +193,40 @@ def record_runtime_change(
     )
 
 
-def list_runtime_audit(
-    conn: psycopg.Connection,
+def _filter_clause(
     *,
-    plan_uuid: uuid.UUID | None = None,
-    entity_type: str | None = None,
-    entity_id: uuid.UUID | None = None,
-) -> list[RuntimeAuditRecord]:
-    """Return the retained audit chain, optionally filtered, oldest first.
+    plan_uuid: uuid.UUID | None,
+    entity_type: str | None,
+    entity_id: uuid.UUID | None,
+    changed_by: str | None,
+    action: str | None,
+    created_after: str | None,
+    created_before: str | None,
+) -> tuple[str, list[Any]]:
+    """Build the shared WHERE clause and parameter list for list_runtime_audit and count_runtime_audit.
 
     Parameters:
-        conn: psycopg.Connection
-            Open connection used to execute the SELECT.
         plan_uuid: uuid.UUID | None
             When given, restrict to audit records with this plan_uuid.
         entity_type: str | None
             When given, restrict to audit records with this entity_type.
         entity_id: uuid.UUID | None
             When given, restrict to audit records with this entity_id.
+        changed_by: str | None
+            When given, restrict to audit records with this changed_by actor.
+        action: str | None
+            When given, restrict to audit records with this action.
+        created_after: str | None
+            When given, restrict to audit records with created_at >= this value.
+        created_before: str | None
+            When given, restrict to audit records with created_at <= this value.
 
     Returns:
-        list[RuntimeAuditRecord]
-            The matching audit records ordered by created_at ascending
-            (the full retained chain of events; no record is ever
-            excluded by soft deletion since deletion is itself an
-            appended action, not a removal).
+        tuple[str, list[Any]]
+            A (where_clause, params) pair. where_clause is either the empty
+            string or a string starting with " WHERE " ready to append to a
+            base SQL statement; params is the ordered list of bind values
+            matching the clause's placeholders.
     """
     conditions: list[str] = []
     params: list[Any] = []
@@ -230,13 +239,142 @@ def list_runtime_audit(
     if entity_id is not None:
         conditions.append("entity_id = %s")
         params.append(entity_id)
-
+    if changed_by is not None:
+        conditions.append("changed_by = %s")
+        params.append(changed_by)
+    if action is not None:
+        conditions.append("action = %s")
+        params.append(action)
+    if created_after is not None:
+        conditions.append("created_at >= %s")
+        params.append(created_after)
+    if created_before is not None:
+        conditions.append("created_at <= %s")
+        params.append(created_before)
     where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-    rows = conn.execute(
+    return where_clause, params
+
+
+def list_runtime_audit(
+    conn: psycopg.Connection,
+    *,
+    plan_uuid: uuid.UUID | None = None,
+    entity_type: str | None = None,
+    entity_id: uuid.UUID | None = None,
+    changed_by: str | None = None,
+    action: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[RuntimeAuditRecord]:
+    """Return a newest-first page of the retained audit chain, optionally filtered.
+
+    Parameters:
+        conn: psycopg.Connection
+            Open connection used to execute the SELECT.
+        plan_uuid: uuid.UUID | None
+            When given, restrict to audit records with this plan_uuid.
+        entity_type: str | None
+            When given, restrict to audit records with this entity_type.
+        entity_id: uuid.UUID | None
+            When given, restrict to audit records with this entity_id.
+        changed_by: str | None
+            When given, restrict to audit records with this changed_by actor.
+        action: str | None
+            When given, restrict to audit records with this action. The
+            caller is responsible for validating the value against
+            ALLOWED_ACTIONS before calling; this function does not validate it.
+        created_after: str | None
+            When given, restrict to audit records with created_at >= this value.
+        created_before: str | None
+            When given, restrict to audit records with created_at <= this value.
+        limit: int | None
+            When given, caps the number of returned rows via SQL LIMIT. None
+            means no LIMIT clause is applied.
+        offset: int
+            Number of matching rows, in the newest-first order, to skip
+            before the returned page starts. Defaults to 0.
+
+    Returns:
+        list[RuntimeAuditRecord]
+            The matching audit records within [offset, offset+limit) (or all
+            matching records from offset onward when limit is None), ordered
+            by created_at descending (newest first; no record is ever
+            excluded by soft deletion since deletion is itself an appended
+            action, not a removal).
+    """
+    where_clause, params = _filter_clause(
+        plan_uuid=plan_uuid,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        changed_by=changed_by,
+        action=action,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    sql = (
         "SELECT uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason, "
         "changed_fields, linked_attempt_id, linked_review_id, created_at FROM runtime_audit_log"
         + where_clause
-        + " ORDER BY created_at ASC",
-        tuple(params),
-    ).fetchall()
+        + " ORDER BY created_at DESC"
+    )
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(limit)
+    sql += " OFFSET %s"
+    params.append(offset)
+    rows = conn.execute(sql, tuple(params)).fetchall()
     return [_row_to_record(row) for row in rows]
+
+
+def count_runtime_audit(
+    conn: psycopg.Connection,
+    *,
+    plan_uuid: uuid.UUID | None = None,
+    entity_type: str | None = None,
+    entity_id: uuid.UUID | None = None,
+    changed_by: str | None = None,
+    action: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+) -> int:
+    """Return the count of audit records matching the same filter set as list_runtime_audit, independent of limit/offset.
+
+    Parameters:
+        conn: psycopg.Connection
+            Open connection used to execute the SELECT COUNT(*).
+        plan_uuid: uuid.UUID | None
+            When given, restrict to audit records with this plan_uuid.
+        entity_type: str | None
+            When given, restrict to audit records with this entity_type.
+        entity_id: uuid.UUID | None
+            When given, restrict to audit records with this entity_id.
+        changed_by: str | None
+            When given, restrict to audit records with this changed_by actor.
+        action: str | None
+            When given, restrict to audit records with this action.
+        created_after: str | None
+            When given, restrict to audit records with created_at >= this value.
+        created_before: str | None
+            When given, restrict to audit records with created_at <= this value.
+
+    Returns:
+        int
+            The total number of audit records matching the given filter set,
+            independent of any limit/offset paging.
+    """
+    where_clause, params = _filter_clause(
+        plan_uuid=plan_uuid,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        changed_by=changed_by,
+        action=action,
+        created_after=created_after,
+        created_before=created_before,
+    )
+    row = conn.execute(
+        "SELECT COUNT(*) FROM runtime_audit_log" + where_clause,
+        tuple(params),
+    ).fetchone()
+    return row[0] if row is not None else 0

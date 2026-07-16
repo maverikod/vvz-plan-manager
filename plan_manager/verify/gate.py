@@ -8,6 +8,7 @@ import uuid
 import psycopg
 
 from plan_manager.verify.finding import Finding, Report, build_report, render_json
+from plan_manager.verify.gate_code import check_embedded_code_parses
 from plan_manager.verify.gate_data import artifact_path_of, load_tree, scope_steps
 from plan_manager.verify.gate_refs import (
     check_references_concepts,
@@ -38,7 +39,7 @@ from plan_manager.views.coverage import (
     relation_coverage,
 )
 
-GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage"]
+GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage", "embedded_code"]
 
 CHECK_IDS: dict[str, list[str]] = {
     "parse": [
@@ -70,6 +71,9 @@ CHECK_IDS: dict[str, list[str]] = {
         "coverage.gs",
         "coverage.labels",
         "coverage.relations",
+    ],
+    "embedded_code": [
+        "embedded_code.parses",
     ],
 }
 
@@ -222,6 +226,8 @@ def run_gate(
                 group_findings.extend(
                     check_coverage_gs(conn, plan_uuid, branch.gs.step_id)
                 )
+        elif group == "embedded_code":
+            group_findings.extend(check_embedded_code_parses(tree, steps))
         run_check_ids.extend(group_check_ids)
         findings.extend(group_findings)
         if fail_fast and group_findings:

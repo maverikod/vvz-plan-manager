@@ -49,6 +49,7 @@ INVENTORY: tuple[str, ...] = (
     "step_search",
     "files_report",
     "step_xref",
+    "step_prompt_verify",
     "graph_deps",
     "graph_order",
     "graph_parallel_map",
@@ -81,6 +82,7 @@ INVENTORY: tuple[str, ...] = (
     "srt_snapshot_list",
     "srt_diff",
     "info",
+    "ops_status",
     # runtime todo (C-029)
     "todo_create",
     "todo_get",
@@ -162,6 +164,9 @@ INVENTORY: tuple[str, ...] = (
     "project_dependents",
     "command_catalog_dump",
     "graph_dependents",
+    "command_timing_stats",
+    # runtime audit (C-010)
+    "audit_list",
 )
 
 MUTATING: frozenset[str] = frozenset({

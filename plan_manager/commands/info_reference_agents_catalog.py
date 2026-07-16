@@ -245,6 +245,7 @@ def crud_matrix() -> dict[str, Any]:
             "bug_fix_propagation": {"create": "bug_propagation_create", "read": "bug_propagation_list", "update": "bug_propagation_update", "delete": "none"},
             "project_dependency": {"create": "project_dependency_add/project_dependency_discover", "read": "project_dependency_list/project_dependents", "update": "project_dependency_update/project_dependency_confirm (confirm raises a discovered edge's confidence to confirmed)", "delete": "project_dependency_remove (soft)"},
             "cascade_request": {"create": "todo_promote_to_cascade_request (the sole command that creates a cascade_request)", "read": "none exposed; read via export_runtime_overlay (C-034, 'cascade_requests' section, filtered by plan_uuid)", "update": "none", "delete": "none (supersede-immutable audit-trail record; the normative change it requests is carried out through the ordinary cascade discipline against the target HRS/MRS/GS/TS/AS artifact, not by mutating or deleting this record)"},
+            "runtime_audit_log": {"create": "none (append-only; records are written only as the side effect of existing mutating commands via record_runtime_change)", "read": "audit_list", "update": "none", "delete": "none"},
         },
     }
 
@@ -285,7 +286,8 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     ],
     "cascade": ["cascade_begin", "cascade_preview", "cascade_commit", "cascade_abort", "plan_unfreeze"],
     "srt": ["srt_snapshot_create", "srt_snapshot_list", "srt_diff"],
-    "system": ["info", "command_catalog_dump"],
+    "system": ["info", "ops_status", "command_catalog_dump"],
+    "audit": ["audit_list"],
     "todo": [
         "todo_create", "todo_get", "todo_list", "todo_update", "todo_reanchor",
         "todo_resolve", "todo_close", "todo_delete", "todo_link_add", "todo_link_remove",
@@ -322,6 +324,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "project_dependency_list", "project_dependency_discover", "project_dependents",
         "project_dependency_update", "project_dependency_confirm",
     ],
+    "observability": ["command_timing_stats"],
 }
 
 # The queue-bound commands (use_queue=True); consumed by queue_polling_guide().
