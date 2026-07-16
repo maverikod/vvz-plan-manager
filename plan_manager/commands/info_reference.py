@@ -736,13 +736,13 @@ def todo_work_capabilities() -> dict[str, Any]:
             },
         },
         "guard_error_attribution": (
-            "todo_link_add's underlying store (todo_link_store.create_todo_link) raises a "
-            "single generic RuntimeValidationError for every guard violation (invalid "
-            "link_type, self-reference, missing todo, duplicate active link, or a blocking "
-            "cycle among blocks/blocked_by edges); the command layer cannot attribute the "
-            "specific guard, so these surface as RUNTIME_VALIDATION_ERROR rather than the "
-            "more specific DUPLICATE_LINK or LINK_CYCLE codes, which are reserved in the "
-            "domain code registry but not currently raised by any command."
+            "todo_link_add's underlying store (todo_link_store.create_todo_link) routes "
+            "duplicate-active-link and blocking-cycle guard violations through the typed "
+            "DuplicateLinkError/LinkCycleError subclasses of RuntimeValidationError "
+            "(plan_manager.domain.runtime_integrity), which map_exception attributes to the "
+            "specific DUPLICATE_LINK / LINK_CYCLE domain codes. The remaining guards (invalid "
+            "link_type, self-reference, missing todo) have no dedicated exception subclass "
+            "and still fall through to the generic RUNTIME_VALIDATION_ERROR domain code."
         ),
         "invariants": [
             "A TODO's authoritative state is TodoItem.status, one of the seven TODO_STATUSES.",
@@ -757,8 +757,8 @@ def todo_work_capabilities() -> dict[str, Any]:
             "TODO_LINK_NOT_FOUND": "The supplied todo link identifier does not resolve to an existing link.",
             "INVALID_ANCHOR": "The supplied primary anchor is malformed, uses an unsupported anchor_type, or does not reference an existing anchor target (anchor target lookup misses also surface as INVALID_ANCHOR or RUNTIME_VALIDATION_ERROR; no separate ANCHOR_NOT_FOUND code exists).",
             "INVALID_NICE_PRIORITY": "The supplied priority_nice value is outside the valid range [-20, 19].",
-            "DUPLICATE_LINK": "Reserved domain code for a duplicate TODO link; not currently raised by any command (todo_link_add surfaces this guard as RUNTIME_VALIDATION_ERROR).",
-            "LINK_CYCLE": "Reserved domain code for a blocking-link cycle; not currently raised by any command (todo_link_add surfaces this guard as RUNTIME_VALIDATION_ERROR).",
+            "DUPLICATE_LINK": "An active link with the same (from_todo, to_todo, link_type) triple already exists; raised by todo_link_add via the typed DuplicateLinkError guard.",
+            "LINK_CYCLE": "The requested blocking link (blocks/blocked_by) would introduce a cycle in the blocking-link graph; raised by todo_link_add via the typed LinkCycleError guard.",
         },
     }
 

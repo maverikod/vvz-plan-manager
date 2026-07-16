@@ -126,13 +126,20 @@ def queue_polling_guide() -> dict[str, Any]:
             "queue_get_job_status."
         ),
         "unknown_param_note": (
-            "The mcp-proxy-adapter (>=8.10.20) rejects unknown top-level "
-            "parameters at its own schema layer (additionalProperties defaults "
-            "to false) before a call reaches plan_manager. Separately, "
-            "plan_manager's own (builtin) command layer performs its own "
-            "explicit parameter validation; a misspelled parameter is an error "
-            "at one layer or the other, not silently ignored, but the exact "
-            "error code/shape depends on which layer rejects it first."
+            "The two command surfaces behave differently for a misspelled "
+            "parameter — do not assume either behavior of the other. "
+            "plan_manager's OWN commands set additionalProperties: false in "
+            "their schema, so a misspelled parameter is rejected before "
+            "execute() runs: ErrorResult code -32602, message 'Invalid "
+            "parameters: <name>. Allowed parameters: [...]'. The adapter's "
+            "BUILTIN commands (verified for help) set additionalProperties: "
+            "true and accept **kwargs they don't recognize, so a misspelled "
+            "parameter (e.g. command= instead of cmdname=) is silently "
+            "ignored — help falls back to its no-cmdname behavior and "
+            "returns the full command catalog instead of erroring. This is "
+            "the adapter behavior behind bug c4281feb (confirmed live "
+            "against adapter 8.10.20). Do not rely on an error to catch a "
+            "typo when calling an adapter builtin."
         ),
     }
 
