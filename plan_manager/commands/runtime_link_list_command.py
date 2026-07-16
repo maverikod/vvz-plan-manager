@@ -95,7 +95,7 @@ class RuntimeLinkListCommand(Command):
         parameters.update(pagination_metadata_params())
 
         return_value = {
-            "description": "An object with a runtime_links key holding a page of RuntimeLink records, plus total_count.",
+            "description": "An object with a runtime_links key holding a page of RuntimeLink records, plus total, limit, and offset.",
             "type": "object",
         }
 
@@ -118,7 +118,7 @@ class RuntimeLinkListCommand(Command):
             best_practices=[
                 "Supply entity_type and entity_uuid together to filter to links touching one endpoint record; supplying only one of the two is rejected with INVALID_FILTER.",
                 "Soft-deleted links are hidden by default; pass include_deleted=true to include them.",
-                "Results are paginated with limit and offset (default limit 50, max 200); total_count reports the full number of matches before the page slice.",
+                "Results are paginated with limit and offset (default limit 50, max 200); total reports the full number of matches before the page slice, and the response echoes the applied limit and offset.",
                 "The listing spans all four endpoint-kind pairs (bug-bug, bug-todo, todo-bug, todo-todo) and matches an endpoint on either the from or the to side.",
                 "Links are returned ordered by created_at ascending.",
             ],
@@ -149,7 +149,9 @@ class RuntimeLinkListCommand(Command):
 
             return SuccessResult(data={
                 "runtime_links": paged,
-                "total_count": len(payload),
+                "total": len(payload),
+                "limit": pg.limit,
+                "offset": pg.offset,
             })
         except Exception as exc:
             return map_exception(exc)

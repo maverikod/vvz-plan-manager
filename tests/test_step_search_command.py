@@ -60,7 +60,7 @@ def test_substring_search_finds_matches_across_levels(monkeypatch) -> None:
     assert "G-001" in paths
     assert "G-001/T-001/A-001" in paths
     assert "G-002" in paths
-    assert payload["data"]["total_count"] == len(payload["data"]["matches"])
+    assert payload["data"]["total"] == len(payload["data"]["matches"])
 
 
 def test_pagination_limits_page_size(monkeypatch) -> None:
@@ -73,7 +73,9 @@ def test_pagination_limits_page_size(monkeypatch) -> None:
     payload = result.to_dict()
     assert payload["success"] is True
     assert len(payload["data"]["matches"]) == 1
-    assert payload["data"]["total_count"] > 1
+    assert payload["data"]["total"] > 1
+    assert payload["data"]["limit"] == 1
+    assert payload["data"]["offset"] == 0
 
 
 def test_regex_mode_finds_match(monkeypatch) -> None:
@@ -85,7 +87,7 @@ def test_regex_mode_finds_match(monkeypatch) -> None:
     result = asyncio.run(StepSearchCommand().execute(plan="p", pattern="need.e", mode="regex"))
     payload = result.to_dict()
     assert payload["success"] is True
-    assert payload["data"]["total_count"] >= 1
+    assert payload["data"]["total"] >= 1
 
 
 def test_invalid_regex_syntax_raises_invalid_filter(monkeypatch) -> None:

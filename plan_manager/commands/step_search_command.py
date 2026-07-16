@@ -151,10 +151,10 @@ class StepSearchCommand(Command):
             offset: Number of matches to skip before returning results (default 0).
 
         Returns:
-            SuccessResult with data {"matches": [...], "total_count": int}, where
-            each match entry has "path", "field", "excerpt", or ErrorResult with
-            code PLAN_NOT_FOUND, STEP_NOT_FOUND, INVALID_FILTER, or
-            INVALID_PAGINATION.
+            SuccessResult with data {"matches": [...], "total": int, "limit":
+            int, "offset": int}, where each match entry has "path", "field",
+            "excerpt", or ErrorResult with code PLAN_NOT_FOUND,
+            STEP_NOT_FOUND, INVALID_FILTER, or INVALID_PAGINATION.
         """
         try:
             if len(pattern) > MAX_PATTERN_LENGTH:
@@ -199,8 +199,13 @@ class StepSearchCommand(Command):
                                 "field": field_name,
                                 "excerpt": _excerpt(text, start, end),
                             })
-                total_count = len(matches)
+                total = len(matches)
                 page = matches[pagination.offset : pagination.offset + pagination.limit]
-                return SuccessResult(data={"matches": page, "total_count": total_count})
+                return SuccessResult(data={
+                    "matches": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)

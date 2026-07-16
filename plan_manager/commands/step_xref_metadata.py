@@ -76,7 +76,7 @@ def get_step_xref_metadata(cls: type) -> dict[str, Any]:
                         "List of (step path, field name, role) tuples in canonical plan order, "
                         "where role is either 'defined' or 'inlined'."
                     ),
-                    "total_count": "Count of all matching locations across the plan before pagination.",
+                    "total": "Count of all matching locations across the plan before pagination.",
                     "limit": "The limit actually applied.",
                     "offset": "The offset actually applied.",
                 },
@@ -95,7 +95,7 @@ def get_step_xref_metadata(cls: type) -> dict[str, Any]:
                             "content_hash": "abc123def456",
                         },
                     ],
-                    "total_count": 2,
+                    "total": 2,
                     "limit": 50,
                     "offset": 0,
                 },
@@ -166,7 +166,7 @@ def get_step_xref_metadata(cls: type) -> dict[str, Any]:
             "Use text search for broad content discovery; use step+field for precise cross-referencing.",
             "Check the 'defined' role to find the canonical location; 'inlined' locations are reuses.",
             "When a step identifier is ambiguous, use the fully qualified artifact path to disambiguate.",
-            "Compare offset+limit against total_count to detect additional pages.",
+            "Compare offset+limit against total to detect additional pages.",
             "Use content_hash to programmatically detect and deduplicate identical fragments.",
         ],
     }

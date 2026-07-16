@@ -177,15 +177,36 @@ def pagination_convention_reference() -> dict[str, Any]:
             "offset": "The applied (validated or defaulted) offset.",
         },
         "rejection": (
-            f"A non-integer limit or offset, a limit outside [1, {MAX_LIMIT}], or "
-            "a negative offset is rejected with domain code INVALID_PAGINATION "
-            "(parse_pagination in plan_manager.commands.runtime_filtering)."
+            "Two layers can reject an out-of-range or non-integer limit/offset, "
+            "and callers normally only observe the outer one. Layer 1 "
+            "(transport/schema): every command's declared JSON-Schema bounds "
+            f"limit to [1, {MAX_LIMIT}] and offset to >= 0 "
+            "(pagination_schema_properties()); the MCP adapter validates "
+            "JSON-RPC parameters against that schema before the call ever "
+            "reaches plan_manager code, and rejects a violation with the "
+            "generic JSON-RPC error -32602 (Invalid params) — this is what an "
+            "MCP caller normally observes for an out-of-range integer. Layer 2 "
+            "(domain): parse_pagination's INVALID_PAGINATION domain code "
+            "(plan_manager.commands.runtime_filtering) re-validates the "
+            "identical bounds and is defense-in-depth — it is what fires for "
+            "any call path that bypasses schema validation (a library-level "
+            "call, a test, or a command whose schema omits the bounds), not "
+            "for a normal MCP call against a schema-bound command."
         ),
         "uniformity_guard": (
-            "Every retrofitted command's limit/offset schema properties are "
-            "byte-identical to the shared pagination_schema_properties() "
-            "fragment; tests/test_uniform_pagination_contract.py enforces this "
-            "and that each command's metadata documents limit, offset, and total."
+            "Every command enumerated in tests/test_uniform_pagination_contract.py's "
+            "_RETROFITTED_COMMANDS list has its schema limit/offset properties "
+            "checked byte-for-byte against the shared pagination_schema_properties() "
+            "fragment, and its metadata() checked to mention limit, offset, and "
+            "total somewhere in the published blob. tests/test_pagination_contract.py "
+            "separately enforces the same schema/metadata fragment identity, "
+            "dynamically, for every command in INVENTORY whose name ends in "
+            "'_list'. tests/test_pagination_envelope_uniformity.py separately "
+            "asserts the actual runtime response envelope keys "
+            "{<entity>, total, limit, offset} for step_list, step_search, "
+            "files_report, and step_xref via each command's execute() path. "
+            "No single test enumerates every list-bearing command in one "
+            "place; this reference is the closest thing to that index."
         ),
     }
 

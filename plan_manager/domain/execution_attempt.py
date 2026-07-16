@@ -30,9 +30,13 @@ class ExecutionAttempt(DataclassEntity):
     ENTITY_ID_FIELD = "attempt_uuid"
     TABLE_NAME = "execution_attempt"
     HARD_DELETE_REFERENCE_CHECKS = (
-        ReferenceCheck("runtime_comment", "anchor_ref_id", "attempt_uuid", live_column="deleted_at"),
-        ReferenceCheck("review_result", "reviewed_attempt_uuid", "attempt_uuid", live_column="deleted_at"),
-        ReferenceCheck("execution_attempt", "parent_attempt_uuid", "attempt_uuid", live_column="deleted_at"),
+        # source_column is "uuid", not the dataclass field "attempt_uuid": find_entity_reference_counts
+        # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
+        # keys are the raw execution_attempt DB columns (PK column is literally "uuid") — not the
+        # dataclass's ENTITY_ID_FIELD name. A source_column of "attempt_uuid" here is a KeyError (bug e52daeab).
+        ReferenceCheck("runtime_comment", "anchor_ref_id", "uuid", live_column="deleted_at"),
+        ReferenceCheck("review_result", "reviewed_attempt_uuid", "uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "parent_attempt_uuid", "uuid", live_column="deleted_at"),
     )
 
     attempt_uuid: uuid.UUID

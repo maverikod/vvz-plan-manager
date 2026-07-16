@@ -95,10 +95,10 @@ class FilesReportCommand(Command):
             offset: Optional pagination offset (default 0).
 
         Returns:
-            SuccessResult with data {"files": [...], "total_count": N} on
-            success, where each files entry is {"target_file", "writers",
-            "ordering_conflict"}; ErrorResult with a stable domain error
-            code on failure.
+            SuccessResult with data {"files": [...], "total": N, "limit":
+            int, "offset": int} on success, where each files entry is
+            {"target_file", "writers", "ordering_conflict"}; ErrorResult
+            with a stable domain error code on failure.
         """
         try:
             with db_connection() as conn:
@@ -118,9 +118,14 @@ class FilesReportCommand(Command):
                 pagination = parse_pagination({"limit": limit, "offset": offset})
 
                 full_report = build_files_report(nodes, scoped_atomic, edges)
-                total_count = len(full_report)
+                total = len(full_report)
                 page = full_report[pagination.offset : pagination.offset + pagination.limit]
-                return SuccessResult(data={"files": page, "total_count": total_count})
+                return SuccessResult(data={
+                    "files": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)
 

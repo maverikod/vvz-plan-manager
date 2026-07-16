@@ -46,9 +46,13 @@ class BugFix(DataclassEntity):
     ENTITY_ID_FIELD = "fix_uuid"
     TABLE_NAME = "bug_fix"
     HARD_DELETE_REFERENCE_CHECKS = (
-        ReferenceCheck("runtime_comment", "anchor_ref_id", "fix_uuid", live_column="deleted_at"),
-        ReferenceCheck("execution_attempt", "bug_fix_uuid", "fix_uuid", live_column="deleted_at"),
-        ReferenceCheck("bug_fix_propagation", "bug_fix_uuid", "fix_uuid", live_column="deleted_at"),
+        # source_column is "uuid", not the dataclass field "fix_uuid": find_entity_reference_counts
+        # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
+        # keys are the raw bug_fix DB columns (PK column is literally "uuid") — not the dataclass's
+        # ENTITY_ID_FIELD name. A source_column of "fix_uuid" here is a KeyError (bug e52daeab).
+        ReferenceCheck("runtime_comment", "anchor_ref_id", "uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "bug_fix_uuid", "uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_fix_propagation", "bug_fix_uuid", "uuid", live_column="deleted_at"),
     )
 
     fix_uuid: uuid.UUID

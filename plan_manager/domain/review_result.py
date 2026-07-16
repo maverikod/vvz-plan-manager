@@ -32,7 +32,11 @@ class ReviewResult(DataclassEntity):
     ENTITY_ID_FIELD = "review_uuid"
     TABLE_NAME = "review_result"
     HARD_DELETE_REFERENCE_CHECKS = (
-        ReferenceCheck("runtime_audit_log", "linked_review_id", "review_uuid"),
+        # source_column is "uuid", not the dataclass field "review_uuid": find_entity_reference_counts
+        # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
+        # keys are the raw review_result DB columns (PK column is literally "uuid") — not the dataclass's
+        # ENTITY_ID_FIELD name. A source_column of "review_uuid" here is a KeyError (bug e52daeab).
+        ReferenceCheck("runtime_audit_log", "linked_review_id", "uuid"),
     )
 
     review_uuid: uuid.UUID

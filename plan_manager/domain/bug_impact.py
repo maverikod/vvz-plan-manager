@@ -35,7 +35,11 @@ class BugImpact(DataclassEntity):
     ENTITY_ID_FIELD = "impact_uuid"
     TABLE_NAME = "bug_impact"
     HARD_DELETE_REFERENCE_CHECKS = (
-        ReferenceCheck("bug_fix_propagation", "impact_uuid", "impact_uuid", live_column="deleted_at"),
+        # source_column is "uuid", not the dataclass field "impact_uuid": find_entity_reference_counts
+        # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
+        # keys are the raw bug_impact DB columns (PK column is literally "uuid") — not the dataclass's
+        # ENTITY_ID_FIELD name. A source_column of "impact_uuid" here is a KeyError (bug e52daeab).
+        ReferenceCheck("bug_fix_propagation", "impact_uuid", "uuid", live_column="deleted_at"),
     )
 
     impact_uuid: uuid.UUID

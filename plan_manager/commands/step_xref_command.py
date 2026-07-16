@@ -170,11 +170,11 @@ class StepXrefCommand(Command):
                 index = build_field_hash_index(nodes)
                 all_locations = _locations_for_hash(nodes, index, target_hash)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
-                total_count = len(all_locations)
+                total = len(all_locations)
                 page = all_locations[pagination.offset : pagination.offset + pagination.limit]
                 data = {
                     "locations": page,
-                    "total_count": total_count,
+                    "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,
                 }

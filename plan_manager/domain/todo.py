@@ -43,10 +43,14 @@ class TodoItem(DataclassEntity):
     ENTITY_ID_FIELD = "todo_uuid"
     TABLE_NAME = "todo_item"
     HARD_DELETE_REFERENCE_CHECKS = (
-        ReferenceCheck("todo_link", "from_todo_uuid", "todo_uuid", live_column="deleted_at"),
-        ReferenceCheck("todo_link", "to_todo_uuid", "todo_uuid", live_column="deleted_at"),
-        ReferenceCheck("execution_attempt", "todo_uuid", "todo_uuid", live_column="deleted_at"),
-        ReferenceCheck("bug_fix_propagation", "linked_todo_uuid", "todo_uuid", live_column="deleted_at"),
+        # source_column is "uuid", not the dataclass field "todo_uuid": find_entity_reference_counts
+        # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
+        # keys are the raw todo_item DB columns (PK column is literally "uuid") — not the dataclass's
+        # ENTITY_ID_FIELD name. A source_column of "todo_uuid" here is a KeyError (bug 113a7888).
+        ReferenceCheck("todo_link", "from_todo_uuid", "uuid", live_column="deleted_at"),
+        ReferenceCheck("todo_link", "to_todo_uuid", "uuid", live_column="deleted_at"),
+        ReferenceCheck("execution_attempt", "todo_uuid", "uuid", live_column="deleted_at"),
+        ReferenceCheck("bug_fix_propagation", "linked_todo_uuid", "uuid", live_column="deleted_at"),
     )
 
     todo_uuid: uuid.UUID

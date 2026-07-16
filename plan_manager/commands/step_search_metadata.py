@@ -85,16 +85,20 @@ def get_step_search_metadata(cls: type) -> dict[str, Any]:
         },
         "return_value": {
             "success": {
-                "description": "A bounded page of step-content search matches, plus total_count.",
+                "description": "A bounded page of step-content search matches, plus total/limit/offset.",
                 "data": {
                     "matches": "List of match entries; each has path, field, excerpt.",
-                    "total_count": "Total number of matches found across the requested scope, before pagination.",
+                    "total": "Total number of matches found across the requested scope, before pagination.",
+                    "limit": "The applied (validated or defaulted) limit.",
+                    "offset": "The applied (validated or defaulted) offset.",
                 },
                 "example": {
                     "matches": [
                         {"path": "G-002/T-002/A-001", "field": "prompt", "excerpt": "...needle..."},
                     ],
-                    "total_count": 1,
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
@@ -150,6 +154,6 @@ def get_step_search_metadata(cls: type) -> dict[str, Any]:
             "Use step_search before step_get when the exact step path is unknown.",
             "step_search never mutates plan state; safe to call at any plan or cascade status.",
             "Prefer scope='branch' with all three step ids to narrow a search once the branch is known.",
-            "Compare offset+limit against total_count to detect additional pages.",
+            "Compare offset+limit against total to detect additional pages.",
         ],
     }

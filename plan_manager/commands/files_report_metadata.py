@@ -33,9 +33,10 @@ def get_files_report_metadata(cls: type) -> dict[str, Any]:
             "writers of the same file have no directed dependency path "
             "between them. Output is paginated per UniformPagination "
             "(C-001): each page carries its file entries alongside "
-            "total_count, the count of matching file entries before "
-            "pagination. This is a read-only command: it never mutates "
-            "the plan and performs no admission or cascade checks."
+            "total, limit, and offset, where total is the count of "
+            "matching file entries before pagination. This is a "
+            "read-only command: it never mutates the plan and performs "
+            "no admission or cascade checks."
         ),
         "parameters": {
             "plan": {
@@ -69,7 +70,9 @@ def get_files_report_metadata(cls: type) -> dict[str, Any]:
                         "list of {step, priority, operation} dicts sorted ascending "
                         "by priority."
                     ),
-                    "total_count": "Total count of matching file entries before pagination.",
+                    "total": "Total count of matching file entries before pagination.",
+                    "limit": "The applied (validated or defaulted) limit.",
+                    "offset": "The applied (validated or defaulted) offset.",
                 },
                 "example": {
                     "files": [
@@ -90,7 +93,9 @@ def get_files_report_metadata(cls: type) -> dict[str, Any]:
                             "ordering_conflict": True,
                         }
                     ],
-                    "total_count": 1,
+                    "total": 1,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
@@ -137,6 +142,6 @@ def get_files_report_metadata(cls: type) -> dict[str, Any]:
         "best_practices": [
             "Use scope to restrict the report to one global step or tactical step branch instead of paging through the whole plan.",
             "ordering_conflict flags a file whenever two writers of it have no directed dependency path between them; add an explicit depends_on edge (or a same-file priority chain under one parent) to resolve it.",
-            "total_count reflects the number of distinct target_file entries before pagination, not the page size — use it to detect additional pages.",
+            "total reflects the number of distinct target_file entries before pagination, not the page size — use it to detect additional pages.",
         ],
     }

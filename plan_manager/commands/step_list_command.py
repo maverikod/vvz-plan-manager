@@ -141,10 +141,15 @@ class StepListCommand(Command):
                     if _matches_filters(entry, level, parent_uuid_filter, status, target_file):
                         entries.append(entry)
                 entries.sort(key=lambda entry: (entry["level"], entry["path"]))
-                total_count = len(entries)
+                total = len(entries)
                 page = entries[pagination.offset : pagination.offset + pagination.limit]
                 page = [_project(entry, fields) for entry in page]
-                return SuccessResult(data={"steps": page, "total_count": total_count})
+                return SuccessResult(data={
+                    "steps": page,
+                    "total": total,
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                })
         except Exception as exc:
             return map_exception(exc)
 

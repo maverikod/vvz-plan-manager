@@ -70,7 +70,9 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
                 "description": "A page of the plan's steps as a flat list with full fields, plus total count.",
                 "data": {
                     "steps": "List of step entries with full fields (uuid, step_id, slug, level, project_id, status, parent_path, parent_uuid, depends_on, concepts, path, artifact_path), optionally projected to requested fields.",
-                    "total_count": "Count of the full step list before pagination.",
+                    "total": "Count of the full step list before pagination.",
+                    "limit": "The applied (validated or defaulted) limit.",
+                    "offset": "The applied (validated or defaulted) offset.",
                 },
                 "example": {
                     "steps": [
@@ -103,7 +105,9 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
                             "concepts": [],
                         },
                     ],
-                    "total_count": 2,
+                    "total": 2,
+                    "limit": 50,
+                    "offset": 0,
                 },
             },
             "error": {
@@ -152,6 +156,6 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
             "Use target_file to find all steps that touch or reference a given file.",
             "Combine level, parent, and status filters to efficiently discover relevant steps.",
             "This command never mutates state; it is safe to call at any time and any status.",
-            "Compare offset + limit against total_count to detect additional pages.",
+            "Compare offset + limit against total to detect additional pages.",
         ],
     }
