@@ -108,9 +108,14 @@ def get_review_result(conn: psycopg.Connection, review_uuid: uuid.UUID) -> Revie
 def list_review_results(
     conn: psycopg.Connection, *, reviewed_attempt_uuid: uuid.UUID | None = None,
     status: str | None = None, include_deleted: bool = False,
+    plan_uuid: uuid.UUID | None = None,
 ) -> list[ReviewResult]:
     """List review results with optional filtering by reviewed_attempt_uuid and/or status.
 
+    When plan_uuid is given, only review results whose reviewed execution attempt
+    belongs to that plan match (semi-join on execution_attempt.plan_uuid); rows with
+    reviewed_attempt_uuid NULL (e.g. revision reviews) and rows whose attempt belongs
+    to another plan are excluded.
     Excludes soft-deleted rows (deleted_at IS NOT NULL) unless include_deleted=True.
     Results ordered by created_at ASC.
     """
@@ -120,6 +125,13 @@ def list_review_results(
     if reviewed_attempt_uuid is not None:
         conditions.append("reviewed_attempt_uuid = %s")
         params.append(reviewed_attempt_uuid)
+
+    if plan_uuid is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM execution_attempt ea "
+            "WHERE ea.uuid = review_result.reviewed_attempt_uuid AND ea.plan_uuid = %s)"
+        )
+        params.append(plan_uuid)
 
     if status is not None:
         conditions.append("status = %s")

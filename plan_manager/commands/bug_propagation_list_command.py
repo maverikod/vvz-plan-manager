@@ -43,7 +43,17 @@ class BugPropagationListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID). Scopes the listing: only propagations "
+                        "whose parent bug is anchored to the resolved plan are returned "
+                        "(propagation -> bug_fix -> bug_report.source_plan_uuid); propagations of "
+                        "bugs with a NULL or foreign source_plan_uuid are excluded. The "
+                        "linked_plan_uuid column is the propagation TARGET plan and is NOT the "
+                        "scope column."
+                    ),
+                },
                 "bug_fix_id": {"type": "string", "description": "Optional UUID filter: only propagations for this bug fix."},
                 "impact_id": {"type": "string", "description": "Optional UUID filter: only propagations for this impact."},
                 "status": {"type": "string", "description": _STATUS_DESCRIPTION, "enum": _STATUS_VALUES},
@@ -58,6 +68,18 @@ class BugPropagationListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID). Scopes the listing: only propagations "
+                    "whose parent bug is anchored to the resolved plan are returned "
+                    "(propagation -> bug_fix -> bug_report.source_plan_uuid); propagations of "
+                    "bugs with a NULL or foreign source_plan_uuid are excluded. The "
+                    "linked_plan_uuid column is the propagation TARGET plan and is NOT the "
+                    "scope column."
+                ),
+                "type": "string",
+                "required": True,
+            },
             "bug_fix_id": {"description": "Optional UUID filter: only propagations for this bug fix.", "type": "string", "required": False},
             "impact_id": {"description": "Optional UUID filter: only propagations for this impact.", "type": "string", "required": False},
             "status": {"description": _STATUS_DESCRIPTION, "type": "string", "required": False, "enum": _STATUS_VALUES},
@@ -70,6 +92,9 @@ class BugPropagationListCommand(Command):
             {"success": {"description": "A page of bug fix propagation record payloads, ordered oldest first, with every UUID field rendered as a string, plus total/limit/offset."}},
             [{"description": "List propagations for a bug fix.", "command": {"plan": "plan_manager", "bug_fix_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}}],
             best_practices=[
+                "The required plan parameter scopes the listing by the parent bug's anchor (propagation -> bug_fix -> bug_report.source_plan_uuid); NULL and foreign plan anchors are excluded. linked_plan_uuid (the propagation target) is never used for this scope.",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "bug_fix_id and impact_id filters intersect (AND) with the plan scope; they never widen it beyond the plan's own bugs.",
                 "Filter by bug_fix_id to see every downstream action required by one fix.",
                 "Filter by impact_id to see all propagation actions for a single impact target.",
                 "Use status to isolate propagations that are still pending or blocked.",
@@ -91,7 +116,7 @@ class BugPropagationListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan)
                 if status is not None and status not in PROPAGATION_STATUSES:
                     raise DomainCommandError(
                         "INVALID_FILTER",
@@ -104,6 +129,7 @@ class BugPropagationListCommand(Command):
                     impact_uuid=uuid.UUID(impact_id) if impact_id is not None else None,
                     status=status,
                     include_deleted=include_deleted,
+                    source_plan_uuid=plan_record.uuid,
                 )
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]

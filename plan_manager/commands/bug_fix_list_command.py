@@ -49,8 +49,16 @@ class BugFixListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                **BASE_PARAMETERS,
-                "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
+                        "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
+                        "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
+                        "command-anchored bugs) is listable under any valid plan."
+                    ),
+                },
+                "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL)."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
@@ -62,7 +70,17 @@ class BugFixListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
-            "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed.", "type": "string", "required": True},
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
+                    "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
+                    "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
+                    "command-anchored bugs) is listable under any valid plan."
+                ),
+                "type": "string",
+                "required": True,
+            },
+            "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL).", "type": "string", "required": True},
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
         }
@@ -71,6 +89,20 @@ class BugFixListCommand(Command):
             params,
             {"success": {"description": "A page of BugFix (C-024) payloads for the bug, plus total/limit/offset."}},
             [{"description": "List unverified fix attempts for a bug.", "command": {"plan": "plan_manager", "bug": "11111111-1111-1111-1111-111111111111", "unverified_fixes": True}}],
+            error_cases={
+                "BUG_NOT_FOUND": {
+                    "description": "The supplied bug identifier does not resolve to an existing BugReport record, OR the bug's source_plan_uuid is set and differs from the resolved plan (plan/bug consistency guard). Bugs with source_plan_uuid NULL are accepted under any valid plan.",
+                    "message": "bug not found: {bug}",
+                    "solution": "Call bug_list for the plan and retry with a bug uuid anchored to that plan (or with a plan-unanchored bug).",
+                },
+            },
+            best_practices=[
+                "The required plan parameter is a consistency guard: a bug whose source_plan_uuid is set to a different plan raises BUG_NOT_FOUND instead of listing foreign fixes.",
+                "Bugs with source_plan_uuid NULL (e.g. command-anchored bugs) are listable under any valid plan; the plan does not further filter their fixes.",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "Set unverified_fixes=true to see only fix attempts not yet verified.",
+                "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
+            ],
         )
 
     async def execute(
@@ -87,11 +119,16 @@ class BugFixListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan)
                 bug_uuid = uuid.UUID(bug)
                 bug_record = get_bug(conn, bug_uuid)
                 if bug_record is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug}")
+                if bug_record.source_plan_uuid is not None and bug_record.source_plan_uuid != plan_record.uuid:
+                    raise DomainCommandError(
+                        "BUG_NOT_FOUND",
+                        f"bug not found: {bug} (anchored to plan {bug_record.source_plan_uuid}, not the resolved plan {plan_record.uuid})",
+                    )
                 raw_params = {
                     "status": status,
                     "unverified_fixes": unverified_fixes,

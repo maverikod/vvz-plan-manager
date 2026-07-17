@@ -35,7 +35,16 @@ class ReviewResultListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID). Scopes the listing: only review results "
+                        "whose reviewed execution attempt belongs to the resolved plan "
+                        "(execution_attempt.plan_uuid) are returned; review results with no "
+                        "reviewed attempt (reviewed_attempt_uuid NULL, e.g. revision reviews) or "
+                        "whose attempt belongs to another plan are excluded."
+                    ),
+                },
                 "reviewed_attempt_uuid": {
                     "type": "string",
                     "description": "Restrict results to review results of this execution attempt.",
@@ -63,6 +72,17 @@ class ReviewResultListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID). Scopes the listing: only review results "
+                    "whose reviewed execution attempt belongs to the resolved plan "
+                    "(execution_attempt.plan_uuid) are returned; review results with no "
+                    "reviewed attempt (reviewed_attempt_uuid NULL, e.g. revision reviews) or "
+                    "whose attempt belongs to another plan are excluded."
+                ),
+                "type": "string",
+                "required": True,
+            },
             "reviewed_attempt_uuid": {"description": "Restrict results to review results of this execution attempt.", "type": "string", "required": False},
             "status": {
                 "description": (
@@ -89,6 +109,8 @@ class ReviewResultListCommand(Command):
                 },
             }],
             best_practices=[
+                "The required plan parameter scopes the listing via the reviewed execution attempt: only review results whose attempt has execution_attempt.plan_uuid equal to the resolved plan are returned; attempt-less (reviewed_attempt_uuid NULL) and foreign-plan review results are excluded.",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Omit reviewed_attempt_uuid and status to list every review result for the plan; add either filter to narrow the scope.",
                 "include_deleted defaults to false; set it true only when auditing soft-deleted review history.",
                 "Results are ordered oldest first (created_at ASC); reverse client-side for a newest-first view.",
@@ -109,7 +131,7 @@ class ReviewResultListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan)
                 if status is not None and status not in REVIEW_STATUSES:
                     raise DomainCommandError(
                         "INVALID_FILTER",
@@ -121,6 +143,7 @@ class ReviewResultListCommand(Command):
                     reviewed_attempt_uuid=uuid.UUID(reviewed_attempt_uuid) if reviewed_attempt_uuid else None,
                     status=status,
                     include_deleted=include_deleted,
+                    plan_uuid=plan_record.uuid,
                 )
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]

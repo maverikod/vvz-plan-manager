@@ -35,7 +35,16 @@ class ProjectDependencyListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID). Scopes the listing: only dependency "
+                        "edges where AT LEAST ONE endpoint (dependent_project_id or "
+                        "depends_on_project_id) is among the resolved plan's bound project "
+                        "uuids (plan_project bindings) are returned. A plan with zero bound "
+                        "projects yields an empty page."
+                    ),
+                },
                 "dependent_project_id": {"type": "string", "description": "Filter: only edges where this project is the dependent."},
                 "depends_on_project_id": {"type": "string", "description": "Filter: only edges where this project is depended on."},
                 "active_only": {"type": "boolean", "description": "When true, only active edges are returned.", "default": False},
@@ -49,6 +58,17 @@ class ProjectDependencyListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID). Scopes the listing: only dependency "
+                    "edges where AT LEAST ONE endpoint (dependent_project_id or "
+                    "depends_on_project_id) is among the resolved plan's bound project "
+                    "uuids (plan_project bindings) are returned. A plan with zero bound "
+                    "projects yields an empty page."
+                ),
+                "type": "string",
+                "required": True,
+            },
             "dependent_project_id": {"description": "Filter: only edges where this project is the dependent.", "type": "string", "required": False},
             "depends_on_project_id": {"description": "Filter: only edges where this project is depended on.", "type": "string", "required": False},
             "active_only": {"description": "When true, only active edges are returned; defaults to false.", "type": "boolean", "required": False},
@@ -67,6 +87,9 @@ class ProjectDependencyListCommand(Command):
                 },
             }],
             best_practices=[
+                "The required plan parameter scopes the listing to edges touching the plan's bound projects (plan_project bindings): an edge matches when at least one endpoint is a bound project uuid. A plan with zero bound projects always yields an empty page; bind projects with plan_project_attach first.",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "Explicit dependent_project_id / depends_on_project_id filters intersect (AND) with the plan scope; they never widen it beyond the plan's bound projects.",
                 "dependent_project_id and depends_on_project_id filters combine with AND when both are supplied.",
                 "Soft-deleted edges are always excluded from results, regardless of active_only.",
                 "total in the response is the full filtered count before pagination, not the returned page size.",
@@ -89,11 +112,13 @@ class ProjectDependencyListCommand(Command):
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
+                bound_project_uuids = [uuid.UUID(pid) for pid in p.project_ids]
                 records = list_project_dependencies(
                     conn,
                     dependent_project_id=validate_uuid(dependent_project_id) if dependent_project_id else None,
                     depends_on_project_id=validate_uuid(depends_on_project_id) if depends_on_project_id else None,
                     active_only=active_only,
+                    project_ids=bound_project_uuids,
                 )
                 total = len(records)
                 page = records[pagination.offset: pagination.offset + pagination.limit]

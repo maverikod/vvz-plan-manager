@@ -38,6 +38,7 @@ def _fake_db():
 class _DummyPlan:
     uuid = uuid.uuid4()
     context_budget = 1000
+    project_ids: list[str] = [GOOD_UUID]
 
 
 def _stub_plan(conn, plan):

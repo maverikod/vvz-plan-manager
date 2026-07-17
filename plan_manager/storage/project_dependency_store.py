@@ -127,9 +127,23 @@ def list_project_dependencies(
     depends_on_project_id: uuid.UUID | None = None,
     active_only: bool = False,
     include_deleted: bool = False,
+    project_ids: list[uuid.UUID] | None = None,
 ) -> list[ProjectDependency]:
+    """List project dependency edges with optional filters.
+
+    When project_ids is given, only edges where AT LEAST ONE endpoint
+    (dependent_project_id OR depends_on_project_id) is among the given project uuids
+    match; an empty project_ids list matches nothing and returns [] without querying.
+    Explicit dependent/depends-on filters intersect (AND) with the project_ids scope.
+    """
+    if project_ids is not None and not project_ids:
+        return []
     clauses: list[str] = []
     params: list[Any] = []
+    if project_ids is not None:
+        clauses.append("(dependent_project_id = ANY(%s) OR depends_on_project_id = ANY(%s))")
+        params.append(project_ids)
+        params.append(project_ids)
     if dependent_project_id is not None:
         clauses.append("dependent_project_id = %s")
         params.append(dependent_project_id)
