@@ -35,7 +35,10 @@ class EscalationListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": "Plan identifier (name or UUID). Scopes the listing: only escalations whose anchor_plan_uuid equals the resolved plan are returned; escalations anchored to other plans or with no plan anchor (anchor_plan_uuid NULL) are excluded. No transitive matching is performed.",
+                },
                 **filter_schema_properties(["status"], enum_overrides={"status": _STATUS_ENUM}),
                 "anchor_ref_id": {"type": "string", "description": "UUID of the anchor_ref_id to filter escalations by."},
                 "include_deleted": {"type": "boolean", "description": "When true, include soft-deleted escalations.", "default": False},
@@ -49,6 +52,11 @@ class EscalationListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": "Plan identifier (name or UUID). Scopes the listing: only escalations whose anchor_plan_uuid equals the resolved plan are returned; escalations anchored to other plans or with no plan anchor (anchor_plan_uuid NULL) are excluded. No transitive matching is performed.",
+                "type": "string",
+                "required": True,
+            },
             **filter_metadata_params(["status"], enum_overrides={"status": _STATUS_ENUM}),
             "anchor_ref_id": {"description": "UUID of the anchor_ref_id to filter escalations by.", "type": "string", "required": False},
             "include_deleted": {"description": "When true, include soft-deleted escalations.", "type": "boolean", "required": False, "default": False},
@@ -63,6 +71,8 @@ class EscalationListCommand(Command):
                 "command": {"plan": "plan_manager", "status": "open"},
             }],
             best_practices=[
+                "The required plan parameter scopes the listing by direct anchor: only escalations with anchor_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via anchor_ref_id or other anchor fields).",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Use status='open' to find escalations awaiting a decision.",
                 "anchor_ref_id filters by the escalation's anchor_ref_id column, not by escalation_uuid.",
                 "Set include_deleted=True to also see soft-deleted escalations; the default excludes them.",
@@ -82,7 +92,7 @@ class EscalationListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan)
                 raw_params = {"status": status, "limit": limit, "offset": offset}
                 filters = parse_filters(raw_params, ["status"], enums={"status": ESCALATION_STATUSES})
                 pagination = parse_pagination(raw_params)
@@ -91,6 +101,7 @@ class EscalationListCommand(Command):
                     conn,
                     status=filters.get("status"),
                     anchor_ref_id=anchor_uuid,
+                    anchor_plan_uuid=plan_record.uuid,
                     include_deleted=include_deleted,
                 )
                 total = len(escalations)

@@ -277,8 +277,10 @@ def get_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID) -> Esca
 
 
 def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
-                     anchor_ref_id: uuid.UUID | None = None, include_deleted: bool = False) -> list[Escalation]:
-    """List escalations with optional filters."""
+                     anchor_ref_id: uuid.UUID | None = None,
+                     anchor_plan_uuid: uuid.UUID | None = None,
+                     include_deleted: bool = False) -> list[Escalation]:
+    """List escalations with optional filters. When anchor_plan_uuid is given, only rows whose anchor_plan_uuid equals it match (NULL and foreign plan anchors are excluded)."""
     # Build the query
     sql_parts = ["SELECT * FROM escalation WHERE 1=1"]
     params: list[Any] = []
@@ -290,6 +292,10 @@ def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
     if anchor_ref_id is not None:
         sql_parts.append("AND anchor_ref_id = %s")
         params.append(anchor_ref_id)
+
+    if anchor_plan_uuid is not None:
+        sql_parts.append("AND anchor_plan_uuid = %s")
+        params.append(anchor_plan_uuid)
 
     if not include_deleted:
         sql_parts.append("AND deleted_at IS NULL")

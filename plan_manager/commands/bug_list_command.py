@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
-from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS, filter_schema_properties, filter_metadata_params, pagination_schema_properties, pagination_metadata_params
+from plan_manager.commands.bug_command_metadata import bug_metadata, filter_schema_properties, filter_metadata_params, pagination_schema_properties, pagination_metadata_params
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import parse_filters, parse_pagination
@@ -47,7 +47,10 @@ class BugListCommand(Command):
         return {
             "type": "object",
             "properties": {
-                **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": "Plan identifier (name or UUID). Scopes the listing: only bugs whose source_plan_uuid equals the resolved plan are returned; bugs anchored to other plans or with no plan anchor (source_plan_uuid NULL) are excluded. No transitive matching is performed.",
+                },
                 **filter_schema_properties(BUG_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
@@ -73,6 +76,8 @@ class BugListCommand(Command):
             {"type": "array", "description": "A page of BugReport payloads plus total/limit/offset."},
             [{"description": "List open bugs owned by alice.", "command": {"plan": "my-plan", "owner": "alice", "active_only": True}}],
             best_practices=[
+                "The required plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields).",
+                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Set active_only=True to exclude closed, rejected, and duplicate bugs.",
                 "The project filter matches source_project_id only, not other anchor fields.",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
@@ -102,7 +107,7 @@ class BugListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan)
                 raw_params = {
                     "project": project,
                     "file": file,
@@ -131,6 +136,7 @@ class BugListCommand(Command):
                     severity=filters.get("severity"),
                     owner=filters.get("owner"),
                     source_project_id=source_project_uuid,
+                    source_plan_uuid=plan_record.uuid,
                     include_deleted=False,
                 )
                 file_value = filters.get("file")

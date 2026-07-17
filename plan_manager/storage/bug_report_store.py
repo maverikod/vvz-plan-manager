@@ -120,9 +120,10 @@ def list_bugs(
     severity: str | None = None,
     owner: str | None = None,
     source_project_id: uuid.UUID | None = None,
+    source_plan_uuid: uuid.UUID | None = None,
     include_deleted: bool = False,
 ) -> list[BugReport]:
-    """List bug reports with optional filtering; exclude soft-deleted rows unless include_deleted is True."""
+    """List bug reports with optional filtering; exclude soft-deleted rows unless include_deleted is True. When source_plan_uuid is given, only rows whose source_plan_uuid equals it match (NULL and foreign plan anchors are excluded)."""
     where_clauses = []
     params = []
 
@@ -141,6 +142,9 @@ def list_bugs(
     if source_project_id is not None:
         where_clauses.append("source_project_id = %s")
         params.append(source_project_id)
+    if source_plan_uuid is not None:
+        where_clauses.append("source_plan_uuid = %s")
+        params.append(source_plan_uuid)
 
     if not include_deleted:
         where_clauses.append("deleted_at IS NULL")
