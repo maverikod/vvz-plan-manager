@@ -231,7 +231,7 @@ def crud_matrix() -> dict[str, Any]:
             "step": {"create": "step_create", "read": "step_get/step_tree", "update": "step_update/step_move; status via step_set_status/step_transition", "delete": "step_delete (also purges the step's step_runtime row via ON DELETE CASCADE)"},
             "concept": {"create": "concept_add", "read": "concept_get/concept_list", "update": "concept_update (concept_id is immutable; no rename)", "delete": "concept_remove (does not clean up relations referencing it; dangling relation endpoints are possible)"},
             "relation": {"create": "relation_add", "read": "relation_list", "update": "relation_update (changes a relation's type; endpoints remain fixed — remove + add to change an endpoint)", "delete": "relation_remove"},
-            "paragraph": {"create": "via hrs_import", "read": "para_list/para_get", "update": "para_label_assign/para_mark_non_binding (direction=wrap marks a paragraph non-binding; direction=unwrap restores it — a reversible round-trip)", "delete": "none exposed; wrap keeps the row but hides it from para_list, and unwrap restores it"},
+            "paragraph": {"create": "hrs_import (wholesale replace) / para_insert (one binding paragraph at a binding-order position; label supplied or auto-assigned; admission-guarded and snapshot-recorded)", "read": "para_list/para_get", "update": "para_update (replaces one paragraph's text in place by label, preserving uuid/label/position); para_label_assign/para_mark_non_binding (direction=wrap marks a paragraph non-binding; direction=unwrap restores it — a reversible round-trip)", "delete": "para_delete (removes one binding paragraph by label, shifting later rows up; recorded as a tombstone so cascade abort restores it); wrap keeps the row but hides it from para_list, and unwrap restores it"},
             "todo": {"create": "todo_create", "read": "todo_get/todo_list", "update": "todo_update (not status); todo_resolve/todo_close for terminal status; todo_close(execution_result=...) persists the outcome while closing in one action", "delete": "todo_delete (soft by default: recoverable, hidden from listings; hard=true irreversible and cascade-removes the item's todo_link rows; both modes gated by the inbound-reference integrity check - live anchored comments, execution attempts, escalations, or bug-fix propagations refuse with DELETE_BLOCKED; dry_run previews references)"},
             "todo_link": {"create": "todo_link_add", "read": "via todo_get", "update": "none", "delete": "todo_link_remove (soft, idempotent)"},
             "comment": {"create": "comment_add", "read": "comment_get/comment_list", "update": "none (comments are immutable; comment_supersede appends a new record; comment_resolve toggles resolved)", "delete": "comment_delete (soft by default: recoverable, hidden from listings; hard=true irreversible; both modes gated by the inbound-reference integrity check - a live superseding comment refuses with DELETE_BLOCKED; dry_run previews references)"},
@@ -262,7 +262,10 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "plan_project_set_primary", "plan_project_clear_primary",
     ],
     "transfer": ["export_upload_save", "export_read", "export_archive", "hrs_import", "hrs_export", "export_cleanup"],
-    "paragraph": ["para_list", "para_get", "para_label_assign", "para_mark_non_binding"],
+    "paragraph": [
+        "para_list", "para_get", "para_label_assign", "para_mark_non_binding",
+        "para_insert", "para_update", "para_delete",
+    ],
     "concept_relation": [
         "concept_get", "concept_list", "concept_add", "concept_update", "concept_remove",
         "relation_list", "relation_add", "relation_remove", "relation_update", "concept_coverage",

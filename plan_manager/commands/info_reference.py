@@ -444,7 +444,7 @@ def planning_standards_reference() -> dict[str, Any]:
             "top_down_change": "All normative changes flow top-down through the cascade discipline.",
             "zero_trust": "Verification and authoring passes re-read source artifacts in full before each check; memory of previous reads is stale.",
             "computed_views_only": "Coverage matrices and traceability views are computed on demand and never written as files.",
-            "human_owned_hrs": "source_spec.md is human-owned prose; procedures may label or mark non-binding text but do not rewrite binding content.",
+            "human_owned_hrs": "source_spec.md is human-owned prose; procedures may label or mark non-binding text but never rewrite binding content on their own initiative. Targeted HRS text editing exists as paragraph-granular commands (para_insert / para_update / para_delete: insert, replace, or delete one binding paragraph addressed by label, admission-guarded and snapshot-recorded) and executes only human-decided changes.",
         },
         "artifact_levels": {
             "HRS": {

@@ -1,10 +1,12 @@
 """Storage of HRS binding paragraphs (MRS concept C-002).
 
-Wholesale replace/read operations against the paragraph table. The
-paragraph set of a plan is always replaced wholesale from a freshly
-parsed document: delete_paragraphs then insert_paragraphs. The server
-never authors or rewrites paragraph prose; these functions only persist
-already-labeled Paragraph objects.
+Wholesale replace/read operations against the paragraph table (the
+paragraph set of a plan is replaced wholesale from a freshly parsed
+document: delete_paragraphs then insert_paragraphs) plus targeted
+single-row primitives (insert_paragraph_at, update_paragraph_text,
+delete_paragraph, shift_positions) used by the paragraph-granular
+editing commands. The server never authors or rewrites paragraph prose
+on its own; these functions only persist already-validated content.
 """
 import uuid
 from dataclasses import dataclass
@@ -116,6 +118,118 @@ def list_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[Stor
         )
         for row in rows
     ]
+
+
+def list_all_paragraphs(
+    conn: psycopg.Connection, plan_uuid: uuid.UUID
+) -> list[StoredParagraph]:
+    """List every stored paragraph row of a plan, binding AND non-binding.
+
+    Unlike list_paragraphs (which surfaces only binding rows), this returns
+    the full physical row set in position order. The targeted-editing
+    operations need it because the position column is a single sequence over
+    ALL rows: a wrapped (non-binding) row keeps its position, so position
+    shifts on insert/delete must move non-binding rows too, and label
+    uniqueness must be checked against labels held by wrapped rows (an
+    unwrap restores them into the binding set).
+
+    Args:
+        conn: An open psycopg 3 database connection.
+        plan_uuid: The uuid of the owning plan.
+
+    Returns:
+        A list of StoredParagraph objects, one per stored row for this
+        plan, ordered by the position column ascending.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT uuid, plan_uuid, label, text, position, binding "
+            "FROM paragraph WHERE plan_uuid = %s ORDER BY position",
+            (plan_uuid,),
+        )
+        rows = cur.fetchall()
+    return [
+        StoredParagraph(
+            uuid=row[0],
+            plan_uuid=row[1],
+            label=row[2],
+            text=row[3],
+            position=row[4],
+            binding=row[5],
+        )
+        for row in rows
+    ]
+
+
+def insert_paragraph_at(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    label: str,
+    text: str,
+    position: int,
+) -> uuid.UUID:
+    """Insert one new binding paragraph row at an already-vacated position.
+
+    The caller is responsible for shifting existing rows (shift_positions)
+    before the insert so the position is free; this function only writes
+    the row.
+
+    Args:
+        conn: An open psycopg 3 database connection.
+        plan_uuid: The uuid of the owning plan.
+        label: The paragraph's four-character base36 label (never None:
+            only labeled binding paragraphs are inserted this way).
+        text: The paragraph's prose text without any "{xxxx} " prefix.
+        position: The row's position value.
+
+    Returns:
+        The generated paragraph row UUID.
+    """
+    row_uuid = uuid.uuid4()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO paragraph (uuid, plan_uuid, label, text, position, binding) "
+            "VALUES (%s, %s, %s, %s, %s, TRUE)",
+            (row_uuid, plan_uuid, label, text, position),
+        )
+    return row_uuid
+
+
+def update_paragraph_text(
+    conn: psycopg.Connection, row_uuid: uuid.UUID, text: str
+) -> None:
+    """Replace the text of one paragraph row in place (uuid, label, position, binding kept)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE paragraph SET text = %s WHERE uuid = %s",
+            (text, row_uuid),
+        )
+
+
+def delete_paragraph(conn: psycopg.Connection, row_uuid: uuid.UUID) -> None:
+    """Delete one paragraph row by its uuid."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM paragraph WHERE uuid = %s", (row_uuid,))
+
+
+def shift_positions(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    start_position: int,
+    delta: int,
+) -> None:
+    """Shift the position of every row (any binding flag) at or after start_position by delta.
+
+    Non-binding rows shift together with binding ones: the position column
+    is one sequence over all rows, and a wrapped row must keep its place in
+    that sequence so a later unwrap restores it where it belongs.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE paragraph SET position = position + %s "
+            "WHERE plan_uuid = %s AND position >= %s",
+            (delta, plan_uuid, start_position),
+        )
 
 
 def get_paragraph_at_position(
