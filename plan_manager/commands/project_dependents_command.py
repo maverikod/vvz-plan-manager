@@ -31,10 +31,18 @@ class ProjectDependentsCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID), optional. project_dependency edges carry "
+                        "no plan column, so a supplied plan is only checked for existence "
+                        "(PLAN_NOT_FOUND if it does not resolve); it never further filters the "
+                        "reverse-dependency result. When omitted, no existence check is performed."
+                    ),
+                },
                 "project_id": {"type": "string", "description": "External analysis-server UUID of the project whose dependents are requested (C-032)."},
             },
-            "required": ["plan", "project_id"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
@@ -42,6 +50,16 @@ class ProjectDependentsCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID), optional. project_dependency edges carry "
+                    "no plan column, so a supplied plan is only checked for existence "
+                    "(PLAN_NOT_FOUND if it does not resolve); it never further filters the "
+                    "reverse-dependency result. When omitted, no existence check is performed."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "project_id": {"description": "External analysis-server UUID of the project whose dependents are requested (C-032).", "type": "string", "required": True},
         }
         return project_dependency_metadata(
@@ -59,18 +77,20 @@ class ProjectDependentsCommand(Command):
                 "Direct reverse lookup only (one hop); use project_dependency_discover for the transitive impact set.",
                 "Only active, non-deleted edges are returned.",
                 "Returns full edge payloads (dependency_type, confidence, version_constraint), unlike discover's bare id list.",
+                "plan is optional and, when supplied, is checked only for existence (project_dependency has no plan column to filter by); a nonexistent plan still raises PLAN_NOT_FOUND.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         project_id: str,
+        plan: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                p = resolve_plan(conn, plan)
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 records = list_reverse_dependents(conn, validate_uuid(project_id))
                 return SuccessResult(data={"reverse_dependents": [r.to_payload() for r in records]})
         except Exception as exc:

@@ -20,12 +20,14 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
 )
 from plan_manager.domain.bug_fix import BUG_FIX_STATUSES, BugFixStatus
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_store import list_bug_fixes
 from plan_manager.storage.bug_report_store import get_bug
+from plan_manager.storage.project_scope import resolve_project_plan_uuids
 
 
-FILTER_FIELDS = ["status", "unverified_fixes", "created_after", "created_before"]
+FILTER_FIELDS = ["status", "unverified_fixes", "created_after", "created_before", "project"]
 
 _FILTER_ENUMS = {"status": BUG_FIX_STATUSES}
 
@@ -52,17 +54,18 @@ class BugFixListCommand(Command):
                 "plan": {
                     "type": "string",
                     "description": (
-                        "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
-                        "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
-                        "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
-                        "command-anchored bugs) is listable under any valid plan."
+                        "Plan identifier (name or UUID), optional. When supplied, enforces plan/bug "
+                        "consistency: when the bug's source_plan_uuid is set, it must equal the "
+                        "resolved plan, otherwise BUG_NOT_FOUND is raised; a bug with "
+                        "source_plan_uuid NULL (e.g. command-anchored bugs) is listable under any "
+                        "supplied plan. When omitted, no plan/bug consistency check is performed."
                     ),
                 },
-                "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL)."},
+                "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL)."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
-            "required": ["plan", "bug"],
+            "required": ["bug"],
             "additionalProperties": False,
         }
 
@@ -72,15 +75,16 @@ class BugFixListCommand(Command):
             **BASE_PARAMETERS,
             "plan": {
                 "description": (
-                    "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
-                    "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
-                    "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
-                    "command-anchored bugs) is listable under any valid plan."
+                    "Plan identifier (name or UUID), optional. When supplied, enforces plan/bug "
+                    "consistency: when the bug's source_plan_uuid is set, it must equal the "
+                    "resolved plan, otherwise BUG_NOT_FOUND is raised; a bug with "
+                    "source_plan_uuid NULL (e.g. command-anchored bugs) is listable under any "
+                    "supplied plan. When omitted, no plan/bug consistency check is performed."
                 ),
                 "type": "string",
-                "required": True,
+                "required": False,
             },
-            "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL).", "type": "string", "required": True},
+            "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL).", "type": "string", "required": True},
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
         }
@@ -97,9 +101,10 @@ class BugFixListCommand(Command):
                 },
             },
             best_practices=[
-                "The required plan parameter is a consistency guard: a bug whose source_plan_uuid is set to a different plan raises BUG_NOT_FOUND instead of listing foreign fixes.",
-                "Bugs with source_plan_uuid NULL (e.g. command-anchored bugs) are listable under any valid plan; the plan does not further filter their fixes.",
-                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The optional plan parameter is a consistency guard: when supplied, a bug whose source_plan_uuid is set to a different plan raises BUG_NOT_FOUND instead of listing foreign fixes. Omit it to skip the guard entirely.",
+                "Bugs with source_plan_uuid NULL (e.g. command-anchored bugs) are listable under any supplied plan; the plan does not further filter their fixes.",
+                "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The project filter matches transitively: a fix whose source_project_id equals the filter value matches directly, and a fix with source_project_id NULL still matches when the owning bug's source_plan_uuid is bound to that project (plan.project_ids).",
                 "Set unverified_fixes=true to see only fix attempts not yet verified.",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
             ],
@@ -107,24 +112,29 @@ class BugFixListCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         bug: str,
+        plan: str | None = None,
         status: str | None = None,
         unverified_fixes: bool | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
+        project: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                plan_record = resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = uuid.UUID(bug)
                 bug_record = get_bug(conn, bug_uuid)
                 if bug_record is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug}")
-                if bug_record.source_plan_uuid is not None and bug_record.source_plan_uuid != plan_record.uuid:
+                if (
+                    plan_record is not None
+                    and bug_record.source_plan_uuid is not None
+                    and bug_record.source_plan_uuid != plan_record.uuid
+                ):
                     raise DomainCommandError(
                         "BUG_NOT_FOUND",
                         f"bug not found: {bug} (anchored to plan {bug_record.source_plan_uuid}, not the resolved plan {plan_record.uuid})",
@@ -134,6 +144,7 @@ class BugFixListCommand(Command):
                     "unverified_fixes": unverified_fixes,
                     "created_after": created_after,
                     "created_before": created_before,
+                    "project": project,
                     "limit": limit,
                     "offset": offset,
                 }
@@ -142,6 +153,15 @@ class BugFixListCommand(Command):
                 records = list_bug_fixes(conn, bug_uuid=bug_uuid, status=filters.get("status"))
                 if filters.get("unverified_fixes"):
                     records = [r for r in records if r.status != "verified"]
+                project_value = filters.get("project")
+                if project_value is not None:
+                    project_uuid = validate_uuid(project_value)
+                    bound_plan_uuids = resolve_project_plan_uuids(conn, project_uuid)
+                    records = [
+                        r for r in records
+                        if (r.source_project_id is not None and r.source_project_id == project_uuid)
+                        or (bug_record.source_plan_uuid is not None and bug_record.source_plan_uuid in bound_plan_uuids)
+                    ]
                 created_after_value = filters.get("created_after")
                 if created_after_value is not None:
                     records = [r for r in records if r.created_at > created_after_value]

@@ -122,13 +122,22 @@ def get_bug_fix_propagation(conn: psycopg.Connection, propagation_uuid: uuid.UUI
 def list_bug_fix_propagations(conn: psycopg.Connection, *, bug_fix_uuid: uuid.UUID | None = None,
                               impact_uuid: uuid.UUID | None = None, status: str | None = None,
                               include_deleted: bool = False,
-                              source_plan_uuid: uuid.UUID | None = None) -> list[BugFixPropagation]:
+                              source_plan_uuid: uuid.UUID | None = None,
+                              source_project_id: uuid.UUID | None = None,
+                              project_bound_plan_uuids: list[uuid.UUID] | None = None) -> list[BugFixPropagation]:
     """List bug fix propagations with optional filters.
 
     When source_plan_uuid is given, only propagations whose parent bug is anchored to
     that plan match (semi-join propagation -> bug_fix -> bug_report.source_plan_uuid);
     propagations of bugs with a NULL or foreign source_plan_uuid are excluded. The
     linked_plan_uuid column is the propagation TARGET, never this scope column.
+
+    When source_project_id is given, matching is transitive: a propagation whose parent
+    bug's source_project_id equals it matches directly, OR (when project_bound_plan_uuids
+    is a non-empty list of plan uuids bound to that project via plan.project_ids) a
+    propagation whose parent bug's source_plan_uuid is one of those plan uuids also
+    matches, even when the parent bug's own source_project_id is NULL.
+    project_bound_plan_uuids is ignored when source_project_id is None.
     """
     where_clauses = []
     params = []
@@ -143,6 +152,22 @@ def list_bug_fix_propagations(conn: psycopg.Connection, *, bug_fix_uuid: uuid.UU
             "WHERE f.uuid = bug_fix_propagation.bug_fix_uuid AND b.source_plan_uuid = %s)"
         )
         params.append(source_plan_uuid)
+
+    if source_project_id is not None:
+        if project_bound_plan_uuids:
+            where_clauses.append(
+                "EXISTS (SELECT 1 FROM bug_fix f JOIN bug_report b ON b.uuid = f.bug_uuid "
+                "WHERE f.uuid = bug_fix_propagation.bug_fix_uuid "
+                "AND (b.source_project_id = %s OR b.source_plan_uuid = ANY(%s)))"
+            )
+            params.append(source_project_id)
+            params.append(project_bound_plan_uuids)
+        else:
+            where_clauses.append(
+                "EXISTS (SELECT 1 FROM bug_fix f JOIN bug_report b ON b.uuid = f.bug_uuid "
+                "WHERE f.uuid = bug_fix_propagation.bug_fix_uuid AND b.source_project_id = %s)"
+            )
+            params.append(source_project_id)
 
     if impact_uuid is not None:
         where_clauses.append("impact_uuid = %s")

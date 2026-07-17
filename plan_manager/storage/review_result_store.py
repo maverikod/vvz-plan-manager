@@ -109,6 +109,7 @@ def list_review_results(
     conn: psycopg.Connection, *, reviewed_attempt_uuid: uuid.UUID | None = None,
     status: str | None = None, include_deleted: bool = False,
     plan_uuid: uuid.UUID | None = None,
+    project_bound_plan_uuids: list[uuid.UUID] | None = None,
 ) -> list[ReviewResult]:
     """List review results with optional filtering by reviewed_attempt_uuid and/or status.
 
@@ -116,6 +117,15 @@ def list_review_results(
     belongs to that plan match (semi-join on execution_attempt.plan_uuid); rows with
     reviewed_attempt_uuid NULL (e.g. revision reviews) and rows whose attempt belongs
     to another plan are excluded.
+
+    project_bound_plan_uuids implements the project scope: review_result carries no
+    project column of its own (nor does execution_attempt), so project matching is
+    purely transitive via execution_attempt.plan_uuid being one of the given plan
+    uuids (plans bound to the project via plan.project_ids). Pass None (the default)
+    to skip project scoping entirely; pass an empty list to scope by project when
+    zero plans are bound to it (yields no matches, since there is no direct project
+    column to fall back on).
+
     Excludes soft-deleted rows (deleted_at IS NOT NULL) unless include_deleted=True.
     Results ordered by created_at ASC.
     """
@@ -132,6 +142,18 @@ def list_review_results(
             "WHERE ea.uuid = review_result.reviewed_attempt_uuid AND ea.plan_uuid = %s)"
         )
         params.append(plan_uuid)
+
+    if project_bound_plan_uuids is not None:
+        if project_bound_plan_uuids:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM execution_attempt ea "
+                "WHERE ea.uuid = review_result.reviewed_attempt_uuid AND ea.plan_uuid = ANY(%s))"
+            )
+            params.append(project_bound_plan_uuids)
+        else:
+            # project filter active but zero plans are bound to it, and there is no
+            # direct project column to match against: no row can possibly match.
+            conditions.append("1 = 0")
 
     if status is not None:
         conditions.append("status = %s")

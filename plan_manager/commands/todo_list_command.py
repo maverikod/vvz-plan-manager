@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, ClassVar
 
 from mcp_proxy_adapter.commands.base import Command
@@ -21,6 +22,7 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES, TodoKind, TodoStatus
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_store import list_todos
+from plan_manager.storage.project_scope import resolve_project_plan_uuids
 
 TODO_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "priority", "owner", "assignee", "model", "created_after", "created_before", "active_only", "unanchored_only"]
 
@@ -78,6 +80,7 @@ class TodoListCommand(Command):
                 "active_only restricts results to statuses open, in_progress, blocked, excluding resolved/closed/cancelled — combine with owner or assignee to build a personal work queue.",
                 "unanchored_only restricts to primary_anchor_type == none, useful for finding TODOs still needing a primary anchor assigned.",
                 "status and kind are pushed down to SQL as exact-match filters; all other filters (project, file, anchor_plan, revision, step, priority, owner, assignee, created_after/before) are applied in-memory after fetch.",
+                "The project filter matches transitively: a TODO whose anchor_project_id equals the filter value matches directly, and a TODO with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "The model filter parameter is accepted in the schema but is not currently applied to the result set — passing it has no filtering effect.",
                 "total reflects the filtered count before pagination is applied, not the page size — use it, together with limit and offset, to detect additional pages.",
             ],
@@ -121,10 +124,17 @@ class TodoListCommand(Command):
                 if anchor_plan is not None:
                     resolved_anchor_plan_uuid = str(resolve_plan(conn, anchor_plan).uuid)
                 records = list_todos(conn, status=filters.get("status"), kind=filters.get("kind"))
+                project_value = filters.get("project")
+                bound_plan_uuids: set[uuid.UUID] = set()
+                if project_value is not None:
+                    bound_plan_uuids = resolve_project_plan_uuids(conn, uuid.UUID(project_value))
                 filtered = []
                 for item in records:
-                    if "project" in filters.values and str(item.anchor_project_id) != filters.get("project"):
-                        continue
+                    if "project" in filters.values:
+                        matches_direct = item.anchor_project_id is not None and str(item.anchor_project_id) == project_value
+                        matches_transitive = item.anchor_plan_uuid is not None and item.anchor_plan_uuid in bound_plan_uuids
+                        if not (matches_direct or matches_transitive):
+                            continue
                     if "file" in filters.values and item.anchor_file_path != filters.get("file"):
                         continue
                     if resolved_anchor_plan_uuid is not None and str(item.anchor_plan_uuid) != resolved_anchor_plan_uuid:

@@ -24,8 +24,9 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import list_bug_impacts
 from plan_manager.storage.bug_report_store import get_bug
+from plan_manager.storage.project_scope import resolve_project_plan_uuids
 
-_LIST_FILTER_FIELDS = ["status", "impact_type", "unresolved_impacts", "created_after", "created_before"]
+_LIST_FILTER_FIELDS = ["status", "impact_type", "unresolved_impacts", "created_after", "created_before", "project"]
 _RESOLVED_IMPACT_STATUSES = frozenset({"resolved", "verified", "unaffected", "skipped"})
 _FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES, "impact_type": BUG_IMPACT_TYPES}
 
@@ -50,20 +51,21 @@ class BugImpactListCommand(Command):
             "plan": {
                 "type": "string",
                 "description": (
-                    "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
-                    "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
-                    "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
-                    "command-anchored bugs) is listable under any valid plan."
+                    "Plan identifier (name or UUID), optional. When supplied, enforces plan/bug "
+                    "consistency: when the bug's source_plan_uuid is set, it must equal the "
+                    "resolved plan, otherwise BUG_NOT_FOUND is raised; a bug with "
+                    "source_plan_uuid NULL (e.g. command-anchored bugs) is listable under any "
+                    "supplied plan. When omitted, no plan/bug consistency check is performed."
                 ),
             },
-            "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report whose impacts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL)."},
+            "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report whose impacts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL)."},
         }
         properties.update(filter_schema_properties(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         properties.update(pagination_schema_properties())
         return {
             "type": "object",
             "properties": properties,
-            "required": ["plan", "bug_id"],
+            "required": ["bug_id"],
             "additionalProperties": False,
         }
 
@@ -73,15 +75,16 @@ class BugImpactListCommand(Command):
             **BASE_PARAMETERS,
             "plan": {
                 "description": (
-                    "Plan identifier (name or UUID). Enforces plan/bug consistency: when the "
-                    "bug's source_plan_uuid is set, it must equal the resolved plan, otherwise "
-                    "BUG_NOT_FOUND is raised; a bug with source_plan_uuid NULL (e.g. "
-                    "command-anchored bugs) is listable under any valid plan."
+                    "Plan identifier (name or UUID), optional. When supplied, enforces plan/bug "
+                    "consistency: when the bug's source_plan_uuid is set, it must equal the "
+                    "resolved plan, otherwise BUG_NOT_FOUND is raised; a bug with "
+                    "source_plan_uuid NULL (e.g. command-anchored bugs) is listable under any "
+                    "supplied plan. When omitted, no plan/bug consistency check is performed."
                 ),
                 "type": "string",
-                "required": True,
+                "required": False,
             },
-            "bug_id": {"description": "UUID of the bug_report whose impacts are listed. Must be anchored to the resolved plan (source_plan_uuid equal or NULL).", "type": "string", "required": True},
+            "bug_id": {"description": "UUID of the bug_report whose impacts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL).", "type": "string", "required": True},
         }
         params.update(filter_metadata_params(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         params.update(pagination_metadata_params())
@@ -105,9 +108,10 @@ class BugImpactListCommand(Command):
                 },
             },
             best_practices=[
-                "The required plan parameter is a consistency guard: a bug whose source_plan_uuid is set to a different plan raises BUG_NOT_FOUND instead of listing foreign impacts.",
-                "Bugs with source_plan_uuid NULL (e.g. command-anchored bugs) are listable under any valid plan; the plan does not further filter their impacts.",
-                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The optional plan parameter is a consistency guard: when supplied, a bug whose source_plan_uuid is set to a different plan raises BUG_NOT_FOUND instead of listing foreign impacts. Omit it to skip the guard entirely.",
+                "Bugs with source_plan_uuid NULL (e.g. command-anchored bugs) are listable under any supplied plan; the plan does not further filter their impacts.",
+                "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The project filter matches transitively: an impact whose target_project_id equals the filter value matches directly, and an impact with target_project_id NULL still matches when its own target_plan_uuid is bound to that project (plan.project_ids).",
                 "Set unresolved_impacts=true to see only impacts still needing action.",
                 "Combine created_after and created_before to scope impacts to a time window.",
                 "Use limit and offset to page through large impact sets instead of fetching all at once.",
@@ -117,25 +121,30 @@ class BugImpactListCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         bug_id: str,
+        plan: str | None = None,
         status: str | None = None,
         impact_type: str | None = None,
         unresolved_impacts: bool | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
+        project: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                plan_record = resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = validate_uuid(bug_id)
                 bug_record = get_bug(conn, bug_uuid)
                 if bug_record is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
-                if bug_record.source_plan_uuid is not None and bug_record.source_plan_uuid != plan_record.uuid:
+                if (
+                    plan_record is not None
+                    and bug_record.source_plan_uuid is not None
+                    and bug_record.source_plan_uuid != plan_record.uuid
+                ):
                     raise DomainCommandError(
                         "BUG_NOT_FOUND",
                         f"bug not found: {bug_id} (anchored to plan {bug_record.source_plan_uuid}, not the resolved plan {plan_record.uuid})",
@@ -146,6 +155,7 @@ class BugImpactListCommand(Command):
                     "unresolved_impacts": unresolved_impacts,
                     "created_after": created_after,
                     "created_before": created_before,
+                    "project": project,
                 }
                 filters = parse_filters(raw_params, _LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
@@ -155,6 +165,15 @@ class BugImpactListCommand(Command):
                     records = [r for r in records if r.impact_type == impact_type_filter]
                 if filters.get("unresolved_impacts"):
                     records = [r for r in records if r.status not in _RESOLVED_IMPACT_STATUSES]
+                project_value = filters.get("project")
+                if project_value is not None:
+                    project_uuid = validate_uuid(project_value)
+                    bound_plan_uuids = resolve_project_plan_uuids(conn, project_uuid)
+                    records = [
+                        r for r in records
+                        if (r.target_project_id is not None and r.target_project_id == project_uuid)
+                        or (r.target_plan_uuid is not None and r.target_plan_uuid in bound_plan_uuids)
+                    ]
                 after = filters.get("created_after")
                 if after is not None:
                     after_dt = datetime.fromisoformat(after)

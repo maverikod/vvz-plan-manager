@@ -17,8 +17,10 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
 )
 from plan_manager.domain.review_result import REVIEW_STATUSES
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.review_result_store import list_review_results
+from plan_manager.storage.project_scope import resolve_project_plan_uuids
 
 class ReviewResultListCommand(Command):
     name: ClassVar[str] = "review_result_list"
@@ -38,11 +40,12 @@ class ReviewResultListCommand(Command):
                 "plan": {
                     "type": "string",
                     "description": (
-                        "Plan identifier (name or UUID). Scopes the listing: only review results "
-                        "whose reviewed execution attempt belongs to the resolved plan "
-                        "(execution_attempt.plan_uuid) are returned; review results with no "
-                        "reviewed attempt (reviewed_attempt_uuid NULL, e.g. revision reviews) or "
-                        "whose attempt belongs to another plan are excluded."
+                        "Plan identifier (name or UUID), optional. When supplied, scopes the "
+                        "listing: only review results whose reviewed execution attempt belongs to "
+                        "the resolved plan (execution_attempt.plan_uuid) are returned; review "
+                        "results with no reviewed attempt (reviewed_attempt_uuid NULL, e.g. "
+                        "revision reviews) or whose attempt belongs to another plan are excluded. "
+                        "When omitted, no plan scoping is applied."
                     ),
                 },
                 "reviewed_attempt_uuid": {
@@ -58,13 +61,23 @@ class ReviewResultListCommand(Command):
                         "changes_requested, escalated, needs_owner_decision."
                     ),
                 },
+                "project": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": (
+                        "Optional project UUID filter. review_result carries no project column of "
+                        "its own; matching is purely transitive via the reviewed execution "
+                        "attempt's plan (execution_attempt.plan_uuid bound to this project via "
+                        "plan.project_ids). A project with zero bound plans yields an empty page."
+                    ),
+                },
                 "include_deleted": {
                     "type": "boolean",
                     "description": "Include soft-deleted review results in the listing. Defaults to false.",
                 },
                 **pagination_schema_properties(),
             },
-            "required": ["plan"],
+            "required": [],
             "additionalProperties": False,
         }
 
@@ -74,14 +87,15 @@ class ReviewResultListCommand(Command):
             **BASE_PARAMETERS,
             "plan": {
                 "description": (
-                    "Plan identifier (name or UUID). Scopes the listing: only review results "
-                    "whose reviewed execution attempt belongs to the resolved plan "
-                    "(execution_attempt.plan_uuid) are returned; review results with no "
-                    "reviewed attempt (reviewed_attempt_uuid NULL, e.g. revision reviews) or "
-                    "whose attempt belongs to another plan are excluded."
+                    "Plan identifier (name or UUID), optional. When supplied, scopes the "
+                    "listing: only review results whose reviewed execution attempt belongs to "
+                    "the resolved plan (execution_attempt.plan_uuid) are returned; review "
+                    "results with no reviewed attempt (reviewed_attempt_uuid NULL, e.g. "
+                    "revision reviews) or whose attempt belongs to another plan are excluded. "
+                    "When omitted, no plan scoping is applied."
                 ),
                 "type": "string",
-                "required": True,
+                "required": False,
             },
             "reviewed_attempt_uuid": {"description": "Restrict results to review results of this execution attempt.", "type": "string", "required": False},
             "status": {
@@ -89,6 +103,16 @@ class ReviewResultListCommand(Command):
                     "Restrict results to review results with this status. One of the 5 "
                     "ReviewStatus values, in declared order: accepted, rejected, "
                     "changes_requested, escalated, needs_owner_decision."
+                ),
+                "type": "string",
+                "required": False,
+            },
+            "project": {
+                "description": (
+                    "Optional project UUID filter. review_result carries no project column of "
+                    "its own; matching is purely transitive via the reviewed execution "
+                    "attempt's plan (execution_attempt.plan_uuid bound to this project via "
+                    "plan.project_ids). A project with zero bound plans yields an empty page."
                 ),
                 "type": "string",
                 "required": False,
@@ -109,8 +133,9 @@ class ReviewResultListCommand(Command):
                 },
             }],
             best_practices=[
-                "The required plan parameter scopes the listing via the reviewed execution attempt: only review results whose attempt has execution_attempt.plan_uuid equal to the resolved plan are returned; attempt-less (reviewed_attempt_uuid NULL) and foreign-plan review results are excluded.",
-                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The optional plan parameter scopes the listing via the reviewed execution attempt: only review results whose attempt has execution_attempt.plan_uuid equal to the resolved plan are returned; attempt-less (reviewed_attempt_uuid NULL) and foreign-plan review results are excluded. Omit it to list across all plans.",
+                "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The project filter is purely transitive (review_result has no project column of its own): it matches via the reviewed attempt's plan being bound to that project (plan.project_ids). A project with zero bound plans yields an empty page even if attempts and review results exist.",
                 "Omit reviewed_attempt_uuid and status to list every review result for the plan; add either filter to narrow the scope.",
                 "include_deleted defaults to false; set it true only when auditing soft-deleted review history.",
                 "Results are ordered oldest first (created_at ASC); reverse client-side for a newest-first view.",
@@ -121,9 +146,10 @@ class ReviewResultListCommand(Command):
 
     async def execute(
         self,
-        plan: str,
+        plan: str | None = None,
         reviewed_attempt_uuid: str | None = None,
         status: str | None = None,
+        project: str | None = None,
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
@@ -131,19 +157,24 @@ class ReviewResultListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                plan_record = resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan) if plan is not None else None
                 if status is not None and status not in REVIEW_STATUSES:
                     raise DomainCommandError(
                         "INVALID_FILTER",
                         f"'status' must be one of {sorted(REVIEW_STATUSES)}; got {status!r}",
                     )
                 pagination = parse_pagination({"limit": limit, "offset": offset})
+                project_bound_plan_uuids: list | None = None
+                if project is not None:
+                    project_uuid = validate_uuid(project)
+                    project_bound_plan_uuids = list(resolve_project_plan_uuids(conn, project_uuid))
                 records = list_review_results(
                     conn,
                     reviewed_attempt_uuid=uuid.UUID(reviewed_attempt_uuid) if reviewed_attempt_uuid else None,
                     status=status,
                     include_deleted=include_deleted,
-                    plan_uuid=plan_record.uuid,
+                    plan_uuid=plan_record.uuid if plan_record is not None else None,
+                    project_bound_plan_uuids=project_bound_plan_uuids,
                 )
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]

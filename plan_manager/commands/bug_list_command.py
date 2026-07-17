@@ -14,6 +14,7 @@ from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUS
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import list_bugs
+from plan_manager.storage.project_scope import resolve_project_plan_uuids
 
 # BugReport has no assignee column (only owner), so assignee is deliberately excluded
 BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only"]
@@ -49,12 +50,12 @@ class BugListCommand(Command):
             "properties": {
                 "plan": {
                     "type": "string",
-                    "description": "Plan identifier (name or UUID). Scopes the listing: only bugs whose source_plan_uuid equals the resolved plan are returned; bugs anchored to other plans or with no plan anchor (source_plan_uuid NULL) are excluded. No transitive matching is performed.",
+                    "description": "Plan identifier (name or UUID), optional. When supplied, scopes the listing: only bugs whose source_plan_uuid equals the resolved plan are returned; bugs anchored to other plans or with no plan anchor (source_plan_uuid NULL) are excluded (direct anchor equality, no transitive matching). When omitted, no plan scoping is applied. The project filter (below) is independent and IS transitive: it also matches bugs whose source_plan_uuid is bound to that project via plan.project_ids, even when the bug's own source_project_id is NULL.",
                 },
                 **filter_schema_properties(BUG_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
             },
-            "required": ["plan"],
+            "required": [],
             "additionalProperties": False,
         }
 
@@ -76,10 +77,10 @@ class BugListCommand(Command):
             {"type": "array", "description": "A page of BugReport payloads plus total/limit/offset."},
             [{"description": "List open bugs owned by alice.", "command": {"plan": "my-plan", "owner": "alice", "active_only": True}}],
             best_practices=[
-                "The required plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields).",
-                "A nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
+                "The optional plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields). Omit it to list across all plans.",
+                "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Set active_only=True to exclude closed, rejected, and duplicate bugs.",
-                "The project filter matches source_project_id only, not other anchor fields.",
+                "The project filter matches transitively: a bug whose source_project_id equals the filter value matches directly, and a bug with source_project_id NULL still matches when its source_plan_uuid is bound to that project (plan.project_ids).",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
                 "Combine file/anchor_plan/revision/step filters with status/kind/severity/owner for precise anchor lookups.",
             ],
@@ -87,7 +88,7 @@ class BugListCommand(Command):
 
     async def execute(
         self,
-        plan: str,
+        plan: str | None = None,
         project: str | None = None,
         file: str | None = None,
         anchor_plan: str | None = None,
@@ -107,7 +108,7 @@ class BugListCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                plan_record = resolve_plan(conn, plan)
+                plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params = {
                     "project": project,
                     "file": file,
@@ -127,18 +128,25 @@ class BugListCommand(Command):
                 }
                 filters = parse_filters(raw_params, BUG_LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination(raw_params)
-                project_value = filters.get("project")
-                source_project_uuid = validate_uuid(project_value) if project_value is not None else None
                 bugs = list_bugs(
                     conn,
                     status=filters.get("status"),
                     kind=filters.get("kind"),
                     severity=filters.get("severity"),
                     owner=filters.get("owner"),
-                    source_project_id=source_project_uuid,
-                    source_plan_uuid=plan_record.uuid,
+                    source_project_id=None,
+                    source_plan_uuid=plan_record.uuid if plan_record is not None else None,
                     include_deleted=False,
                 )
+                project_value = filters.get("project")
+                if project_value is not None:
+                    project_uuid = validate_uuid(project_value)
+                    bound_plan_uuids = resolve_project_plan_uuids(conn, project_uuid)
+                    bugs = [
+                        b for b in bugs
+                        if (b.source_project_id is not None and b.source_project_id == project_uuid)
+                        or (b.source_plan_uuid is not None and b.source_plan_uuid in bound_plan_uuids)
+                    ]
                 file_value = filters.get("file")
                 if file_value is not None:
                     bugs = [b for b in bugs if b.source_file_path == file_value]

@@ -240,16 +240,19 @@ def test_escalation_list_unknown_plan_raises_plan_not_found(monkeypatch) -> None
 
 
 def test_plan_scope_documented_in_metadata() -> None:
+    """plan became OPTIONAL across this family (bug 8684ea59 follow-on: project as a
+    first-class scope); the direct-anchor-equality semantics documented here are
+    unchanged for when a plan IS supplied — only its required-ness changed."""
     for command_cls, anchor_column in (
         (bug_list_command.BugListCommand, "source_plan_uuid"),
         (comment_list_command.CommentListCommand, "anchor_plan_uuid"),
         (escalation_list_command.EscalationListCommand, "anchor_plan_uuid"),
     ):
         metadata = command_cls.metadata()
-        assert metadata["parameters"]["plan"]["required"] is True
+        assert metadata["parameters"]["plan"]["required"] is False
         assert anchor_column in metadata["parameters"]["plan"]["description"]
         assert "PLAN_NOT_FOUND" in metadata["error_cases"]
         schema = command_cls.get_schema()
-        assert "plan" in schema["required"]
+        assert "plan" not in schema["required"]
         assert anchor_column in schema["properties"]["plan"]["description"]
         assert schema["additionalProperties"] is False

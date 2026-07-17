@@ -279,8 +279,21 @@ def get_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID) -> Esca
 def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
                      anchor_ref_id: uuid.UUID | None = None,
                      anchor_plan_uuid: uuid.UUID | None = None,
+                     anchor_project_id: uuid.UUID | None = None,
+                     project_bound_plan_uuids: list[uuid.UUID] | None = None,
                      include_deleted: bool = False) -> list[Escalation]:
-    """List escalations with optional filters. When anchor_plan_uuid is given, only rows whose anchor_plan_uuid equals it match (NULL and foreign plan anchors are excluded)."""
+    """List escalations with optional filters.
+
+    When anchor_plan_uuid is given, only rows whose anchor_plan_uuid equals it match
+    (NULL and foreign plan anchors are excluded; direct equality, no transitivity).
+
+    When anchor_project_id is given, matching is transitive: a row whose own
+    anchor_project_id equals it matches directly, OR (when project_bound_plan_uuids is
+    a non-empty list of plan uuids bound to that project via plan.project_ids) a row
+    whose anchor_plan_uuid is one of those plan uuids also matches, even when the row's
+    own anchor_project_id is NULL. project_bound_plan_uuids is ignored when
+    anchor_project_id is None.
+    """
     # Build the query
     sql_parts = ["SELECT * FROM escalation WHERE 1=1"]
     params: list[Any] = []
@@ -296,6 +309,15 @@ def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
     if anchor_plan_uuid is not None:
         sql_parts.append("AND anchor_plan_uuid = %s")
         params.append(anchor_plan_uuid)
+
+    if anchor_project_id is not None:
+        if project_bound_plan_uuids:
+            sql_parts.append("AND (anchor_project_id = %s OR anchor_plan_uuid = ANY(%s))")
+            params.append(anchor_project_id)
+            params.append(project_bound_plan_uuids)
+        else:
+            sql_parts.append("AND anchor_project_id = %s")
+            params.append(anchor_project_id)
 
     if not include_deleted:
         sql_parts.append("AND deleted_at IS NULL")

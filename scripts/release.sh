@@ -19,6 +19,9 @@ VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","
 REPO="${DOCKERHUB_REPO:-vasilyvz/planmgr}"
 echo "version=${VERSION} repo=${REPO}"
 
+echo "== stage: run test suite =="
+python3 -m pytest -q
+
 echo "== stage: render documentation =="
 ADAPTER_VERSION="$(python3 -c 'import tomllib;deps=tomllib.load(open("pyproject.toml","rb"))["project"]["dependencies"];print([d for d in deps if d.startswith("mcp-proxy-adapter")][0])')"
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

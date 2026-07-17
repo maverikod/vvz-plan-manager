@@ -385,19 +385,24 @@ def test_bug_impact_list_unknown_plan_raises_plan_not_found(monkeypatch) -> None
 
 
 def test_plan_scope_documented_in_metadata() -> None:
-    for command_cls, scope_marker in (
-        (review_result_list_command.ReviewResultListCommand, "execution_attempt.plan_uuid"),
-        (bug_propagation_list_command.BugPropagationListCommand, "source_plan_uuid"),
-        (project_dependency_list_command.ProjectDependencyListCommand, "plan_project bindings"),
-        (bug_fix_list_command.BugFixListCommand, "source_plan_uuid"),
-        (bug_impact_list_command.BugImpactListCommand, "source_plan_uuid"),
+    """plan became OPTIONAL on review_result_list, bug_propagation_list, bug_fix_list,
+    and bug_impact_list (bug 8684ea59 follow-on: project as a first-class scope);
+    project_dependency_list is NOT part of that family (its plan parameter is the
+    sole mechanism resolving the bound-project scope, not a direct anchor filter)
+    and keeps plan required."""
+    for command_cls, scope_marker, plan_required in (
+        (review_result_list_command.ReviewResultListCommand, "execution_attempt.plan_uuid", False),
+        (bug_propagation_list_command.BugPropagationListCommand, "source_plan_uuid", False),
+        (project_dependency_list_command.ProjectDependencyListCommand, "plan_project bindings", True),
+        (bug_fix_list_command.BugFixListCommand, "source_plan_uuid", False),
+        (bug_impact_list_command.BugImpactListCommand, "source_plan_uuid", False),
     ):
         metadata = command_cls.metadata()
-        assert metadata["parameters"]["plan"]["required"] is True
+        assert metadata["parameters"]["plan"]["required"] is plan_required
         assert scope_marker in metadata["parameters"]["plan"]["description"]
         assert "PLAN_NOT_FOUND" in metadata["error_cases"]
         schema = command_cls.get_schema()
-        assert "plan" in schema["required"]
+        assert ("plan" in schema["required"]) is plan_required
         assert scope_marker in schema["properties"]["plan"]["description"]
         assert schema["additionalProperties"] is False
 
