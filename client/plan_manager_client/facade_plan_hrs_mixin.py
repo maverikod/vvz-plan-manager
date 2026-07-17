@@ -106,6 +106,18 @@ class PlanHrsCommandsMixin:
         """Wrap or unwrap the non-binding markers around one HRS block of a plan."""
         return await self._call("para_mark_non_binding", params)
 
+    async def para_insert(self, **params: Any) -> Any:
+        """Insert one new binding paragraph into a plan's HRS at a binding-order position."""
+        return await self._call("para_insert", params)
+
+    async def para_update(self, **params: Any) -> Any:
+        """Replace the text of one binding HRS paragraph addressed by label."""
+        return await self._call("para_update", params)
+
+    async def para_delete(self, **params: Any) -> Any:
+        """Delete one binding HRS paragraph addressed by label, shifting later paragraphs up."""
+        return await self._call("para_delete", params)
+
     async def concept_get(self, **params: Any) -> Any:
         """Return one concept of a plan by concept_id."""
         return await self._call("concept_get", params)
