@@ -199,6 +199,126 @@ def list_comments(
     return [_row_to_record(row) for row in rows]
 
 
+_COMMENT_SELECT_COLUMNS = """
+    uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
+    anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
+    anchor_ref_id, kind, visibility, author, body, resolved,
+    supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
+"""
+
+
+def list_comments_page(
+    conn: psycopg.Connection,
+    *,
+    anchor_plan_uuid: uuid.UUID | None = None,
+    filter_anchor_plan_uuid: uuid.UUID | None = None,
+    anchor_step_uuid: uuid.UUID | None = None,
+    anchor_revision_uuid: uuid.UUID | None = None,
+    anchor_file_path: str | None = None,
+    kind: str | None = None,
+    owner: str | None = None,
+    status: str | None = None,
+    active_only: bool = False,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    project_id: uuid.UUID | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    include_deleted: bool = False,
+) -> tuple[list[RuntimeComment], int]:
+    """List one paginated page of runtime comments plus the total filtered count, entirely in SQL.
+
+    Every comment_list filter (plan scope, anchor_plan, step, revision, file, kind,
+    owner, status, active_only, created_after/before, and the transitive project
+    scope) is a WHERE clause here; none is applied by post-fetch Python filtering.
+
+    `anchor_plan_uuid` is the resolved `plan` top-level scope parameter and
+    `filter_anchor_plan_uuid` is the independent `anchor_plan` filter field; both
+    compare against the same anchor_plan_uuid column, so when both are supplied
+    they are ANDed (both must match, else the intersection is empty) -- this
+    reproduces the prior in-command behavior of intersecting rather than widening.
+
+    `status` is the synthetic resolved/unresolved derivation (not a stored column):
+    status="resolved" matches resolved = true; status="unresolved" matches
+    resolved IS NULL OR resolved = false (anything not exactly true). active_only
+    applies that same unresolved predicate independently of status.
+
+    created_after/created_before are EXCLUSIVE bounds here (created_at > / <),
+    preserving this store's pre-existing (and, unlike bug_list/todo_list,
+    deliberately non-inclusive) semantics.
+
+    `project_id`, when given, is a TRANSITIVE OR match expressed as a single
+    correlated subquery (one round trip, no precomputed plan-uuid list passed from
+    Python): a comment matches when its own anchor_project_id equals project_id
+    directly, OR its anchor_plan_uuid is one of the plans whose plan.project_ids
+    contains project_id.
+
+    Returns (page_rows, total); see bug_report_store.list_bugs_page's docstring
+    for the count(*) OVER() / fallback-COUNT(*) total-computation strategy this
+    mirrors exactly.
+    """
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if anchor_plan_uuid is not None:
+        where_clauses.append("anchor_plan_uuid = %s")
+        params.append(anchor_plan_uuid)
+    if filter_anchor_plan_uuid is not None:
+        where_clauses.append("anchor_plan_uuid = %s")
+        params.append(filter_anchor_plan_uuid)
+    if anchor_step_uuid is not None:
+        where_clauses.append("anchor_step_uuid = %s")
+        params.append(anchor_step_uuid)
+    if anchor_revision_uuid is not None:
+        where_clauses.append("anchor_revision_uuid = %s")
+        params.append(anchor_revision_uuid)
+    if anchor_file_path is not None:
+        where_clauses.append("anchor_file_path = %s")
+        params.append(anchor_file_path)
+    if kind is not None:
+        where_clauses.append("kind = %s")
+        params.append(kind)
+    if owner is not None:
+        where_clauses.append("author = %s")
+        params.append(owner)
+    if status is not None:
+        if status == "resolved":
+            where_clauses.append("resolved = true")
+        else:
+            where_clauses.append("(resolved IS NULL OR resolved = false)")
+    if active_only:
+        where_clauses.append("(resolved IS NULL OR resolved = false)")
+    if created_after is not None:
+        where_clauses.append("created_at > %s")
+        params.append(created_after)
+    if created_before is not None:
+        where_clauses.append("created_at < %s")
+        params.append(created_before)
+    if project_id is not None:
+        where_clauses.append(
+            "(anchor_project_id = %s OR anchor_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))"
+        )
+        params.append(project_id)
+        params.append(str(project_id))
+    if not include_deleted:
+        where_clauses.append("deleted_at IS NULL")
+
+    where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    sql = (
+        f"SELECT {_COMMENT_SELECT_COLUMNS}, count(*) OVER() AS total FROM runtime_comment "
+        f"WHERE {where_clause} ORDER BY created_at ASC LIMIT %s OFFSET %s"
+    )
+    rows = conn.execute(sql, params + [limit, offset]).fetchall()
+
+    if rows:
+        total = rows[0][-1]
+        return [_row_to_record(row[:-1]) for row in rows], total
+
+    count_row = conn.execute(f"SELECT count(*) FROM runtime_comment WHERE {where_clause}", params).fetchone()
+    return [], (count_row[0] if count_row else 0)
+
+
 def supersede_comment(
     conn: psycopg.Connection,
     comment_uuid: uuid.UUID,

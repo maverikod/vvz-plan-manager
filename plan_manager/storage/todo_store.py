@@ -251,6 +251,126 @@ def list_todos(
     return [_row_to_record(row) for row in rows]
 
 
+# The set of statuses treated as "active" for the active_only filter (todo_list's
+# equivalent of _ACTIVE_STATUSES, owned here now that the filter is SQL-side).
+_ACTIVE_TODO_STATUSES = frozenset({"open", "in_progress", "blocked"})
+
+_TODO_SELECT_COLUMNS = """
+    uuid, title, description, kind, status, priority_nice, created_by,
+    assigned_to, created_at, updated_at, started_at, resolved_at, due_at,
+    primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
+    anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
+    blocking_reason, execution_result, deleted_at
+"""
+
+
+def list_todos_page(
+    conn: psycopg.Connection,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    anchor_file_path: str | None = None,
+    anchor_plan_uuid: uuid.UUID | None = None,
+    anchor_revision_uuid: uuid.UUID | None = None,
+    anchor_step_uuid: uuid.UUID | None = None,
+    priority_nice: int | None = None,
+    owner: str | None = None,
+    assignee: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    active_only: bool = False,
+    unanchored_only: bool = False,
+    project_id: uuid.UUID | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    include_deleted: bool = False,
+) -> tuple[list[TodoItem], int]:
+    """List one paginated page of TODO items plus the total filtered count, entirely in SQL.
+
+    Every todo_list filter (status, kind, file, anchor_plan, revision, step, priority,
+    owner, assignee, created_after/before, active_only, unanchored_only, and the
+    transitive project scope) is a WHERE clause here; none is applied by post-fetch
+    Python filtering. `owner` maps to the created_by column and `assignee` to
+    assigned_to, matching TodoItem's field names (the entity has no separate
+    "owner" column). The `model` filter parameter accepted by todo_list has no
+    backing column and is therefore, as before, not applied here either.
+
+    `project_id`, when given, is a TRANSITIVE OR match expressed as a single
+    correlated subquery (one round trip, no precomputed plan-uuid list passed from
+    Python): a TODO matches when its own anchor_project_id equals project_id
+    directly, OR its anchor_plan_uuid is one of the plans whose plan.project_ids
+    contains project_id.
+
+    Returns (page_rows, total); see list_bugs_page's docstring for the count(*)
+    OVER() / fallback-COUNT(*) total-computation strategy this mirrors exactly.
+    """
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if kind is not None:
+        where_clauses.append("kind = %s")
+        params.append(kind)
+    if status is not None:
+        where_clauses.append("status = %s")
+        params.append(status)
+    if anchor_file_path is not None:
+        where_clauses.append("anchor_file_path = %s")
+        params.append(anchor_file_path)
+    if anchor_plan_uuid is not None:
+        where_clauses.append("anchor_plan_uuid = %s")
+        params.append(anchor_plan_uuid)
+    if anchor_revision_uuid is not None:
+        where_clauses.append("anchor_revision_uuid = %s")
+        params.append(anchor_revision_uuid)
+    if anchor_step_uuid is not None:
+        where_clauses.append("anchor_step_uuid = %s")
+        params.append(anchor_step_uuid)
+    if priority_nice is not None:
+        where_clauses.append("priority_nice = %s")
+        params.append(priority_nice)
+    if owner is not None:
+        where_clauses.append("created_by = %s")
+        params.append(owner)
+    if assignee is not None:
+        where_clauses.append("assigned_to = %s")
+        params.append(assignee)
+    if created_after is not None:
+        where_clauses.append("created_at >= %s")
+        params.append(created_after)
+    if created_before is not None:
+        where_clauses.append("created_at <= %s")
+        params.append(created_before)
+    if active_only:
+        where_clauses.append("status IN (%s, %s, %s)")
+        params.extend(sorted(_ACTIVE_TODO_STATUSES))
+    if unanchored_only:
+        where_clauses.append("primary_anchor_type = %s")
+        params.append("none")
+    if project_id is not None:
+        where_clauses.append(
+            "(anchor_project_id = %s OR anchor_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))"
+        )
+        params.append(project_id)
+        params.append(str(project_id))
+    if not include_deleted:
+        where_clauses.append("deleted_at IS NULL")
+
+    where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    sql = (
+        f"SELECT {_TODO_SELECT_COLUMNS}, count(*) OVER() AS total FROM todo_item "
+        f"WHERE {where_clause} ORDER BY created_at ASC LIMIT %s OFFSET %s"
+    )
+    rows = conn.execute(sql, params + [limit, offset]).fetchall()
+
+    if rows:
+        total = rows[0][-1]
+        return [_row_to_record(row[:-1]) for row in rows], total
+
+    count_row = conn.execute(f"SELECT count(*) FROM todo_item WHERE {where_clause}", params).fetchone()
+    return [], (count_row[0] if count_row else 0)
+
+
 def update_todo(
     conn: psycopg.Connection,
     todo_uuid: uuid.UUID,

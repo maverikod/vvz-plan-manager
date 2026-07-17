@@ -13,8 +13,7 @@ from plan_manager.commands.runtime_filtering import parse_filters, parse_paginat
 from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES, BugKind, BugSeverity, BugStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.bug_report_store import list_bugs
-from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.storage.bug_report_store import list_bugs_page
 
 # BugReport has no assignee column (only owner), so assignee is deliberately excluded
 BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only"]
@@ -29,7 +28,9 @@ _ENUM_OVERRIDES = {
     "severity": [e.value for e in BugSeverity],
 }
 
-# These are the statuses treated as terminal/inactive for the active_only filter
+# These are the statuses treated as terminal/inactive for the active_only filter.
+# The SQL predicate now lives in bug_report_store.list_bugs_page (_TERMINAL_BUG_STATUSES);
+# this copy is kept only as the documented, importable vocabulary for callers/tests.
 BUG_TERMINAL_STATUSES = frozenset({"closed", "rejected", "duplicate"})
 
 
@@ -128,50 +129,34 @@ class BugListCommand(Command):
                 }
                 filters = parse_filters(raw_params, BUG_LIST_FILTER_FIELDS, enums=_FILTER_ENUMS)
                 pagination = parse_pagination(raw_params)
-                bugs = list_bugs(
+                project_value = filters.get("project")
+                project_uuid = validate_uuid(project_value) if project_value is not None else None
+                anchor_plan_value = filters.get("anchor_plan")
+                anchor_plan_uuid = validate_uuid(anchor_plan_value) if anchor_plan_value is not None else None
+                revision_value = filters.get("revision")
+                revision_uuid = validate_uuid(revision_value) if revision_value is not None else None
+                step_value = filters.get("step")
+                step_uuid = validate_uuid(step_value) if step_value is not None else None
+                bugs, total = list_bugs_page(
                     conn,
                     status=filters.get("status"),
                     kind=filters.get("kind"),
                     severity=filters.get("severity"),
                     owner=filters.get("owner"),
-                    source_project_id=None,
                     source_plan_uuid=plan_record.uuid if plan_record is not None else None,
+                    anchor_plan_uuid=anchor_plan_uuid,
+                    source_file_path=filters.get("file"),
+                    source_revision_uuid=revision_uuid,
+                    source_step_uuid=step_uuid,
+                    priority_nice=filters.get("priority"),
+                    created_after=filters.get("created_after"),
+                    created_before=filters.get("created_before"),
+                    active_only=bool(filters.get("active_only")),
+                    project_id=project_uuid,
+                    limit=pagination.limit,
+                    offset=pagination.offset,
                     include_deleted=False,
                 )
-                project_value = filters.get("project")
-                if project_value is not None:
-                    project_uuid = validate_uuid(project_value)
-                    bound_plan_uuids = resolve_project_plan_uuids(conn, project_uuid)
-                    bugs = [
-                        b for b in bugs
-                        if (b.source_project_id is not None and b.source_project_id == project_uuid)
-                        or (b.source_plan_uuid is not None and b.source_plan_uuid in bound_plan_uuids)
-                    ]
-                file_value = filters.get("file")
-                if file_value is not None:
-                    bugs = [b for b in bugs if b.source_file_path == file_value]
-                anchor_plan_value = filters.get("anchor_plan")
-                if anchor_plan_value is not None:
-                    bugs = [b for b in bugs if b.source_plan_uuid is not None and str(b.source_plan_uuid) == anchor_plan_value]
-                revision_value = filters.get("revision")
-                if revision_value is not None:
-                    bugs = [b for b in bugs if b.source_revision_uuid is not None and str(b.source_revision_uuid) == revision_value]
-                step_value = filters.get("step")
-                if step_value is not None:
-                    bugs = [b for b in bugs if b.source_step_uuid is not None and str(b.source_step_uuid) == step_value]
-                priority_value = filters.get("priority")
-                if priority_value is not None:
-                    bugs = [b for b in bugs if b.priority_nice == priority_value]
-                created_after_value = filters.get("created_after")
-                if created_after_value is not None:
-                    bugs = [b for b in bugs if b.created_at >= created_after_value]
-                created_before_value = filters.get("created_before")
-                if created_before_value is not None:
-                    bugs = [b for b in bugs if b.created_at <= created_before_value]
-                if filters.get("active_only"):
-                    bugs = [b for b in bugs if b.status not in BUG_TERMINAL_STATUSES]
-                total = len(bugs)
-                page = bugs[pagination.offset : pagination.offset + pagination.limit]
-                return SuccessResult(data={"bugs": [b.to_payload() for b in page], "total": total, "limit": pagination.limit, "offset": pagination.offset})
+                return SuccessResult(data={"bugs": [b.to_payload() for b in bugs], "total": total, "limit": pagination.limit, "offset": pagination.offset})
         except Exception as exc:
             return map_exception(exc)

@@ -157,6 +157,124 @@ def list_bugs(
     return [_row_to_record(row) for row in rows]
 
 
+# Statuses treated as terminal/inactive for the active_only filter (bug_list's
+# equivalent of BUG_TERMINAL_STATUSES, owned here now that the filter is SQL-side).
+_TERMINAL_BUG_STATUSES = frozenset({"closed", "rejected", "duplicate"})
+
+
+def list_bugs_page(
+    conn: psycopg.Connection,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    severity: str | None = None,
+    owner: str | None = None,
+    source_plan_uuid: uuid.UUID | None = None,
+    anchor_plan_uuid: uuid.UUID | None = None,
+    source_file_path: str | None = None,
+    source_revision_uuid: uuid.UUID | None = None,
+    source_step_uuid: uuid.UUID | None = None,
+    priority_nice: int | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    active_only: bool = False,
+    project_id: uuid.UUID | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    include_deleted: bool = False,
+) -> tuple[list[BugReport], int]:
+    """List one paginated page of bug reports plus the total filtered count, entirely in SQL.
+
+    Every bug_list filter (status, kind, severity, owner, plan scope, file, revision,
+    step, priority, created_after/before, active_only) is a WHERE clause here; none is
+    applied by post-fetch Python filtering.
+
+    `source_plan_uuid` is the resolved `plan` top-level scope parameter and
+    `anchor_plan_uuid` is the independent `anchor_plan` filter field; both compare
+    against the same source_plan_uuid column, so when both are supplied they are
+    ANDed (both must match, else the intersection is empty) -- this reproduces the
+    prior in-command behavior of applying both as separate equality checks without
+    either widening the other's scope.
+
+    `project_id`, when given, is a TRANSITIVE OR match expressed as a single
+    correlated subquery (one round trip, no precomputed plan-uuid list passed from
+    Python): a bug matches when its own source_project_id equals project_id
+    directly, OR its source_plan_uuid is one of the plans whose plan.project_ids
+    contains project_id.
+
+    Returns (page_rows, total). `total` is computed via a `count(*) OVER()` window
+    so the common case (non-empty page) needs only this one query; when the
+    requested page is empty (e.g. offset lands past the end of the filtered set)
+    the window aggregate has no output row to ride along on, so a second, cheap
+    `SELECT count(*)` with the same WHERE clause recovers the true total.
+    """
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if status is not None:
+        where_clauses.append("status = %s")
+        params.append(status)
+    if kind is not None:
+        where_clauses.append("kind = %s")
+        params.append(kind)
+    if severity is not None:
+        where_clauses.append("severity = %s")
+        params.append(severity)
+    if owner is not None:
+        where_clauses.append("owner = %s")
+        params.append(owner)
+    if source_plan_uuid is not None:
+        where_clauses.append("source_plan_uuid = %s")
+        params.append(source_plan_uuid)
+    if anchor_plan_uuid is not None:
+        where_clauses.append("source_plan_uuid = %s")
+        params.append(anchor_plan_uuid)
+    if source_file_path is not None:
+        where_clauses.append("source_file_path = %s")
+        params.append(source_file_path)
+    if source_revision_uuid is not None:
+        where_clauses.append("source_revision_uuid = %s")
+        params.append(source_revision_uuid)
+    if source_step_uuid is not None:
+        where_clauses.append("source_step_uuid = %s")
+        params.append(source_step_uuid)
+    if priority_nice is not None:
+        where_clauses.append("priority_nice = %s")
+        params.append(priority_nice)
+    if created_after is not None:
+        where_clauses.append("created_at >= %s")
+        params.append(created_after)
+    if created_before is not None:
+        where_clauses.append("created_at <= %s")
+        params.append(created_before)
+    if active_only:
+        where_clauses.append("status NOT IN (%s, %s, %s)")
+        params.extend(sorted(_TERMINAL_BUG_STATUSES))
+    if project_id is not None:
+        where_clauses.append(
+            "(source_project_id = %s OR source_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))"
+        )
+        params.append(project_id)
+        params.append(str(project_id))
+    if not include_deleted:
+        where_clauses.append("deleted_at IS NULL")
+
+    where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    sql = (
+        f"SELECT *, count(*) OVER() AS total FROM bug_report WHERE {where_clause} "
+        "ORDER BY created_at ASC LIMIT %s OFFSET %s"
+    )
+    rows = conn.execute(sql, params + [limit, offset]).fetchall()
+
+    if rows:
+        total = rows[0][-1]
+        return [_row_to_record(row[:-1]) for row in rows], total
+
+    count_row = conn.execute(f"SELECT count(*) FROM bug_report WHERE {where_clause}", params).fetchone()
+    return [], (count_row[0] if count_row else 0)
+
+
 def update_bug(
     conn: psycopg.Connection,
     bug_uuid: uuid.UUID,

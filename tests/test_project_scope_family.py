@@ -46,8 +46,11 @@ from plan_manager.commands import (
 from plan_manager.commands.errors import DomainCommandError
 from plan_manager.storage import project_scope
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
+from plan_manager.storage.bug_report_store import list_bugs_page
 from plan_manager.storage.escalation_store import list_escalations
 from plan_manager.storage.review_result_store import list_review_results
+from plan_manager.storage.runtime_comment_store import list_comments_page
+from plan_manager.storage.todo_store import list_todos_page
 
 PROJECT_UUID = uuid.uuid4()
 OTHER_PROJECT_UUID = uuid.uuid4()
@@ -123,103 +126,75 @@ def test_resolve_project_plan_uuids_empty_when_no_plan_bound() -> None:
     assert project_scope.resolve_project_plan_uuids(conn, PROJECT_UUID) == set()
 
 
-# --- bug_list: null-anchor invisibility bug shape, reached via plan binding -------
+# --- bug_list / todo_list / comment_list: null-anchor invisibility bug shape, now
+# fixed by a SQL-side correlated subquery instead of a Python bound-plan-uuids loop
+# (2026-07-18: pushing bug_list/todo_list/comment_list filtering entirely into SQL).
+# These three commands no longer call resolve_project_plan_uuids or post-filter in
+# Python at all -- the transitive OR match is proven here directly against the SQL
+# each store's *_page function builds, reusing this file's _FakeConn/_FakeQueryResult
+# harness exactly like the pre-existing escalation/bug_fix_propagation SQL tests below.
 
 
-class _FakeBug:
-    def __init__(self, source_project_id=None, source_plan_uuid=None):
-        self.source_project_id = source_project_id
-        self.source_plan_uuid = source_plan_uuid
-        self.source_file_path = None
-        self.source_revision_uuid = None
-        self.source_step_uuid = None
-        self.priority_nice = 0
-        self.created_at = "2026-07-17T00:00:00+00:00"
-        self.status = "reported"
-
-    def to_payload(self):
-        return {"source_project_id": str(self.source_project_id) if self.source_project_id else None}
+def test_list_bugs_page_sql_project_filter_transitive_or() -> None:
+    conn = _FakeConn()
+    list_bugs_page(conn, project_id=PROJECT_UUID)
+    sql, params = conn.calls[0]
+    assert "(source_project_id = %s OR source_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))" in sql
+    assert PROJECT_UUID in params
+    assert str(PROJECT_UUID) in params
 
 
-def test_bug_list_project_filter_reaches_null_anchored_bug_via_plan_binding(monkeypatch) -> None:
-    bound_plan = uuid.uuid4()
-    null_anchor_bug = _FakeBug(source_project_id=None, source_plan_uuid=bound_plan)
-    foreign_bug = _FakeBug(source_project_id=None, source_plan_uuid=uuid.uuid4())
-    direct_bug = _FakeBug(source_project_id=PROJECT_UUID, source_plan_uuid=None)
-
-    monkeypatch.setattr(bug_list_command, "db_connection", _fake_db)
-    monkeypatch.setattr(bug_list_command, "list_bugs", lambda conn, **kw: [null_anchor_bug, foreign_bug, direct_bug])
-    monkeypatch.setattr(
-        bug_list_command, "resolve_project_plan_uuids", lambda conn, project_id: {bound_plan} if project_id == PROJECT_UUID else set()
-    )
-    # No plan supplied at all: demonstrates plan is optional (bug e93dd68d/8684ea59 family).
-    result = asyncio.run(bug_list_command.BugListCommand().execute(project=str(PROJECT_UUID)))
-    data = result.to_dict()["data"]
-    assert data["total"] == 2  # null_anchor_bug (transitive) + direct_bug (direct); foreign excluded
+def test_list_bugs_page_sql_without_project_filter_unchanged() -> None:
+    conn = _FakeConn()
+    list_bugs_page(conn)
+    sql, params = conn.calls[0]
+    assert "source_project_id" not in sql
+    assert "project_ids" not in sql
+    assert params == [50, 0]  # no filters at all -> only the default LIMIT/OFFSET params remain
 
 
-# --- todo_list: same null-anchor bug shape ----------------------------------------
+def test_list_todos_page_sql_project_filter_transitive_or() -> None:
+    conn = _FakeConn()
+    list_todos_page(conn, project_id=PROJECT_UUID)
+    sql, params = conn.calls[0]
+    assert "(anchor_project_id = %s OR anchor_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))" in sql
+    assert PROJECT_UUID in params
+    assert str(PROJECT_UUID) in params
 
 
-class _FakeTodo:
-    def __init__(self, anchor_project_id=None, anchor_plan_uuid=None):
-        self.anchor_project_id = anchor_project_id
-        self.anchor_plan_uuid = anchor_plan_uuid
-
-    def to_payload(self):
-        return {}
-
-
-def test_todo_list_project_filter_reaches_null_anchored_todo_via_plan_binding(monkeypatch) -> None:
-    bound_plan = uuid.uuid4()
-    null_anchor = _FakeTodo(anchor_project_id=None, anchor_plan_uuid=bound_plan)
-    foreign = _FakeTodo(anchor_project_id=None, anchor_plan_uuid=uuid.uuid4())
-    direct = _FakeTodo(anchor_project_id=PROJECT_UUID, anchor_plan_uuid=None)
-
-    monkeypatch.setattr(todo_list_command, "db_connection", _fake_db)
-    monkeypatch.setattr(todo_list_command, "list_todos", lambda conn, **kw: [null_anchor, foreign, direct])
-    monkeypatch.setattr(todo_list_command, "resolve_project_plan_uuids", lambda conn, project_id: {bound_plan})
-    result = asyncio.run(todo_list_command.TodoListCommand().execute(project=str(PROJECT_UUID)))
-    data = result.to_dict()["data"]
-    assert data["total"] == 2
+def test_list_todos_page_sql_without_project_filter_unchanged() -> None:
+    conn = _FakeConn()
+    list_todos_page(conn)
+    sql, params = conn.calls[0]
+    assert "anchor_project_id = %s" not in sql
+    assert "project_ids" not in sql
 
 
-# --- comment_list: same null-anchor bug shape, plan omitted -----------------------
+def test_list_comments_page_sql_project_filter_transitive_or() -> None:
+    conn = _FakeConn()
+    list_comments_page(conn, project_id=PROJECT_UUID)
+    sql, params = conn.calls[0]
+    assert "(anchor_project_id = %s OR anchor_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))" in sql
+    assert PROJECT_UUID in params
+    assert str(PROJECT_UUID) in params
 
 
-class _FakeComment:
-    def __init__(self, anchor_project_id=None, anchor_plan_uuid=None):
-        self.anchor_project_id = anchor_project_id
-        self.anchor_plan_uuid = anchor_plan_uuid
-        self.anchor_file_path = None
-        self.anchor_revision_uuid = None
-        self.kind = "note"
-        self.author = "tester"
-        self.resolved = False
-        self.created_at = "2026-07-17T00:00:00+00:00"
-
-    def to_payload(self):
-        return {}
+def test_list_comments_page_sql_without_project_filter_unchanged() -> None:
+    conn = _FakeConn()
+    list_comments_page(conn)
+    sql, params = conn.calls[0]
+    assert "anchor_project_id = %s" not in sql
+    assert "project_ids" not in sql
 
 
-def test_comment_list_project_filter_reaches_null_anchored_comment_via_plan_binding(monkeypatch) -> None:
-    bound_plan = uuid.uuid4()
-    null_anchor = _FakeComment(anchor_project_id=None, anchor_plan_uuid=bound_plan)
-    foreign = _FakeComment(anchor_project_id=None, anchor_plan_uuid=uuid.uuid4())
-    direct = _FakeComment(anchor_project_id=PROJECT_UUID, anchor_plan_uuid=None)
-    captured: dict = {}
-
-    def fake_list_comments(conn, **kwargs):
-        captured.update(kwargs)
-        return [null_anchor, foreign, direct]
-
-    monkeypatch.setattr(comment_list_command, "db_connection", _fake_db)
-    monkeypatch.setattr(comment_list_command, "list_comments", fake_list_comments)
-    monkeypatch.setattr(comment_list_command, "resolve_project_plan_uuids", lambda conn, project_id: {bound_plan})
-    result = asyncio.run(comment_list_command.CommentListCommand().execute(project=str(PROJECT_UUID)))
-    data = result.to_dict()["data"]
-    assert data["total"] == 2
-    assert captured["anchor_plan_uuid"] is None  # plan omitted entirely -> no plan scoping applied
+def test_bug_list_command_no_longer_references_resolve_project_plan_uuids() -> None:
+    """bug_list/todo_list/comment_list must not import or call
+    resolve_project_plan_uuids any more -- the transitive project match is now a
+    single correlated subquery inside list_bugs_page/list_todos_page/
+    list_comments_page, not a Python-side bound-plan-uuids precomputation."""
+    assert not hasattr(bug_list_command, "resolve_project_plan_uuids")
+    assert not hasattr(todo_list_command, "resolve_project_plan_uuids")
+    assert not hasattr(comment_list_command, "resolve_project_plan_uuids")
 
 
 # --- bug_fix_list: transitive via the OWNING BUG's plan binding -------------------

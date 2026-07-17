@@ -20,9 +20,9 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
 )
 from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES, TodoKind, TodoStatus
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.todo_store import list_todos
-from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.storage.todo_store import list_todos_page
 
 TODO_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "priority", "owner", "assignee", "model", "created_after", "created_before", "active_only", "unanchored_only"]
 
@@ -39,6 +39,8 @@ _ENUM_OVERRIDES = {
     "kind": [e.value for e in TodoKind],
 }
 
+# The SQL predicate now lives in todo_store.list_todos_page (_ACTIVE_TODO_STATUSES);
+# this copy is kept as the documented, importable vocabulary for callers/tests.
 _ACTIVE_STATUSES = frozenset({"open", "in_progress", "blocked"})
 
 
@@ -79,7 +81,7 @@ class TodoListCommand(Command):
             best_practices=[
                 "active_only restricts results to statuses open, in_progress, blocked, excluding resolved/closed/cancelled — combine with owner or assignee to build a personal work queue.",
                 "unanchored_only restricts to primary_anchor_type == none, useful for finding TODOs still needing a primary anchor assigned.",
-                "status and kind are pushed down to SQL as exact-match filters; all other filters (project, file, anchor_plan, revision, step, priority, owner, assignee, created_after/before) are applied in-memory after fetch.",
+                "status, kind, project, file, anchor_plan, revision, step, priority, owner, assignee, created_after/before, active_only, and unanchored_only are all pushed down to SQL as WHERE clauses -- none is applied by post-fetch, in-memory filtering.",
                 "The project filter matches transitively: a TODO whose anchor_project_id equals the filter value matches directly, and a TODO with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "The model filter parameter is accepted in the schema but is not currently applied to the result set — passing it has no filtering effect.",
                 "total reflects the filtered count before pagination is applied, not the page size — use it, together with limit and offset, to detect additional pages.",
@@ -120,48 +122,37 @@ class TodoListCommand(Command):
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 # anchor_plan accepts a plan name or UUID (siblings resolve the same way via resolve_plan);
                 # a well-formed but nonexistent name/uuid raises PLAN_NOT_FOUND from resolve_plan itself.
-                resolved_anchor_plan_uuid: str | None = None
+                resolved_anchor_plan_uuid: uuid.UUID | None = None
                 if anchor_plan is not None:
-                    resolved_anchor_plan_uuid = str(resolve_plan(conn, anchor_plan).uuid)
-                records = list_todos(conn, status=filters.get("status"), kind=filters.get("kind"))
+                    resolved_anchor_plan_uuid = resolve_plan(conn, anchor_plan).uuid
                 project_value = filters.get("project")
-                bound_plan_uuids: set[uuid.UUID] = set()
-                if project_value is not None:
-                    bound_plan_uuids = resolve_project_plan_uuids(conn, uuid.UUID(project_value))
-                filtered = []
-                for item in records:
-                    if "project" in filters.values:
-                        matches_direct = item.anchor_project_id is not None and str(item.anchor_project_id) == project_value
-                        matches_transitive = item.anchor_plan_uuid is not None and item.anchor_plan_uuid in bound_plan_uuids
-                        if not (matches_direct or matches_transitive):
-                            continue
-                    if "file" in filters.values and item.anchor_file_path != filters.get("file"):
-                        continue
-                    if resolved_anchor_plan_uuid is not None and str(item.anchor_plan_uuid) != resolved_anchor_plan_uuid:
-                        continue
-                    if "revision" in filters.values and str(item.anchor_revision_uuid) != filters.get("revision"):
-                        continue
-                    if "step" in filters.values and str(item.anchor_step_uuid) != filters.get("step"):
-                        continue
-                    if "priority" in filters.values and item.priority_nice != filters.get("priority"):
-                        continue
-                    if "owner" in filters.values and item.created_by != filters.get("owner"):
-                        continue
-                    if "assignee" in filters.values and item.assigned_to != filters.get("assignee"):
-                        continue
-                    if "created_after" in filters.values and item.created_at < filters.get("created_after"):
-                        continue
-                    if "created_before" in filters.values and item.created_at > filters.get("created_before"):
-                        continue
-                    if filters.get("active_only") and item.status not in _ACTIVE_STATUSES:
-                        continue
-                    if filters.get("unanchored_only") and item.primary_anchor_type != "none":
-                        continue
-                    filtered.append(item)
-                total = len(filtered)
-                page = filtered[pagination.offset : pagination.offset + pagination.limit]
+                project_uuid = uuid.UUID(project_value) if project_value is not None else None
+                revision_value = filters.get("revision")
+                revision_uuid = validate_uuid(revision_value) if revision_value is not None else None
+                step_value = filters.get("step")
+                step_uuid = validate_uuid(step_value) if step_value is not None else None
+                records, total = list_todos_page(
+                    conn,
+                    status=filters.get("status"),
+                    kind=filters.get("kind"),
+                    anchor_file_path=filters.get("file"),
+                    anchor_plan_uuid=resolved_anchor_plan_uuid,
+                    anchor_revision_uuid=revision_uuid,
+                    anchor_step_uuid=step_uuid,
+                    priority_nice=filters.get("priority"),
+                    owner=filters.get("owner"),
+                    assignee=filters.get("assignee"),
+                    created_after=filters.get("created_after"),
+                    created_before=filters.get("created_before"),
+                    active_only=bool(filters.get("active_only")),
+                    unanchored_only=bool(filters.get("unanchored_only")),
+                    project_id=project_uuid,
+                    limit=pagination.limit,
+                    offset=pagination.offset,
+                    include_deleted=False,
+                )
                 return SuccessResult(data={
-                    "todos": [r.to_payload() for r in page],
+                    "todos": [r.to_payload() for r in records],
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

@@ -71,13 +71,13 @@ class _FakeConn:
 def _run_bug_list(monkeypatch, plan: str):
     captured: dict = {}
 
-    def fake_list_bugs(conn, **kwargs):
+    def fake_list_bugs_page(conn, **kwargs):
         captured.update(kwargs)
-        return []
+        return [], 0
 
     monkeypatch.setattr(bug_list_command, "db_connection", _fake_db)
     monkeypatch.setattr(bug_list_command, "resolve_plan", _fake_resolve_plan)
-    monkeypatch.setattr(bug_list_command, "list_bugs", fake_list_bugs)
+    monkeypatch.setattr(bug_list_command, "list_bugs_page", fake_list_bugs_page)
     result = asyncio.run(bug_list_command.BugListCommand().execute(plan=plan))
     return result, captured
 
@@ -125,13 +125,14 @@ def test_list_bugs_sql_without_plan_scope_unchanged() -> None:
 def _run_comment_list(monkeypatch, plan: str, records=None, **kwargs):
     captured: dict = {}
 
-    def fake_list_comments(conn, **store_kwargs):
+    def fake_list_comments_page(conn, **store_kwargs):
         captured.update(store_kwargs)
-        return list(records or [])
+        page = list(records or [])
+        return page, len(page)
 
     monkeypatch.setattr(comment_list_command, "db_connection", _fake_db)
     monkeypatch.setattr(comment_list_command, "resolve_plan", _fake_resolve_plan)
-    monkeypatch.setattr(comment_list_command, "list_comments", fake_list_comments)
+    monkeypatch.setattr(comment_list_command, "list_comments_page", fake_list_comments_page)
     result = asyncio.run(comment_list_command.CommentListCommand().execute(plan=plan, **kwargs))
     return result, captured
 
@@ -155,7 +156,7 @@ def test_comment_list_unknown_plan_raises_plan_not_found(monkeypatch) -> None:
 
 
 class _FakeComment:
-    """Minimal RuntimeComment stand-in for the in-command filter path."""
+    """Minimal RuntimeComment stand-in for command-level (non-SQL) assertions."""
 
     def __init__(self, anchor_plan_uuid):
         self.anchor_plan_uuid = anchor_plan_uuid
@@ -171,15 +172,37 @@ class _FakeComment:
         return {"anchor_plan_uuid": str(self.anchor_plan_uuid)}
 
 
-def test_comment_list_anchor_plan_filter_intersects_plan_scope(monkeypatch) -> None:
-    # The store already returns the plan-scoped set; a different anchor_plan
-    # value must intersect to empty, never widen the scope.
-    records = [_FakeComment(PLAN_UUID)]
+def test_comment_list_forwards_both_plan_scope_and_anchor_plan_filter(monkeypatch) -> None:
+    """The command must forward BOTH the resolved `plan` scope and the independent
+    `anchor_plan` filter value to the store as two distinct parameters -- it is
+    list_comments_page's job (proven at the SQL level in
+    test_runtime_comment_store_page.py) to AND them into two anchor_plan_uuid = %s
+    clauses; the command itself must not intersect/filter in Python any more."""
     other_plan = uuid.uuid4()
-    result, _ = _run_comment_list(monkeypatch, PLAN_NAME, records=records, anchor_plan=str(other_plan))
-    assert result.to_dict()["data"]["total"] == 0
-    result, _ = _run_comment_list(monkeypatch, PLAN_NAME, records=records, anchor_plan=str(PLAN_UUID))
-    assert result.to_dict()["data"]["total"] == 1
+    result, captured = _run_comment_list(
+        monkeypatch, PLAN_NAME, records=[_FakeComment(PLAN_UUID)], anchor_plan=str(other_plan)
+    )
+    assert captured["anchor_plan_uuid"] == PLAN_UUID
+    assert captured["filter_anchor_plan_uuid"] == other_plan
+    assert result.to_dict()["data"]["total"] == 1  # the fake store's own count, un-recomputed
+
+
+def test_comment_list_trusts_store_total_no_recomputation(monkeypatch) -> None:
+    """Proves comment_list_command does not slice/recompute total in Python: the
+    fake store returns a page of 2 records but a deliberately mismatched total of
+    999. If the command's response total were anything but 999, the command would
+    still be doing its own (store-independent) counting -- i.e. the Python-loop
+    filtering/pagination bug this change eliminates would have crept back in."""
+    def fake_list_comments_page(conn, **kwargs):
+        return [_FakeComment(PLAN_UUID), _FakeComment(PLAN_UUID)], 999
+
+    monkeypatch.setattr(comment_list_command, "db_connection", _fake_db)
+    monkeypatch.setattr(comment_list_command, "resolve_plan", _fake_resolve_plan)
+    monkeypatch.setattr(comment_list_command, "list_comments_page", fake_list_comments_page)
+    result = asyncio.run(comment_list_command.CommentListCommand().execute(plan=PLAN_NAME))
+    data = result.to_dict()["data"]
+    assert data["total"] == 999
+    assert len(data["comments"]) == 2
 
 
 # --- runtime_comment_store.list_comments SQL is pre-existing; escalation store ---
