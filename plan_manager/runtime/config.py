@@ -57,6 +57,31 @@ class EmbeddingSection(BaseModel):
     timeout: float = 30.0
 
 
+class CodeAnalysisSection(BaseModel):
+    """Optional Code Analysis server (CA) settings, used for live anchor confirmation.
+
+    All fields are optional; the CA server is an optional external integration
+    (bug 5926d536) whose absence degrades project/file anchor confirmation
+    only: a project/file anchor whose target cannot be confirmed against CA
+    (unconfigured, unreachable, or a clean not-found response) is never
+    persisted unverified -- the caller downgrades it to unanchored instead of
+    refusing the create.
+
+    ``url`` carries scheme, host, and port together (e.g.
+    ``"mtls://casmgr:15010"``), the same shape as ``EmbeddingSection.url``.
+    ``cert``/``key``/``ca`` are mTLS client-identity and trust material paths,
+    required only when ``url`` uses the ``mtls`` scheme.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str | None = None
+    timeout: float = 10.0
+    cert: str | None = None
+    key: str | None = None
+    ca: str | None = None
+
+
 class ScoringSection(BaseModel):
     """Optional scoring settings carrying the published defaults (C-028).
 
@@ -121,6 +146,7 @@ class PlanManagerSection(BaseModel):
 
     database: DatabaseSection
     embedding: EmbeddingSection = Field(default_factory=EmbeddingSection)
+    code_analysis: CodeAnalysisSection = Field(default_factory=CodeAnalysisSection)
     scoring: ScoringSection = Field(default_factory=ScoringSection)
     schema_overrides: dict = Field(default_factory=dict)
     export_root: str

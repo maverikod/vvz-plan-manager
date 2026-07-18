@@ -48,6 +48,13 @@
       "url": ${PLANMGR_EMBEDDING_URL_JSON},
       "timeout": ${PLANMGR_EMBEDDING_TIMEOUT}
     },
+    "code_analysis": {
+      "url": "mtls://casmgr:15010",
+      "timeout": 10.0,
+      "cert": "/etc/planmgr/secrets/client.crt",
+      "key": "/etc/planmgr/secrets/client.key",
+      "ca": "/etc/planmgr/secrets/ca.crt"
+    },
     "export_root": "/var/planmgr/export"
   }
 }

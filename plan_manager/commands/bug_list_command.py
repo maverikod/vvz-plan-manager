@@ -16,7 +16,7 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import list_bugs_page
 
 # BugReport has no assignee column (only owner), so assignee is deliberately excluded
-BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only"]
+BUG_LIST_FILTER_FIELDS = ["project", "file", "anchor_plan", "revision", "step", "status", "kind", "severity", "priority", "owner", "created_after", "created_before", "active_only", "unanchored_only"]
 
 _FILTER_ENUMS = {"status": BUG_STATUSES, "kind": BUG_KINDS, "severity": BUG_SEVERITIES}
 
@@ -81,6 +81,7 @@ class BugListCommand(Command):
                 "The optional plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields). Omit it to list across all plans.",
                 "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Set active_only=True to exclude closed, rejected, and duplicate bugs.",
+                "Set unanchored_only=True to find bugs whose source_anchor_type is unidentified -- including those recorded unanchored because bug_create/bug_reanchor could not confirm the requested project/file anchor against the Code Analysis server (see anchor_confirmation in the bug_create/bug_reanchor response).",
                 "The project filter matches transitively: a bug whose source_project_id equals the filter value matches directly, and a bug with source_project_id NULL still matches when its source_plan_uuid is bound to that project (plan.project_ids).",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
                 "Combine file/anchor_plan/revision/step filters with status/kind/severity/owner for precise anchor lookups.",
@@ -103,6 +104,7 @@ class BugListCommand(Command):
         created_after: str | None = None,
         created_before: str | None = None,
         active_only: bool | None = None,
+        unanchored_only: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
@@ -124,6 +126,7 @@ class BugListCommand(Command):
                     "created_after": created_after,
                     "created_before": created_before,
                     "active_only": active_only,
+                    "unanchored_only": unanchored_only,
                     "limit": limit,
                     "offset": offset,
                 }
@@ -152,6 +155,7 @@ class BugListCommand(Command):
                     created_after=filters.get("created_after"),
                     created_before=filters.get("created_before"),
                     active_only=bool(filters.get("active_only")),
+                    unanchored_only=bool(filters.get("unanchored_only")),
                     project_id=project_uuid,
                     limit=pagination.limit,
                     offset=pagination.offset,

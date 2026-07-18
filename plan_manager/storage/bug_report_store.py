@@ -178,6 +178,7 @@ def list_bugs_page(
     created_after: str | None = None,
     created_before: str | None = None,
     active_only: bool = False,
+    unanchored_only: bool = False,
     project_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -186,8 +187,13 @@ def list_bugs_page(
     """List one paginated page of bug reports plus the total filtered count, entirely in SQL.
 
     Every bug_list filter (status, kind, severity, owner, plan scope, file, revision,
-    step, priority, created_after/before, active_only) is a WHERE clause here; none is
-    applied by post-fetch Python filtering.
+    step, priority, created_after/before, active_only, unanchored_only) is a WHERE
+    clause here; none is applied by post-fetch Python filtering.
+
+    `unanchored_only`, when True, restricts to bugs whose source_anchor_type is
+    "unidentified" (BugSourceType.UNIDENTIFIED) -- the bug-report equivalent of
+    todo_list's unanchored_only (primary_anchor_type = 'none'), surfacing the
+    unanchored records a dropped CA project/file confirmation produces (bug 5926d536).
 
     `source_plan_uuid` is the resolved `plan` top-level scope parameter and
     `anchor_plan_uuid` is the independent `anchor_plan` filter field; both compare
@@ -250,6 +256,9 @@ def list_bugs_page(
     if active_only:
         where_clauses.append("status NOT IN (%s, %s, %s)")
         params.extend(sorted(_TERMINAL_BUG_STATUSES))
+    if unanchored_only:
+        where_clauses.append("source_anchor_type = %s")
+        params.append("unidentified")
     if project_id is not None:
         where_clauses.append(
             "(source_project_id = %s OR source_plan_uuid IN (SELECT uuid FROM plan WHERE %s = ANY(project_ids)))"

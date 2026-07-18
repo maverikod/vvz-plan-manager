@@ -8,12 +8,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.domain.bug_source import BugSource
 from plan_manager.domain.runtime_validation import validate_uuid
-from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.bug_report_store import create_bug
 
 
@@ -85,6 +86,7 @@ class BugCreateCommand(Command):
                 "Leave status unset to default to 'reported' unless intentionally seeding historical data.",
                 "Use priority_nice in [-20, 19]; lower values are higher priority.",
                 "Record reporter and created_by even when they are the same actor.",
+                "source_type=project or file is confirmed live against the Code Analysis server before it is persisted; when CA cannot confirm the project (or file) -- unreachable/unconfigured, or a clean not-found response -- the bug is still created but its source is recorded unanchored (source_type=unidentified) and the response's anchor_confirmation.reason names why (ca_unreachable or not_found). Check anchor_confirmation.confirmed rather than assuming the requested anchor was honored.",
             ],
         )
 
@@ -121,20 +123,34 @@ class BugCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            resolved_source_project_id = validate_uuid(source_project_id) if source_project_id is not None else None
+            confirmation = confirm_anchor(
+                app_config,
+                requested_type=source_type,
+                project_id=resolved_source_project_id,
+                file_path=source_file_path,
+            )
             with db_connection() as conn:
                 resolve_plan(conn, plan)
-                source = BugSource(
-                    source_type=source_type,
-                    project_id=validate_uuid(source_project_id) if source_project_id is not None else None,
-                    file_path=source_file_path,
-                    plan_uuid=validate_uuid(source_plan_uuid) if source_plan_uuid is not None else None,
-                    revision_uuid=validate_uuid(source_revision_uuid) if source_revision_uuid is not None else None,
-                    step_uuid=validate_uuid(source_step_uuid) if source_step_uuid is not None else None,
-                    step_path=source_step_path,
-                    ref_id=validate_uuid(source_ref_id) if source_ref_id is not None else None,
-                    command=source_command,
-                    service=source_service,
-                )
+                if confirmation.confirmed:
+                    source = BugSource(
+                        source_type=source_type,
+                        project_id=resolved_source_project_id,
+                        file_path=source_file_path,
+                        plan_uuid=validate_uuid(source_plan_uuid) if source_plan_uuid is not None else None,
+                        revision_uuid=validate_uuid(source_revision_uuid) if source_revision_uuid is not None else None,
+                        step_uuid=validate_uuid(source_step_uuid) if source_step_uuid is not None else None,
+                        step_path=source_step_path,
+                        ref_id=validate_uuid(source_ref_id) if source_ref_id is not None else None,
+                        command=source_command,
+                        service=source_service,
+                    )
+                else:
+                    # CA could not confirm the requested project/file anchor (unreachable,
+                    # unconfigured, or a clean not-found response): never persist an
+                    # unverified project/file anchor -- record the bug unanchored instead
+                    # of losing the create (bug 5926d536).
+                    source = BugSource(source_type="unidentified")
                 bug = create_bug(
                     conn,
                     title=title,
@@ -156,6 +172,9 @@ class BugCreateCommand(Command):
                     duplicate_of_uuid=validate_uuid(duplicate_of_uuid) if duplicate_of_uuid is not None else None,
                     parent_bug_uuid=validate_uuid(parent_bug_uuid) if parent_bug_uuid is not None else None,
                 )
-                return SuccessResult(data=bug.to_payload())
+                payload = bug.to_payload()
+                if confirmation.applicable:
+                    payload["anchor_confirmation"] = confirmation.to_payload(source_type)
+                return SuccessResult(data=payload)
         except Exception as exc:
             return map_exception(exc)

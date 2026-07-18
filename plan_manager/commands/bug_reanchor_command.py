@@ -7,13 +7,14 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.reanchor_command_metadata import REANCHOR_BEST_PRACTICES, REANCHOR_ERROR_CASES
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.domain.bug_source import BugSource
 from plan_manager.domain.runtime_validation import validate_uuid
-from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.bug_reanchor_store import reanchor_bug_source
 
 
@@ -84,22 +85,38 @@ class BugReanchorCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            resolved_new_source_project_id = validate_uuid(new_source_project_id) if new_source_project_id is not None else None
+            confirmation = confirm_anchor(
+                app_config,
+                requested_type=new_source_type,
+                project_id=resolved_new_source_project_id,
+                file_path=new_source_file_path,
+            )
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
-                new_source = BugSource(
-                    source_type=new_source_type,
-                    project_id=validate_uuid(new_source_project_id) if new_source_project_id is not None else None,
-                    file_path=new_source_file_path,
-                    plan_uuid=validate_uuid(new_source_plan_uuid) if new_source_plan_uuid is not None else None,
-                    revision_uuid=validate_uuid(new_source_revision_uuid) if new_source_revision_uuid is not None else None,
-                    step_uuid=validate_uuid(new_source_step_uuid) if new_source_step_uuid is not None else None,
-                    step_path=new_source_step_path,
-                    ref_id=validate_uuid(new_source_ref_id) if new_source_ref_id is not None else None,
-                    command=new_source_command,
-                    service=new_source_service,
-                )
+                if confirmation.confirmed:
+                    new_source = BugSource(
+                        source_type=new_source_type,
+                        project_id=resolved_new_source_project_id,
+                        file_path=new_source_file_path,
+                        plan_uuid=validate_uuid(new_source_plan_uuid) if new_source_plan_uuid is not None else None,
+                        revision_uuid=validate_uuid(new_source_revision_uuid) if new_source_revision_uuid is not None else None,
+                        step_uuid=validate_uuid(new_source_step_uuid) if new_source_step_uuid is not None else None,
+                        step_path=new_source_step_path,
+                        ref_id=validate_uuid(new_source_ref_id) if new_source_ref_id is not None else None,
+                        command=new_source_command,
+                        service=new_source_service,
+                    )
+                else:
+                    # CA could not confirm the requested project/file anchor: never
+                    # persist an unverified project/file anchor -- move the bug to
+                    # unanchored instead of refusing the re-anchor (bug 5926d536).
+                    new_source = BugSource(source_type="unidentified")
                 updated = reanchor_bug_source(conn, bug_uuid, changed_by=changed_by, new_source=new_source)
-                return SuccessResult(data=updated.to_payload())
+                payload = updated.to_payload()
+                if confirmation.applicable:
+                    payload["anchor_confirmation"] = confirmation.to_payload(new_source_type)
+                return SuccessResult(data=payload)
         except Exception as exc:
             return map_exception(exc)

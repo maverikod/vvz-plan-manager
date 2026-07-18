@@ -8,11 +8,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.reanchor_command_metadata import REANCHOR_BEST_PRACTICES, REANCHOR_ERROR_CASES
 from plan_manager.commands.todo_command_metadata import todo_metadata
 from plan_manager.domain.primary_anchor import PrimaryAnchor
-from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.todo_reanchor_store import reanchor_todo
 
 
@@ -77,19 +78,35 @@ class TodoReanchorCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            resolved_new_anchor_project_id = uuid.UUID(new_anchor_project_id) if new_anchor_project_id is not None else None
+            confirmation = confirm_anchor(
+                app_config,
+                requested_type=new_anchor_type,
+                project_id=resolved_new_anchor_project_id,
+                file_path=new_anchor_file_path,
+            )
             with db_connection() as conn:
                 todo_uuid = uuid.UUID(todo)
-                new_anchor = PrimaryAnchor(
-                    anchor_type=new_anchor_type,
-                    project_id=uuid.UUID(new_anchor_project_id) if new_anchor_project_id is not None else None,
-                    file_path=new_anchor_file_path,
-                    plan_uuid=uuid.UUID(new_anchor_plan_uuid) if new_anchor_plan_uuid is not None else None,
-                    revision_uuid=uuid.UUID(new_anchor_revision_uuid) if new_anchor_revision_uuid is not None else None,
-                    step_uuid=uuid.UUID(new_anchor_step_uuid) if new_anchor_step_uuid is not None else None,
-                    step_path=new_anchor_step_path,
-                    ref_id=uuid.UUID(new_anchor_ref_id) if new_anchor_ref_id is not None else None,
-                )
+                if confirmation.confirmed:
+                    new_anchor = PrimaryAnchor(
+                        anchor_type=new_anchor_type,
+                        project_id=resolved_new_anchor_project_id,
+                        file_path=new_anchor_file_path,
+                        plan_uuid=uuid.UUID(new_anchor_plan_uuid) if new_anchor_plan_uuid is not None else None,
+                        revision_uuid=uuid.UUID(new_anchor_revision_uuid) if new_anchor_revision_uuid is not None else None,
+                        step_uuid=uuid.UUID(new_anchor_step_uuid) if new_anchor_step_uuid is not None else None,
+                        step_path=new_anchor_step_path,
+                        ref_id=uuid.UUID(new_anchor_ref_id) if new_anchor_ref_id is not None else None,
+                    )
+                else:
+                    # CA could not confirm the requested project/file anchor: never
+                    # persist an unverified project/file anchor -- move the TODO to
+                    # unanchored instead of refusing the re-anchor (bug 5926d536).
+                    new_anchor = PrimaryAnchor(anchor_type="none")
                 updated = reanchor_todo(conn, todo_uuid, changed_by=changed_by, new_anchor=new_anchor)
-                return SuccessResult(data=updated.to_payload())
+                payload = updated.to_payload()
+                if confirmation.applicable:
+                    payload["anchor_confirmation"] = confirmation.to_payload(new_anchor_type)
+                return SuccessResult(data=payload)
         except Exception as exc:
             return map_exception(exc)

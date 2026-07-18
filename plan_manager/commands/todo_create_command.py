@@ -8,9 +8,10 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
-from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.todo_store import create_todo
 from plan_manager.domain.primary_anchor import PrimaryAnchor
 
@@ -97,6 +98,7 @@ class TodoCreateCommand(Command):
                 "priority_nice follows the nice scale in [-20, 19]; lower values are higher priority, and out-of-range values are rejected before the insert.",
                 "kind must be one of the fixed TodoKind vocabulary (task, followup, cleanup, question, risk, investigation, review, update, migration, rebuild, test_rerun, documentation); status defaults to open and must be a valid TodoStatus if overridden.",
                 "Each call always inserts a new TODO item — there is no dedup/idempotency check, so do not blindly retry on ambiguous failures without checking whether the item was already created.",
+                "anchor_type=project or file is confirmed live against the Code Analysis server before it is persisted; when CA cannot confirm the project (or file) -- unreachable/unconfigured, or a clean not-found response -- the TODO is still created but its anchor is recorded unanchored (anchor_type=none) and the response's anchor_confirmation.reason names why (ca_unreachable or not_found). Check anchor_confirmation.confirmed rather than assuming the requested anchor was honored.",
             ],
         )
 
@@ -123,17 +125,31 @@ class TodoCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            resolved_anchor_project_id = uuid.UUID(anchor_project_id) if anchor_project_id is not None else None
+            confirmation = confirm_anchor(
+                app_config,
+                requested_type=anchor_type,
+                project_id=resolved_anchor_project_id,
+                file_path=anchor_file_path,
+            )
             with db_connection() as conn:
-                anchor = PrimaryAnchor(
-                    anchor_type=anchor_type,
-                    project_id=uuid.UUID(anchor_project_id) if anchor_project_id is not None else None,
-                    file_path=anchor_file_path,
-                    plan_uuid=uuid.UUID(anchor_plan_uuid) if anchor_plan_uuid is not None else None,
-                    revision_uuid=uuid.UUID(anchor_revision_uuid) if anchor_revision_uuid is not None else None,
-                    step_uuid=uuid.UUID(anchor_step_uuid) if anchor_step_uuid is not None else None,
-                    step_path=anchor_step_path,
-                    ref_id=uuid.UUID(anchor_ref_id) if anchor_ref_id is not None else None,
-                )
+                if confirmation.confirmed:
+                    anchor = PrimaryAnchor(
+                        anchor_type=anchor_type,
+                        project_id=resolved_anchor_project_id,
+                        file_path=anchor_file_path,
+                        plan_uuid=uuid.UUID(anchor_plan_uuid) if anchor_plan_uuid is not None else None,
+                        revision_uuid=uuid.UUID(anchor_revision_uuid) if anchor_revision_uuid is not None else None,
+                        step_uuid=uuid.UUID(anchor_step_uuid) if anchor_step_uuid is not None else None,
+                        step_path=anchor_step_path,
+                        ref_id=uuid.UUID(anchor_ref_id) if anchor_ref_id is not None else None,
+                    )
+                else:
+                    # CA could not confirm the requested project/file anchor (unreachable,
+                    # unconfigured, or a clean not-found response): never persist an
+                    # unverified project/file anchor -- record the TODO unanchored
+                    # instead of losing the create (bug 5926d536).
+                    anchor = PrimaryAnchor(anchor_type="none")
                 record = create_todo(
                     conn,
                     title=title,
@@ -148,6 +164,9 @@ class TodoCreateCommand(Command):
                     blocking_reason=blocking_reason,
                     execution_result=execution_result,
                 )
-                return SuccessResult(data=record.to_payload())
+                payload = record.to_payload()
+                if confirmation.applicable:
+                    payload["anchor_confirmation"] = confirmation.to_payload(anchor_type)
+                return SuccessResult(data=payload)
         except Exception as exc:
             return map_exception(exc)

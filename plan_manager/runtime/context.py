@@ -154,6 +154,18 @@ class AppConfig:
         embedding_timeout: The configured per-request embedding timeout in
             seconds, governing every embed call (scoring and the info/health
             reachability probe).
+        code_analysis_url: The configured Code Analysis (CA) server URL
+            (scheme+host+port, e.g. "mtls://casmgr:15010"), or None when CA
+            is not configured -- in which case live project/file anchor
+            confirmation (bug 5926d536) always falls to the unreachable path.
+        code_analysis_timeout: The configured per-request CA confirmation
+            timeout in seconds, bounding list_projects/list_project_files.
+        code_analysis_cert: Path to the client certificate presented for
+            mTLS CA connections, or None.
+        code_analysis_key: Path to the client private key for mTLS CA
+            connections, or None.
+        code_analysis_ca: Path to the CA trust bundle used to verify the CA
+            server's certificate, or None.
         export_root: The default export root directory used when a caller
             passes a relative export path.
         scoring_threshold: The configured scoring pass/fail threshold.
@@ -167,6 +179,11 @@ class AppConfig:
 
     embedding_url: str | None
     embedding_timeout: float
+    code_analysis_url: str | None
+    code_analysis_timeout: float
+    code_analysis_cert: str | None
+    code_analysis_key: str | None
+    code_analysis_ca: str | None
     export_root: str
     scoring_threshold: float
     scoring_aggregation: str
@@ -182,6 +199,11 @@ def app_config() -> AppConfig:
             configuration section returned by ``_require_section()``:
             ``embedding_url`` from ``section.embedding.url``,
             ``embedding_timeout`` from ``section.embedding.timeout``,
+            ``code_analysis_url`` from ``section.code_analysis.url``,
+            ``code_analysis_timeout`` from ``section.code_analysis.timeout``,
+            ``code_analysis_cert`` from ``section.code_analysis.cert``,
+            ``code_analysis_key`` from ``section.code_analysis.key``,
+            ``code_analysis_ca`` from ``section.code_analysis.ca``,
             ``export_root`` from ``section.export_root``,
             ``scoring_threshold`` from ``section.scoring.threshold``,
             ``scoring_aggregation`` from ``section.scoring.aggregation``,
@@ -195,6 +217,11 @@ def app_config() -> AppConfig:
     return AppConfig(
         embedding_url=section.embedding.url,
         embedding_timeout=section.embedding.timeout,
+        code_analysis_url=section.code_analysis.url,
+        code_analysis_timeout=section.code_analysis.timeout,
+        code_analysis_cert=section.code_analysis.cert,
+        code_analysis_key=section.code_analysis.key,
+        code_analysis_ca=section.code_analysis.ca,
         export_root=section.export_root,
         scoring_threshold=section.scoring.threshold,
         scoring_aggregation=section.scoring.aggregation,

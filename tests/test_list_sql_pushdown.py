@@ -110,6 +110,17 @@ def test_list_bugs_page_active_only_excludes_terminal_statuses() -> None:
     assert {"closed", "rejected", "duplicate"}.issubset(set(params))
 
 
+def test_list_bugs_page_unanchored_only() -> None:
+    """bug_list's unanchored_only mirrors todo_list's: source_anchor_type = 'unidentified'
+    is the bug-report analog of todo_item's primary_anchor_type = 'none' (bug 5926d536:
+    surfaces bugs a dropped CA project/file confirmation recorded unanchored)."""
+    conn = _SequencedConn()
+    list_bugs_page(conn, unanchored_only=True)
+    sql, params = conn.calls[0]
+    assert "source_anchor_type = %s" in sql
+    assert "unidentified" in params
+
+
 def test_list_bugs_page_created_after_before_are_inclusive() -> None:
     conn = _SequencedConn()
     list_bugs_page(conn, created_after="2026-01-01T00:00:00+00:00", created_before="2026-12-31T00:00:00+00:00")
@@ -309,6 +320,19 @@ def test_bug_list_command_calls_store_once_and_trusts_its_total(monkeypatch) -> 
     assert calls["n"] == 1
     assert data["total"] == 999
     assert len(data["bugs"]) == 2
+
+
+def test_bug_list_command_forwards_unanchored_only_to_store(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_list_bugs_page(conn, **kwargs):
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(bug_list_command, "db_connection", _fake_db_ctx())
+    monkeypatch.setattr(bug_list_command, "list_bugs_page", fake_list_bugs_page)
+    asyncio.run(bug_list_command.BugListCommand().execute(unanchored_only=True))
+    assert captured["unanchored_only"] is True
 
 
 def test_todo_list_command_calls_store_once_and_trusts_its_total(monkeypatch) -> None:
