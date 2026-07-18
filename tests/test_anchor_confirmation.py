@@ -293,8 +293,12 @@ def test_confirm_project_anchor_bounded_timeout_does_not_hang(monkeypatch) -> No
 
     class _HangingRpc(_FakeRpc):
         async def execute_command_unified(self, command, params, *, auto_poll, timeout):
-            await asyncio.sleep(5.0)
-            raise AssertionError("must never complete within the bounded timeout")
+            # Model the real client honoring its own per-call ``timeout`` on a
+            # stuck CA: each call is bounded at ``timeout`` and raises, folding
+            # to ca_unreachable -- confirmation must not hang for the whole
+            # (larger) overall guard.
+            await asyncio.sleep(timeout)
+            raise asyncio.TimeoutError(f"CA call exceeded {timeout}s")
 
     _patch_client(monkeypatch, _HangingRpc())
     import time

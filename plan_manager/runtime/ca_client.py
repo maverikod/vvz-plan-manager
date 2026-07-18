@@ -45,6 +45,10 @@ from urllib.parse import urlparse
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
+# A file anchor confirmation makes at most this many sequential queued CA calls
+# (list_projects, then list_project_files); the overall guard is sized from it.
+_MAX_CA_CALLS_PER_CONFIRM = 2
+
 
 @dataclass(frozen=True)
 class AnchorConfirmation:
@@ -270,9 +274,16 @@ def confirm_project_anchor(
     if not ca_url:
         return AnchorConfirmation(confirmed=False, reason="ca_unreachable")
     try:
+        # ``timeout`` is the PER-CA-CALL budget (each execute_command_unified
+        # inside _confirm_async is bounded by it). A file anchor makes TWO
+        # sequential queued calls (list_projects then list_project_files), so
+        # the OVERALL guard must fit both -- sizing it at the per-call budget
+        # (as the first cut did) times the whole sequence out mid-second-call
+        # and mis-reports a reachable CA as ca_unreachable.
+        overall_budget = timeout * _MAX_CA_CALLS_PER_CONFIRM + 5.0
         return _run_blocking(
             _confirm_async(ca_url, project_id, file_path, timeout, cert, key, ca),
-            timeout=timeout,
+            timeout=overall_budget,
         )
     except Exception:
         return AnchorConfirmation(confirmed=False, reason="ca_unreachable")
