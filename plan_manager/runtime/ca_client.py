@@ -148,16 +148,29 @@ def _unwrap_command_data(envelope: Any) -> dict[str, Any]:
     "ca_unreachable", never be misread as a clean "not_found".
     """
     value: Any = envelope
-    if isinstance(value, dict) and "result" in value:
-        value = value["result"]
-    if isinstance(value, dict) and "success" in value:
-        if value.get("success") is False:
-            raise _CAUnavailable(
-                f"CA command failed: {value.get('message') or value.get('error') or value!r}"
-            )
-        data = value.get("data")
-        if isinstance(data, dict):
-            value = data
+    # The queued path DOUBLE-wraps: the unified mode-envelope's "result" is
+    # itself a job envelope whose OWN "result" is the {success, data} layer,
+    # observed live as {mode, command, job_id, status,
+    #   result: {job_id, command, result: {success, data: {...}}}, ...}.
+    # Peel "result" repeatedly (bounded) until we reach the {success, data}
+    # layer; a single peel lands on {job_id, command, result: ...}, which has
+    # no "success" key and would wrongly be returned as the payload.
+    for _ in range(6):
+        if not isinstance(value, dict):
+            break
+        if "success" in value:
+            if value.get("success") is False:
+                raise _CAUnavailable(
+                    f"CA command failed: {value.get('message') or value.get('error') or value!r}"
+                )
+            data = value.get("data")
+            if isinstance(data, dict):
+                value = data
+            break
+        if "result" in value:
+            value = value["result"]
+            continue
+        break
     if not isinstance(value, dict):
         raise _CAUnavailable(f"CA response did not resolve to a data dict: {envelope!r}")
     return value

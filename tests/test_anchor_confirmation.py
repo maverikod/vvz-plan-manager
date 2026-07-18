@@ -68,13 +68,25 @@ def _immediate_envelope(data: dict) -> dict:
 def _queued_envelope(data: dict) -> dict:
     """Build a real execute_command_unified "queued" envelope.
 
-    The queued branch already unwraps the job's own ``{"success", "data"}``
-    layer server-side (see execute_command_unified's queued branch: it sets
-    ``result_value = raw_result.get("data")`` when ``raw_result`` has a
-    "data" key), so this envelope's ``result`` IS the command's data dict
-    directly -- one nesting layer shallower than the immediate case above.
+    Captured live (2026-07-18, casmgr 1.6.53) from inside the deployed
+    container: the queued branch DOUBLE-wraps -- the mode-envelope's
+    ``result`` is itself a job envelope whose OWN ``result`` is the
+    ``{"success", "data"}`` layer, which is NOT unwrapped server-side:
+    ``{"mode": "queued", ..., "result": {"job_id", "command",
+    "result": {"success": True, "data": {...}}}}``. A single peel of
+    ``result`` lands on ``{"job_id", "command", "result": ...}`` (no
+    "success"/"projects" key), which is exactly the shape that made the
+    first cut mis-read every live response as ca_unreachable.
     """
-    return {"mode": "queued", "command": "x", "job_id": "job-1", "status": "completed", "result": data, "queued": True}
+    return {
+        "mode": "queued",
+        "command": "x",
+        "job_id": "job-1",
+        "status": "completed",
+        "result": {"job_id": "job-1", "command": "x", "result": {"success": True, "data": data}},
+        "queued": True,
+        "raw_status": {},
+    }
 
 
 class _FakeRpc:
