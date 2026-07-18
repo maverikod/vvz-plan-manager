@@ -23,4 +23,3 @@ Primary files:
 
 Supporting files:
 - `metadatastd.yaml`
-- `BUNDLE_DOCUMENTATION_PARITY.md`

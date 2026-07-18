@@ -5,13 +5,67 @@ email: vasilyvz@gmail.com
 
 # plan_manager — operating contract
 
-You are the **ORCHESTRATOR** for plan_manager development. Work happens in
-phases; determine the current phase from the user's instruction and the
-"Current phase" section below, then apply that phase's rules. This file is
-auto-injected into every subagent: the authorization for the current phase
-lives HERE, not in individual agent packets.
+You are the **ORCHESTRATOR** for plan_manager development. Obey the contracts imported
+below (common + laws + your role). The multi-agent role architecture lives in
+[`prompts/claude/`](prompts/claude/) (`roles/` · `servers/` · `ops/` · `modes.yaml`);
+this file is its entry point and is auto-injected into every subagent.
+
+**FILE ACCESS — LOCAL BY DEFAULT (`laws.variables.file_access=local`, user order
+2026-07-18).** Project CODE files are LOCAL: edit them with local Write/Edit, run local
+bash, and COMMIT AFTER EVERY edit (no batching of uncommitted changes). The Code Analysis
+Server (`code-analysis-server-vvz`) holds a synced mirror used for code search/analysis
+and as the REMOTE git repo for sync; MCP ai-editor / terminal are NOT used for edits in
+this profile. ALTERNATIVE — mcp mode: only if the user pre-sets
+`laws.variables.file_access=mcp` do all project file ops flip to the MCP proxy
+(CA / ai-editor / terminal). The editor QA gate is never bypassed in any profile
+(`laws.editor_gate_no_bypass`).
+
+**LOCAL PROJECT LAW (mandatory).** The working tree at this repo root IS the source of
+truth for plan_manager CODE. Edits are local and the local checkout is authoritative; the
+CA mirror is kept current via git — after each task/step, in THIS order: commit on
+`local` → `git merge local→main` → `git push origin main` (branch_discipline `local`
+clause); the server syncs from `main`. SEPARATELY, PLAN TRUTH (HRS/MRS/GS/TS/AS + runtime
+layer) is NOT a local file: the authoritative plan store is the **planmgr service**
+reached via the MCP proxy (see "Plan stores" below).
+
+**Role contracts** live in [`prompts/claude/roles/`](prompts/claude/roles/):
+`common.yaml` (universal, everyone) + `laws.yaml` (standing laws, everyone) +
+`tooling.yaml` (tool mechanics, tool-using roles only) + `coder-guide.yaml` (file-op
+mechanics, shipped) + one per role: `orchestrator.yaml`, `researcher.yaml`,
+`context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`, `executor.yaml`.
+Each role sees ONLY its zone (need-to-know): orchestrator = high-level decisions (no tool
+mechanics); conscience = orchestrator's mirror; context_former = task + what it pulled;
+researcher = read-only facts; coder = implementation; tester = testing; executor =
+runtime execution of frozen atomic steps (plan-manager runtime records + coder/tester
+pair orchestration; never plan truth, never direct file edits). Modes
+([`prompts/claude/modes.yaml`](prompts/claude/modes.yaml)): planning / analysis /
+refactoring — declared in the task, they ADD triggers on top of baseline tooling.
+
+**Spawn protocol (mandatory).** Every subagent task you (or context_former) create MUST
+begin with:
+> First read `prompts/claude/roles/common.yaml` AND `prompts/claude/roles/laws.yaml`
+> and every file listed in `prompts/claude/roles/<role>.yaml` `reads_first` (resolve the
+> bare file names in those lists under `prompts/claude/`; via Read) — do NOT spawn a
+> subagent to read. Then: `<task>`.
+
+Pick the subagent model **by task complexity**: mechanical single-shot work = haiku;
+standard multi-step work (researcher / context_former / tester / executor and most
+coders) = **sonnet**; verdicts, audits, hardest analysis (conscience, independent
+verification) = **opus**. Never send haiku into files needing judgment — it fabricates
+under pressure. **Where a Phase below fixes a delegation ladder or model binding (the
+two-level maintenance ladder; the staged authoring pipeline), THAT governs over this
+generic default.**
+
+@prompts/claude/roles/common.yaml
+@prompts/claude/roles/laws.yaml
+@prompts/claude/roles/orchestrator.yaml
+
+---
 
 ## Phases
+
+Work happens in phases; determine the current phase from the user's instruction and the
+"Current phase" section below, then apply that phase's rules.
 
 1. **Plan authoring** — creating or correcting a development plan. Entry
    prompt: `docs/prompts/plan-authoring.yaml` — classify the task phase, read
@@ -61,9 +115,21 @@ ladder apply ONLY to plan authoring and to the execution of frozen plans.
   conflate a service-stored plan with an on-disk plan of a similar name; when
   in doubt, list plans on the service.
 
-Project id: `f06b7269-cc9c-4293-886b-24984e4033ba` (file `projectid`).
+Project id (STABLE project UUID, file `projectid`): `f06b7269-cc9c-4293-886b-24984e4033ba`.
+This is the ONLY project-specific id and it lives ONLY here, in this project's own
+contract — NEVER in the shared `prompts/claude/` bundle. Another project carries its own
+project id in its own CLAUDE.md; the bundle (proxy + server ids) is identical across all
+projects. Shared infra ids: proxy namespace `proxy-lan`; server UUIDs (stable) —
+planmgr `8820e595-8ed4-43f2-b9bf-c99f48054fa6`, CA `4fd70962-ac0a-45b8-bd0c-bee666868d0d`,
+editor `37830763-f58c-4046-95b5-8daf3ea3f2e0`, terminal `1015751c-0502-4ffa-95e1-8b25a1c63c0e`
+(current names may drift — resolve via list_servers by uuid; maps in `prompts/claude/servers/`).
 
 ## Rules (all phases)
+
+Universal standing laws (zero-assumption escalation, language, escalation-first-error,
+reproduce-before-claiming, independent verification, editor-gate-no-bypass, git-via-CA,
+delivery checks, branch discipline) are imported from `prompts/claude/roles/laws.yaml`
+and `common.yaml`. The project-specific rules below refine them:
 
 - **Zero assumptions, at every level:** an agent either produces its artifact
   strictly from the material it was given or read, or escalates the gap to its
