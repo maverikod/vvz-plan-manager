@@ -65,6 +65,11 @@ def get_graph_order_metadata(cls) -> dict:
             }
         ],
         "error_cases": {
+        "AS_SAME_FILE_ORDER_AMBIGUOUS": {
+            "description": "Two atomic writers target the same file but no dependency path establishes their execution order.",
+            "message": "ambiguous same-file writer order: {details}",
+            "solution": "Add an explicit dependency between the affected TS/GS branches, then retry.",
+        },
             "PLAN_NOT_FOUND": {
                 "description": "The plan identifier does not match any plan in the catalog.",
                 "message": "plan not found: {plan}",

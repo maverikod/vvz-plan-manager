@@ -21,6 +21,7 @@ from plan_manager.scoring.embedding import EmbeddingUnavailable
 from plan_manager.scoring.index import ScoreRefusedError
 from plan_manager.storage.version_store import VersionStoreError
 from plan_manager.views.dependency_graph import GraphIntegrityError
+from plan_manager.views.same_file_order import SameFileOrderAmbiguousError
 from plan_manager.views.prompt_assembly import PromptAssemblyError
 
 
@@ -94,6 +95,7 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "INVALID_PAGINATION",
     "PROMPT_ASSEMBLY_FAILED",
     "GRAPH_CORRUPTED_CHAIN",
+    "AS_SAME_FILE_ORDER_AMBIGUOUS",
     "EXPORT_FILE_NOT_FOUND",
     "EXPORT_PATH_INVALID",
     "UNKNOWN_STEP_SELECTOR",
@@ -193,4 +195,13 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("PROMPT_ASSEMBLY_FAILED", str(exc), {})
     if isinstance(exc, GraphIntegrityError):
         return domain_error("GRAPH_CORRUPTED_CHAIN", str(exc), {})
+    if isinstance(exc, SameFileOrderAmbiguousError):
+        return domain_error(
+            "AS_SAME_FILE_ORDER_AMBIGUOUS",
+            str(exc),
+            {"conflicts": [
+                {"first_uuid": str(first), "second_uuid": str(second), "target_file": target_file}
+                for first, second, target_file in exc.conflicts
+            ]},
+        )
     raise exc

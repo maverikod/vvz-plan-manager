@@ -114,7 +114,7 @@ class FilesReportCommand(Command):
                 except ValueError as exc:
                     return domain_error("STEP_NOT_FOUND", str(exc))
 
-                edges = build_edges(nodes)
+                edges = build_edges(nodes, strict_same_file_order=False)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
 
                 full_report = build_files_report(nodes, scoped_atomic, edges)

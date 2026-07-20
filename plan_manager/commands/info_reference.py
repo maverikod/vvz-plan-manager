@@ -56,7 +56,7 @@ def project_binding_capabilities() -> dict[str, Any]:
             "plan_status": "Returns projects.count, projects.project_ids, and projects.primary_project_id.",
             "plan_list": "Returns project_ids, project_count, and primary_project_id for each plan.",
             "step_get": "Returns top-level project_id.",
-            "step_tree": "Returns project_id for every tree entry.",
+            "step_tree": "Returns project_id for every tree entry; include_content=true additionally returns fields, depends_on, and concepts without per-step reads.",
             "branch_prompt": "Includes plan project bindings and the current atomic step project context.",
             "plan_prompt_chain": "Includes plan project bindings and project_id for each included atomic step.",
             "plan_export": "Writes project_ids, primary_project_id, and each step project_id.",
@@ -267,7 +267,7 @@ def step_lifecycle_capabilities() -> dict[str, Any]:
         },
         "read_surfaces": {
             "step_get": "Returns authoritative status for one step.",
-            "step_tree": "Returns authoritative status for every step.",
+            "step_tree": "Returns authoritative status for every step; include_content and include_runtime are independent opt-in expansions.",
             "plan_prompt_chain": "Compiles only ready_for_review/frozen steps by default.",
         },
         "domain_errors": {
@@ -617,7 +617,7 @@ def planning_standards_reference() -> dict[str, Any]:
             "mini": "Context former and verifier for exactly one GS/TS branch; forms per-TS context and delegates AS work.",
             "spark": "One-AS coder; executes exactly one target-file change and reports verification.",
             "context_minimization": "Agents receive only the context needed for their level; sibling branch context is contamination unless explicitly required.",
-            "target_file_lock": "AS touching the same file are serialized by priority; independent files may run in parallel.",
+            "target_file_lock": "Same-file AS under one TS are serialized by priority. Cross-branch writers derive order from declared TS/GS dependencies; ambiguous pairs fail dependencies.same_file_order. Runtime file locking remains a second barrier; independent files may run in parallel.",
             "spawn_unavailable": "Mini must report SPAWN_UNAVAILABLE instead of coding directly when it cannot spawn spark.",
         },
         "status_terms": {

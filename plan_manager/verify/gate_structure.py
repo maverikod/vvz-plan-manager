@@ -1,12 +1,15 @@
 """Parse and identity checks for the mechanical gate (C-012)."""
 
 import re
+from pathlib import PurePosixPath
 
 from plan_manager.domain.concept import CONCEPT_ID_PATTERN
 from plan_manager.domain.step import SLUG_PATTERN, STEP_ID_PATTERNS, Step
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
 from plan_manager.views.branch import Branch
+from plan_manager.views.dependency_graph import build_edges
+from plan_manager.views.same_file_order import same_file_order_conflicts
 
 
 LABEL_PATTERN = re.compile(r"^[0-9a-z]{4}$")
@@ -117,6 +120,90 @@ def check_parse_target_file(tree: GateTree, steps: list[Step]) -> list[Finding]:
             )
     return findings
 
+
+
+_CODE_PATH_RE = re.compile(
+    r"(?<![\w.-])(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|pyi|js|jsx|ts|tsx|java|kt|go|rs|c|cc|cpp|h|hpp|cs|php|rb|swift|scala|sh|sql)(?![\w-])"
+)
+_WRITE_INTENT_RE = re.compile(
+    r"\b(?:create|write|modify|edit|update|replace|delete|remove|rename|move|patch|append|insert|создать|создай|записать|изменить|изменяй|редактировать|редактируй|удалить|удаляй|переименовать|переместить|добавить)\b",
+    re.IGNORECASE,
+)
+
+
+def _normal_path(value: str) -> str:
+    return PurePosixPath(value.strip("`'\".,:;()[]{}<> ")).as_posix()
+
+
+def _additional_write_targets(step: Step, target_file: str) -> dict[str, list[str]]:
+    """Return explicit code paths mentioned on write-intent lines, by field."""
+    normalized_target = _normal_path(target_file)
+    result: dict[str, list[str]] = {}
+    for field_name in ("prompt", "verification", "operation"):
+        value = step.fields.get(field_name)
+        if not isinstance(value, str):
+            continue
+        matches: set[str] = set()
+        segments = re.split(r"(?<=[.!?;])\s+|\n+", value)
+        for segment in segments:
+            if not _WRITE_INTENT_RE.search(segment):
+                continue
+            for raw_path in _CODE_PATH_RE.findall(segment):
+                path = _normal_path(raw_path)
+                if path != normalized_target:
+                    matches.add(path)
+        if matches:
+            result[field_name] = sorted(matches)
+    return result
+
+
+def check_parse_atomic_single_code_file(tree: GateTree, steps: list[Step]) -> list[Finding]:
+    """Reject an AS that explicitly instructs writes to a second code file."""
+    findings: list[Finding] = []
+    for step in steps:
+        if step.level != 5:
+            continue
+        target_file = step.fields.get("target_file")
+        if not isinstance(target_file, str) or not target_file.strip():
+            continue
+        additional = _additional_write_targets(step, target_file)
+        if additional:
+            paths = sorted({path for values in additional.values() for path in values})
+            findings.append(Finding(
+                check_id="parse.atomic_single_code_file",
+                severity="error",
+                artifact_path=_path(tree, step),
+                message=(
+                    "AS_MULTIPLE_CODE_FILES: target_file="
+                    f"{target_file!r}; additional_write_targets={paths!r}; "
+                    f"source_fields={sorted(additional)!r}"
+                ),
+            ))
+    return findings
+
+
+def check_dependencies_same_file_order(tree: GateTree, steps: list[Step]) -> list[Finding]:
+    """Reject same-file AS pairs whose cross-branch order is ambiguous."""
+    scoped_ids = {step.uuid for step in steps if step.level == 5}
+    edges = build_edges(tree.steps, strict_same_file_order=False)
+    findings: list[Finding] = []
+    for first_uuid, second_uuid, target_file in same_file_order_conflicts(tree.steps, edges):
+        if first_uuid not in scoped_ids and second_uuid not in scoped_ids:
+            continue
+        first = tree.steps[first_uuid]
+        second = tree.steps[second_uuid]
+        writer_paths = sorted([_path(tree, first), _path(tree, second)])
+        findings.append(Finding(
+            check_id="dependencies.same_file_order",
+            severity="error",
+            artifact_path=writer_paths[0],
+            message=(
+                "AS_SAME_FILE_ORDER_AMBIGUOUS: target_file="
+                f"{target_file!r}; writers={writer_paths!r}; "
+                "add an explicit dependency between their TS/GS branches"
+            ),
+        ))
+    return findings
 
 def check_parse_sanity_counts(
     tree: GateTree, steps: list[Step], branch: Branch | None
