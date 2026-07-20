@@ -54,6 +54,11 @@ class StepTreeCommand(Command):
                     "description": "When true, include each step's runtime parameters in the response.",
                     "default": False,
                 },
+                "include_content": {
+                    "type": "boolean",
+                    "description": "When true, include fields, depends_on, and concepts from the already loaded Step objects.",
+                    "default": False,
+                },
                 **pagination_schema_properties(),
             },
             "required": ["plan"],
@@ -77,6 +82,7 @@ class StepTreeCommand(Command):
         self,
         plan: str,
         include_runtime: bool = False,
+        include_content: bool = False,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
@@ -86,6 +92,7 @@ class StepTreeCommand(Command):
         Args:
             plan: Plan identifier (UUID or name).
             include_runtime: Whether to include runtime parameters.
+            include_content: Whether to include normative fields, depends_on, and concepts.
             limit: Maximum number of tree entries to return (default 50, max 200).
             offset: Number of tree entries to skip before returning results (default 0).
 
@@ -117,6 +124,10 @@ class StepTreeCommand(Command):
                         "parent_uuid": parent_uuid(nodes, s),
                         "artifact_path": artifact_path_of(nodes, s),
                     }
+                    if include_content:
+                        entry["fields"] = s.fields
+                        entry["depends_on"] = s.depends_on
+                        entry["concepts"] = s.concepts
                     if include_runtime:
                         entry["runtime"] = get_runtime_record(conn, p.uuid, s.uuid)
                     tree.append(entry)

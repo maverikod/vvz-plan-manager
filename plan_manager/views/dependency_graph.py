@@ -13,6 +13,11 @@ import uuid
 import psycopg
 
 from plan_manager.domain.step import Step
+from plan_manager.views.same_file_order import (
+    SameFileOrderAmbiguousError,
+    derive_cross_branch_edges,
+    same_file_order_conflicts,
+)
 
 
 class GraphIntegrityError(ValueError):
@@ -121,34 +126,15 @@ def tie_break_key(nodes: dict[uuid.UUID, Step], node_uuid: uuid.UUID) -> tuple[i
     return (step.level, parent_path(nodes, step), step.step_id)
 
 
-def build_edges(nodes: dict[uuid.UUID, Step]) -> set[tuple[uuid.UUID, uuid.UUID]]:
-    """Build the full edge set of the dependency graph.
+def build_edges(
+    nodes: dict[uuid.UUID, Step], *, strict_same_file_order: bool = True
+) -> set[tuple[uuid.UUID, uuid.UUID]]:
+    """Build declared and deterministic same-file execution edges.
 
-    Edge direction is (prerequisite_uuid, dependent_uuid). Two normative
-    sources of edges are combined:
-
-    (1) For every step S and every entry d in S.depends_on, the sibling
-    step P with P.plan_uuid == S.plan_uuid, P.parent_step_uuid ==
-    S.parent_step_uuid, P.level == S.level, P.step_id == d gives edge
-    (P.uuid, S.uuid). A depends_on entry that names no existing sibling
-    raises ValueError naming S.step_id and d.
-
-    (2) Level-5 steps are grouped by (fields["target_file"],
-    parent_step_uuid). Each group is sorted ascending by
-    fields["priority"]. An edge is added between each consecutive pair
-    in that sorted order: (lower-priority uuid, higher-priority uuid).
-
-    Args:
-        nodes: All steps of the plan, keyed by uuid.
-
-    Returns:
-        The set of (prerequisite_uuid, dependent_uuid) edges from both
-        sources combined.
-
-    Raises:
-        ValueError: If a depends_on entry names no existing sibling.
-            The message names the dependent step's step_id and the
-            unresolved depends_on entry.
+    Same-file atomic steps under one tactical parent are serialized by priority.
+    Across branches, an atomic edge is derived only when declared dependencies
+    between their ancestor branches establish one direction. Ambiguous cross-
+    branch writers remain unordered and are reported by the mechanical gate.
     """
     edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
 
@@ -170,18 +156,28 @@ def build_edges(nodes: dict[uuid.UUID, Step]) -> set[tuple[uuid.UUID, uuid.UUID]
                 )
             edges.add((match, dependent_uuid))
 
-    groups: dict[tuple[str, uuid.UUID | None], list[uuid.UUID]] = {}
+    by_parent_file: dict[tuple[str, uuid.UUID | None], list[uuid.UUID]] = {}
+    by_file: dict[str, list[uuid.UUID]] = {}
     for node_uuid, step in nodes.items():
         if step.level != 5:
             continue
-        key = (step.fields["target_file"], step.parent_step_uuid)
-        groups.setdefault(key, []).append(node_uuid)
+        target_file = step.fields.get("target_file")
+        priority = step.fields.get("priority")
+        if not isinstance(target_file, str) or not target_file.strip() or not isinstance(priority, int):
+            continue
+        by_parent_file.setdefault((target_file, step.parent_step_uuid), []).append(node_uuid)
+        by_file.setdefault(target_file, []).append(node_uuid)
 
-    for group_uuids in groups.values():
+    for group_uuids in by_parent_file.values():
         ordered = sorted(group_uuids, key=lambda u: nodes[u].fields["priority"])
         for lower_uuid, higher_uuid in zip(ordered, ordered[1:]):
             edges.add((lower_uuid, higher_uuid))
 
+    derive_cross_branch_edges(nodes, edges, by_file)
+    if strict_same_file_order:
+        conflicts = same_file_order_conflicts(nodes, edges)
+        if conflicts:
+            raise SameFileOrderAmbiguousError(conflicts)
     return edges
 
 

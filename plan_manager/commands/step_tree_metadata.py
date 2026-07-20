@@ -31,7 +31,9 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
             "entries, sorted by (level, path) and paginated with the uniform "
             "offset/limit convention (default limit 50, max 200). This is a "
             "read-only command: it never mutates the plan and performs no "
-            "admission or cascade checks."
+            "admission or cascade checks. include_content=true adds fields, "
+            "depends_on, and concepts from the already loaded Step objects "
+            "without per-step database reads."
         ),
         "parameters": {
             "plan": {
@@ -44,13 +46,18 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
                 "type": "boolean",
                 "required": False,
             },
+            "include_content": {
+                "description": "Optional flag, default false; when true, add fields, depends_on, and concepts without N+1 reads.",
+                "type": "boolean",
+                "required": False,
+            },
             **pagination_metadata_params(),
         },
         "return_value": {
             "success": {
                 "description": "A page of the plan's full step tree as a flat, sorted list, plus total/limit/offset.",
                 "data": {
-                    "tree": "List of {path, step_id, slug, level, status} entries, sorted by (level, path). Entries include runtime when include_runtime is true.",
+                    "tree": "List of topology entries sorted by (level, path). Entries add fields/depends_on/concepts when include_content is true and runtime when include_runtime is true.",
                     "total": "Count of the full step tree before pagination.",
                     "limit": "The limit actually applied.",
                     "offset": "The offset actually applied.",
@@ -91,6 +98,11 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
                 "explanation": "Returns the first page (default limit 50) of the plan's steps as a flat, sorted list with statuses.",
             },
             {
+                "description": "List the step tree with normative content.",
+                "command": {"plan": "plan_manager", "include_content": True},
+                "explanation": "Adds fields, depends_on, and concepts while reusing the single loaded step set.",
+            },
+            {
                 "description": "List the step tree with runtime parameters.",
                 "command": {"plan": "plan_manager", "include_runtime": True},
                 "explanation": "Includes runtime only when explicitly requested.",
@@ -116,6 +128,8 @@ def get_step_tree_metadata(cls: type) -> dict[str, Any]:
         "best_practices": [
             "Use step_tree to discover valid step_id values before calling step_get, step_update, step_move, step_delete, or step_set_status.",
             "This command never mutates state; it is safe to call at any time and any status.",
+            "Leave include_content false for compact topology reads; enable it when normative step content is needed.",
+            "include_content and include_runtime are independent and may be combined.",
             "Leave include_runtime false for ordinary topology reads and use it only when operational runtime data is needed.",
             "Compare offset+limit against total to detect additional pages.",
         ],
