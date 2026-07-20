@@ -1,9 +1,8 @@
 # ai-editor-server — thin server map. Read the triggered ops/ file before acting; no other source needed.
 
 server:
-  uuid: '37830763-f58c-4046-95b5-8daf3ea3f2e0'   # STABLE identity (changes very rarely). Resolve id+copy_number from list_servers by matching THIS uuid.
-  id: 'ai-editor-server-vvz'   # current registry NAME — can change on re-registration; do not hardcode-trust
-  copy_number: 1   # current copy (flips on restart)
+  id: '{{EDITOR_SERVER_ID}}'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
 
 essence: |
   Thin MCP layer between agent and CA. Zero independent locking: every lock/download/upload

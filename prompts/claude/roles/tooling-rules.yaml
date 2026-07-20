@@ -1,4 +1,4 @@
-# plan_manager — TOOLING rules (tool-using roles only). Referenced from tooling.yaml manuals/triggers.
+# {{PROJECT_NAME}} — TOOLING rules (tool-using roles only). Referenced from tooling.yaml manuals/triggers.
 # Battle-tested gotchas; each entry exists because an agent lost work without it.
 
 editor_rules:

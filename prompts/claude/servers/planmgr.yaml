@@ -4,9 +4,8 @@
 # roles/tooling-rules.yaml (planmgr_gotchas) — not duplicated here.
 
 server:
-  uuid: '8820e595-8ed4-43f2-b9bf-c99f48054fa6'   # STABLE identity (changes very rarely). Resolve id+copy_number from list_servers by matching THIS uuid.
-  id: 'planmgr'   # current registry NAME — can change on re-registration; do not hardcode-trust
-  copy_number: 1   # current copy (flips on restart)
+  id: '{{PLANMGR_SERVER_ID}}'   # LIVE registry id — verify with list_servers
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
   product: plan_manager v0.1.44   # fill in your installed version; keep in sync with the known-defect notes below
   adapter_min: '>=8.10.20'   # your adapter's minimum compatible version, if applicable
 

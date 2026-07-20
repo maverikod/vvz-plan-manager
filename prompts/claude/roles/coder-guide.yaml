@@ -1,4 +1,4 @@
-# plan_manager — MCP Coder Agent Guide (ships with the template; universal mechanics).
+# {{PROJECT_NAME}} — MCP Coder Agent Guide (ships with the template; universal mechanics).
 # Read this file before performing any file operations.
 # Default profile: all file access ONLY through MCP proxy servers — no local bash, no Read/Write/Edit
 # (laws.variables.file_access=local flips this; see roles/laws.yaml).
@@ -6,17 +6,17 @@
 
 meta:
   project_id: 'obtain once via CA list_projects (use the returned project_id UUID in every call)'
-  mcp_tool: mcp__proxy-lan__call_server
+  mcp_tool: mcp__claude_ai_MCP-Proxy__call_server
   servers:
-    ca: 'code-analysis-server-vvz'        # sessions, quality gates, FS read
-    editor: 'ai-editor-server-vvz'  # file create/modify lifecycle
+    ca: '{{CA_SERVER_ID}}'        # sessions, quality gates, FS read
+    editor: '{{EDITOR_SERVER_ID}}'  # file create/modify lifecycle
 
 # ─────────────────────────────────────────────────────────────────────
 # 1. CALL PATTERN
 # ─────────────────────────────────────────────────────────────────────
 # Every MCP call:
-#   mcp__proxy-lan__call_server(
-#     server_id = "code-analysis-server-vvz" | "ai-editor-server-vvz",
+#   mcp__claude_ai_MCP-Proxy__call_server(
+#     server_id = "{{CA_SERVER_ID}}" | "{{EDITOR_SERVER_ID}}",
 #     copy_number = <live copy from list_servers()>,
 #     command = "<name>",
 #     params = { ... }

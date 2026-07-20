@@ -1,9 +1,8 @@
 # code-analysis-server — thin server map. Read the triggered ops/ file before acting; no other source needed.
 
 server:
-  uuid: '4fd70962-ac0a-45b8-bd0c-bee666868d0d'   # STABLE identity (changes very rarely). Resolve id+copy_number from list_servers by matching THIS uuid.
-  id: 'code-analysis-server-vvz'   # current registry NAME — can change on re-registration; do not hardcode-trust
-  copy_number: 2   # current copy (flips on restart) — live at 2026-07-18
+  id: '{{CA_SERVER_ID}}'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart (re-registration gets a new copy) — verify with list_servers
 
 essence: |
   Authoritative server for project files, indexes, search, git, sessions, jobs, admin.

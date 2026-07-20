@@ -1,0 +1,43 @@
+# ops: delivery & release. Read BEFORE the first release action of a task
+# (version bump, build, publish, deploy, real-server pipeline).
+# laws.yaml delivery_checks names the steps; THIS file is the operating procedure.
+
+purpose: full procedure for "work delivered to the user" — versioning, build, publish, deploy, verification, propagation.
+
+procedure: |
+  1. VERSION BUMP: increment the project version by 1 in the root pyproject.toml —
+     the single source of truth. VERSION LOCKSTEP IS LAW: client package, server
+     package, docker image tag, and .deb version must all equal this version
+     (sync scripts run as part of the build; never hand-edit derived version files).
+  2. BUILD: run ./build.sh at the project root. It MUST: run the local unit tests;
+     if the project ships a docker image — build it, tag it with the SAME version,
+     push it to Docker Hub; build the .deb package. A missing ./build.sh is a gap
+     to close, not ignore.
+  3. CLIENT PUBLISH: the server's client package is published to PyPI at the same
+     version. Publishing uses ~/.pypirc credentials (twine); never inline tokens,
+     never interactive prompts.
+  4. TRANSFER/DEPLOY: if the transfer+deploy method for this project has not been
+     established earlier, ASK THE USER before proceeding. Deploy to the
+     testing/production server (one and the same server in this setup).
+  5. REAL-SERVER PIPELINE: exactly ONE pre-delivery test pipeline, built on the
+     server's own client (or, if none, the adapter's client), runs against the
+     freshly deployed instance: the server is present in the mcp-proxy registry
+     (list_servers); every changed/added command AND its related commands respond
+     correctly THROUGH the proxy (call_server), not only in isolation; pipeline green.
+  6. PROPAGATION: branch_discipline POST-DEPLOY PROPAGATION — merge the site branch
+     into main, push main to GitHub (on a site without push credentials: prepare the
+     merge and immediately ask the user to push), then update the server repository
+     from GitHub (git_pull / git_pull_safe). The deploy is NOT finished until the
+     server repo contains the deployed commit.
+
+invariants:
+  - unit-test suite always runnable in the repo (locally or via the server terminal, per variables.file_access profile)
+  - exactly ONE pre-delivery test pipeline — never multiply pipelines
+  - versions client == server == docker image == deb, always (laws.yaml server_client_law)
+  - a server project MUST ship a client that hides ALL network interaction — callers see results or exceptions, never transport, URLs, retries, or queued-job envelopes (a leaked {"job_id","status":"pending"} instead of a result is a client bug)
+  - a project built on mcp-proxy-adapter implements that client as a WRAPPER over the adapter's client — never reimplements transport
+
+gotchas:
+  - dpkg on the target host may need --force-confold to keep existing config files
+  - a queued "completed" status is not command success — check the inner result before declaring the pipeline green
+  - after deploy, run the pipeline against the DEPLOYED instance, not a local one

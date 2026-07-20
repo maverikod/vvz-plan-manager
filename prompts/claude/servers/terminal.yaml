@@ -1,9 +1,8 @@
 # mcp-terminal — thin server map. Read the triggered ops/ file before acting; no other source needed.
 
 server:
-  uuid: '1015751c-0502-4ffa-95e1-8b25a1c63c0e'   # STABLE identity (changes very rarely). Resolve id+copy_number from list_servers by matching THIS uuid.
-  id: 'mcp-terminal-vvz'   # current registry NAME — can change on re-registration; do not hardcode-trust
-  copy_number: 1   # current copy (flips on restart)
+  id: '{{TERMINAL_SERVER_ID}}'   # LIVE registry id — verify with list_servers; a short/generic name may -> SERVER_NOT_FOUND
+  copy_number: 1   # copy_number can flip after a backend service restart — verify with list_servers
 
 essence: |
   Project-aware sandboxed terminal keyed by (project_id, session_id). session_id MUST be a

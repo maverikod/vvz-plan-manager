@@ -1,17 +1,29 @@
-# plan_manager — standing LAWS (universal). Referenced from common.yaml spawn protocol;
+# {{PROJECT_NAME}} — standing LAWS (universal). Referenced from common.yaml spawn protocol;
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
 variables:
-  file_access: local    # THIS PROJECT'S DEFAULT: files are local, edited with local tools (user order 2026-07-18). Options: mcp | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
+  file_access: mcp      # mcp (default) | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
   escalation: strict    # strict (default) | off. User pre-sets 'off' -> law escalation_first_error is relaxed.
 
 laws:
   branch_discipline: >-
     UNIVERSAL CORE (all profiles): three branches - 'cas' (server-side working tree),
-    'local' (local checkout), 'main' (integration/deploy ONLY, nobody edits it
+    'local' (local checkout), 'main' (integration/exchange/deploy ONLY, nobody edits it
     directly); every deploy builds from main; only the orchestrator merges into main,
     and only after delivery_checks pass; server-side main is protected.
+    TWO-SITE PARALLEL DEVELOPMENT: 'local' and 'cas' are two development SITES that may
+    work in parallel, each usually driven by a model. A site works ONLY in its own
+    branch and never commits to main or to the other site's branch. ALL exchange
+    between sites goes THROUGH main - direct local<->cas merges are FORBIDDEN.
+    Sync-in: before starting new work a site merges main into its own branch and
+    resolves conflicts there, never in main.
+    POST-DEPLOY PROPAGATION (mandatory): after EVERY deploy + verification - merge the
+    site branch into main, push main to GitHub, then update the server repository from
+    GitHub (CA git_pull / git_pull_safe). A deploy is NOT finished until the server
+    repo contains the deployed commit. On a site without push credentials the model
+    prepares the merge and immediately asks the user to push (this propagation is a
+    standing user request, not a new push permission each time).
     [when variables.file_access=mcp] The changing branch is 'cas': all agent edits
     (editor auto-commits, CA git_commit) land there; agents NEVER commit to main;
     delivery = cas->main SQUASH merge (one commit per delivery); after every main
@@ -31,7 +43,7 @@ laws:
     when reporting to the user.
   mcp_only: >-
     [unless variables.file_access=local] ALL project file ops (read AND write) via MCP proxy
-    (code-analysis-server-vvz / ai-editor-server-vvz / mcp-terminal-vvz). Never local bash/Read/Write/Edit
+    ({{CA_SERVER_ID}} / {{EDITOR_SERVER_ID}} / {{TERMINAL_SERVER_ID}}). Never local bash/Read/Write/Edit
     on project files, including quick checks (wc/grep). Sole local-read exception:
     roles/*. Paste this constraint into every subagent prompt.
   local_mode: >-
@@ -70,23 +82,29 @@ laws:
     zero-tolerance gate is deliberate design against models multiplying garbage; tooling
     false positives are tooling bugs - fix the tool, still no bypass.
   ssh_repair: >-
-    Server-side repair/deploy over ssh root@192.168.254.26 is decided by the ORCHESTRATOR
+    Server-side repair/deploy over ssh root@{{HOST}} is decided by the ORCHESTRATOR
     ONLY, who holds the user's standing grant and exercises it with the conscience's
     approval. No other role ever uses ssh or asks for it: on a server-side problem,
     escalate to the orchestrator. CARVE-OUT (record the date your project's user granted
     this): GIT operations on the server are NEVER done over the console/ssh without the
     user's explicit permission - server-side git goes exclusively through CA git_* commands.
   delivery_checks: >-
-    MANDATORY before handing any task result to the user: (1) auto-registration - the
-    server is present in the mcp-proxy registry (list_servers); (2) live command check -
-    every changed/added command AND its related commands respond correctly when invoked
-    THROUGH the proxy (call_server), not only in isolation; (3) main pipeline script -
-    the project contains ONE main pipeline script built on the server's own client (or,
-    if none, the adapter's client) that tests ALL server commands against the REAL
-    running server - if missing, that is a gap to close, not ignore; (4) deploy cycle -
-    when the completed task MODIFIED a server: run the image-build script, deploy the
-    server (new image up), then run the main pipeline test script AGAINST THE DEPLOYED
-    instance; checks (1)-(3) are performed on that freshly deployed instance. A
-    server-change task is complete only after all four pass. (Owner: the role that
-    delivers to the user — orchestrator/executor level. Coders/testers are not gated
-    on these checks; they gate DELIVERY, not individual steps.)
+    DELIVERY DEFINITION - "work delivered to the user" means, in order: (1) version
+    bump +1 (root pyproject = source of truth); (2) ./build.sh at the project root
+    (local unit tests; docker image build+tag+push when the project ships one; .deb
+    build); (3) client published to PyPI at the same version; (4) deploy to the
+    single testing/production server (method not established earlier -> ASK THE
+    USER first); (5) the ONE real-server test pipeline green against the deployed
+    instance; (6) branch_discipline post-deploy propagation. FULL PROCEDURE,
+    INVARIANTS, AND GOTCHAS: ops/delivery-release.yaml - read it BEFORE the first
+    release action (tooling.yaml trigger). A task that modified a server is complete
+    only after all steps pass. (Owner: the delivering role - orchestrator/executor
+    level; coders/testers gate their own steps, not delivery.)
+  server_client_law: >-
+    A server project MUST ship a client that hides ALL network interaction: callers
+    get results or exceptions - never transport details, URLs, retries, or
+    queued-job envelopes. A project built on mcp-proxy-adapter implements that
+    client as a WRAPPER over the adapter's client, never reimplementing transport.
+    The client is published to PyPI (credentials via ~/.pypirc), and the versions of
+    client, server, and docker image (when one exists) are ALWAYS identical.
+    Release mechanics: ops/delivery-release.yaml.
