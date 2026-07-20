@@ -25,10 +25,12 @@ from plan_manager.verify.gate_refs import (
     check_uniqueness_step_id,
 )
 from plan_manager.verify.gate_structure import (
+    check_dependencies_same_file_order,
     check_identity_concept_id,
     check_identity_label,
     check_identity_slug,
     check_identity_step_id,
+    check_parse_atomic_single_code_file,
     check_parse_inputs_outputs,
     check_parse_required_fields,
     check_parse_sanity_counts,
@@ -202,12 +204,14 @@ def run_gate(
     run_check_ids: list[str] = []
     findings: list[Finding] = []
     for group in GROUP_ORDER:
-        group_check_ids = CHECK_IDS[group]
+        group_check_ids = list(CHECK_IDS[group])
         group_findings: list[Finding] = []
         if group == "parse":
             group_findings.extend(check_parse_required_fields(tree, steps))
             group_findings.extend(check_parse_inputs_outputs(tree, steps))
             group_findings.extend(check_parse_target_file(tree, steps))
+            group_findings.extend(check_parse_atomic_single_code_file(tree, steps))
+            group_check_ids.append("parse.atomic_single_code_file")
             group_findings.extend(check_parse_sanity_counts(tree, steps, branch))
         elif group == "identity":
             group_findings.extend(check_identity_step_id(tree, steps))
@@ -224,6 +228,8 @@ def run_gate(
             group_findings.extend(check_references_concepts(tree, steps))
             group_findings.extend(check_references_relations(tree, steps))
             group_findings.extend(check_references_source_labels(tree, steps))
+            group_findings.extend(check_dependencies_same_file_order(tree, steps))
+            group_check_ids.append("dependencies.same_file_order")
         elif group == "coverage":
             if branch is None:
                 group_findings.extend(check_coverage_concepts(conn, plan_uuid))

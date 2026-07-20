@@ -239,3 +239,7 @@ old_code/
 mtls-certs/
 
 .env
+.terminals/
+/.mcp_terminal/
+/docs/bugs/
+/.terminals/
