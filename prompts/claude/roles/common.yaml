@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}} — COMMON laws. Every role reads THIS first, then the files its role file lists.
+# plan_manager — COMMON laws. Every role reads THIS first, then the files its role file lists.
 # Universal only. Tool mechanics live in tooling.yaml (tool-using roles only).
 
 principles:

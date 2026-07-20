@@ -1,4 +1,4 @@
-# {{PROJECT_NAME}} — mode -> trigger map. A mode is DECLARED IN THE TASK the orchestrator issues
+# plan_manager — mode -> trigger map. A mode is DECLARED IN THE TASK the orchestrator issues
 # (aliases below are an example of matching the orchestrator's natural-language task wording
 # in another language — swap in your own team's working language or drop the aliases entirely).
 # A task WITHOUT a declared mode uses only baseline roles/tooling.yaml

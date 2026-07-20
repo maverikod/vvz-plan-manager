@@ -1,9 +1,9 @@
-# {{PROJECT_NAME}} — standing LAWS (universal). Referenced from common.yaml spawn protocol;
+# plan_manager — standing LAWS (universal). Referenced from common.yaml spawn protocol;
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
 variables:
-  file_access: mcp      # mcp (default) | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
+  file_access: local    # EXCEPTION per standing user order 2026-07-18 (recorded in root CLAUDE.md) — overrides the mcp default. mcp (default) | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
   escalation: strict    # strict (default) | off. User pre-sets 'off' -> law escalation_first_error is relaxed.
 
 laws:
@@ -43,7 +43,7 @@ laws:
     when reporting to the user.
   mcp_only: >-
     [unless variables.file_access=local] ALL project file ops (read AND write) via MCP proxy
-    ({{CA_SERVER_ID}} / {{EDITOR_SERVER_ID}} / {{TERMINAL_SERVER_ID}}). Never local bash/Read/Write/Edit
+    (code-analysis-server-vvz / ai-editor-server-vvz / mcp-terminal-vvz). Never local bash/Read/Write/Edit
     on project files, including quick checks (wc/grep). Sole local-read exception:
     roles/*. Paste this constraint into every subagent prompt.
   local_mode: >-
@@ -82,7 +82,7 @@ laws:
     zero-tolerance gate is deliberate design against models multiplying garbage; tooling
     false positives are tooling bugs - fix the tool, still no bypass.
   ssh_repair: >-
-    Server-side repair/deploy over ssh root@{{HOST}} is decided by the ORCHESTRATOR
+    Server-side repair/deploy over ssh root@192.168.254.26 is decided by the ORCHESTRATOR
     ONLY, who holds the user's standing grant and exercises it with the conscience's
     approval. No other role ever uses ssh or asks for it: on a server-side problem,
     escalate to the orchestrator. CARVE-OUT (record the date your project's user granted

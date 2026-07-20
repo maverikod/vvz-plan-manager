@@ -9,9 +9,7 @@ format_groups:
     Sibling insert = target_node_id + position before|after.
     NESTED_BATCH_FORBIDDEN: never batch a parent op with its child op together.
   marked_tree (.json/.yaml/.yml/.md): |
-    node_ref: int-string, from preview. New top-level YAML key insert currently fails
-    (known defect in editor as of editor 1.0.49 — re-verify on your install and record
-    your own bug ids) — use a workaround, not a retry loop.
+    node_ref: int-string, from preview.
   legacy_tree_temp: |
     json_pointer + value (RFC6901). '/-' sentinel appends to the end of an array.
   text (.txt/.rst/.adoc): |
@@ -25,7 +23,6 @@ commands:
   universal_file_edit: 'operations[]; addressing scheme depends on format group above'
 
 gotchas:
-  - 'known defect in editor as of editor 1.0.49 (re-verify on your install and record your own bug ids): new top-level YAML key insert fails with "marked node missing ___id___" — create the file fresh (create=true) or replace an existing key''s whole value instead'
   - never reuse a line index/node_id after an intervening edit shifted the tree — re-preview
   - NESTED_BATCH_FORBIDDEN applies only to sidecar (.py) parent+child batches
 
