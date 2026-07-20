@@ -9,11 +9,6 @@ editor_rules:
     known defect in editor as of editor 1.0.49 — re-verify on your install and record your
     own bug ids: universal_file_edit's error signal is uncorrelated with outcome ->
     after EVERY edit call re-preview the draft; landed -> do not re-apply; absent -> re-apply once.
-  yaml_root_insert_broken: >-
-    known defect in editor as of editor 1.0.49 — re-verify on your install and record your
-    own bug ids: inserting a NEW top-level key into an existing YAML (tree-temp) fails with
-    INVALID_OPERATION 'marked node missing ___id___'. Add new content via a NEW file
-    (create:true + initial_content) or REPLACE an existing key's whole value.
   one_agent_one_step: one agent = one atomic step = one file; multiple steps per agent degrade focus into hallucinations.
   no_subagents: coders/testers NEVER spawn subagents; every needed value is inlined in the task prompt.
   python_reads: >-

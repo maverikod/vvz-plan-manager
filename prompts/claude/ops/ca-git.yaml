@@ -22,6 +22,7 @@ commands:
 
 gotchas:
   - 'LAW: server-side git ALWAYS via CA git_* — NEVER console/ssh git without explicit user permission (laws.yaml ssh_repair carve-out)'
+  - 'LAW branch_discipline: local<->cas exchange ONLY through main; after every deploy+verification push main to GitHub and update the server repo via git_pull / git_pull_safe — the deploy is not finished until the server repo has the deployed commit'
   - git_pull takes ref, not branch — a common param-naming trap
   - 'most git commands are queued: a "completed" queue status is not the same as command success — check the inner result'
 

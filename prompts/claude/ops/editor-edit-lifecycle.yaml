@@ -21,8 +21,6 @@ commands:
 
 gotchas:
   - 'known defect in editor as of editor 1.0.49 (re-verify on your install and record your own bug ids): edit error signal UNTRUSTED — after EVERY edit, re-preview; if change landed do not reapply, if absent reapply once'
-  - 'known defect in editor as of editor 1.0.49 (re-verify on your install and record your own bug ids): class/def header trailing comment stripped on code_lines replace'
-  - 'known defect in editor as of editor 1.0.49 (re-verify on your install and record your own bug ids): statements inside try/except unaddressable (replace_range unsupported, no parent id)'
   - 'known defect in editor as of editor 1.0.49 (re-verify on your install and record your own bug ids): commit-gate QA sandbox can yield a false import-not-found'
   - 'unclosed session = stale lock blocking the whole pipeline — close on abort too'
   - 'never CA get_file_lines on a healthy .py (USE_CST_COMMANDS) — use one-shot preview or file_structure'

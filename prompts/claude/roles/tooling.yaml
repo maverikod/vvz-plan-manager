@@ -2,14 +2,14 @@
 # Orchestrator and conscience do NOT use tools and do NOT read this file.
 
 meta:
-  file_access: local               # THIS PROJECT'S DEFAULT (laws.variables.file_access=local): editor=LOCAL Write/Edit, terminal=LOCAL bash; CA still used for search/analysis and as the REMOTE REPO for git sync. commit-after-edit applies (see laws.yaml local_mode).
+  file_access: local               # THIS PROJECT'S DEFAULT (laws.variables.file_access=local, standing user order 2026-07-18): editor=LOCAL Write/Edit, terminal=LOCAL bash; CA still used for search/analysis and as the REMOTE REPO for git sync. commit-after-edit applies (see laws.yaml local_mode).
   proxy: proxy-lan                 # MCP client namespace (address = mcp__proxy-lan__*); set client-side, no registry uuid. NAME can change; if it does, the tool namespace changes with it.
   call: 'mcp__proxy-lan__call_server(server_id, copy_number, command, params)'
   path: project-relative POSIX only; no host paths; no ".."
   # STABLE identity per server = uuid (changes very rarely). id (NAME) + copy_number can drift —
   # on SERVER_NOT_FOUND, re-resolve current id+copy_number from list_servers by matching the uuid. Authoritative per-server maps: servers/*.yaml.
   servers:
-    ca:      {id: code-analysis-server-vvz, copy_number: 2, uuid: 4fd70962-ac0a-45b8-bd0c-bee666868d0d}
+    ca:      {id: code-analysis-server-vvz, copy_number: 1, uuid: 4fd70962-ac0a-45b8-bd0c-bee666868d0d}
     editor:  {id: ai-editor-server-vvz,     copy_number: 1, uuid: 37830763-f58c-4046-95b5-8daf3ea3f2e0}
     term:    {id: mcp-terminal-vvz,         copy_number: 1, uuid: 1015751c-0502-4ffa-95e1-8b25a1c63c0e}
     planmgr: {id: planmgr,                  copy_number: 1, uuid: 8820e595-8ed4-43f2-b9bf-c99f48054fa6}
@@ -32,6 +32,7 @@ manuals:
   coder_guide: roles/coder-guide.yaml
   cmd_help:    'call_server(<server>,"help",{cmdname:<command>})'
   modes:       modes.yaml
+  delivery:    ops/delivery-release.yaml
 
 # condition -> MUST read manual(s) BEFORE the first matching action
 triggers:
@@ -50,6 +51,8 @@ triggers:
     read: [rules]   # cas_rules.git_via_ca — git ONLY through CA git_* commands
   - when: the task declares a mode (planning / analysis / refactoring)
     read: [modes]
+  - when: before the first release action of a delivery (version bump, build, publish, deploy, real-server pipeline)
+    read: [delivery]
 
 # error taxonomy — exactly one branch per failure
 errors:

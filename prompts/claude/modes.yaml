@@ -57,10 +57,38 @@ modes:
         read: [ops/ca-jobs-queue.yaml]
 
   refactoring:
-    aliases: [рефакторинг]
+    aliases: [рефакторинг, исправление, доделка, bugfix, мелкие правки]
     description: >-
-      Tracing usages/dependencies/hierarchy and editing project files through the CA +
-      ai-editor + terminal toolchain.
+      Refactoring, bug fixes, and small finishing touches: tracing
+      usages/dependencies/hierarchy and editing project files. The mode works in BOTH
+      file-access profiles (laws.yaml variables.file_access) and MUST NOT collapse that
+      fork: [mcp] edits go through the CA + ai-editor + terminal toolchain on the
+      server-side project; [local / local_ide] edits follow the local profile of
+      laws.yaml (local editor tools / human IDE, local bash, CA = remote repo +
+      analysis, commit-after-edit). This mode changes WHO does the work and HOW it is
+      accepted (see scheme), not WHERE files are edited - the profile decides that.
+    scheme: >-
+      TWO-LEVEL: orchestrator + executors, nothing in between. The orchestrator
+      decomposes the task and spawns executors directly (no context-forming layer in
+      this mode); independent edits run as parallel executors. MODEL CHOICE - per
+      executor task the orchestrator picks the model AND its reasoning depth by two
+      criteria, in order: (1) the model must be able to complete the task with low
+      hallucination risk; (2) among the capable ones, the cheapest wins. On executor
+      failure escalate one tier up, once. For this mode's executor tasks this rule
+      refines the default role->model mapping (CLAUDE.md / orchestrator.yaml spawn).
+      ZERO-TRUST ACCEPTANCE - the orchestrator accepts the work with an ADVERSARIAL,
+      negative default: the result is PRESUMED WRONG until verification proves it
+      correct. This is a direct consequence of the model-choice rule: executors run
+      near the edge of their capability (cheapest capable), which is exactly where
+      models hallucinate - so an executor's "done" report is never evidence, and
+      self-reported success carries zero weight. Acceptance = read-only verification
+      of the actual result (diff review, editor QA-gate / lint / test outcomes, live
+      command check when the change touches a running server) under the orchestrator's
+      authority - via an independent read-only verifier it spawns, or directly by the
+      orchestrator only where the user granted it direct tool access. FULL
+      RESPONSIBILITY for accepted work lies with the ORCHESTRATOR: a defect that
+      slips through acceptance is the orchestrator's failure, not the executor's.
+      Unverified work is not delivered.
     always_read: [servers/ca.yaml, servers/editor.yaml]
     triggers:
       - when: first usages/dependencies/class-hierarchy lookup before a refactor
