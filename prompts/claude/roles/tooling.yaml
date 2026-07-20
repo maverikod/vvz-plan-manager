@@ -9,7 +9,7 @@ meta:
   # STABLE identity per server = uuid (changes very rarely). id (NAME) + copy_number can drift —
   # on SERVER_NOT_FOUND, re-resolve current id+copy_number from list_servers by matching the uuid. Authoritative per-server maps: servers/*.yaml.
   servers:
-    ca:      {id: code-analysis-server-vvz, copy_number: 2, uuid: 4fd70962-ac0a-45b8-bd0c-bee666868d0d}
+    ca:      {id: code-analysis-server-vvz, copy_number: 1, uuid: 4fd70962-ac0a-45b8-bd0c-bee666868d0d}
     editor:  {id: ai-editor-server-vvz,     copy_number: 1, uuid: 37830763-f58c-4046-95b5-8daf3ea3f2e0}
     term:    {id: mcp-terminal-vvz,         copy_number: 1, uuid: 1015751c-0502-4ffa-95e1-8b25a1c63c0e}
     planmgr: {id: planmgr,                  copy_number: 1, uuid: 8820e595-8ed4-43f2-b9bf-c99f48054fa6}
