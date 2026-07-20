@@ -160,3 +160,20 @@ Optional generated indices (if `USE_CODE_MAP` = yes): e.g. `code_analysis/` — 
 | `HEADER_EMAIL` | `vasilyvz@gmail.com` |
 | `DOC_FILENAME_STYLE` | `snake_case` (existing `docs/` may mix legacy names) |
 | `USE_CODE_MAP` | `yes` (`code_mapper` → `code_analysis/`) |
+
+---
+
+## 8. Branching & exchange (`GIT-*`)
+
+Two development sites work on this repository in parallel, each usually driven by a model:
+the **local site** (branch `local`; working tree = the plan-manager checkout on the CA server)
+and the **remote site** (branch `cas`). `main` is the **only** exchange point between them.
+
+| ID | P | Rule |
+|----|---|------|
+| **GIT-01** | 0 | Permanent branches: `main` (exchange + release), `local` (local-site development), `cas` (remote-site development). Work **only** in your own site branch. Never commit directly to `main` or to the other site's branch. |
+| **GIT-02** | 0 | All exchange between sites goes **through `main`**. Direct `local` <-> `cas` merges are forbidden. |
+| **GIT-03** | 1 | **Sync-in (before starting work):** fetch and merge `main` into your site branch. Conflicts are resolved in the site branch - never in `main`. |
+| **GIT-04** | 1 | **Sync-out:** merge your site branch into `main` only in a tested, releasable state (full test suite green). `main` must always remain releasable; no work-in-progress in `main`. |
+| **GIT-05** | 0 | **After every deploy + verification** (production checks passed): propagate the deployed state through GitHub to the server repository - merge the site branch into `main`, push `main` to GitHub, then update the server working tree from GitHub (`git_pull`). A deploy is **not finished** until the server repository contains the deployed commit. |
+| **GIT-06** | 2 | Pushing needs GitHub credentials. On a site without a push key the model prepares the merge and **immediately asks the user to push**; otherwise CR-011 applies (push only on user request - the GIT-05 post-deploy propagation counts as a standing user request). |
