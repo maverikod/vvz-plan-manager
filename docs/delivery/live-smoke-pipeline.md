@@ -41,6 +41,31 @@ whose queued failure looks like an unresolved-command error -- see
 `_looks_like_unresolved_command` / `DISPATCH_LOG`) in `scripts/live_smoke.py`
 for the full investigation and file:line citations.
 
+**Third-live-run finding (0.1.52, same run family):** 232 passed, 29
+failed, 120 skipped, zero server regressions -- R1 and R3 fully green.
+Every failure was a script recipe/ordering defect, not a server bug: (1)
+every entity-scoped Tier-2 probe failed PLAN_NOT_FOUND (or SKIPped) because
+the Tier-3 lifecycles deleted their throwaway plan/todo before those probes
+ever ran -- fixed by splitting each lifecycle into a create phase and a
+separate cleanup phase, with Tier 2's scoped probes running strictly
+between them (`run_tier3_plan_step_create`/`_cleanup`,
+`run_tier3_todo_create`/`_cleanup` in `scripts/live_smoke.py`); (2)
+`step_search` needs `plan`+`pattern`, not zero params; (3)
+`graph_dependents`'s `direction` enum is `["dependents", "dependencies"]`,
+not `"downstream"/"upstream"`; (4) `bug_close` requires a verified fix
+(`bug_fix_create` -> `bug_fix_verify(passed=True)`) before it succeeds --
+`run_tier3_bug_create` now runs the full documented closure chain; (5) the
+R2 regression's step builder skipped level 4 (creating level-5 steps
+directly under a level-3 parent), which downstream produced
+GRAPH_CORRUPTED_CHAIN -- rebuilt to the proven G/T-001/T-002/A-under-each-T
+chain with `context_common` recompiled before every single `step_create`
+(a stored context block's revision must match the plan's current head
+revision exactly, and every `step_create` advances that revision); (6) 19
+adapter-builtin/admin/transfer/stub commands got specific
+`KNOWN_SKIP_REASONS` entries instead of the generic fallback. See the
+docstrings of `run_tier3_plan_step_create`, `run_tier3_bug_create`, and
+`run_r2_same_file_order_ambiguity` for the full detail.
+
 ## How to run
 
 ### On-host (loopback, typical local/dev run)
