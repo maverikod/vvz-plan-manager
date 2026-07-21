@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission, frozen_at_or_below
@@ -103,7 +104,7 @@ class StepCreateCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: If slug is not lowercase kebab-case, if
+            InvalidParamsError: If slug is not lowercase kebab-case, if
                 parent_step_id is present for level 3, if parent_step_id is
                 absent for level 4 or 5, or if cascade_uuid is not a valid
                 UUID string.
@@ -111,16 +112,19 @@ class StepCreateCommand(Command):
         params = super().validate_params(params)
         slug = params.get("slug", "")
         if not _SLUG_PATTERN.fullmatch(slug):
-            raise ValueError(f"slug must be lowercase kebab-case: {slug!r}")
+            raise InvalidParamsError(f"slug must be lowercase kebab-case: {slug!r}")
         level = params.get("level")
         parent_step_id = params.get("parent_step_id")
         if level == 3 and parent_step_id is not None:
-            raise ValueError("parent_step_id must be absent for level 3")
+            raise InvalidParamsError("parent_step_id must be absent for level 3")
         if level in (4, 5) and not parent_step_id:
-            raise ValueError(f"parent_step_id is required for level {level}")
+            raise InvalidParamsError(f"parent_step_id is required for level {level}")
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
-            uuid.UUID(cascade_uuid)
+            try:
+                uuid.UUID(cascade_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(
