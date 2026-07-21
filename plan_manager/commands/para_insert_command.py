@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -76,19 +77,33 @@ class ParaInsertCommand(Command):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate para_insert parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If text is empty, if position is not a
+                non-negative integer, or if cascade_uuid is not a valid
+                UUID string.
+        """
         params = super().validate_params(params)
         text = params.get("text")
         if not isinstance(text, str) or not text.strip():
-            raise ValueError(f"text must be a non-empty string: {text!r}")
+            raise InvalidParamsError(f"text must be a non-empty string: {text!r}")
         position = params.get("position")
         if position is not None and (not isinstance(position, int) or position < 0):
-            raise ValueError(f"position must be an integer >= 0: {position!r}")
+            raise InvalidParamsError(f"position must be an integer >= 0: {position!r}")
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
             try:
                 uuid.UUID(cascade_uuid)
             except ValueError as exc:
-                raise ValueError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
