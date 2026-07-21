@@ -116,3 +116,39 @@ def same_file_order_conflicts(
                 ):
                     conflicts.append((first_uuid, second_uuid, target_file))
     return conflicts
+
+
+def _conflict_key(conflict: tuple[uuid.UUID, uuid.UUID, str]) -> tuple[str, frozenset[uuid.UUID]]:
+    first, second, target_file = conflict
+    return (target_file, frozenset((first, second)))
+
+
+def diff_same_file_conflicts(
+    before_conflicts: list[tuple[uuid.UUID, uuid.UUID, str]],
+    after_conflicts: list[tuple[uuid.UUID, uuid.UUID, str]],
+) -> tuple[
+    list[tuple[uuid.UUID, uuid.UUID, str]],
+    list[tuple[uuid.UUID, uuid.UUID, str]],
+    list[tuple[uuid.UUID, uuid.UUID, str]],
+]:
+    """Diff two same-file-conflict snapshots into (introduced, resolved, remaining).
+
+    Pairs are compared by an order-independent key (target_file, frozenset of the
+    two step uuids), never by tuple position: ``same_file_order_conflicts`` orders
+    each pair by ``nodes.items()`` iteration order, which is insertion order and is
+    NOT guaranteed identical between a before-state node dict and an independently
+    reloaded after-state node dict (e.g. a fresh ``load_steps`` row fetch has no
+    ORDER BY), so a naive tuple-equality diff could mistake a flipped pair for a
+    different one.
+
+    Returns:
+        introduced: pairs present after but absent before (new ambiguity).
+        resolved: pairs present before but absent after (no longer ambiguous).
+        remaining: pairs present in both (pre-existing ambiguity that persists).
+    """
+    before_by_key = {_conflict_key(c): c for c in before_conflicts}
+    after_by_key = {_conflict_key(c): c for c in after_conflicts}
+    introduced = [after_by_key[k] for k in after_by_key if k not in before_by_key]
+    resolved = [before_by_key[k] for k in before_by_key if k not in after_by_key]
+    remaining = [after_by_key[k] for k in after_by_key if k in before_by_key]
+    return introduced, resolved, remaining
