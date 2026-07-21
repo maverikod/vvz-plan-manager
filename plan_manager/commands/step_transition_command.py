@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission
@@ -100,15 +101,32 @@ class StepTransitionCommand(Command):
         }
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate step_transition parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If step_id and scope are both supplied, if
+                scope does not match whole_plan/G-NNN/G-NNN/T-NNN, or if
+                cascade_uuid is not a valid UUID string.
+        """
         params = super().validate_params(params)
         if params.get("step_id") and params.get("scope"):
-            raise ValueError("step_id and scope are mutually exclusive")
+            raise InvalidParamsError("step_id and scope are mutually exclusive")
         scope = params.get("scope")
         if scope is not None and not _valid_scope(scope):
-            raise ValueError("scope must be whole_plan, G-NNN, or G-NNN/T-NNN")
+            raise InvalidParamsError("scope must be whole_plan, G-NNN, or G-NNN/T-NNN")
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
-            uuid.UUID(cascade_uuid)
+            try:
+                uuid.UUID(cascade_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(
