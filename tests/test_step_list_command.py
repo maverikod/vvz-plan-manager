@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.step_list_command import (
     StepListCommand,
@@ -269,7 +270,7 @@ def test_validate_params_accepts_known_projection() -> None:
 
 
 def test_validate_params_rejects_unknown_projection_key() -> None:
-    """validate_params raises ValueError when the fields projection names an unknown entry key."""
+    """validate_params raises InvalidParamsError when the fields projection names an unknown entry key."""
     cmd = StepListCommand()
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidParamsError):
         cmd.validate_params({"plan": "x", "fields": ["nonexistent_key"]})

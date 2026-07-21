@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -105,12 +106,17 @@ class StepListCommand(Command):
         return get_step_list_schema()
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Validate step_list parameters, adding projection-key semantics."""
+        """Validate step_list parameters, adding projection-key semantics.
+
+        Raises:
+            InvalidParamsError: If fields names a key that is not a known
+                step_list entry key.
+        """
         params = super().validate_params(params)
         fields = params.get("fields")
         if fields is not None:
             if not all(isinstance(name, str) and name in ENTRY_KEYS for name in fields):
-                raise ValueError(f"fields must only name known entry keys: {sorted(ENTRY_KEYS)}")
+                raise InvalidParamsError(f"fields must only name known entry keys: {sorted(ENTRY_KEYS)}")
         return params
 
     async def execute(
