@@ -98,8 +98,10 @@ class Command(_AdapterCommand):
             # Handle invalid parameters based on additionalProperties setting
             if invalid_params:
                 if additional_properties_allowed:
-                    # Permissive mode: allow additional parameters, just log debug info
-                    get_global_logger().debug(
+                    # Permissive mode: allow additional parameters, just log debug info.
+                    # get_global_logger() is untyped in the vendored adapter package
+                    # (out of scope to edit -- see module docstring).
+                    get_global_logger().debug(  # type: ignore[no-untyped-call]
                         f"Command {self.__class__.__name__} received additional parameters: {invalid_params}. "
                         f"These are allowed due to additionalProperties: true"
                     )
