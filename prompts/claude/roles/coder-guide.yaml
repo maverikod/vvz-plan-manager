@@ -219,6 +219,33 @@ quality_gate:
   on_failure: 'STOP. Report exact error + step + command. Do NOT proceed.'
 
 # ─────────────────────────────────────────────────────────────────────
+# 6a. DOCSTRING & SIGNATURE STANDARD — MANDATORY
+# ─────────────────────────────────────────────────────────────────────
+docstring_standard:
+  origin: 'user directive 2026-07-20, MANDATORY — the editor commit gate enforces this with zero tolerance'
+  required_always:
+    module: 'every .py file starts with a module docstring describing the file''s overall purpose'
+    module_functions: 'every module-level function has a docstring describing its purpose'
+    classes: 'every class has a docstring describing its purpose'
+    methods: 'every class method has a docstring describing its purpose'
+    module_variables: 'every module-level variable carries documentation describing its purpose (docstring line or trailing doc-comment)'
+  content_rule: >-
+    a docstring states the PURPOSE of the object (what it is for), never merely restates its
+    name; Google style; include Args/Returns/Raises sections where applicable; the SIGNATURE
+    and the docstring together must describe IN DETAIL both the TYPE and the PURPOSE of every
+    object involved: full type annotations on all parameters and the return value in the
+    signature, and per-parameter/return type + purpose descriptions in the docstring
+  signature_rule: >-
+    method/function signatures carry complete type annotations (every parameter and the return
+    type); the docstring's Args/Returns entries repeat the type and explain the purpose —
+    signature and docstring must agree
+  gate: >-
+    the editor commit gate hard-blocks on missing docstrings, missing Returns sections, and
+    missing return-type hints — fix by writing real documentation, never by bypass (see
+    laws.editor_gate_no_bypass)
+  forbidden_note: 'placeholder docstrings remain forbidden (see forbidden section)'
+
+# ─────────────────────────────────────────────────────────────────────
 # 7. FORBIDDEN
 # ─────────────────────────────────────────────────────────────────────
 forbidden:

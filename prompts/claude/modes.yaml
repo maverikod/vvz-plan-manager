@@ -65,7 +65,7 @@ modes:
       fork: [mcp] edits go through the CA + ai-editor + terminal toolchain on the
       server-side project; [local / local_ide] edits follow the local profile of
       laws.yaml (local editor tools / human IDE, local bash, CA = remote repo +
-      analysis, commit-after-edit). This mode changes WHO does the work and HOW it is
+      analysis, work on the local branch). This mode changes WHO does the work and HOW it is
       accepted (see scheme), not WHERE files are edited - the profile decides that.
     scheme: >-
       TWO-LEVEL: orchestrator + executors, nothing in between. The orchestrator

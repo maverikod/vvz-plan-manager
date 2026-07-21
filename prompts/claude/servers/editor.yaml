@@ -16,7 +16,11 @@ hard_rules:
   - multi_file_bundle.open_file_count > 1 -> file_path required on edit/write/close
   - 'editor_gate_no_bypass (laws.yaml): gate rejection -> STOP, analyze, FIX; never bypass'
   - never CA get_file_lines on a healthy .py (USE_CST_COMMANDS) — use one-shot preview or file_structure
-  - '.toml unsupported: create as .txt, commit, mv in terminal, remove orphan .txt.lock'
+  - resolve current Python nodes with universal_file_node_at_line after tree changes
+  - 'JSON, YAML, INI/CFG have native structured edit support; TOML does NOT on this
+    install (live-verified 2026-07-20, CA-layer persist failure) — DEVIATION from the
+    template''s native-TOML claim: create as .txt, commit, mv in terminal, remove
+    orphan .txt.lock (re-verify before trusting native TOML again)'
 
 blocks:
   lifecycle:

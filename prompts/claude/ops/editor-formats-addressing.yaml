@@ -1,30 +1,45 @@
-# ops: ai-editor-server — how to address universal_file_edit operations, per format group.
-
-purpose: pick the right node addressing scheme for universal_file_edit operations[] depending on file format group.
+# Format-specific addressing for universal_file_edit.
 
 format_groups:
-  sidecar (.py/.pyi/.pyw): |
-    node_id: int short_id AS STRING, from preview/search. code_lines preferred over code.
-    type: replace|insert|delete|move. parent_node_id="__root__" for module level.
-    Sibling insert = target_node_id + position before|after.
-    NESTED_BATCH_FORBIDDEN: never batch a parent op with its child op together.
-  marked_tree (.json/.yaml/.yml/.md): |
-    node_ref: int-string, from preview.
-  legacy_tree_temp: |
-    json_pointer + value (RFC6901). '/-' sentinel appends to the end of an array.
-  text (.txt/.rst/.adoc): |
-    0-based line index from preview -> convert to 1-based start_line/end_line for edit.
-    optional anchor_head/anchor_tail for safety. NEVER reuse line numbers across an
-    intervening edit — always re-preview first.
-  parse_error_fallback: |
-    is_invalid=true -> forced into line-based editing until the file achieves one clean commit.
+  python_sidecar:
+    extensions: [.py, .pyi, .pyw]
+    address: MAP short_id string in node_id, target_node_id, or parent_node_id
+    notes:
+      - use parent_node_id __root__ for module-level insertion
+      - use target_node_id plus before or after for sibling insertion
+      - NESTED_BATCH_FORBIDDEN — never batch a parent op with its child op together
+      - universal_file_node_at_line resolves the current node and ancestors
+  marked_tree:
+    extensions: [.json, .yaml, .yml, .md]
+    address: node_ref int-string, from preview
+    # DEVIATION (2026-07-20 pruned-note discipline): the template additionally claims
+    # confirmed root-key YAML insertion and try/except-statement addressability as a
+    # live contract here. Neither is re-verified on this install — do not carry those
+    # two specific claims forward as facts; if you need them, re-verify live first.
+  structured_ini_cfg:
+    extensions: [.ini, .cfg]
+    address: node_ref/json_pointer per preview; values are strings
+  toml:
+    # DEVIATION from the template (which now claims native TOML support): CA-layer
+    # TOML persistence was live-verified BROKEN on this install (2026-07-20). Use the
+    # .txt-then-mv workaround (ops/editor-new-file.yaml) until re-verified.
+    address: UNSUPPORTED on this install — see ops/editor-new-file.yaml workaround
+  text:
+    extensions: [.txt, .rst, .adoc]
+    address: >-
+      0-based line index from preview -> convert to 1-based start_line/end_line for
+      edit; optional anchor_head/anchor_tail for safety. NEVER reuse line numbers
+      across an intervening edit — always re-preview first.
+  parse_error_fallback:
+    address: 'is_invalid=true -> forced into line-based editing until the file achieves one clean commit'
 
 commands:
   universal_file_edit: 'operations[]; addressing scheme depends on format group above'
 
 gotchas:
   - never reuse a line index/node_id after an intervening edit shifted the tree — re-preview
-  - NESTED_BATCH_FORBIDDEN applies only to sidecar (.py) parent+child batches
+  - NESTED_BATCH_FORBIDDEN applies only to python_sidecar (.py) parent+child batches
+  - inspect the preview diff before commit
 
 errors:
   SESSION_FILE_PATH_REQUIRED: 'multi-file session — pass file_path explicitly'

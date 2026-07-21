@@ -8,33 +8,21 @@ variables:
 
 laws:
   branch_discipline: >-
-    UNIVERSAL CORE (all profiles): three branches - 'cas' (server-side working tree),
-    'local' (local checkout), 'main' (integration/exchange/deploy ONLY, nobody edits it
-    directly); every deploy builds from main; only the orchestrator merges into main,
-    and only after delivery_checks pass; server-side main is protected.
-    TWO-SITE PARALLEL DEVELOPMENT: 'local' and 'cas' are two development SITES that may
-    work in parallel, each usually driven by a model. A site works ONLY in its own
-    branch and never commits to main or to the other site's branch. ALL exchange
-    between sites goes THROUGH main - direct local<->cas merges are FORBIDDEN.
-    Sync-in: before starting new work a site merges main into its own branch and
-    resolves conflicts there, never in main.
-    POST-DEPLOY PROPAGATION (mandatory): after EVERY deploy + verification - merge the
-    site branch into main, push main to GitHub, then update the server repository from
-    GitHub (CA git_pull / git_pull_safe). A deploy is NOT finished until the server
-    repo contains the deployed commit. On a site without push credentials the model
-    prepares the merge and immediately asks the user to push (this propagation is a
-    standing user request, not a new push permission each time).
-    [when variables.file_access=mcp] The changing branch is 'cas': all agent edits
-    (editor auto-commits, CA git_commit) land there; agents NEVER commit to main;
-    delivery = cas->main SQUASH merge (one commit per delivery); after every main
-    update, merge main->cas (via CA git_merge) BEFORE agents continue.
-    [when variables.file_access=local or local_ide] The changing branch is 'local':
-    after completing each task or step - IMMEDIATELY and in THIS ORDER: (1) commit on
-    'local', (2) git merge local->main, (3) git push origin main (pushing only the
-    working branch is NOT delivery - the server syncs from main); never batched.
-    main->local pull is allowed ONLY AFTER a completed deploy (local takes only
-    deploy-verified states of main). If server-side agents work in parallel, the mcp
-    clause above applies to them simultaneously.
+    Three branches are mandatory: local is the local working branch, cas is the CAS
+    working branch, and main is transfer-only. A site works only on its own branch;
+    main is never edited directly and local is never merged directly with cas. Before
+    new work, synchronize main into the active branch. Build, deploy, and run live
+    acceptance from the active working branch. Only after production verification is
+    green, merge that branch into local main. The model MUST NOT push main: report the
+    exact ready commit and wait for explicit user confirmation that it was pushed.
+    Then the opposite site checks out main, pulls it through its authoritative Git
+    surface, verifies the expected commit, returns to its working branch, and merges
+    main into it. Mirror the same sequence when work originates on cas.
+    PROJECT NOTE: this text is the template's current (post 2026-07-21 resync) wording
+    and governs prompts/claude/. The root CLAUDE.md's own LOCAL PROJECT LAW is the
+    higher-authority text for this project ("These instructions OVERRIDE any default
+    behavior") and is auto-injected into every subagent; where the two differ on a
+    given step (e.g. push timing), CLAUDE.md's literal text governs.
   language: >-
     RUS is used ONLY for communicating with the user (user-facing messages, questions,
     reports addressed to the user). ENG for everything else: code, comments, commit
@@ -50,8 +38,11 @@ laws:
     [active when variables.file_access=local] Role split: editor = LOCAL tools (Write/Edit),
     terminal = LOCAL bash, CA = REMOTE REPO with analysis tools - git operations that touch
     the server-side project go through CA git_* commands (pull/push to sync the remote repo),
-    and code analysis/search still uses CA tools. COMMIT-AFTER-EDIT: after every local file
-    edit - git commit, immediately, no batching-up of uncommitted edits.
+    and code analysis/search still uses CA tools. PROJECT NOTE: root CLAUDE.md's LOCAL
+    PROJECT LAW is stricter and governs — COMMIT-AFTER-EDIT: after every local file
+    edit - git commit, immediately, no batching-up of uncommitted edits (the template's
+    own default here is looser - "commit a coherent verified task" - but does not apply
+    to this project). Never push main (see branch_discipline).
   local_ide_mode: >-
     [active when variables.file_access=local_ide] Files live locally and are edited by
     the HUMAN via the IDE; agents NEVER edit project files - they deliver proposed
@@ -81,6 +72,13 @@ laws:
     bypass (skip_quality_tools / validate_syntax_only / weakening gate config). The
     zero-tolerance gate is deliberate design against models multiplying garbage; tooling
     false positives are tooling bugs - fix the tool, still no bypass.
+  queue_semantics: >-
+    A long operation may validly transition to a queued job. The adapter client
+    supports synchronous poll-and-unwrap mode (auto_poll=true) and asynchronous or
+    message-driven mode (auto_poll=false or manual_event_handling=true). The caller
+    selects the intended mode explicitly; queue handoff itself is not a defect. A
+    "completed" queue status is not the same as command success - always check the
+    inner result/exit code.
   ssh_repair: >-
     Server-side repair/deploy over ssh root@192.168.254.26 is decided by the ORCHESTRATOR
     ONLY, who holds the user's standing grant and exercises it with the conscience's
@@ -102,9 +100,11 @@ laws:
     level; coders/testers gate their own steps, not delivery.)
   server_client_law: >-
     A server project MUST ship a client that hides ALL network interaction: callers
-    get results or exceptions - never transport details, URLs, retries, or
-    queued-job envelopes. A project built on mcp-proxy-adapter implements that
-    client as a WRAPPER over the adapter's client, never reimplementing transport.
-    The client is published to PyPI (credentials via ~/.pypirc), and the versions of
-    client, server, and docker image (when one exists) are ALWAYS identical.
-    Release mechanics: ops/delivery-release.yaml.
+    get results or exceptions - never transport details, URLs, retries, or leaked
+    queued-job envelopes. A project built on mcp-proxy-adapter implements that client
+    as a WRAPPER over the adapter's client, never reimplementing transport, and
+    exposes explicit synchronous-emulation and asynchronous/message modes (see
+    queue_semantics): sync callers receive terminal results or exceptions; async
+    callers may receive a valid queued handoff. The client is published to PyPI
+    (credentials via ~/.pypirc), and the versions of client, server, and docker image
+    (when one exists) are ALWAYS identical. Release mechanics: ops/delivery-release.yaml.

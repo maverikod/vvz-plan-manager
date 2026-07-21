@@ -1,30 +1,31 @@
-# ops: ai-editor-server — creating a brand-new file, and handling unsupported formats (.toml).
-
-purpose: create a file that does not yet exist on the server, or work around formats the editor cannot parse natively.
+# Creating a brand-new file through ai-editor, and handling unsupported formats (.toml on this install).
 
 procedure:
-  new_file: |
-    1. universal_file_open(project_id, file_path, session_id, create=true, initial_content?)
-       # pure local draft — zero CA calls until first commit; .py REQUIRES initial_content on create
-    2. edit locally as needed (same edit ops as an existing file, see editor-edit-lifecycle.yaml)
-    3. universal_file_write(write_mode=commit) -> first commit locks + registers the file atomically on CA
-    4. universal_file_close
-  unsupported_format_toml: |
-    1. universal_file_open(create=true, file_path='*.txt') -> author content as text
-    2. universal_file_write(commit) the .txt
-    3. universal_file_close
-    4. terminal: mv the committed .txt to the real .toml path (see terminal-sandbox.yaml)
-    5. remove the orphan '<name>.toml.txt.lock' left behind, if present
+  new_file:
+    - create a CA session
+    - call universal_file_open with create=true and initial_content (.py REQUIRES it on create)
+    - preview and edit the draft as needed (same edit ops as an existing file, see editor-edit-lifecycle.yaml)
+    - inspect write_mode=preview
+    - commit with universal_file_write(write_mode=commit) -> first commit locks + registers the file atomically on CA
+    - close the editor file and delete the CA session
+  unsupported_format_toml:
+    # DEVIATION from the template default (which now claims native TOML support):
+    # CA-layer TOML persistence was live-verified BROKEN on this install
+    # (2026-07-20) — keep this workaround until re-verified.
+    - universal_file_open(create=true, file_path='*.txt') -> author content as text
+    - universal_file_write(commit) the .txt
+    - universal_file_close
+    - 'terminal: mv the committed .txt to the real .toml path (see terminal-sandbox.yaml)'
+    - remove the orphan '<name>.toml.txt.lock' left behind, if present
 
-commands:
-  universal_file_open: 'create=true -> pure local draft; no CA calls until first commit'
-  universal_file_write: 'commit on a create=true session performs the atomic lock+register'
+native_structured_formats: [.json, .yaml, .yml, .ini, .cfg]
 
 gotchas:
-  - .toml is unsupported natively — always go through the .txt-then-mv workaround
+  - 'DEVIATION: .toml is NOT natively supported on this install (re-verify before trusting otherwise) — always go through the .txt-then-mv workaround'
   - unknown extension needs an explicit format_group override or you get UNKNOWN_FORMAT
   - .py create MUST pass initial_content or open fails
   - after mv in terminal, remember to remove the orphan .txt.lock file — it is not cleaned up automatically
+  - closing a modified uncommitted draft is rejected to prevent silent data loss
 
 errors:
   UNKNOWN_FORMAT: 'unknown extension — pass format_group explicitly or use the .txt workaround'

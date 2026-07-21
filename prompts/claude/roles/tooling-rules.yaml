@@ -1,62 +1,110 @@
 # plan_manager — TOOLING rules (tool-using roles only). Referenced from tooling.yaml manuals/triggers.
-# Battle-tested gotchas; each entry exists because an agent lost work without it.
+# Resynced 2026-07-21 to claude-prompts-v1 template update. Template's new design principle
+# (see README.md "Editor contract"): don't carry historical workarounds forward as permanent
+# facts — maintain live regression coverage instead. This project keeps THREE explicit
+# exceptions to that principle (KEPT notes below), each live-verified 2026-07-20, plus a
+# block of pre-existing project-specific operational facts the template has no equivalent for
+# (project_notes below) — dropping those silently would lose hard-won operational knowledge
+# with nothing replacing it, so they are carried forward, clearly labeled, for re-verification.
 
 editor_rules:
   lifecycle: >-
-    CA session_create -> open -> preview -> edit -> write(preview) -> write(commit) ->
-    close ALWAYS, even on error; an unclosed session leaves a stale lock that blocks the pipeline.
+    CA session_create -> universal_file_open -> preview -> edit -> write(preview) ->
+    write(commit) -> universal_file_close -> CA session_delete. Reuse the same CA
+    session_id and always close every opened file, even on abort.
+  outcome_correlation: >-
+    Verify that universal_file_edit success correlates with draft mutation on the
+    installed version. Preview the exact diff before commit.
   edit_signal_untrusted: >-
-    known defect in editor as of editor 1.0.49 — re-verify on your install and record your
-    own bug ids: universal_file_edit's error signal is uncorrelated with outcome ->
-    after EVERY edit call re-preview the draft; landed -> do not re-apply; absent -> re-apply once.
+    KEPT (established 2026-07-20, re-verify on your install and record your own bug ids):
+    universal_file_edit's error signal is uncorrelated with outcome -> after EVERY edit
+    call re-preview the draft; landed -> do not re-apply; absent -> re-apply once.
+  toml: >-
+    KEPT (established 2026-07-20, re-verify on your install and record your own bug ids):
+    no working .toml handler at the CA layer (persist failure) -> create as .txt, commit,
+    then mv in terminal; remove the orphan .txt.lock. DEVIATION from the template, which
+    now claims native TOML support — not adopted here until re-verified live.
+  commit_gate_mypy_stub_friction: >-
+    KEPT (established 2026-07-20): commit validates (.py: black-parseable/flake8/mypy/
+    docstrings, ZERO TOLERANCE; JSON/YAML: parse) and the QA sandbox can yield a false
+    import-not-found for sibling-project/stub imports — verify real imports in the
+    isolated QA copy before assuming a genuine defect; never add an import-path bypass
+    to hide it (editor_gate_no_bypass still applies).
+  structured_formats: >-
+    JSON, YAML, and INI/CFG use structured node_ref/json_pointer addressing (see
+    ops/editor-formats-addressing.yaml). DEVIATION: the template additionally claims
+    live-verified YAML root-key insertion and try/except SimpleStatementLine
+    addressability as facts here — dropped again per the 2026-07-20 pruned-note
+    discipline (live-verify before trusting either claim).
+  import_validation: >-
+    Verify sibling project imports in the isolated QA copy. Never add import-path
+    bypasses to hide a validation defect.
+  qa_gate: never bypass parsing, Ruff, Flake8, mypy, import, or format validation
   one_agent_one_step: one agent = one atomic step = one file; multiple steps per agent degrade focus into hallucinations.
   no_subagents: coders/testers NEVER spawn subagents; every needed value is inlined in the task prompt.
   python_reads: >-
     never CA get_file_lines on a healthy .py (USE_CST_COMMANDS) - read via
     universal_file_preview (one-shot, no session_id) or file_structure.
-  toml: 'no .toml handler -> create as .txt, commit, then mv in terminal; remove the orphan .txt.lock.'
   coder_tool_error: >-
     a coder hitting a tool error STOPS and reports; NEVER falls back to local bash -
     it never reaches the remote CA (lost work).
 
+cas_rules:
+  copy_number: verify live registration after a service restart (a re-registration can land on a new copy_number)
+  git: all server-side Git uses CA git_* commands through MCP Proxy — never console/ssh git without explicit user permission
+  read_order: structural and AST analysis before cross-search when applicable
+  sequential_only: >-
+    project_notes (no template equivalent — carried forward, re-verify on your install and
+    record your own bug ids): NEVER run CAS searches in parallel - the concurrent-search
+    race corrupts JSON-RPC (-32600 "command is required", heartbeat stays green, "active"
+    status lies). All CAS calls strictly sequential.
+  usages_index: >-
+    project_notes: a project's usages table can be EMPTY (find_usages returns 0 for
+    everything) - rely on the AST/class index, not usage counts.
+
+queue_rules:
+  valid_transition: a long operation may return a queued job instead of blocking
+  synchronous_emulation: adapter client polls and unwraps with auto_poll=true
+  asynchronous_messages: use auto_poll=false or manual_event_handling=true
+  acceptance: inspect terminal payload or exception, not only queue status
+
+planmgr_rules:
+  - Plan Manager is authoritative for plan levels, lifecycle, cascades, prompts,
+    runtime records, bugs, TODOs, links, validation, and semantic score.
+  - Read a bug or TODO body before reanchoring, linking, closing, or duplicating it.
+  - Run mechanical validation before semantic scoring; manually inspect weak branches.
+  - Binding HRS is human-owned; never invent or silently rewrite it.
+
+planmgr_gotchas:
+  # project_notes (no template equivalent — carried forward, re-verify on your install)
+  - 'hrs_import defaults dry_run=true - a success without dry_run:false writes NOTHING.'
+  - 'step_update: concepts is a TOP-LEVEL param; fields.concepts is ignored by the gate.'
+  - 'bug_list filters (re-verify on your install): plan = direct source_plan_uuid equality (project-anchored bugs excluded - correct); project = TRANSITIVE (matches source_project_id and plan-bound bugs). Use project filter for project-anchored records.'
+  - 'anchor validation is weak (known defect in planmgr as of planmgr 0.1.44 — re-verify on your install and record your own bug ids): bug_create accepts a nonexistent source_project_id - double-check UUIDs before create; fix mistakes via bug_reanchor/todo_reanchor.'
+
+branch_rules:
+  - local works only on local; CAS works only on cas; main is transfer-only
+  - never merge local directly with cas
+  - deploy and verify from the active working branch before merging it into main
+  - never push main; report the ready commit and wait for user push confirmation
+  - after confirmation, pull main at the opposite site and merge main into its branch
+  - >-
+    PROJECT NOTE: root CLAUDE.md's LOCAL PROJECT LAW (commit after every local edit,
+    no batching) is the higher-authority text for the local site — see roles/laws.yaml
+    branch_discipline/local_mode.
+
 sandbox_rules:
+  # project_notes (no template equivalent — carried forward, re-verify on your install)
   waf: WAF returns 403 on complex shell (pipes, 2>&1, loops, command -v) -> simple single commands only.
-  qa_tools: sandbox venv is bare (no mypy/flake8/pytest); the quality gate runs CAS-side tools, not the sandbox venv.
+  qa_tools: sandbox venv is bare (no mypy/flake8/pytest) unless image_profile=python_dev_3_12; the quality gate runs CAS-side tools, not the sandbox venv.
   host_exec: 'multi-step host commands: wrap in bash -c ''<chain>''; avoid redirects/heredocs (forbidden-pattern scan rejects them).'
   certs: >-
     NEVER run the full certificate-generation script that rebuilds the shared Root CA
     (it breaks every sibling's certs) - only a per-service cert helper script.
 
 host_files:
+  # project_notes (no template equivalent — carried forward, re-verify on your install)
   ownership: >-
     files under the CA server's watch catalog must be owned by the CA service's
     user:group; drift fix: chgrp -R <ca_group> <catalog>; dirs also need the owner-read
     bit for the CA daemon (symptom: "No Python files found" while exact-path reads work).
-
-cas_rules:
-  sequential_only: >-
-    known defect in CAS as of CAS 1.6.53 — re-verify on your install and record your own
-    bug ids: NEVER run CAS searches in parallel - the concurrent-search race corrupts
-    JSON-RPC (-32600 "command is required", heartbeat stays green, "active" status lies).
-    All CAS calls strictly sequential.
-  copy_number: >-
-    copy_number can flip after a backend service restart (a re-registration gets a new
-    copy, e.g. copy 1 -> SERVER_NOT_FOUND, new registration lands as copy 2) — verify
-    with list_servers rather than assuming a fixed copy_number per server.
-  usages_index: >-
-    a project's usages table can be EMPTY (find_usages returns 0 for everything) -
-    rely on the AST/class index, not usage counts.
-  git_via_ca: >-
-    when working against the server-side project, ALL git operations go through CA git_*
-    commands (git_status/git_add/git_commit/git_pull/git_push/git_branch_*/git_merge...) -
-    never a local git workaround for server-side state, and NEVER git over console/ssh on
-    the server without the user's explicit permission (user law — record the date your
-    project's user granted this). In LOCAL mode (variables.file_access=local) CA acts as
-    the REMOTE REPO: local edits are committed locally after every file edit
-    (commit-after-edit), then synced via push / CA git_pull.
-
-planmgr_gotchas:
-  - 'hrs_import defaults dry_run=true - a success without dry_run:false writes NOTHING.'
-  - 'step_update: concepts is a TOP-LEVEL param; fields.concepts is ignored by the gate.'
-  - 'bug_list filters (re-verify on your install): plan = direct source_plan_uuid equality (project-anchored bugs excluded - correct); project = TRANSITIVE (matches source_project_id and plan-bound bugs). Use project filter for project-anchored records.'
-  - 'anchor validation is weak (known defect in planmgr as of planmgr 0.1.44 — re-verify on your install and record your own bug ids): bug_create accepts a nonexistent source_project_id - double-check UUIDs before create; fix mistakes via bug_reanchor/todo_reanchor.'

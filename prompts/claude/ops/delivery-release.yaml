@@ -4,7 +4,16 @@
 
 purpose: full procedure for "work delivered to the user" — versioning, build, publish, deploy, verification, propagation.
 
+project:
+  version_source: pyproject.toml (root; single source — client/server/docker/deb lockstep)
+  build: ./build.sh (project root)
+  deploy_host: 192.168.254.26
+  live_pipeline: the one real-server MCP smoke pipeline, run via proxy-lan against the deployed planmgr instance
+  production_server: planmgr (uuid 8820e595-8ed4-43f2-b9bf-c99f48054fa6)
+
 procedure: |
+  0. FOR A BUG FIX: reproduce the defect and prove its cause before mutation; implement
+     the localized repair plus a focused regression test; run project checks.
   1. VERSION BUMP: increment the project version by 1 in the root pyproject.toml —
      the single source of truth. VERSION LOCKSTEP IS LAW: client package, server
      package, docker image tag, and .deb version must all equal this version
@@ -18,24 +27,31 @@ procedure: |
      never interactive prompts.
   4. TRANSFER/DEPLOY: if the transfer+deploy method for this project has not been
      established earlier, ASK THE USER before proceeding. Deploy to the
-     testing/production server (one and the same server in this setup).
+     testing/production server (one and the same server in this setup), from the
+     active working branch — never from or before merging main.
   5. REAL-SERVER PIPELINE: exactly ONE pre-delivery test pipeline, built on the
      server's own client (or, if none, the adapter's client), runs against the
      freshly deployed instance: the server is present in the mcp-proxy registry
      (list_servers); every changed/added command AND its related commands respond
      correctly THROUGH the proxy (call_server), not only in isolation; pipeline green.
-  6. PROPAGATION: branch_discipline POST-DEPLOY PROPAGATION — merge the site branch
-     into main, push main to GitHub (on a site without push credentials: prepare the
-     merge and immediately ask the user to push), then update the server repository
-     from GitHub (git_pull / git_pull_safe). The deploy is NOT finished until the
-     server repo contains the deployed commit.
+     Verify registration, health, version, and the changed behavior.
+  6. PLAN MANAGER RECORD: for a bug fix, record and verify the fix in Plan Manager
+     before closing the proven bug (bug lifecycle — see ops/planmgr-bugs.yaml).
+  7. PROPAGATION (branch_discipline): merge the verified working branch into local
+     main, report the exact ready commit, and WAIT for explicit user confirmation
+     that it was pushed — the model never pushes main. After confirmation, the
+     opposite site pulls main through its authoritative Git surface, verifies the
+     expected commit, and merges main into its own branch. The deploy is NOT
+     finished until this propagation completes.
 
 invariants:
   - unit-test suite always runnable in the repo (locally or via the server terminal, per variables.file_access profile)
-  - exactly ONE pre-delivery test pipeline — never multiply pipelines
+  - exactly ONE pre-delivery/real-server pipeline — extend it, never multiply pipelines
   - versions client == server == docker image == deb, always (laws.yaml server_client_law)
-  - a server project MUST ship a client that hides ALL network interaction — callers see results or exceptions, never transport, URLs, retries, or queued-job envelopes (a leaked {"job_id","status":"pending"} instead of a result is a client bug)
+  - a server project MUST ship a client that hides ALL network interaction — callers see results or exceptions, never transport, URLs, retries, or leaked queued-job envelopes (a leaked {"job_id","status":"pending"} instead of a result is a client bug); async callers may explicitly receive a valid queued handoff (laws.yaml queue_semantics)
   - a project built on mcp-proxy-adapter implements that client as a WRAPPER over the adapter's client — never reimplements transport
+  - do not deploy from or edit main before production verification
+  - the model never pushes main (laws.yaml branch_discipline; root CLAUDE.md LOCAL PROJECT LAW governs the exact commit sequence)
 
 gotchas:
   - dpkg on the target host may need --force-confold to keep existing config files
