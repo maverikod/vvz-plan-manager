@@ -4,6 +4,7 @@ import uuid
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.concept_update_metadata import get_concept_update_metadata
 from plan_manager.commands.errors import domain_error, map_exception
@@ -92,18 +93,23 @@ class ConceptUpdateCommand(Command):
         """Validate params: shallow schema checks, cascade_uuid format, and fields semantics.
 
         Raises:
-            ValueError: if cascade_uuid is not a well-formed UUID string, or if
-                fields is not a non-empty dict whose keys are a subset of
-                {"name", "definition", "properties", "source_labels"}.
+            InvalidParamsError: if cascade_uuid is not a well-formed UUID
+                string, or if fields is not a non-empty dict whose keys are
+                a subset of {"name", "definition", "properties",
+                "source_labels"}.
         """
         params = super().validate_params(params)
-        uuid.UUID(params["cascade_uuid"])
+        cascade_uuid = params["cascade_uuid"]
+        try:
+            uuid.UUID(cascade_uuid)
+        except ValueError as exc:
+            raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         fields = params.get("fields")
         if not isinstance(fields, dict) or not fields:
-            raise ValueError("fields must be a non-empty object")
+            raise InvalidParamsError("fields must be a non-empty object")
         extra = set(fields.keys()) - _UPDATABLE_FIELDS
         if extra:
-            raise ValueError(f"fields contains unsupported keys: {sorted(extra)}")
+            raise InvalidParamsError(f"fields contains unsupported keys: {sorted(extra)}")
         return params
 
     async def execute(
