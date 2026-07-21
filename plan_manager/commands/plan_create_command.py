@@ -4,6 +4,7 @@ from typing import ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_create_metadata import get_plan_create_metadata
@@ -71,14 +72,14 @@ class PlanCreateCommand(Command):
                 "context_budget" defaulted to 4000 when absent.
 
         Raises:
-            ValueError: When name is empty after stripping, or when
+            InvalidParamsError: When name is empty after stripping, or when
                 context_budget is not an integer >= 1. These are
                 parameter-shape violations, not domain conditions.
         """
         params = super().validate_params(params)
         name = params.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError("name must be a non-empty string")
+            raise InvalidParamsError("name must be a non-empty string")
         params["name"] = name.strip()
         context_budget = params.get("context_budget", 4000)
         if (
@@ -86,7 +87,7 @@ class PlanCreateCommand(Command):
             or isinstance(context_budget, bool)
             or context_budget < 1
         ):
-            raise ValueError("context_budget must be an integer >= 1")
+            raise InvalidParamsError("context_budget must be an integer >= 1")
         params["context_budget"] = context_budget
         return params
 
