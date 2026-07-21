@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission, frozen_at_or_below
@@ -180,8 +181,8 @@ class StepUpdateCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: If fields is empty or if cascade_uuid is not a valid
-                UUID string.
+            InvalidParamsError: If fields is empty or if cascade_uuid is not
+                a valid UUID string.
         """
         raw_project_present = "project_id" in params
         raw_project_clear = raw_project_present and params["project_id"] is None
@@ -195,12 +196,15 @@ class StepUpdateCommand(Command):
         concepts_present = "concepts" in params
         project_present = "project_id" in params
         if fields is None and not concepts_present and not project_present:
-            raise ValueError("fields, concepts, or project_id must be supplied")
+            raise InvalidParamsError("fields, concepts, or project_id must be supplied")
         if fields is not None and (not isinstance(fields, dict) or not fields):
-            raise ValueError("fields must be a non-empty object when supplied")
+            raise InvalidParamsError("fields must be a non-empty object when supplied")
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
-            uuid.UUID(cascade_uuid)
+            try:
+                uuid.UUID(cascade_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(
