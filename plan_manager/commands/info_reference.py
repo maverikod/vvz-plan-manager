@@ -1138,6 +1138,10 @@ def project_dependency_capabilities() -> dict[str, Any]:
                 "mutates": False,
                 "summary": "Return the set of projects that transitively depend on a given project, via suspected_impact_targets reverse traversal.",
             },
+            "project_view": {
+                "mutates": False,
+                "summary": "Project-centric aggregate view: paginated todos/bugs (plus a comments count) scoped to one project, direct or transitive via bound plans, built by calling todo_list/bug_list/comment_list's own store functions -- never a separate query shape.",
+            },
         },
         "guards": {
             "self_reference": "validate_dependency_project_ids refuses dependent_project_id == depends_on_project_id.",
