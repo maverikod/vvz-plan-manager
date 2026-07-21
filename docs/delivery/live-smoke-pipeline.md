@@ -15,6 +15,17 @@ does not (yet) automate, and as a design reference when extending it.
 regression checks are added as new entries in `live_smoke.py`'s tier tables
 (see "How to extend" below), never as a separate script.
 
+**First-live-run finding (0.1.52, on-host https):** the deployed server
+queues every command, even trivial reads like `info`/`help` -- confirming
+`queue_semantics` applies pipeline-wide, not just to slow commands. The
+shipped client's own envelope unwrap peels only one conditional layer past
+the queue terminal event; a live response nesting one layer deeper left the
+full `{job_id, command, result, status}` envelope in place where the script
+expected plain data. Fixed with `unwrap_envelope()` (a pure, iteratively
+applied unwrap of any nesting/combination of the queue and success/error
+envelope shapes) -- see its docstring in `scripts/live_smoke.py` for the
+full investigation and exact file:line citations into the adapter package.
+
 ## How to run
 
 ### On-host (loopback, typical local/dev run)
