@@ -66,6 +66,27 @@ adapter-builtin/admin/transfer/stub commands got specific
 docstrings of `run_tier3_plan_step_create`, `run_tier3_bug_create`, and
 `run_r2_same_file_order_ambiguity` for the full detail.
 
+**Fourth-live-run finding (0.1.52, same run family):** 266 passed, 6
+failed, 116 skipped -- all six were script recipe-level, not server bugs.
+(1) `branch_weak`/`plan_score` refused with the documented `GATE_RED`
+domain error against the deliberately unpolished throwaway plan --
+correct, expected behavior, not a probe failure; `interpret_gate_red_probe`
+now inverts the usual pass/fail logic for these two (`GATE_RED_EXPECTED`),
+labeling them `"<name>(gate_red_contract)"`. (2) `step_xref` needs `text`
+or `step`+`field`, not zero params -- fixed to `{"plan":..., "text":
+"live-smoke"}`. (3) the R2 regression's curative dependency edge targeted
+the two A (level-5) steps directly, but they live under DIFFERENT level-4
+parents and so are not siblings -- `-32000 INVALID_DEPENDENCY_SCOPE`
+("a dependency must reference a sibling step"); the curative batch now
+orders the T-level SIBLINGS instead (`T-002 depends_on [T-001]`, same
+parent G, same level 4), which transitively orders the same-file atomic
+children beneath them; preview is now run WITH that curative batch (not
+`changes=[]`) so its `same_file_order` response carries a non-trivial
+`resolved_pairs`, and the check now asserts all four simulation fields are
+present. See `interpret_gate_red_probe` and
+`run_r2_same_file_order_ambiguity`'s docstrings in `scripts/live_smoke.py`
+for the full detail.
+
 ## How to run
 
 ### On-host (loopback, typical local/dev run)
