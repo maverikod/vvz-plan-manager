@@ -3,11 +3,17 @@
 Covers: catalog classification into pipeline tiers (including the
 zero-uncovered-command invariant against the shipped client's own
 COMMAND_NAMES catalog), the tier-2 scoped-params builder, the
-Summary/exit-code computation, the base-url/protocol parsing helper, and
-the mTLS auto-upgrade in build_config. None of these tests touch the
-network or import asyncio -- the script's networked coroutines
-(run_tier0/run_tier1/... /run_pipeline) are exercised only against a live
-server, out of scope for this suite.
+Summary/exit-code computation, the base-url/protocol parsing helper, the
+mTLS auto-upgrade in build_config, and the queue/success envelope
+unwrapping (unwrap_envelope + call()) added to fix a real first-live-run
+defect against the deployed 0.1.52 server: every command comes back as a
+queued-job envelope, sometimes nested one layer deeper than the shipped
+adapter's own unwrap handles, and info/help's failure surfaced as a
+mis-shaped success rather than a real error. `call()` is exercised here
+against a minimal fake client (no real network) via `asyncio.run` --
+none of these tests reach an actual server; the script's other networked
+coroutines (run_tier0/run_tier1/.../run_pipeline) are exercised only
+against a live server, out of scope for this suite.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,6 +21,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -309,3 +316,171 @@ def test_build_arg_parser_rejects_unknown_protocol():
         assert exc.code != 0
     else:
         raise AssertionError("expected argparse to reject an invalid --protocol choice")
+
+
+# --------------------------------------------------------------------------
+# unwrap_envelope -- fix for the first-live-run defect against 0.1.52: every
+# command comes back as a queued-job envelope (even instant reads like
+# info/help), sometimes nested one layer deeper than the shipped adapter's
+# own unwrap peels off. Cases below reproduce the exact evidence shapes.
+# --------------------------------------------------------------------------
+
+
+def test_unwrap_envelope_plain_data_passthrough():
+    data = {"identity": {"package_version": "0.1.52"}}
+    assert ls.unwrap_envelope(data) == (True, data)
+
+
+def test_unwrap_envelope_non_dict_passthrough():
+    assert ls.unwrap_envelope("already-plain-string") == (True, "already-plain-string")
+    assert ls.unwrap_envelope(None) == (True, None)
+
+
+def test_unwrap_envelope_single_success_data_layer():
+    envelope = {"success": True, "data": {"uuid": "abc"}}
+    assert ls.unwrap_envelope(envelope) == (True, {"uuid": "abc"})
+
+
+def test_unwrap_envelope_success_false_is_failure_with_error_surfaced():
+    envelope = {"success": False, "error": "STEP_NOT_FOUND: no such step"}
+    assert ls.unwrap_envelope(envelope) == (False, "STEP_NOT_FOUND: no such step")
+
+
+def test_unwrap_envelope_success_false_without_error_key_surfaces_whole_envelope():
+    envelope = {"success": False}
+    assert ls.unwrap_envelope(envelope) == (False, envelope)
+
+
+def test_unwrap_envelope_queued_completed_single_nested_success_data():
+    # One layer of queue wrapper around one layer of success/data -- the
+    # shape the shipped adapter's own unwrap already handles correctly.
+    envelope = {
+        "mode": "queued", "job_id": "j1", "command": "step_get", "queued": True,
+        "status": "completed", "result": {"success": True, "data": {"step_id": "G-001"}},
+    }
+    assert ls.unwrap_envelope(envelope) == (True, {"step_id": "G-001"})
+
+
+def test_unwrap_envelope_queued_completed_double_nested_reproduces_live_evidence():
+    """Exact shape from the first live run against 0.1.52's info command:
+    the queue envelope's own job_id/command/status sit ALONGSIDE what should
+    have been the plain success/data result -- one layer deeper than the
+    shipped adapter's own unwrap check (which only looks for "data" at the
+    top of ``result``) expects. Must still fully unwrap to plain data."""
+    envelope = {
+        "job_id": "47c20a2c-0000-0000-0000-000000000000",
+        "command": "info",
+        "result": {
+            "success": True,
+            "data": {
+                "identity": {"product": "plan_manager", "package_version": "0.1.52"},
+                "build": {"build_date": "2026-07-01"},
+            },
+        },
+        "status": "completed",
+        "queued": True,
+    }
+    ok, data = ls.unwrap_envelope(envelope)
+    assert ok is True
+    assert data == {
+        "identity": {"product": "plan_manager", "package_version": "0.1.52"},
+        "build": {"build_date": "2026-07-01"},
+    }
+
+
+def test_unwrap_envelope_queued_non_completed_status_is_failure():
+    """Reproduces the "help" catalog_fetch failure shape: a queue envelope
+    whose status never reached "completed" must be reported as a failure,
+    with the full envelope preserved for diagnosis -- not silently treated
+    as success."""
+    envelope = {"job_id": "c0bab142-0000", "command": "help", "status": "failed", "result": {}}
+    ok, diagnostic = ls.unwrap_envelope(envelope)
+    assert ok is False
+    assert diagnostic == envelope
+
+
+def test_unwrap_envelope_queued_pending_status_is_failure_not_success():
+    envelope = {"job_id": "j2", "command": "info", "status": "pending", "result": None, "mode": "queued"}
+    ok, diagnostic = ls.unwrap_envelope(envelope)
+    assert ok is False
+    assert diagnostic == envelope
+
+
+def test_unwrap_envelope_recognizes_command_completed_and_job_completed_aliases():
+    for alias in ("command_completed", "job_completed"):
+        envelope = {"job_id": "j", "status": alias, "result": {"x": 1}}
+        assert ls.unwrap_envelope(envelope) == (True, {"x": 1})
+
+
+def test_unwrap_envelope_max_depth_guard_never_infinite_loops():
+    # A pathological self-referential-looking shape (queue wrapper whose
+    # "result" is itself an identical queue wrapper, forever) must terminate
+    # as a reported failure rather than hang.
+    cyclical = {"job_id": "j", "status": "completed", "result": None}
+    cyclical["result"] = cyclical  # type: ignore[assignment]
+    ok, diagnostic = ls.unwrap_envelope(cyclical)
+    assert ok is False
+    assert isinstance(diagnostic, dict)
+
+
+# --------------------------------------------------------------------------
+# call() -- the async wrapper around client._call + unwrap_envelope +
+# exception .details surfacing. Exercised against a minimal fake client
+# (no real network) via asyncio.run.
+# --------------------------------------------------------------------------
+
+
+class _FakeClient:
+    def __init__(self, outcome):
+        self._outcome = outcome
+
+    async def _call(self, name, params=None):
+        if isinstance(self._outcome, BaseException):
+            raise self._outcome
+        return self._outcome
+
+
+class _FakeErrorWithDetails(Exception):
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+def test_call_success_path_unwraps_queued_envelope():
+    envelope = {
+        "job_id": "j1", "command": "info", "status": "completed", "queued": True,
+        "result": {"success": True, "data": {"identity": {"package_version": "0.1.52"}}},
+    }
+    client = _FakeClient(envelope)
+    ok, data = asyncio.run(ls.call(client, "info", {}))
+    assert ok is True
+    assert data == {"identity": {"package_version": "0.1.52"}}
+
+
+def test_call_non_completed_status_reports_failure():
+    envelope = {"job_id": "j2", "command": "help", "status": "failed", "result": {}}
+    client = _FakeClient(envelope)
+    ok, message = asyncio.run(ls.call(client, "help", {}))
+    assert ok is False
+    assert "non-success/incomplete envelope" in message
+    assert "'status': 'failed'" in message
+
+
+def test_call_exception_includes_details_verbatim():
+    exc = _FakeErrorWithDetails(
+        "Queued command 'help' failed (job_id=c0bab142-0000)",
+        details={"terminal_event": {"event": "command_failed"}, "result_status": {"error": "boom"}},
+    )
+    client = _FakeClient(exc)
+    ok, message = asyncio.run(ls.call(client, "help", {}))
+    assert ok is False
+    assert "Queued command 'help' failed" in message
+    assert "terminal_event" in message
+    assert "command_failed" in message
+
+
+def test_call_exception_without_details_still_reports_str():
+    client = _FakeClient(RuntimeError("plain transport error"))
+    ok, message = asyncio.run(ls.call(client, "plan_list", {}))
+    assert ok is False
+    assert message == "plain transport error"

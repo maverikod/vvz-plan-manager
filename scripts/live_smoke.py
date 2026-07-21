@@ -487,6 +487,93 @@ def unique_suffix(tag: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# Envelope unwrapping (pure, no network) -- fixes a real first-live-run
+# defect: the 0.1.52 server queues EVERY command, even trivial reads
+# (info/help came back "completed" almost instantly, but still queued).
+#
+# INVESTIGATION FINDING (queue-mode selection): the shipped
+# client/plan_manager_client/dispatch.py `_CommandDispatchMixin._call`
+# already calls the adapter's `execute_command_unified(..., auto_poll=True)`
+# -- this IS the client's synchronous poll-and-unwrap mode; it blocks until
+# the WebSocket command session reports a terminal event and then fetches
+# `session.result()` (see
+# .venv/lib/python3.12/site-packages/mcp_proxy_adapter/client/jsonrpc_client
+# /command_api.py:224-330). There is NO more-synchronous alternative to
+# switch to: passing `expect_queue=False` does not mean "wait, but skip
+# WebSocket bookkeeping" -- it means "return the initial acceptance
+# envelope immediately, before the job finishes" (command_api.py's
+# docstring at 246-266, and the `if expect_queue is False: return
+# {"mode": "immediate", ..., "result": command_result}` branch further
+# down), i.e. the ASYNC/non-blocking handoff mode -- the opposite of what
+# a synchronous smoke pipeline needs. So `_call`'s hardcoded auto_poll=True
+# was already the right mode; there was nothing to "enable explicitly".
+#
+# The actual defect is in how many wrapper layers are peeled off after the
+# terminal event. command_api.py:308-316 does exactly ONE conditional
+# unwrap: `raw_result = session_result.get("result")`, then unwraps a
+# SECOND level only `if isinstance(raw_result, dict) and "data" in
+# raw_result`. On this live run, that second check evidently found no
+# top-level "data" key (server-side result-fetch shape apparently nests
+# one level deeper than the adapter code assumes), so the unwrap stopped
+# one layer early and `execute_command_unified`'s own "result" field --
+# which `_call` returns via `response.get("result")` -- still carried the
+# full queue envelope (job_id/command/inner-result/status), exactly the
+# shape in the evidence: `{"job_id":..., "command": "info", "result":
+# {"success": True, "data": {"identity": {...}}}, "status": "completed"}`.
+#
+# Rather than patch the shared adapter/client package (out of scope for a
+# script-local fix, and used elsewhere), this script defensively unwraps
+# ANY nesting/combination of the two known envelope shapes itself:
+#   - a queue/dispatch envelope: dict with "status" alongside "job_id"
+#     and/or "queued" and/or "mode" -- only a COMPLETED status is unwrapped
+#     (into its "result" key); any other status is a failure, and the full
+#     envelope at that layer is preserved verbatim for diagnosis.
+#   - an adapter SuccessResult/ErrorResult envelope: dict with a boolean
+#     "success" key -- True unwraps into "data" (or the envelope minus
+#     "success" if "data" is absent); False is a failure, surfacing
+#     "error" (or the whole envelope) verbatim.
+# queue_semantics law: a "completed" queue status is not command success on
+# its own -- always check the inner result, which is exactly what this
+# loop does at every layer before declaring victory.
+# --------------------------------------------------------------------------
+
+COMPLETED_STATUSES: frozenset[str] = frozenset({"completed", "command_completed", "job_completed"})
+_UNWRAP_MAX_DEPTH = 5
+
+
+def unwrap_envelope(raw: Any) -> tuple[bool, Any]:
+    """Peel any nesting/combination of queue and success/error envelopes.
+
+    Returns (True, data) once ``raw`` is fully unwrapped to plain command
+    data (a dict with no recognized wrapper keys, or any non-dict value).
+    Returns (False, diagnostic) at the first failing layer -- a
+    non-completed queue status, or an explicit success=False -- with
+    ``diagnostic`` set to the raw payload AT THAT LAYER (never summarized
+    away), so a genuine command failure is distinguishable from an unwrap
+    bug. A malformed/cyclical shape that never resolves within
+    ``_UNWRAP_MAX_DEPTH`` layers is itself reported as a failure rather
+    than looping forever.
+    """
+    current = raw
+    for _ in range(_UNWRAP_MAX_DEPTH):
+        if not isinstance(current, dict):
+            return True, current
+        if "status" in current and any(k in current for k in ("job_id", "queued", "mode")):
+            status = current.get("status")
+            if status not in COMPLETED_STATUSES:
+                return False, current
+            current = current.get("result")
+            continue
+        if "success" in current and isinstance(current.get("success"), bool):
+            if not current["success"]:
+                return False, current.get("error", current)
+            current = current.get("data", {k: v for k, v in current.items() if k != "success"})
+            continue
+        return True, current
+    return False, {"error": "envelope unwrap exceeded max depth", "raw": raw}
+
+
+# --------------------------------------------------------------------------
 # Networked runtime (async) -- everything below touches the live server.
 # tests/test_live_smoke_script.py never imports asyncio or calls these.
 # --------------------------------------------------------------------------
@@ -527,15 +614,28 @@ def build_config(args: argparse.Namespace) -> "ClientConnectionConfig":  # noqa:
 async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) -> tuple[bool, Any]:
     """Invoke one command through the client's generic dispatch primitive.
 
-    Returns (True, result) on success, (False, str(exc)) on any exception --
-    a queued "completed" envelope is already unwrapped to its inner result by
-    PlanManagerClient._call (auto_poll=True), per queue_semantics.
+    Returns (True, data) on success, with ``data`` fully unwrapped through
+    ``unwrap_envelope`` regardless of how many queue/success layers the live
+    server's response carried (see the module-level investigation note
+    above ``unwrap_envelope``). Returns (False, diagnostic) on any raised
+    exception (the diagnostic string includes the exception's ``.details``
+    attribute verbatim when present -- e.g. CommandSessionFailedError's
+    ``{"terminal_event": ..., "result_status": ...}`` -- so a genuine queued
+    failure is distinguishable from an unwrap bug) or on a non-completed
+    status / success=False found while unwrapping.
     """
     try:
-        result = await client._call(name, params or {})  # noqa: SLF001 -- documented single dispatch point
-        return True, result
+        raw = await client._call(name, params or {})  # noqa: SLF001 -- documented single dispatch point
     except Exception as exc:  # noqa: BLE001 -- this IS the failure-classification boundary
-        return False, str(exc)
+        details = getattr(exc, "details", None)
+        message = str(exc)
+        if details:
+            message = f"{message} | details={details!r}"
+        return False, message
+    ok, data = unwrap_envelope(raw)
+    if not ok:
+        return False, f"non-success/incomplete envelope: {data!r}"
+    return True, data
 
 
 async def run_tier0(client: Any, expect_version: Optional[str]) -> list[CheckResult]:
