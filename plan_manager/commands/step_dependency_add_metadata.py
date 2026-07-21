@@ -21,7 +21,10 @@ def get_step_dependency_add_metadata(cls) -> dict[str, Any]:
             "returns already_present=true without a new revision. A change that "
             "would close a cycle is refused with DEPENDENCY_CYCLE. Mutation is "
             "admitted under the same regime as step_update: draft directly, "
-            "frozen only inside a cascade."
+            "frozen only inside a cascade. Same-file writer-order ambiguity is "
+            "admitted monotonically (bug 64107707): a pre-existing ambiguity "
+            "elsewhere in the graph never refuses this add; only a NEW ambiguous "
+            "pair the edge would introduce does, as AS_SAME_FILE_ORDER_AMBIGUOUS."
         ),
         "parameters": {
             "plan": {
@@ -115,6 +118,19 @@ def get_step_dependency_add_metadata(cls) -> dict[str, Any]:
                 "description": "The edge would create a cycle in the dependency graph.",
                 "message": "Dependency change would create a cycle.",
                 "solution": "Remove the opposing edge first or choose a different dependency.",
+            },
+            "AS_SAME_FILE_ORDER_AMBIGUOUS": {
+                "description": (
+                    "The edge would introduce a NEW same-file writer ambiguity absent "
+                    "from the before-state (bug 64107707). A pre-existing ambiguity "
+                    "elsewhere in the graph never refuses this add."
+                ),
+                "message": "Dependency change would introduce a new same-file writer ambiguity.",
+                "solution": (
+                    "Add an explicit dependency between the branches of the newly "
+                    "conflicting pair(s) named in introduced_pairs, or preview first "
+                    "with step_dependency_preview."
+                ),
             },
             "CASCADE_REQUIRED": {
                 "description": "The step is frozen at or below and no cascade was supplied.",

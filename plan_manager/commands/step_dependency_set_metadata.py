@@ -18,7 +18,11 @@ def get_step_dependency_set_metadata(cls) -> dict[str, Any]:
             "not the step itself), the list is deduplicated preserving order, and "
             "the resulting graph is refused with DEPENDENCY_CYCLE if it would "
             "contain a cycle. Returns both the old and new lists. Mutation is "
-            "admitted under the same regime as step_update."
+            "admitted under the same regime as step_update. Same-file "
+            "writer-order ambiguity is admitted monotonically (bug 64107707): a "
+            "pre-existing ambiguity elsewhere in the graph never refuses this "
+            "set; only a NEW ambiguous pair the replacement would introduce "
+            "does, as AS_SAME_FILE_ORDER_AMBIGUOUS."
         ),
         "parameters": {
             "plan": {
@@ -110,6 +114,19 @@ def get_step_dependency_set_metadata(cls) -> dict[str, Any]:
                 "description": "The new list would create a cycle.",
                 "message": "Dependency change would create a cycle.",
                 "solution": "Break the opposing edges before setting this list.",
+            },
+            "AS_SAME_FILE_ORDER_AMBIGUOUS": {
+                "description": (
+                    "The replacement list would introduce a NEW same-file writer "
+                    "ambiguity absent from the before-state (bug 64107707). A "
+                    "pre-existing ambiguity elsewhere in the graph never refuses this."
+                ),
+                "message": "Dependency change would introduce a new same-file writer ambiguity.",
+                "solution": (
+                    "Add an explicit dependency between the branches of the newly "
+                    "conflicting pair(s) named in introduced_pairs, or preview first "
+                    "with step_dependency_preview."
+                ),
             },
             "CASCADE_REQUIRED": {
                 "description": "The step is frozen at or below and no cascade was supplied.",
