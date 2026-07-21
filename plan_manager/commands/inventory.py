@@ -165,6 +165,7 @@ INVENTORY: tuple[str, ...] = (
     "project_dependency_list",
     "project_dependency_discover",
     "project_dependents",
+    "project_view",
     "command_catalog_dump",
     "graph_dependents",
     "command_timing_stats",
