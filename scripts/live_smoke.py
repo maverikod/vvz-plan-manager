@@ -236,6 +236,7 @@ TIER2_SCOPED_NEEDS: dict[str, tuple[str, ...]] = {
     "srt_snapshot_list": ("plan",),
     "step_runtime_list": ("plan",),
     "step_xref": ("plan",),
+    "files_report": ("plan",),
     "step_get": ("plan", "step"),
     "step_dependency_list": ("plan", "step"),
     "step_runtime_get": ("plan", "step"),
@@ -279,6 +280,8 @@ def scoped_params(name: str, entities: dict[str, str]) -> Optional[dict[str, Any
         return {"bug": entities["bug"]}
     if name == "project_dependents":
         return {"project_id": entities["project"]}
+    if name == "files_report":
+        return {"plan": entities["plan"]}
     return {"plan": entities["plan"]}
 
 
@@ -411,6 +414,10 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_clear": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
+    "plan_project_attach": "mutates the plan<->project binding on a throwaway plan we already tear down; not exercised in this pass",
+    "plan_project_detach": "requires an existing plan_project_attach binding to remove; not exercised in this pass",
+    "plan_project_set_primary": "requires an existing plan_project_attach binding to promote; not exercised in this pass",
+    "plan_project_clear_primary": "requires an existing primary plan-project binding to clear; not exercised in this pass",
 }
 
 
