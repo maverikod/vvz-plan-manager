@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -48,10 +49,23 @@ class ParaGetCommand(Command):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate para_get parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If label is not exactly four base36
+                characters.
+        """
         params = super().validate_params(params)
         label = params.get("label", "")
         if not _LABEL_RE.match(label):
-            raise ValueError(
+            raise InvalidParamsError(
                 f"label must be exactly four base36 characters [0-9a-z]: {label!r}"
             )
         return params
