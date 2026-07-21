@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.plan_score_metadata import get_plan_score_metadata
@@ -109,10 +110,10 @@ class PlanScoreCommand(Command):
         :type params: Dict[str, Any]
         :returns: The validated (and platform-normalized) parameter dict.
         :rtype: Dict[str, Any]
-        :raises ValueError: When the scope selector semantics above are
-            violated, or when expected_revision is supplied but is not a
-            valid UUID string. This is a platform invalid-params failure,
-            not a domain error code.
+        :raises InvalidParamsError: When the scope selector semantics above
+            are violated, or when expected_revision is supplied but is not a
+            valid UUID string. This is a platform invalid-params failure
+            (JSON-RPC -32602), not a domain error code.
         """
         params = super().validate_params(params)
         scope = params.get("scope", "plan")
@@ -121,13 +122,13 @@ class PlanScoreCommand(Command):
         as_step_id = params.get("as_step_id")
         if scope == "branch":
             if not gs_step_id or not ts_step_id or not as_step_id:
-                raise ValueError(
+                raise InvalidParamsError(
                     "gs_step_id, ts_step_id, and as_step_id are all required "
                     "and must be non-empty when scope is 'branch'"
                 )
         elif scope == "plan":
             if gs_step_id or ts_step_id or as_step_id:
-                raise ValueError(
+                raise InvalidParamsError(
                     "gs_step_id, ts_step_id, and as_step_id must be absent "
                     "when scope is 'plan'"
                 )
@@ -136,7 +137,7 @@ class PlanScoreCommand(Command):
             try:
                 uuid.UUID(expected_revision)
             except ValueError as exc:
-                raise ValueError(
+                raise InvalidParamsError(
                     f"expected_revision is not a valid UUID: {expected_revision}"
                 ) from exc
         return params
