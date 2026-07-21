@@ -4,6 +4,7 @@ from typing import ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_list_metadata import get_plan_list_metadata
@@ -76,13 +77,14 @@ class PlanListCommand(Command):
                 False when absent.
 
         Raises:
-            ValueError: When ``show_deleted`` is present but not a boolean;
-                a parameter-shape violation, not a domain condition.
+            InvalidParamsError: When ``show_deleted`` is present but not a
+                boolean; a parameter-shape violation, not a domain
+                condition.
         """
         params = super().validate_params(params)
         show_deleted = params.get("show_deleted", False)
         if not isinstance(show_deleted, bool):
-            raise ValueError("show_deleted must be a boolean")
+            raise InvalidParamsError("show_deleted must be a boolean")
         params["show_deleted"] = show_deleted
         return params
 
