@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.info_metadata import get_info_metadata
@@ -114,22 +115,37 @@ class InfoCommand(Command):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate info parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If section is not one of the known
+                sections, if subsection is given without section, or if
+                subsection is not a top-level key of the resolved section's
+                data.
+        """
         params = super().validate_params(params)
         section = params.get("section")
         if section is not None and section not in _SECTIONS:
-            raise ValueError(
+            raise InvalidParamsError(
                 f"Invalid section: {section!r}. Must be one of {', '.join(_SECTIONS)}."
             )
         subsection = params.get("subsection")
         if subsection is not None:
             if section is None:
-                raise ValueError(
+                raise InvalidParamsError(
                     f"Invalid subsection: {subsection!r} was given without section; "
                     "subsection is valid only together with section."
                 )
             section_data = self._section_data(section, build_info())
             if not isinstance(section_data, dict) or subsection not in section_data:
-                raise ValueError(
+                raise InvalidParamsError(
                     f"Invalid subsection: {subsection!r} is not a top-level key of "
                     f"section {section!r}'s data."
                 )

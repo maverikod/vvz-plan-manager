@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.info_command import InfoCommand
 from plan_manager.commands.info_reference_agents import agent_reference
@@ -30,13 +31,13 @@ def test_subsection_narrows_response_to_requested_table() -> None:
     assert "lifecycle_matrices" not in result.data["agent_reference"]
 
 def test_invalid_subsection_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Invalid subsection"):
+    with pytest.raises(InvalidParamsError, match="Invalid subsection"):
         InfoCommand().validate_params(
             {"section": "agent_reference", "subsection": "not_a_real_table"}
         )
 
 def test_subsection_without_section_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Invalid subsection"):
+    with pytest.raises(InvalidParamsError, match="Invalid subsection"):
         InfoCommand().validate_params({"subsection": "status_vocabularies"})
 
 def test_omitting_subsection_preserves_whole_section_behavior() -> None:
