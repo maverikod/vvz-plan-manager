@@ -1,6 +1,6 @@
 """Command: reverse coverage query for one concept (concept_coverage)."""
 
-from mcp_proxy_adapter.commands.base import Command
+from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from plan_manager.commands.concept_coverage_metadata import get_concept_coverage_metadata

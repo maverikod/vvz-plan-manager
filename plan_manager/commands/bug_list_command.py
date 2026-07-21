@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from mcp_proxy_adapter.commands.base import Command
+from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.bug_command_metadata import bug_metadata, filter_schema_properties, filter_metadata_params, pagination_schema_properties, pagination_metadata_params
 from plan_manager.commands.errors import map_exception

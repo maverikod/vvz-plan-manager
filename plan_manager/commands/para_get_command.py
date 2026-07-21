@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
-from mcp_proxy_adapter.commands.base import Command
+from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from plan_manager.commands.errors import domain_error, map_exception

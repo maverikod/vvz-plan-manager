@@ -1,7 +1,7 @@
 """BranchWeakCommand: rank the plan's branches by ascending semantic index."""
 from typing import Any, ClassVar, Dict
 
-from mcp_proxy_adapter.commands.base import Command
+from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.branch_weak_metadata import get_branch_weak_metadata

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from mcp_proxy_adapter.api.handlers import get_transfer_store
-from mcp_proxy_adapter.commands.base import Command
+from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.commands.transfer_command_support import (
     transfer_domain_error_result,
