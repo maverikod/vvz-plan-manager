@@ -289,7 +289,42 @@ def scoped_params(name: str, entities: dict[str, str]) -> Optional[dict[str, Any
         # "G-" is a harmless substring (the level-3 human step_id prefix
         # convention) whether or not it matches anything in the throwaway plan.
         return {"plan": entities["plan"], "pattern": "G-"}
+    if name == "step_xref":
+        # confirmed live: -32000 INVALID_FILTER "provide either text or
+        # (step and field)" -- step_xref_command.py's _resolve_query_hash
+        # requires one of the two filter shapes; "text" alone is simplest
+        # and needs no step/field coordination.
+        return {"plan": entities["plan"], "text": "live-smoke"}
     return {"plan": entities["plan"]}
+
+
+# GATE_RED-expected probes: branch_weak/plan_score run the mechanical gate
+# (branch_weak_command.py, plan_score_command.py) against a throwaway plan
+# that is DELIBERATELY unpolished (2-4 bare-skeleton steps, no concepts/
+# relations/prompts) -- confirmed live, this refuses with the documented
+# GATE_RED domain error ("mechanical gate not green (N findings)"), which
+# is the CORRECT, expected contract response for an unpolished plan, not a
+# probe failure. See interpret_gate_red_probe below for the PASS/FAIL logic.
+GATE_RED_EXPECTED: frozenset[str] = frozenset({"branch_weak", "plan_score"})
+
+
+def interpret_gate_red_probe(ok: bool, result_or_diagnostic: Any) -> tuple[str, str]:
+    """PASS/FAIL logic for a GATE_RED_EXPECTED command's probe outcome.
+
+    The throwaway plan is deliberately unpolished, so the CORRECT, expected
+    response is a refusal carrying the GATE_RED domain error -- that
+    refusal is what PASSes here, not an ordinary success. An unexpected
+    success (the mechanical gate was somehow green) or ANY other failure
+    (a real transport/unknown error, not the documented GATE_RED contract)
+    both FAIL, so a genuine regression is never masked by this inverted
+    expectation.
+    """
+    if ok:
+        return STATUS_FAIL, f"expected a GATE_RED refusal but the call succeeded: {result_or_diagnostic!r}"
+    diagnostic = str(result_or_diagnostic)
+    if "GATE_RED" in diagnostic:
+        return STATUS_PASS, f"refused as expected (GATE_RED contract): {diagnostic}"
+    return STATUS_FAIL, f"failed, but NOT with the expected GATE_RED contract: {diagnostic}"
 
 
 # Commands explicitly handled by name in Tier 3 / Tier 4 flows (not generic
@@ -890,6 +925,10 @@ async def run_tier2_scoped(client: Any, catalog_names: frozenset[str], entities:
             results.append(CheckResult("2", name, STATUS_SKIP, "required throwaway entity was not available"))
             continue
         ok, res = await call(client, name, params)
+        if name in GATE_RED_EXPECTED:
+            status, detail = interpret_gate_red_probe(ok, res)
+            results.append(CheckResult("2", f"{name}(gate_red_contract)", status, detail))
+            continue
         results.append(CheckResult("2", name, STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     return results
 
@@ -1137,8 +1176,8 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
     same-file order ambiguity used to fail AS_SAME_FILE_ORDER_AMBIGUOUS
     before candidate simulation.
 
-    Repro sequence mirrors the coordinator's proven live repro exactly (a
-    prior repro attempt in this script skipped level 4 entirely -- creating
+    Repro sequence mirrors the coordinator's proven live repro exactly (an
+    earlier attempt in this script skipped level 4 entirely -- creating
     level-5 steps directly under a level-3 parent -- which live evidence
     showed produces GRAPH_CORRUPTED_CHAIN downstream, "parent of step A-001
     not found in nodes": level 5 MUST have a level-4 parent, level 4 a
@@ -1160,6 +1199,21 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
     the plan's CURRENT head revision exactly, and every step_create bumps
     that head revision -- so a block compiled before an earlier sibling's
     create is already stale for the next one.
+
+    CURATIVE EDGE SCOPE (fourth live run): the two A steps live under
+    DIFFERENT level-4 parents (T-001, T-002), so they are NOT siblings, and
+    a direct A->A dependency edge is rejected -32000 INVALID_DEPENDENCY_
+    SCOPE ("a dependency must reference a sibling step (same parent and
+    level)") -- confirmed at plan_manager/commands/step_dependency_ops.py
+    :85-94 (resolve_dependency_bare), which requires the target and every
+    depends_on ref to share the SAME parent_step_uuid AND level. T-001 and
+    T-002, by contrast, ARE siblings (both parented on G, both level 4), so
+    the curative batch orders the T-LEVEL pair instead (T-002 depends_on
+    [T-001]) -- ordering the tactical parents transitively orders the
+    same-file atomic children beneath them. preview is run WITH this
+    curative batch (not an empty change list) so its simulated
+    same_file_order carries a non-trivial resolved_pairs entry, not just
+    before_findings.
     """
     results: list[CheckResult] = []
     plan_name = unique_suffix("r2-plan")
@@ -1183,6 +1237,7 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
         results.append(CheckResult("4", "R2_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
 
         t_ids: dict[str, str] = {}
+        t_uuids: dict[str, str] = {}
         for slug in ("t-001", "t-002"):
             ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
             if not ok:
@@ -1190,10 +1245,12 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
                 return results
             ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": slug, "parent_step_id": g_id})
             tid = _extract_step_id(res) if ok else None
-            if not ok or tid is None:
+            t_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+            if not ok or tid is None or not t_uuid:
                 results.append(CheckResult("4", f"R2_step_create({slug})", STATUS_FAIL, str(res)))
                 return results
             t_ids[slug] = tid
+            t_uuids[slug] = t_uuid
         results.append(CheckResult("4", "R2_step_create(T-001/T-002)", STATUS_PASS, f"{t_ids}"))
 
         a_uuids: dict[str, str] = {}
@@ -1219,11 +1276,21 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
                 return results
         results.append(CheckResult("4", "R2_target_file_set_on_both_a_steps", STATUS_PASS, shared_file))
 
-        # Pre-existing ambiguity now in place: the two A steps share
-        # target_file with no dependency between them.
-        ok, preview = await call(client, "step_dependency_preview", {"plan": plan_uuid, "changes": []})
+        # Pre-existing ambiguity now in place: the two A steps (different
+        # level-4 parents) share target_file with no order between them.
+        # The curative edge orders their SIBLING level-4 parents instead
+        # (T-002 depends_on T-001) -- a direct A->A edge is out of scope
+        # (INVALID_DEPENDENCY_SCOPE: A steps are not siblings of each other).
+        curative_changes = [
+            {"op": "add", "step_id": t_uuids["t-002"], "depends_on": [t_uuids["t-001"]]},
+        ]
+
+        ok, preview = await call(client, "step_dependency_preview", {"plan": plan_uuid, "changes": curative_changes})
         same_file = preview.get("same_file_order") if ok and isinstance(preview, dict) else None
-        preview_ok = ok and isinstance(same_file, dict) and "before_findings" in same_file
+        preview_fields_ok = isinstance(same_file, dict) and all(
+            key in same_file for key in ("before_findings", "after_findings", "resolved_pairs", "introduced_pairs")
+        )
+        preview_ok = ok and preview_fields_ok
         results.append(
             CheckResult(
                 "4", "R2_preview_simulates_without_raising", STATUS_PASS if preview_ok else STATUS_FAIL,
@@ -1231,9 +1298,6 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
             )
         )
 
-        curative_changes = [
-            {"op": "add", "step_id": a_uuids["t-002"], "depends_on": [a_uuids["t-001"]]},
-        ]
         ok, dry = await call(client, "step_dependency_apply", {"plan": plan_uuid, "changes": curative_changes, "dry_run": True})
         dry_ok = ok and isinstance(dry, dict) and dry.get("dry_run") is True
         results.append(CheckResult("4", "R2_apply_dry_run_no_mutation", STATUS_PASS if dry_ok else STATUS_FAIL, "" if dry_ok else str(dry)))

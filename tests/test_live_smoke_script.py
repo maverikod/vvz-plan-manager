@@ -265,6 +265,43 @@ def test_scoped_params_files_report_shape():
     assert ls.scoped_params("files_report", {"plan": "p-uuid"}) == {"plan": "p-uuid"}
 
 
+def test_scoped_params_step_xref_shape():
+    # Confirmed live: -32000 INVALID_FILTER "provide either text or (step
+    # and field)" -- "text" alone is the simplest valid filter shape.
+    params = ls.scoped_params("step_xref", {"plan": "p-uuid"})
+    assert params == {"plan": "p-uuid", "text": "live-smoke"}
+
+
+# --------------------------------------------------------------------------
+# GATE_RED-expected probes (fourth live run): branch_weak/plan_score refuse
+# with the documented GATE_RED domain error against the deliberately
+# unpolished throwaway plan -- that refusal IS the expected/correct
+# contract, so interpret_gate_red_probe inverts the usual ok->PASS logic.
+# --------------------------------------------------------------------------
+
+
+def test_gate_red_expected_membership():
+    assert ls.GATE_RED_EXPECTED == frozenset({"branch_weak", "plan_score"})
+
+
+def test_interpret_gate_red_probe_pass_on_gate_red_failure():
+    status, detail = ls.interpret_gate_red_probe(False, "domain error GATE_RED: mechanical gate not green (11 findings)")
+    assert status == ls.STATUS_PASS
+    assert "GATE_RED" in detail
+
+
+def test_interpret_gate_red_probe_fails_on_unexpected_success():
+    status, detail = ls.interpret_gate_red_probe(True, {"weak_findings": []})
+    assert status == ls.STATUS_FAIL
+    assert "succeeded" in detail
+
+
+def test_interpret_gate_red_probe_fails_on_non_gate_red_error():
+    status, detail = ls.interpret_gate_red_probe(False, "PLAN_NOT_FOUND: no such plan")
+    assert status == ls.STATUS_FAIL
+    assert "NOT with the expected GATE_RED" in detail
+
+
 def test_scoped_params_project_dependents_shape():
     assert ls.scoped_params("project_dependents", {"project": "proj-uuid"}) == {"project_id": "proj-uuid"}
 
@@ -915,7 +952,15 @@ def test_run_r2_uses_correct_level_chain_never_skipping_level_4():
     evidence showed fails downstream with GRAPH_CORRUPTED_CHAIN ("parent of
     step A-001 not found in nodes"). The corrected recipe must create
     levels 3 -> 4 -> 4 -> 5 -> 5, each level-5 step parented on a
-    DIFFERENT level-4 tactical step, never directly on the level-3 step."""
+    DIFFERENT level-4 tactical step, never directly on the level-3 step.
+
+    Also covers the fourth-live-run fix: the curative dependency edge must
+    reference the two T-level SIBLINGS (same parent G, same level 4), never
+    the two A steps directly (they have different level-4 parents, so are
+    not siblings -- confirmed live: -32000 INVALID_DEPENDENCY_SCOPE), and
+    preview must be called WITH that curative batch (not an empty change
+    list) so same_file_order carries all four simulation fields.
+    """
     step_create_calls: list[dict] = []
 
     def _step_create(params):
@@ -923,15 +968,21 @@ def test_run_r2_uses_correct_level_chain_never_skipping_level_4():
         idx = len(step_create_calls)
         return _ok({"uuid": f"uuid-{idx}", "step_id": f"{params['slug']}-{idx}"})
 
+    preview_calls: list[dict] = []
+
+    def _preview(params):
+        preview_calls.append(dict(params))
+        return _ok(
+            {"same_file_order": {"before_findings": [{"pair": 1}], "after_findings": [], "resolved_pairs": [{"pair": 1}], "introduced_pairs": []}}
+        )
+
     client = _ScriptedClient(
         {
             "plan_create": _ok({"uuid": "r2-plan"}),
             "context_common": _ok({"common_block_id": "blk"}),
             "step_create": _step_create,
             "step_update": _ok({"uuid": "updated"}),
-            "step_dependency_preview": _ok(
-                {"same_file_order": {"before_findings": [{"pair": 1}], "after_findings": [], "resolved_pairs": [], "introduced_pairs": []}}
-            ),
+            "step_dependency_preview": _preview,
             "step_dependency_apply": _sequence(
                 _ok({"dry_run": True, "applied": False}),
                 _ok({"dry_run": False, "applied": True}),
@@ -954,6 +1005,7 @@ def test_run_r2_uses_correct_level_chain_never_skipping_level_4():
     g_step_id = f"{g_call['slug']}-1"
     assert t1_call["parent_step_id"] == g_step_id
     assert t2_call["parent_step_id"] == g_step_id
+    t1_uuid, t2_uuid = "uuid-2", "uuid-3"
 
     t1_step_id = f"{t1_call['slug']}-2"
     t2_step_id = f"{t2_call['slug']}-3"
@@ -977,15 +1029,92 @@ def test_run_r2_uses_correct_level_chain_never_skipping_level_4():
     target_files = {c["fields"]["target_file"] for c in step_update_calls}
     assert len(target_files) == 1
 
-    # the curative step_dependency_apply batch references the two A steps'
-    # UUIDs (uuid-4, uuid-5 per the scripted _step_create), not their human
-    # step_ids, and is applied both dry-run then real.
+    # preview is called WITH the curative batch (not changes=[]) -- its
+    # PASS result depends on all four same_file_order simulation fields
+    # (checked by the CheckResult status above, since a malformed preview
+    # payload would have failed R2_preview_simulates_without_raising).
+    assert len(preview_calls) == 1
+    assert preview_calls[0]["changes"] != []
+
+    # the curative step_dependency_apply batch references the two T-LEVEL
+    # SIBLINGS' UUIDs (uuid-2, uuid-3 -- G=uuid-1, T-001=uuid-2, T-002=
+    # uuid-3, A-under-T001=uuid-4, A-under-T002=uuid-5), never the two A
+    # steps directly (they are not siblings of each other), and matches
+    # what preview was given, applied both dry-run then real.
     apply_calls = [c for name, c in client.calls if name == "step_dependency_apply"]
     assert len(apply_calls) == 2
     assert apply_calls[0]["dry_run"] is True
     assert apply_calls[1]["dry_run"] is False
-    assert apply_calls[0]["changes"] == apply_calls[1]["changes"]
-    assert apply_calls[0]["changes"][0]["step_id"] == "uuid-5"
-    assert apply_calls[0]["changes"][0]["depends_on"] == ["uuid-4"]
+    assert apply_calls[0]["changes"] == apply_calls[1]["changes"] == preview_calls[0]["changes"]
+    assert apply_calls[0]["changes"][0]["step_id"] == t2_uuid
+    assert apply_calls[0]["changes"][0]["depends_on"] == [t1_uuid]
 
     assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+
+
+def test_run_r2_preview_fails_when_same_file_order_missing_a_simulation_field():
+    """A preview response missing any of the four documented simulation
+    fields must FAIL the check, not pass on a partial/malformed payload."""
+    step_create_calls: list[dict] = []
+
+    def _step_create(params):
+        step_create_calls.append(dict(params))
+        idx = len(step_create_calls)
+        return _ok({"uuid": f"uuid-{idx}", "step_id": f"{params['slug']}-{idx}"})
+
+    client = _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r2-plan"}),
+            "context_common": _ok({"common_block_id": "blk"}),
+            "step_create": _step_create,
+            "step_update": _ok({"uuid": "updated"}),
+            # missing "resolved_pairs" and "introduced_pairs"
+            "step_dependency_preview": _ok({"same_file_order": {"before_findings": [], "after_findings": []}}),
+            "step_dependency_apply": _sequence(
+                _ok({"dry_run": True, "applied": False}),
+                _ok({"dry_run": False, "applied": True}),
+            ),
+            "graph_order": _ok({"order": []}),
+            "plan_delete": _ok({"deleted": True}),
+        }
+    )
+    results = asyncio.run(ls.run_r2_same_file_order_ambiguity(client))
+    preview_result = next(r for r in results if r.name == "R2_preview_simulates_without_raising")
+    assert preview_result.status == ls.STATUS_FAIL
+
+
+def test_run_tier2_scoped_labels_gate_red_probe_and_passes_on_expected_refusal():
+    client = _ScriptedClient(
+        {
+            "branch_weak": RuntimeError("GATE_RED: mechanical gate not green (11 findings)"),
+        }
+    )
+    results = asyncio.run(
+        ls.run_tier2_scoped(client, frozenset({"branch_weak"}), {"plan": "plan-1"})
+    )
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "branch_weak(gate_red_contract)"
+    assert result.status == ls.STATUS_PASS
+    assert "GATE_RED" in result.detail
+
+
+def test_run_tier2_scoped_fails_gate_red_probe_on_unexpected_success():
+    client = _ScriptedClient({"plan_score": _ok({"index": []})})
+    results = asyncio.run(
+        ls.run_tier2_scoped(client, frozenset({"plan_score"}), {"plan": "plan-1"})
+    )
+    result = results[0]
+    assert result.name == "plan_score(gate_red_contract)"
+    assert result.status == ls.STATUS_FAIL
+    assert "succeeded" in result.detail
+
+
+def test_run_tier2_scoped_ordinary_command_unaffected_by_gate_red_labeling():
+    client = _ScriptedClient({"plan_status": _ok({"status": "draft"})})
+    results = asyncio.run(
+        ls.run_tier2_scoped(client, frozenset({"plan_status"}), {"plan": "plan-1"})
+    )
+    result = results[0]
+    assert result.name == "plan_status"
+    assert result.status == ls.STATUS_PASS
