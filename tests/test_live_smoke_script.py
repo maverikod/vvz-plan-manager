@@ -4,14 +4,17 @@ Covers: catalog classification into pipeline tiers (including the
 zero-uncovered-command invariant against the shipped client's own
 COMMAND_NAMES catalog), the tier-2 scoped-params builder, the
 Summary/exit-code computation, the base-url/protocol parsing helper, the
-mTLS auto-upgrade in build_config, and the queue/success envelope
-unwrapping (unwrap_envelope + call()) added to fix a real first-live-run
-defect against the deployed 0.1.52 server: every command comes back as a
-queued-job envelope, sometimes nested one layer deeper than the shipped
-adapter's own unwrap handles, and info/help's failure surfaced as a
-mis-shaped success rather than a real error. `call()` is exercised here
-against a minimal fake client (no real network) via `asyncio.run` --
-none of these tests reach an actual server; the script's other networked
+mTLS auto-upgrade in build_config, the queue/success envelope unwrapping
+(unwrap_envelope + call()) added to fix the first-live-run defect (every
+command comes back as a queued-job envelope, sometimes nested one layer
+deeper than the shipped adapter's own unwrap handles), and the builtin-vs-
+domain dispatch routing (KNOWN_BUILTIN_COMMANDS, _looks_like_unresolved_
+command, the direct-path fallback, DISPATCH_LOG) added to fix the SECOND
+live-run defect: `help` is an adapter-framework builtin not registered in
+the server's queue-executor registry, so the queued path raised "Command
+'help' not found" even after the envelope fix. `call()` is exercised here
+against a minimal fake client (no real network) via `asyncio.run` -- none
+of these tests reach an actual server; the script's other networked
 coroutines (run_tier0/run_tier1/.../run_pipeline) are exercised only
 against a live server, out of scope for this suite.
 
@@ -424,17 +427,53 @@ def test_unwrap_envelope_max_depth_guard_never_infinite_loops():
 
 
 # --------------------------------------------------------------------------
-# call() -- the async wrapper around client._call + unwrap_envelope +
-# exception .details surfacing. Exercised against a minimal fake client
-# (no real network) via asyncio.run.
+# call() -- the async wrapper around the builtin-vs-domain routing policy
+# (queued client._call by default, direct client._rpc.execute_command for
+# KNOWN_BUILTIN_COMMANDS or as a one-shot fallback) + unwrap_envelope +
+# exception .details surfacing. Exercised against a minimal fake client (no
+# real network) via asyncio.run.
 # --------------------------------------------------------------------------
+
+_UNSET = object()
+
+
+class _FakeRpc:
+    """Stand-in for the composed JsonRpcClient reached via client._rpc."""
+
+    def __init__(self, outer: "_FakeClient"):
+        self._outer = outer
+
+    async def execute_command(self, name, params=None, use_cmd_endpoint=False):
+        self._outer.direct_calls.append((name, params or {}))
+        outcome = self._outer._direct_outcome
+        if outcome is _UNSET:
+            raise AssertionError(
+                f"direct path invoked unexpectedly for {name!r} with no direct_outcome configured"
+            )
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
 
 class _FakeClient:
-    def __init__(self, outcome):
+    """Minimal stand-in for PlanManagerClient.
+
+    ``outcome`` configures the queued path (``client._call``); the (default
+    unset) ``direct_outcome`` configures the plain JSON-RPC path
+    (``client._rpc.execute_command``) -- unset means "this test asserts the
+    direct path is never reached", so an unexpected call fails loudly
+    rather than silently returning something plausible.
+    """
+
+    def __init__(self, outcome=None, direct_outcome=_UNSET):
         self._outcome = outcome
+        self._direct_outcome = direct_outcome
+        self.queued_calls: list[tuple[str, dict]] = []
+        self.direct_calls: list[tuple[str, dict]] = []
+        self._rpc = _FakeRpc(self)
 
     async def _call(self, name, params=None):
+        self.queued_calls.append((name, params or {}))
         if isinstance(self._outcome, BaseException):
             raise self._outcome
         return self._outcome
@@ -451,36 +490,153 @@ def test_call_success_path_unwraps_queued_envelope():
         "job_id": "j1", "command": "info", "status": "completed", "queued": True,
         "result": {"success": True, "data": {"identity": {"package_version": "0.1.52"}}},
     }
-    client = _FakeClient(envelope)
+    client = _FakeClient(outcome=envelope)
     ok, data = asyncio.run(ls.call(client, "info", {}))
     assert ok is True
     assert data == {"identity": {"package_version": "0.1.52"}}
+    assert client.queued_calls == [("info", {})]
+    assert client.direct_calls == []
 
 
 def test_call_non_completed_status_reports_failure():
-    envelope = {"job_id": "j2", "command": "help", "status": "failed", "result": {}}
-    client = _FakeClient(envelope)
-    ok, message = asyncio.run(ls.call(client, "help", {}))
+    envelope = {"job_id": "j2", "command": "step_get", "status": "failed", "result": {}}
+    client = _FakeClient(outcome=envelope)
+    ok, message = asyncio.run(ls.call(client, "step_get", {"plan": "p", "step_id": "G-001"}))
     assert ok is False
     assert "non-success/incomplete envelope" in message
     assert "'status': 'failed'" in message
+    # no "not found" text in this envelope -> never mistaken for an
+    # unresolved-command routing problem, so the direct path is untouched.
+    assert client.direct_calls == []
 
 
 def test_call_exception_includes_details_verbatim():
     exc = _FakeErrorWithDetails(
-        "Queued command 'help' failed (job_id=c0bab142-0000)",
+        "Queued command 'plan_list' failed (job_id=deadbeef-0000)",
         details={"terminal_event": {"event": "command_failed"}, "result_status": {"error": "boom"}},
     )
-    client = _FakeClient(exc)
-    ok, message = asyncio.run(ls.call(client, "help", {}))
+    client = _FakeClient(outcome=exc)
+    ok, message = asyncio.run(ls.call(client, "plan_list", {}))
     assert ok is False
-    assert "Queued command 'help' failed" in message
+    assert "Queued command 'plan_list' failed" in message
     assert "terminal_event" in message
     assert "command_failed" in message
+    assert client.direct_calls == []
 
 
 def test_call_exception_without_details_still_reports_str():
-    client = _FakeClient(RuntimeError("plain transport error"))
+    client = _FakeClient(outcome=RuntimeError("plain transport error"))
     ok, message = asyncio.run(ls.call(client, "plan_list", {}))
     assert ok is False
     assert message == "plain transport error"
+
+
+# --------------------------------------------------------------------------
+# Builtin-vs-domain routing: KNOWN_BUILTIN_COMMANDS, the direct path, the
+# one-shot fallback on an unresolved-command queue failure, DISPATCH_LOG.
+# --------------------------------------------------------------------------
+
+
+def test_known_builtin_commands_membership():
+    # help IS the reproduced live defect; info/health/plan_list are
+    # confirmed-working domain commands and must stay on the queued path.
+    assert "help" in ls.KNOWN_BUILTIN_COMMANDS
+    assert "echo" in ls.KNOWN_BUILTIN_COMMANDS
+    assert "queue_get_job_status" in ls.KNOWN_BUILTIN_COMMANDS
+    assert "info" not in ls.KNOWN_BUILTIN_COMMANDS
+    assert "health" not in ls.KNOWN_BUILTIN_COMMANDS
+    assert "plan_list" not in ls.KNOWN_BUILTIN_COMMANDS
+
+
+def test_looks_like_unresolved_command_matches_live_evidence():
+    diagnostic = (
+        "Queued command 'help' failed (job_id=c0bab142-0000) | "
+        "details={'terminal_event': {...}, 'result_status': "
+        "{'description': 'Command execution failed: \"Command \\'help\\' not found\"'}}"
+    )
+    assert ls._looks_like_unresolved_command("help", diagnostic) is True
+
+
+def test_looks_like_unresolved_command_rejects_domain_not_found_errors():
+    # A legitimate domain NOT_FOUND error never quotes the *command* name
+    # the way an adapter "Command 'x' not found" message does.
+    diagnostic = "non-success/incomplete envelope: {'success': False, 'error': 'STEP_NOT_FOUND: step not found: G-001'}"
+    assert ls._looks_like_unresolved_command("step_get", diagnostic) is False
+
+
+def test_looks_like_unresolved_command_requires_not_found_text():
+    diagnostic = "some other failure mentioning 'help' but no resolution phrase"
+    assert ls._looks_like_unresolved_command("help", diagnostic) is False
+
+
+def test_call_routes_known_builtin_directly_never_touching_queued_path():
+    ls.reset_dispatch_log()
+    direct_envelope = {"success": True, "data": {"commands": {"info": "..."}}}
+    client = _FakeClient(outcome=AssertionError("queued path must not be reached"), direct_outcome=direct_envelope)
+    ok, data = asyncio.run(ls.call(client, "help", {}))
+    assert ok is True
+    assert data == {"commands": {"info": "..."}}
+    assert client.queued_calls == []
+    assert client.direct_calls == [("help", {})]
+    assert [e for e in ls.DISPATCH_LOG if e["command"] == "help"][-1]["path"] == "direct"
+
+
+def test_call_falls_back_to_direct_path_on_unresolved_command_queue_failure():
+    """Reproduces the exact second-live-run scenario for a command NOT yet
+    in KNOWN_BUILTIN_COMMANDS: the queued path fails with an adapter
+    "Command '<name>' not found" style error, and call() self-heals via
+    one direct-path retry instead of reporting a hard failure."""
+    ls.reset_dispatch_log()
+    exc = _FakeErrorWithDetails(
+        "Queued command 'mystery_builtin' failed (job_id=c0bab142-0000)",
+        details={"result_status": {"description": "Command execution failed: \"Command 'mystery_builtin' not found\""}},
+    )
+    direct_envelope = {"success": True, "data": {"ok": True}}
+    client = _FakeClient(outcome=exc, direct_outcome=direct_envelope)
+    assert "mystery_builtin" not in ls.KNOWN_BUILTIN_COMMANDS
+    ok, data = asyncio.run(ls.call(client, "mystery_builtin", {}))
+    assert ok is True
+    assert data == {"ok": True}
+    assert client.queued_calls == [("mystery_builtin", {})]
+    assert client.direct_calls == [("mystery_builtin", {})]
+    log_entry = [e for e in ls.DISPATCH_LOG if e["command"] == "mystery_builtin"][-1]
+    assert log_entry["path"] == "queued->direct-fallback"
+    assert log_entry["fallback"] is True
+
+
+def test_call_does_not_fallback_on_genuine_domain_not_found_error():
+    """A real domain NOT_FOUND failure must be reported as-is, never
+    misrouted into a direct-path retry (which would just repeat uselessly
+    since the entity genuinely doesn't exist, not the command)."""
+    ls.reset_dispatch_log()
+    envelope = {"success": False, "error": "STEP_NOT_FOUND: step not found: G-001"}
+    client = _FakeClient(outcome=envelope)  # direct_outcome left _UNSET on purpose
+    ok, message = asyncio.run(ls.call(client, "step_get", {"plan": "p", "step_id": "G-001"}))
+    assert ok is False
+    assert "STEP_NOT_FOUND" in message
+    assert client.direct_calls == []
+
+
+def test_summarize_dispatch_fallbacks_none_when_nothing_fell_back():
+    log = [{"command": "info", "path": "queued", "fallback": False}]
+    assert ls.summarize_dispatch_fallbacks(log) is None
+
+
+def test_summarize_dispatch_fallbacks_names_recovered_commands():
+    log = [
+        {"command": "info", "path": "queued", "fallback": False},
+        {"command": "mystery_a", "path": "queued->direct-fallback", "fallback": True},
+        {"command": "mystery_b", "path": "queued->direct-fallback", "fallback": True},
+        {"command": "mystery_a", "path": "queued->direct-fallback", "fallback": True},
+    ]
+    note = ls.summarize_dispatch_fallbacks(log)
+    assert note is not None
+    assert "mystery_a" in note and "mystery_b" in note
+    assert "KNOWN_BUILTIN_COMMANDS" in note
+
+
+def test_reset_dispatch_log_clears_entries():
+    ls.DISPATCH_LOG.append({"command": "x", "path": "direct", "fallback": False})
+    assert ls.DISPATCH_LOG
+    ls.reset_dispatch_log()
+    assert ls.DISPATCH_LOG == []

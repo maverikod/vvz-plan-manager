@@ -574,6 +574,112 @@ def unwrap_envelope(raw: Any) -> tuple[bool, Any]:
 
 
 # --------------------------------------------------------------------------
+# Builtin vs domain command routing (pure, no network) -- second live-run
+# defect, on top of the envelope fix above.
+#
+# EVIDENCE: with envelope unwrapping fixed, Tier 0 went fully green, but
+# catalog_fetch still failed: "Queued command 'help' failed" with an inner
+# ``result_status.description = 'Command execution failed: "Command \'help\'
+# not found"'`` (job_success=False, command_execution=False).
+#
+# ROOT CAUSE: `help` is an mcp_proxy_adapter FRAMEWORK builtin
+# (`CommandApiMixin.help`,
+# .venv/lib/python3.12/site-packages/mcp_proxy_adapter/client/jsonrpc_client
+# /command_api.py:66-71) -- it is registered on the plain JSON-RPC command
+# dispatcher, but NOT in the separate queue-executor registry that the
+# WebSocket command-session path (`execute_command_unified`'s default
+# auto_poll=True branch, command_api.py:269-330, which is what
+# `PlanManagerClient._call` always drives) resolves commands against. That
+# path opens a queue job for `help` that the queue runner then cannot
+# execute ("Command 'help' not found"), and the terminal event is a
+# failure, raising `CommandSessionFailedError` (command_api.py:298-307).
+# `info` and `health`, by contrast, ARE plan_manager domain commands
+# (plan_manager/commands/info_command.py, plan_manager/commands
+# /health_command.py) registered in that same queue-executor registry, so
+# they resolve fine via the queued path -- confirmed live (Tier 0 fully
+# green after the envelope fix).
+#
+# FIX: `CommandApiMixin.execute_command(command, params,
+# use_cmd_endpoint=False)` (command_api.py:85-109) is the plain,
+# non-queued JSON-RPC dispatch primitive `CommandApiMixin.help` itself
+# uses internally -- a single request/response round trip against the
+# SAME held JsonRpcClient (`client._rpc`; no new session/connection is
+# opened per call), resolvable against the plain-JSON-RPC command
+# registry that DOES include framework builtins. KNOWN_BUILTIN_COMMANDS
+# below routes proactively to that direct path (no failed queue round
+# trip first) for every adapter-framework builtin this script is aware
+# of; anything not in that set still takes the production-representative
+# queued path FIRST (per the coordinator's explicit instruction to keep
+# domain commands on the queued route), falling back to the direct path
+# exactly once if the queued failure looks like an unresolved-command
+# error (`_looks_like_unresolved_command`) -- so a command this script
+# does not yet know is a builtin still self-heals, and a genuine domain
+# error (e.g. STEP_NOT_FOUND) is never misrouted, since that phrasing
+# never quotes the *command* name the way an adapter "Command 'x' not
+# found" message does.
+# --------------------------------------------------------------------------
+
+KNOWN_BUILTIN_COMMANDS: frozenset[str] = frozenset(
+    {
+        "help",
+        "echo",
+        "config",
+        "long_task",
+        "job_status",
+        "queue_add_job",
+        "queue_start_job",
+        "queue_stop_job",
+        "queue_delete_job",
+        "queue_get_job_status",
+        "queue_get_job_logs",
+        "queue_list_jobs",
+        "queue_health",
+    }
+)
+
+
+def summarize_dispatch_fallbacks(dispatch_log: list[dict[str, Any]]) -> Optional[str]:
+    """Pure summary of DISPATCH_LOG entries that needed the fallback retry.
+
+    Returns None when nothing fell back (the common case once
+    KNOWN_BUILTIN_COMMANDS is accurate for the live server). Otherwise a
+    human-readable note naming every command that recovered via the
+    direct-path fallback -- each one is a candidate to add to
+    KNOWN_BUILTIN_COMMANDS so future runs skip the failed queue round trip.
+    """
+    names = sorted({entry["command"] for entry in dispatch_log if entry.get("fallback")})
+    if not names:
+        return None
+    return f"commands recovered via direct-path fallback (consider adding to KNOWN_BUILTIN_COMMANDS): {names}"
+
+
+def _looks_like_unresolved_command(name: str, diagnostic_text: str) -> bool:
+    """True iff a queued-path failure looks like "Command '<name>' not found".
+
+    Deliberately narrow: requires BOTH "not found" and the failing
+    command's own name in quotes, so a legitimate domain NOT_FOUND error
+    (e.g. "step not found: G-001", which never quotes the *command* name)
+    is never misclassified as an unresolved-command routing problem.
+    """
+    lowered = diagnostic_text.lower()
+    name_quoted = f"'{name}'" in diagnostic_text or f'"{name}"' in diagnostic_text
+    return "not found" in lowered and name_quoted
+
+
+# Diagnostic trail of which dispatch path actually served each call this
+# run -- "direct" (proactive, KNOWN_BUILTIN_COMMANDS), "queued" (the
+# production-representative default), or "queued->direct-fallback" (a
+# queued "Command not found" auto-recovered via one direct-path retry,
+# meaning KNOWN_BUILTIN_COMMANDS is missing that command name). Reset per
+# run by run_pipeline; printed as part of --json output for visibility.
+DISPATCH_LOG: list[dict[str, Any]] = []
+
+
+def reset_dispatch_log() -> None:
+    DISPATCH_LOG.clear()
+
+
+# --------------------------------------------------------------------------
 # Networked runtime (async) -- everything below touches the live server.
 # tests/test_live_smoke_script.py never imports asyncio or calls these.
 # --------------------------------------------------------------------------
@@ -611,31 +717,81 @@ def build_config(args: argparse.Namespace) -> "ClientConnectionConfig":  # noqa:
     )
 
 
-async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) -> tuple[bool, Any]:
-    """Invoke one command through the client's generic dispatch primitive.
+def _format_exception(exc: BaseException) -> str:
+    """str(exc), plus a raised exception's .details verbatim when present
+    (e.g. CommandSessionFailedError's {"terminal_event":..., "result_status":
+    ...}) so a genuine queued failure is distinguishable from an unwrap bug."""
+    details = getattr(exc, "details", None)
+    message = str(exc)
+    if details:
+        message = f"{message} | details={details!r}"
+    return message
 
-    Returns (True, data) on success, with ``data`` fully unwrapped through
-    ``unwrap_envelope`` regardless of how many queue/success layers the live
-    server's response carried (see the module-level investigation note
-    above ``unwrap_envelope``). Returns (False, diagnostic) on any raised
-    exception (the diagnostic string includes the exception's ``.details``
-    attribute verbatim when present -- e.g. CommandSessionFailedError's
-    ``{"terminal_event": ..., "result_status": ...}`` -- so a genuine queued
-    failure is distinguishable from an unwrap bug) or on a non-completed
+
+async def _call_queued(client: Any, name: str, params: dict[str, Any]) -> tuple[bool, Any]:
+    """Invoke one command through the client's queued dispatch primitive.
+
+    This is the production-representative route: PlanManagerClient._call
+    (client/plan_manager_client/dispatch.py:42-55) always drives
+    execute_command_unified(..., auto_poll=True) -- the WebSocket
+    command-session path that blocks for a terminal event before
+    returning. Returns (True, data) on success, with ``data`` fully
+    unwrapped through ``unwrap_envelope`` regardless of how many
+    queue/success layers the live server's response carried. Returns
+    (False, diagnostic) on any raised exception, or on a non-completed
     status / success=False found while unwrapping.
     """
     try:
-        raw = await client._call(name, params or {})  # noqa: SLF001 -- documented single dispatch point
+        raw = await client._call(name, params)  # noqa: SLF001 -- documented single dispatch point
     except Exception as exc:  # noqa: BLE001 -- this IS the failure-classification boundary
-        details = getattr(exc, "details", None)
-        message = str(exc)
-        if details:
-            message = f"{message} | details={details!r}"
-        return False, message
+        return False, _format_exception(exc)
     ok, data = unwrap_envelope(raw)
     if not ok:
         return False, f"non-success/incomplete envelope: {data!r}"
     return True, data
+
+
+async def _call_direct(client: Any, name: str, params: dict[str, Any]) -> tuple[bool, Any]:
+    """Invoke one command through the client's plain, non-queued JSON-RPC path.
+
+    Reaches CommandApiMixin.execute_command(command, params,
+    use_cmd_endpoint=False) on the composed client._rpc -- a single
+    request/response round trip against the SAME held connection (no new
+    session opened per call), resolvable against the plain-JSON-RPC command
+    registry that includes adapter-framework builtins the queue executor
+    does not know (see the KNOWN_BUILTIN_COMMANDS module note above). This
+    is exactly the surface CommandApiMixin.help() itself uses internally.
+    """
+    try:
+        raw = await client._rpc.execute_command(name, params, use_cmd_endpoint=False)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        return False, _format_exception(exc)
+    ok, data = unwrap_envelope(raw)
+    if not ok:
+        return False, f"non-success/incomplete envelope (direct path): {data!r}"
+    return True, data
+
+
+async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) -> tuple[bool, Any]:
+    """Dispatch one command via the routing policy in the module note above
+    KNOWN_BUILTIN_COMMANDS: proactively direct for known adapter builtins,
+    otherwise queued first with a one-shot direct-path fallback on an
+    unresolved-command queue failure. Records which path served the call in
+    DISPATCH_LOG for post-run diagnostics."""
+    params = params or {}
+    if name in KNOWN_BUILTIN_COMMANDS:
+        ok, data = await _call_direct(client, name, params)
+        DISPATCH_LOG.append({"command": name, "path": "direct", "fallback": False, "ok": ok})
+        return ok, data
+
+    ok, data = await _call_queued(client, name, params)
+    if not ok and _looks_like_unresolved_command(name, str(data)):
+        ok2, data2 = await _call_direct(client, name, params)
+        DISPATCH_LOG.append({"command": name, "path": "queued->direct-fallback", "fallback": True, "ok": ok2})
+        return ok2, data2
+
+    DISPATCH_LOG.append({"command": name, "path": "queued", "fallback": False, "ok": ok})
+    return ok, data
 
 
 async def run_tier0(client: Any, expect_version: Optional[str]) -> list[CheckResult]:
@@ -1008,6 +1164,7 @@ async def run_r3_project_view(client: Any, catalog_names: frozenset[str], projec
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
+    reset_dispatch_log()
     config = build_config(args)
     client = PlanManagerClient(**config.to_jsonrpc_kwargs())
 
@@ -1063,6 +1220,10 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r2_same_file_order_ambiguity(client)
     results += await run_r3_project_view(client, catalog_names, args.project)
 
+    fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
+    if fallback_note is not None:
+        results.append(CheckResult("diag", "dispatch_fallbacks_used", STATUS_PASS, fallback_note))
+
     return compute_summary(results)
 
 
@@ -1087,7 +1248,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
     summary = asyncio.run(run_pipeline(args))
     if args.json:
-        print(json.dumps(summary.to_dict(), indent=2, default=str))
+        payload = summary.to_dict()
+        payload["dispatch_log"] = list(DISPATCH_LOG)
+        print(json.dumps(payload, indent=2, default=str))
     else:
         print(summary.render_text())
     return summary.exit_code()
