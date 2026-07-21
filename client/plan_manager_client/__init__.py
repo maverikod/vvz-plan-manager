@@ -4,6 +4,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.52"
 
 __all__: list[str] = []
