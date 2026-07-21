@@ -209,7 +209,6 @@ TIER2_STATIC_PARAMS: dict[str, dict[str, Any]] = {
     "model_binding_list": {},
     "review_result_list": {},
     "runtime_link_list": {},
-    "step_search": {},
     "todo_queue": {},
 }
 
@@ -237,6 +236,7 @@ TIER2_SCOPED_NEEDS: dict[str, tuple[str, ...]] = {
     "step_runtime_list": ("plan",),
     "step_xref": ("plan",),
     "files_report": ("plan",),
+    "step_search": ("plan",),
     "step_get": ("plan", "step"),
     "step_dependency_list": ("plan", "step"),
     "step_runtime_get": ("plan", "step"),
@@ -267,7 +267,9 @@ def scoped_params(name: str, entities: dict[str, str]) -> Optional[dict[str, Any
     if name in ("step_get", "step_dependency_list", "step_runtime_get", "graph_deps", "graph_impact"):
         return {"plan": entities["plan"], "step_id": entities["step"]}
     if name == "graph_dependents":
-        return {"plan": entities["plan"], "step_id": entities["step"], "direction": "downstream"}
+        # enum is ["dependents", "dependencies"] -- "downstream"/"upstream" are
+        # NOT valid values (confirmed live: -32602 invalid enum value).
+        return {"plan": entities["plan"], "step_id": entities["step"], "direction": "dependents"}
     if name == "block_get":
         return {"plan": entities["plan"], "block_id": entities["block"]}
     if name == "todo_get":
@@ -282,6 +284,11 @@ def scoped_params(name: str, entities: dict[str, str]) -> Optional[dict[str, Any
         return {"project_id": entities["project"]}
     if name == "files_report":
         return {"plan": entities["plan"]}
+    if name == "step_search":
+        # confirmed live: -32602 Missing required parameters: plan, pattern.
+        # "G-" is a harmless substring (the level-3 human step_id prefix
+        # convention) whether or not it matches anything in the throwaway plan.
+        return {"plan": entities["plan"], "pattern": "G-"}
     return {"plan": entities["plan"]}
 
 
@@ -302,6 +309,8 @@ TIER3_HANDLED: frozenset[str] = frozenset(
         "todo_delete",
         "bug_create",
         "bug_confirm",
+        "bug_fix_create",
+        "bug_fix_verify",
         "bug_close",
     }
 )
@@ -312,6 +321,7 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         "step_dependency_preview",
         "step_dependency_apply",
         "step_create",
+        "step_update",
         "plan_create",
         "plan_delete",
         "graph_order",
@@ -365,7 +375,6 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "branch_prompt": "requires a fully-populated GS/TS/AS branch; out of scope for the minimal throwaway lifecycle",
     "plan_prompt_chain": "requires a populated authoring branch; out of scope for the minimal throwaway lifecycle",
     "step_prompt_verify": "verifies a frozen atomic-step prompt hash; no frozen plan exists in this pass",
-    "step_update": "mutates arbitrary declarative step content; not exercised beyond the create/dependency/delete lifecycle",
     "step_move": "reparents a step; not exercised beyond the create/dependency/delete lifecycle",
     "step_set_status": "mutates step status outside the create/dependency/delete lifecycle",
     "step_transition": "transitions plan-level freeze status; no frozen throwaway plan is constructed in this pass",
@@ -399,9 +408,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "bug_impact_add": "records a bug impact beyond this pass's scope",
     "bug_impact_update": "requires an existing impact_uuid from bug_impact_add",
     "bug_impact_discover": "runs CA-backed impact discovery; not exercised in this pass",
-    "bug_fix_create": "records a bug fix beyond this pass's scope",
-    "bug_fix_update": "requires an existing bug_fix from bug_fix_create",
-    "bug_fix_verify": "requires an existing bug_fix from bug_fix_create",
+    "bug_fix_update": "arbitrary bug-fix field mutation; not exercised beyond the create/verify/close lifecycle",
     "bug_propagation_create": "records a fix propagation beyond this pass's scope",
     "bug_propagation_update": "requires an existing propagation_id from bug_propagation_create",
     "bug_propagation_generate_todos": "requires an existing bug_fix_id from bug_fix_create",
@@ -418,6 +425,37 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "plan_project_detach": "requires an existing plan_project_attach binding to remove; not exercised in this pass",
     "plan_project_set_primary": "requires an existing plan_project_attach binding to promote; not exercised in this pass",
     "plan_project_clear_primary": "requires an existing primary plan-project binding to clear; not exercised in this pass",
+    # adapter-framework queue-management builtins: every call this pipeline
+    # makes already exercises the queue machinery implicitly (KNOWN_BUILTIN_
+    # COMMANDS/call() routes some commands through it, and the queued path is
+    # the default for every domain command); none of these are safe or
+    # meaningful to probe standalone (job_id/log/lifecycle churn belonging to
+    # OTHER commands' own queue jobs, not a throwaway entity of their own).
+    "queue_add_job": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_start_job": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_stop_job": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_delete_job": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_get_job_status": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_get_job_logs": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_list_jobs": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    "queue_health": "adapter-framework queue-management builtin, exercised implicitly by every queued dispatch this pipeline makes; not separately probed",
+    # server-state mutating admin surface: excluded by design from a
+    # throwaway-entity smoke pass -- these mutate live server/proxy
+    # configuration shared by every other client, not a disposable entity.
+    "reload": "server-state mutating admin surface (config/process reload); excluded by design from a throwaway smoke pass",
+    "unload": "server-state mutating admin surface (module/resource unload); excluded by design from a throwaway smoke pass",
+    "settings": "server-state mutating admin surface (live configuration); excluded by design from a throwaway smoke pass",
+    "transport_management": "server-state mutating admin surface (transport/connection management); excluded by design from a throwaway smoke pass",
+    "proxy_registration": "server-state mutating admin surface (mcp-proxy registry membership); excluded by design from a throwaway smoke pass",
+    # peer-endpoint transfer handshake: needs a second party to transfer
+    # to/from, outside a single throwaway-entity smoke pipeline.
+    "transfer_download_begin": "requires a peer transfer endpoint/session handshake outside a single-pipeline throwaway smoke pass",
+    "transfer_download_status": "requires an existing transfer session from transfer_download_begin",
+    "transfer_upload_begin": "requires a peer transfer endpoint/session handshake outside a single-pipeline throwaway smoke pass",
+    "transfer_upload_complete": "requires an existing transfer session from transfer_upload_begin",
+    "transfer_upload_status": "requires an existing transfer session from transfer_upload_begin",
+    # diagnostic stub, not a real domain/admin surface.
+    "roletest": "diagnostic stub command with no real domain/admin behavior; not exercised",
 }
 
 
@@ -862,119 +900,158 @@ def _extract_step_id(payload: Any) -> Optional[str]:
     return payload.get("step_id")
 
 
-async def run_tier3_plan_step_lifecycle(client: Any) -> tuple[list[CheckResult], dict[str, str]]:
-    """plan_create -> context_common -> step_create (L3, L4) -> graph_order -> plan_delete(hard).
+async def run_tier3_plan_step_create(client: Any) -> tuple[list[CheckResult], dict[str, str], Optional[str], str]:
+    """plan_create -> context_common -> step_create (L3, L4) -> graph_order.
 
-    Returns (results, entities) where entities carries plan/step/block ids
-    for Tier-2-scoped reads to reuse before cleanup. Cleanup always runs.
+    Deliberately does NOT delete the plan -- Tier-2-scoped reads
+    (plan_status, step_get, ...) must run against this plan/step/block
+    WHILE THEY STILL EXIST (third live run: every entity-scoped probe
+    failed PLAN_NOT_FOUND because the original single-function lifecycle
+    deleted the plan in its own `finally` before those reads ever ran).
+    Returns (results, entities, plan_uuid_or_None, plan_name); the caller
+    MUST invoke run_tier3_plan_step_cleanup with the same (plan_uuid,
+    plan_name) once every scoped read that needs this plan has run.
     """
     results: list[CheckResult] = []
     entities: dict[str, str] = {}
     plan_name = unique_suffix("plan")
-    plan_uuid: Optional[str] = None
-    try:
-        ok, res = await call(client, "plan_create", {"name": plan_name})
-        if not ok or not isinstance(res, dict) or not res.get("uuid"):
-            results.append(CheckResult("3", "plan_create", STATUS_FAIL, str(res)))
-            return results, entities
-        plan_uuid = res["uuid"]
-        entities["plan"] = plan_uuid
-        results.append(CheckResult("3", "plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
 
-        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
-        results.append(CheckResult("3", "context_common(level3)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    ok, res = await call(client, "plan_create", {"name": plan_name})
+    if not ok or not isinstance(res, dict) or not res.get("uuid"):
+        results.append(CheckResult("3", "plan_create", STATUS_FAIL, str(res)))
+        return results, entities, None, plan_name
+    plan_uuid = res["uuid"]
+    entities["plan"] = plan_uuid
+    results.append(CheckResult("3", "plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
 
-        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "root"})
-        step3_id = _extract_step_id(res) if ok else None
-        if not ok or step3_id is None:
-            results.append(CheckResult("3", "step_create(level3)", STATUS_FAIL, str(res)))
-        else:
-            results.append(CheckResult("3", "step_create(level3)", STATUS_PASS, f"step_id={step3_id}"))
-            entities["step"] = step3_id
+    ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+    results.append(CheckResult("3", "context_common(level3)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
 
-            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": step3_id, "child_level": 4})
-            block_id = res.get("common_block_id") if ok and isinstance(res, dict) else None
-            results.append(CheckResult("3", "context_common(level4)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-            if block_id:
-                entities["block"] = block_id
+    ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "root"})
+    step3_id = _extract_step_id(res) if ok else None
+    if not ok or step3_id is None:
+        results.append(CheckResult("3", "step_create(level3)", STATUS_FAIL, str(res)))
+    else:
+        results.append(CheckResult("3", "step_create(level3)", STATUS_PASS, f"step_id={step3_id}"))
+        entities["step"] = step3_id
 
-            ok, res = await call(
-                client, "step_create",
-                {"plan": plan_uuid, "level": 4, "slug": "child", "parent_step_id": step3_id},
-            )
-            step4_id = _extract_step_id(res) if ok else None
-            results.append(CheckResult("3", "step_create(level4)", STATUS_PASS if (ok and step4_id) else STATUS_FAIL, "" if ok else str(res)))
-            if step4_id:
-                entities["step"] = step4_id
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": step3_id, "child_level": 4})
+        block_id = res.get("common_block_id") if ok and isinstance(res, dict) else None
+        results.append(CheckResult("3", "context_common(level4)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if block_id:
+            entities["block"] = block_id
 
-        ok, res = await call(client, "graph_order", {"plan": plan_uuid})
-        order_ok = ok and isinstance(res, dict) and "order" in res
-        results.append(CheckResult("3", "graph_order", STATUS_PASS if order_ok else STATUS_FAIL, "" if order_ok else str(res)))
-    finally:
-        if plan_uuid is not None:
-            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
-            results.append(CheckResult("3", "plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-            if ok:
-                ok2, listing = await call(client, "plan_list", {"limit": 200})
-                names = []
-                if ok2 and isinstance(listing, dict):
-                    names = [p.get("name") for p in listing.get("plans", []) if isinstance(p, dict)]
-                deleted_confirmed = plan_name not in names
-                results.append(
-                    CheckResult(
-                        "3", "plan_delete(hard)_verified", STATUS_PASS if deleted_confirmed else STATUS_FAIL,
-                        "" if deleted_confirmed else "plan still present in plan_list after hard delete",
-                    )
-                )
-    return results, entities
-
-
-async def run_tier3_todo_lifecycle(client: Any) -> list[CheckResult]:
-    results: list[CheckResult] = []
-    title = unique_suffix("todo")
-    todo_uuid: Optional[str] = None
-    try:
         ok, res = await call(
-            client, "todo_create",
-            {
-                "title": title, "description": "throwaway smoke todo", "kind": "task",
-                "priority_nice": 0, "created_by": "live-smoke", "anchor_type": "none",
-            },
+            client, "step_create",
+            {"plan": plan_uuid, "level": 4, "slug": "child", "parent_step_id": step3_id},
         )
-        if not ok or not isinstance(res, dict) or not res.get("uuid"):
-            results.append(CheckResult("3", "todo_create", STATUS_FAIL, str(res)))
-            return results
-        todo_uuid = res["uuid"]
-        results.append(CheckResult("3", "todo_create", STATUS_PASS, f"uuid={todo_uuid}"))
+        step4_id = _extract_step_id(res) if ok else None
+        results.append(CheckResult("3", "step_create(level4)", STATUS_PASS if (ok and step4_id) else STATUS_FAIL, "" if ok else str(res)))
+        if step4_id:
+            entities["step"] = step4_id
 
-        ok, res = await call(client, "todo_update", {"todo": todo_uuid, "changed_by": "live-smoke", "title": title + "-updated"})
-        results.append(CheckResult("3", "todo_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    ok, res = await call(client, "graph_order", {"plan": plan_uuid})
+    order_ok = ok and isinstance(res, dict) and "order" in res
+    results.append(CheckResult("3", "graph_order", STATUS_PASS if order_ok else STATUS_FAIL, "" if order_ok else str(res)))
 
-        ok, res = await call(client, "todo_resolve", {"todo": todo_uuid, "changed_by": "live-smoke"})
-        results.append(CheckResult("3", "todo_resolve", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results, entities, plan_uuid, plan_name
 
-        ok, res = await call(client, "todo_close", {"todo": todo_uuid, "changed_by": "live-smoke"})
-        results.append(CheckResult("3", "todo_close", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-    finally:
-        if todo_uuid is not None:
-            ok, res = await call(client, "todo_delete", {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True})
-            results.append(CheckResult("3", "todo_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-            if ok:
-                ok2, fetched = await call(client, "todo_get", {"todo": todo_uuid})
-                results.append(
-                    CheckResult(
-                        "3", "todo_delete(hard)_verified", STATUS_PASS if not ok2 else STATUS_FAIL,
-                        "" if not ok2 else "todo still fetchable after hard delete",
-                    )
-                )
+
+async def run_tier3_plan_step_cleanup(client: Any, plan_uuid: Optional[str], plan_name: str) -> list[CheckResult]:
+    """plan_delete(hard) + verify absence from plan_list. Call ONLY after
+    every Tier-2-scoped read needing this plan/step/block has finished."""
+    results: list[CheckResult] = []
+    if plan_uuid is None:
+        return results
+    ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    results.append(CheckResult("3", "plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    if ok:
+        ok2, listing = await call(client, "plan_list", {"limit": 200})
+        names = []
+        if ok2 and isinstance(listing, dict):
+            names = [p.get("name") for p in listing.get("plans", []) if isinstance(p, dict)]
+        deleted_confirmed = plan_name not in names
+        results.append(
+            CheckResult(
+                "3", "plan_delete(hard)_verified", STATUS_PASS if deleted_confirmed else STATUS_FAIL,
+                "" if deleted_confirmed else "plan still present in plan_list after hard delete",
+            )
+        )
     return results
 
 
-async def run_tier3_bug_lifecycle(client: Any, plan_uuid: str) -> list[CheckResult]:
-    """bug_create -> bug_confirm -> bug_close. No bug_delete command exists on
-    this server's surface, so the lifecycle intentionally ends at close
-    (recorded, not treated as a gap -- see KNOWN_SKIP_REASONS note in the
-    module docstring)."""
+async def run_tier3_todo_create(client: Any) -> tuple[list[CheckResult], Optional[str]]:
+    """todo_create -> todo_update -> todo_resolve -> todo_close.
+
+    Deliberately does NOT delete the todo -- Tier-2-scoped todo_get must run
+    against it while it still exists (see run_tier3_plan_step_create's
+    docstring for the ordering defect this mirrors). Returns (results,
+    todo_uuid_or_None); the caller MUST invoke run_tier3_todo_cleanup with
+    the same todo_uuid once the scoped read has run.
+    """
+    results: list[CheckResult] = []
+    title = unique_suffix("todo")
+
+    ok, res = await call(
+        client, "todo_create",
+        {
+            "title": title, "description": "throwaway smoke todo", "kind": "task",
+            "priority_nice": 0, "created_by": "live-smoke", "anchor_type": "none",
+        },
+    )
+    if not ok or not isinstance(res, dict) or not res.get("uuid"):
+        results.append(CheckResult("3", "todo_create", STATUS_FAIL, str(res)))
+        return results, None
+    todo_uuid = res["uuid"]
+    results.append(CheckResult("3", "todo_create", STATUS_PASS, f"uuid={todo_uuid}"))
+
+    ok, res = await call(client, "todo_update", {"todo": todo_uuid, "changed_by": "live-smoke", "title": title + "-updated"})
+    results.append(CheckResult("3", "todo_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+    ok, res = await call(client, "todo_resolve", {"todo": todo_uuid, "changed_by": "live-smoke"})
+    results.append(CheckResult("3", "todo_resolve", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+    ok, res = await call(client, "todo_close", {"todo": todo_uuid, "changed_by": "live-smoke"})
+    results.append(CheckResult("3", "todo_close", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+    return results, todo_uuid
+
+
+async def run_tier3_todo_cleanup(client: Any, todo_uuid: Optional[str]) -> list[CheckResult]:
+    """todo_delete(hard) + verify via a now-failing todo_get. Call ONLY
+    after Tier-2-scoped todo_get has run against this todo."""
+    results: list[CheckResult] = []
+    if todo_uuid is None:
+        return results
+    ok, res = await call(client, "todo_delete", {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True})
+    results.append(CheckResult("3", "todo_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    if ok:
+        ok2, fetched = await call(client, "todo_get", {"todo": todo_uuid})
+        results.append(
+            CheckResult(
+                "3", "todo_delete(hard)_verified", STATUS_PASS if not ok2 else STATUS_FAIL,
+                "" if not ok2 else "todo still fetchable after hard delete",
+            )
+        )
+    return results
+
+
+async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckResult], Optional[str]]:
+    """bug_create -> bug_confirm -> bug_fix_create -> bug_fix_verify(passed=True)
+    -> bug_close, the FULL documented closure path.
+
+    Confirmed live: bug_close alone (skipping the fix chain) fails -32000
+    "source fix not verified" / INVALID_RUNTIME_STATUS_TRANSITION.
+    BugClosureDiscipline.evaluate_closure (plan_manager/domain/bug_closure_
+    discipline.py:36-70) requires source_fix_verified=True, and
+    bug_close_command.py derives that as ``any(fix.status == "verified" and
+    bool(fix.passed) for fix in fixes)`` -- so at least one bug_fix must
+    reach status "verified" via bug_fix_verify(passed=True) before close is
+    legal. No bug_delete command exists on this server's surface, so the
+    lifecycle intentionally ends at close (see KNOWN_SKIP_REASONS note in
+    the module docstring); the caller hard-deletes this bug's dedicated
+    plan afterward.
+    """
     results: list[CheckResult] = []
     title = unique_suffix("bug")
     ok, res = await call(
@@ -988,16 +1065,36 @@ async def run_tier3_bug_lifecycle(client: Any, plan_uuid: str) -> list[CheckResu
     )
     if not ok or not isinstance(res, dict) or not res.get("uuid"):
         results.append(CheckResult("3", "bug_create", STATUS_FAIL, str(res)))
-        return results
+        return results, None
     bug_uuid = res["uuid"]
     results.append(CheckResult("3", "bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
 
     ok, res = await call(client, "bug_confirm", {"plan": plan_uuid, "bug_id": bug_uuid, "changed_by": "live-smoke"})
     results.append(CheckResult("3", "bug_confirm", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
 
+    ok, res = await call(
+        client, "bug_fix_create",
+        {
+            "plan": plan_uuid, "bug": bug_uuid, "fix_type": "code",
+            "summary": "throwaway smoke fix for live_smoke.py", "author": "live-smoke",
+            "created_by": "live-smoke",
+        },
+    )
+    # response is {"bug_fix": {...to_payload()...}} -- the uuid is nested,
+    # not top-level (unlike most other create commands' flat payloads).
+    fix_uuid = res.get("bug_fix", {}).get("uuid") if ok and isinstance(res, dict) else None
+    results.append(CheckResult("3", "bug_fix_create", STATUS_PASS if (ok and fix_uuid) else STATUS_FAIL, "" if ok else str(res)))
+
+    if fix_uuid:
+        ok, res = await call(
+            client, "bug_fix_verify",
+            {"plan": plan_uuid, "bug_fix": fix_uuid, "changed_by": "live-smoke", "passed": True},
+        )
+        results.append(CheckResult("3", "bug_fix_verify", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
     ok, res = await call(client, "bug_close", {"plan": plan_uuid, "bug_id": bug_uuid, "closed_by": "live-smoke"})
     results.append(CheckResult("3", "bug_close", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-    return results
+    return results, bug_uuid
 
 
 # ---- Tier 4: named bug regressions -----------------------------------------
@@ -1038,12 +1135,32 @@ async def run_r1_todo_anchor_none(client: Any) -> list[CheckResult]:
 async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
     """Bug 64107707: step_dependency_preview/apply on a plan with pre-existing
     same-file order ambiguity used to fail AS_SAME_FILE_ORDER_AMBIGUOUS
-    before candidate simulation. Repro: two same-file pairs (A/B on fileX,
-    C/D on fileY) with no dependency between each pair -- the pre-existing
-    ambiguity. preview() must now always simulate (returning
-    same_file_order.before_findings for both pairs, not raising). A fully
-    curative apply (add A->B and C->D, curing both pairs, introducing no new
-    ambiguity) must commit."""
+    before candidate simulation.
+
+    Repro sequence mirrors the coordinator's proven live repro exactly (a
+    prior repro attempt in this script skipped level 4 entirely -- creating
+    level-5 steps directly under a level-3 parent -- which live evidence
+    showed produces GRAPH_CORRUPTED_CHAIN downstream, "parent of step A-001
+    not found in nodes": level 5 MUST have a level-4 parent, level 4 a
+    level-3 parent):
+
+        plan_create -> context_common(plan, child_level=3) ->
+        step_create G (level 3) ->
+        context_common(G, child_level=4) -> step_create T-001 (level 4, parent=G) ->
+        context_common(G, child_level=4) -> step_create T-002 (level 4, parent=G) ->
+        context_common(T-001, child_level=5) -> step_create A (level 5, parent=T-001) ->
+        context_common(T-002, child_level=5) -> step_create A (level 5, parent=T-002) ->
+        step_update both A steps' target_file to the SAME value (the
+        pre-existing ambiguity: two same-file steps with no order between
+        them) -> preview/apply.
+
+    context_common is recompiled immediately before EVERY step_create, not
+    once per parent: has_current_common_block (plan_manager/views/context_
+    blocks.py:544-567) requires the stored block's revision_uuid to match
+    the plan's CURRENT head revision exactly, and every step_create bumps
+    that head revision -- so a block compiled before an earlier sibling's
+    create is already stale for the next one.
+    """
     results: list[CheckResult] = []
     plan_name = unique_suffix("r2-plan")
     plan_uuid: Optional[str] = None
@@ -1056,41 +1173,54 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
 
         ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
         if not ok:
-            results.append(CheckResult("4", "R2_context_common(level3)", STATUS_FAIL, str(res)))
+            results.append(CheckResult("4", "R2_context_common(plan,level3)", STATUS_FAIL, str(res)))
             return results
-        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "root"})
-        root_id = _extract_step_id(res) if ok else None
-        if not ok or root_id is None:
-            results.append(CheckResult("4", "R2_step_create(root)", STATUS_FAIL, str(res)))
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R2_step_create(G)", STATUS_FAIL, str(res)))
             return results
+        results.append(CheckResult("4", "R2_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
 
-        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": root_id, "child_level": 5})
-        if not ok:
-            results.append(CheckResult("4", "R2_context_common(level5)", STATUS_FAIL, str(res)))
-            return results
-
-        step_ids: dict[str, str] = {}
-        for slug in ("a", "b", "c", "d"):
-            ok, res = await call(
-                client, "step_create",
-                {"plan": plan_uuid, "level": 5, "slug": slug, "parent_step_id": root_id},
-            )
-            sid = _extract_step_id(res) if ok else None
-            if not ok or sid is None:
+        t_ids: dict[str, str] = {}
+        for slug in ("t-001", "t-002"):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+            if not ok:
+                results.append(CheckResult("4", f"R2_context_common(G,level4,before {slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": slug, "parent_step_id": g_id})
+            tid = _extract_step_id(res) if ok else None
+            if not ok or tid is None:
                 results.append(CheckResult("4", f"R2_step_create({slug})", STATUS_FAIL, str(res)))
                 return results
-            step_ids[slug] = sid
-        results.append(CheckResult("4", "R2_repro_steps_created", STATUS_PASS, f"{step_ids}"))
+            t_ids[slug] = tid
+        results.append(CheckResult("4", "R2_step_create(T-001/T-002)", STATUS_PASS, f"{t_ids}"))
 
-        # Pre-existing ambiguity: a/b share target_file X, c/d share target_file
-        # Y (both set at scaffold time via SKELETON_FIELDS defaults, so both
-        # pairs currently have an EMPTY shared target_file "" -- same-file
-        # admission treats same (non-empty distinguishing) target_file steps
-        # with no order between them as ambiguous; using step_update is out of
-        # scope for this throwaway pass (see KNOWN_SKIP_REASONS), so this
-        # repro relies on the scaffold default being identical across
-        # siblings, which is exactly the shape same_file_admission flags.
+        a_uuids: dict[str, str] = {}
+        for slug in ("t-001", "t-002"):
+            t_id = t_ids[slug]
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+            if not ok:
+                results.append(CheckResult("4", f"R2_context_common({slug},level5)", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
+            a_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+            if not ok or not a_uuid:
+                results.append(CheckResult("4", f"R2_step_create(A under {slug})", STATUS_FAIL, str(res)))
+                return results
+            a_uuids[slug] = a_uuid
+        results.append(CheckResult("4", "R2_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_ids} A={a_uuids}"))
 
+        shared_file = "src/live_smoke_r2_shared_file.py"
+        for slug, a_uuid in a_uuids.items():
+            ok, res = await call(client, "step_update", {"plan": plan_uuid, "step_id": a_uuid, "fields": {"target_file": shared_file}})
+            if not ok:
+                results.append(CheckResult("4", f"R2_step_update(target_file,A under {slug})", STATUS_FAIL, str(res)))
+                return results
+        results.append(CheckResult("4", "R2_target_file_set_on_both_a_steps", STATUS_PASS, shared_file))
+
+        # Pre-existing ambiguity now in place: the two A steps share
+        # target_file with no dependency between them.
         ok, preview = await call(client, "step_dependency_preview", {"plan": plan_uuid, "changes": []})
         same_file = preview.get("same_file_order") if ok and isinstance(preview, dict) else None
         preview_ok = ok and isinstance(same_file, dict) and "before_findings" in same_file
@@ -1102,8 +1232,7 @@ async def run_r2_same_file_order_ambiguity(client: Any) -> list[CheckResult]:
         )
 
         curative_changes = [
-            {"op": "add", "step_id": step_ids["b"], "depends_on": [step_ids["a"]]},
-            {"op": "add", "step_id": step_ids["d"], "depends_on": [step_ids["c"]]},
+            {"op": "add", "step_id": a_uuids["t-002"], "depends_on": [a_uuids["t-001"]]},
         ]
         ok, dry = await call(client, "step_dependency_apply", {"plan": plan_uuid, "changes": curative_changes, "dry_run": True})
         dry_ok = ok and isinstance(dry, dict) and dry.get("dry_run") is True
@@ -1189,32 +1318,48 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
 
     results += await run_tier2_static(client, catalog_names)
 
-    plan_step_results, entities = await run_tier3_plan_step_lifecycle(client)
-    todo_results = await run_tier3_todo_lifecycle(client)
+    # --- Tier 3 CREATE phase: every throwaway entity Tier-2-scoped reads
+    # need is created here and kept ALIVE until those reads have run (third
+    # live run: every entity-scoped probe failed PLAN_NOT_FOUND / was
+    # SKIPped because the old single-pass lifecycle functions deleted their
+    # entities before the scoped reads ever ran -- see run_tier3_plan_step_
+    # create's docstring). Cleanup is a separate, later phase below.
+    plan_step_results, entities, plan_uuid, plan_name = await run_tier3_plan_step_create(client)
 
-    # bug lifecycle needs its own plan (the plan/step lifecycle plan is
-    # already hard-deleted by the time we get here); create/clean a
-    # dedicated one so bug entities can still exist during the tier2-scoped
-    # bug_get/bug_impact_list/bug_fix_list probes below.
+    todo_create_results, todo_uuid = await run_tier3_todo_create(client)
+    if todo_uuid is not None:
+        entities["todo"] = todo_uuid
+
+    # bug lifecycle needs its own plan (bug_create/bug_close/... all take a
+    # "plan" param) -- kept alive through the scoped reads below, then
+    # hard-deleted alongside everything else in the cleanup phase.
     bug_plan_name = unique_suffix("bug-plan")
     ok, bug_plan_res = await call(client, "plan_create", {"name": bug_plan_name})
-    bug_results: list[CheckResult] = []
+    bug_create_results: list[CheckResult] = []
+    bug_plan_uuid: Optional[str] = None
     if ok and isinstance(bug_plan_res, dict) and bug_plan_res.get("uuid"):
         bug_plan_uuid = bug_plan_res["uuid"]
-        bug_results = await run_tier3_bug_lifecycle(client, bug_plan_uuid)
-        for r in bug_results:
-            if r.name == "bug_create" and r.status == STATUS_PASS:
-                entities["bug"] = r.detail.split("uuid=", 1)[-1]
-        await call(client, "plan_delete", {"plan": bug_plan_uuid, "hard": True})
+        bug_create_results, bug_uuid = await run_tier3_bug_create(client, bug_plan_uuid)
+        if bug_uuid is not None:
+            entities["bug"] = bug_uuid
     else:
-        bug_results = [CheckResult("3", "bug_plan_create", STATUS_FAIL, str(bug_plan_res))]
+        bug_create_results = [CheckResult("3", "bug_plan_create", STATUS_FAIL, str(bug_plan_res))]
 
     entities["project"] = args.project
 
     results += plan_step_results
-    results += todo_results
-    results += bug_results
+    results += todo_create_results
+    results += bug_create_results
+
+    # --- Tier 2 scoped probes run WHILE every entity above is still alive.
     results += await run_tier2_scoped(client, catalog_names, entities)
+
+    # --- Tier 3 CLEANUP phase: now it is safe to tear everything down.
+    results += await run_tier3_plan_step_cleanup(client, plan_uuid, plan_name)
+    results += await run_tier3_todo_cleanup(client, todo_uuid)
+    if bug_plan_uuid is not None:
+        ok, res = await call(client, "plan_delete", {"plan": bug_plan_uuid, "hard": True})
+        results.append(CheckResult("3", "bug_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
 
     results += await run_r1_todo_anchor_none(client)
     results += await run_r2_same_file_order_ambiguity(client)

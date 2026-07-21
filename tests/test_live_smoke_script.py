@@ -5,18 +5,26 @@ zero-uncovered-command invariant against the shipped client's own
 COMMAND_NAMES catalog), the tier-2 scoped-params builder, the
 Summary/exit-code computation, the base-url/protocol parsing helper, the
 mTLS auto-upgrade in build_config, the queue/success envelope unwrapping
-(unwrap_envelope + call()) added to fix the first-live-run defect (every
+(unwrap_envelope + call()) added to fix the FIRST-live-run defect (every
 command comes back as a queued-job envelope, sometimes nested one layer
-deeper than the shipped adapter's own unwrap handles), and the builtin-vs-
+deeper than the shipped adapter's own unwrap handles), the builtin-vs-
 domain dispatch routing (KNOWN_BUILTIN_COMMANDS, _looks_like_unresolved_
 command, the direct-path fallback, DISPATCH_LOG) added to fix the SECOND
-live-run defect: `help` is an adapter-framework builtin not registered in
-the server's queue-executor registry, so the queued path raised "Command
-'help' not found" even after the envelope fix. `call()` is exercised here
-against a minimal fake client (no real network) via `asyncio.run` -- none
-of these tests reach an actual server; the script's other networked
-coroutines (run_tier0/run_tier1/.../run_pipeline) are exercised only
-against a live server, out of scope for this suite.
+live-run defect (`help` is an adapter-framework builtin not registered in
+the server's queue-executor registry), and the THIRD-live-run fixes:
+create/cleanup phase splitting for the plan/step and todo lifecycles (so
+Tier-2-scoped reads run while their throwaway entities are still alive,
+instead of after Tier 3's own cleanup had already deleted them --
+PLAN_NOT_FOUND across every plan-scoped probe live), the corrected
+step_search/graph_dependents recipes, the bug_fix_create/bug_fix_verify
+chain bug_close actually requires, the corrected R2 level-3/4/5 step
+chain (a prior attempt skipped level 4, live evidence: GRAPH_CORRUPTED_
+CHAIN), and specific (non-generic) skip reasons for adapter-builtin/admin/
+transfer/stub commands. `call()` and the tier-3/regression coroutines are
+exercised here against fake clients (no real network) via `asyncio.run` --
+none of these tests reach an actual server; run_pipeline's own top-level
+orchestration is exercised only against a live server, out of scope for
+this suite.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -129,6 +137,81 @@ def test_classify_catalog_project_view_absent_is_not_silently_dropped():
     assert "project_view" not in {n for n, _ in result.skipped}
 
 
+def test_classify_catalog_bug_fix_and_step_update_moved_out_of_skip():
+    # Third live run: bug_close needs the full documented close path
+    # (bug_fix_create -> bug_fix_verify) and R2 needs step_update to set
+    # target_file -- all three are now actively invoked, not skipped.
+    result = ls.classify_catalog(frozenset({"bug_fix_create", "bug_fix_verify", "step_update"}))
+    skipped_names = {n for n, _ in result.skipped}
+    assert skipped_names.isdisjoint({"bug_fix_create", "bug_fix_verify", "step_update"})
+    assert {"bug_fix_create", "bug_fix_verify", "step_update"} <= set(result.tier3_handled) | set(result.tier4_handled)
+
+
+# --------------------------------------------------------------------------
+# Third-live-run "cosmetic" fix: every adapter-builtin/admin/transfer/stub
+# command must have a SPECIFIC skip reason, not the generic fallback --
+# and each such command has exactly one disposition (it must NOT also be
+# in TIER2_STATIC_PARAMS/TIER2_SCOPED_NEEDS, which would silently mask its
+# skip reason since classify_catalog checks those first).
+# --------------------------------------------------------------------------
+
+_THIRD_RUN_COSMETIC_COMMANDS = (
+    "proxy_registration",
+    "queue_add_job", "queue_delete_job", "queue_get_job_logs", "queue_get_job_status",
+    "queue_health", "queue_list_jobs", "queue_start_job", "queue_stop_job",
+    "reload", "roletest", "settings",
+    "transfer_download_begin", "transfer_download_status",
+    "transfer_upload_begin", "transfer_upload_complete", "transfer_upload_status",
+    "transport_management", "unload",
+)
+
+
+def test_third_run_cosmetic_commands_have_specific_not_generic_skip_reasons():
+    result = ls.classify_catalog(frozenset(_THIRD_RUN_COSMETIC_COMMANDS))
+    reasons = dict(result.skipped)
+    assert set(reasons) == set(_THIRD_RUN_COSMETIC_COMMANDS)
+    for name, reason in reasons.items():
+        assert reason != ls.GENERIC_SKIP_REASON, f"{name} still falls back to the generic reason"
+
+
+def test_third_run_cosmetic_commands_have_exactly_one_disposition():
+    # None of these may ALSO appear in TIER2_STATIC_PARAMS/TIER2_SCOPED_NEEDS
+    # (queue_health in particular was flagged live as appearing in both a
+    # routing set and the skip list -- KNOWN_BUILTIN_COMMANDS is a separate,
+    # orthogonal routing concern from classify_catalog's tiers, but a name
+    # must never ALSO be actively probed while also carrying a skip reason).
+    for name in _THIRD_RUN_COSMETIC_COMMANDS:
+        assert name not in ls.TIER2_STATIC_PARAMS, f"{name} is both skipped and actively probed (tier2_static)"
+        assert name not in ls.TIER2_SCOPED_NEEDS, f"{name} is both skipped and actively probed (tier2_scoped)"
+
+
+def test_queue_family_reasons_reference_builtin_routing():
+    for name in (
+        "queue_add_job", "queue_delete_job", "queue_get_job_logs", "queue_get_job_status",
+        "queue_health", "queue_list_jobs", "queue_start_job", "queue_stop_job",
+    ):
+        assert "queue" in ls.KNOWN_SKIP_REASONS[name].lower()
+        assert name in ls.KNOWN_BUILTIN_COMMANDS
+
+
+def test_admin_surface_reasons_mention_exclusion_by_design():
+    for name in ("reload", "unload", "settings", "transport_management", "proxy_registration"):
+        assert "admin" in ls.KNOWN_SKIP_REASONS[name].lower()
+
+
+def test_transfer_reasons_mention_peer_endpoint_or_existing_session():
+    for name in (
+        "transfer_download_begin", "transfer_download_status",
+        "transfer_upload_begin", "transfer_upload_complete", "transfer_upload_status",
+    ):
+        reason = ls.KNOWN_SKIP_REASONS[name].lower()
+        assert "peer" in reason or "session" in reason
+
+
+def test_roletest_reason_names_it_a_diagnostic_stub():
+    assert "diagnostic" in ls.KNOWN_SKIP_REASONS["roletest"].lower()
+
+
 # --------------------------------------------------------------------------
 # scoped_params
 # --------------------------------------------------------------------------
@@ -153,8 +236,10 @@ def test_scoped_params_step_scoped_shape():
 
 
 def test_scoped_params_graph_dependents_includes_direction():
+    # Confirmed live: -32602 invalid enum value for "downstream"/"upstream" --
+    # the actual enum is ["dependents", "dependencies"].
     params = ls.scoped_params("graph_dependents", {"plan": "p-uuid", "step": "G-001"})
-    assert params == {"plan": "p-uuid", "step_id": "G-001", "direction": "downstream"}
+    assert params == {"plan": "p-uuid", "step_id": "G-001", "direction": "dependents"}
 
 
 def test_scoped_params_block_get_shape():
@@ -167,6 +252,17 @@ def test_scoped_params_bug_and_todo_shapes():
     assert ls.scoped_params("bug_get", {"bug": "b-uuid"}) == {"bug_id": "b-uuid"}
     assert ls.scoped_params("bug_impact_list", {"bug": "b-uuid"}) == {"bug_id": "b-uuid"}
     assert ls.scoped_params("bug_fix_list", {"bug": "b-uuid"}) == {"bug": "b-uuid"}
+
+
+def test_scoped_params_step_search_shape():
+    # Confirmed live: -32602 Missing required parameters: plan, pattern.
+    params = ls.scoped_params("step_search", {"plan": "p-uuid"})
+    assert params == {"plan": "p-uuid", "pattern": "G-"}
+    assert ls.scoped_params("step_search", {}) is None
+
+
+def test_scoped_params_files_report_shape():
+    assert ls.scoped_params("files_report", {"plan": "p-uuid"}) == {"plan": "p-uuid"}
 
 
 def test_scoped_params_project_dependents_shape():
@@ -640,3 +736,256 @@ def test_reset_dispatch_log_clears_entries():
     assert ls.DISPATCH_LOG
     ls.reset_dispatch_log()
     assert ls.DISPATCH_LOG == []
+
+
+# --------------------------------------------------------------------------
+# Third-live-run fixes to the networked tier-3/regression coroutines:
+# create/cleanup phase splitting (ordering) and the corrected bug-close and
+# R2 recipes. Exercised against a scripted fake client (no real network).
+# --------------------------------------------------------------------------
+
+
+def _ok(data):
+    return {"success": True, "data": data}
+
+
+def _sequence(*outcomes):
+    """A callable outcome usable in _ScriptedClient's response table: pops
+    the next scripted outcome on each invocation, for a command name called
+    more than once with different desired responses per call."""
+    remaining = list(outcomes)
+
+    def _next(_params):
+        if not remaining:
+            raise AssertionError("sequence exhausted: more calls than scripted outcomes")
+        return remaining.pop(0)
+
+    return _next
+
+
+class _ScriptedClient:
+    """Fake client whose queued path (_call) returns a scripted response per
+    command name -- a value, an exception instance, or a callable(params)
+    for dynamic/stateful behavior -- and records every (name, params) call
+    in call order. None of the coroutines tested below invoke a
+    KNOWN_BUILTIN_COMMANDS name, so the direct path is left unconfigured
+    (reached only, and loudly, on a routing mistake).
+    """
+
+    def __init__(self, responses: dict[str, Any]):
+        self._responses = responses
+        self.calls: list[tuple[str, dict]] = []
+        self.direct_calls: list[tuple[str, dict]] = []
+        self._direct_outcome = _UNSET
+        self._rpc = _FakeRpc(self)
+
+    async def _call(self, name, params=None):
+        params = dict(params or {})
+        self.calls.append((name, params))
+        outcome = self._responses.get(name)
+        if outcome is None:
+            raise AssertionError(f"no scripted response for command {name!r} (params={params})")
+        if callable(outcome) and not isinstance(outcome, BaseException):
+            outcome = outcome(params)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def test_run_tier3_plan_step_create_does_not_delete_and_returns_entities():
+    client = _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "plan-1"}),
+            "context_common": _ok({"common_block_id": "blk-1"}),
+            "step_create": _sequence(
+                _ok({"uuid": "step3-uuid", "step_id": "G-001"}),
+                _ok({"uuid": "step4-uuid", "step_id": "T-001"}),
+            ),
+            "graph_order": _ok({"order": ["G-001/T-001"]}),
+        }
+    )
+    results, entities, plan_uuid, plan_name = asyncio.run(ls.run_tier3_plan_step_create(client))
+    assert plan_uuid == "plan-1"
+    assert plan_name.startswith(ls.PREFIX)
+    assert entities["plan"] == "plan-1"
+    assert entities["step"] == "T-001"  # overwritten by the level-4 child
+    assert entities["block"] == "blk-1"
+    assert all(r.status != ls.STATUS_FAIL for r in results)
+    assert not any(name == "plan_delete" for name, _ in client.calls), "create phase must never delete"
+
+
+def test_run_tier3_plan_step_cleanup_deletes_and_verifies():
+    client = _ScriptedClient(
+        {
+            "plan_delete": _ok({"deleted": True}),
+            "plan_list": _ok({"plans": [{"name": "some-other-plan"}]}),
+        }
+    )
+    results = asyncio.run(ls.run_tier3_plan_step_cleanup(client, "plan-1", "live-smoke-plan-xyz"))
+    assert [c[0] for c in client.calls] == ["plan_delete", "plan_list"]
+    assert client.calls[0][1] == {"plan": "plan-1", "hard": True}
+    assert all(r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_tier3_plan_step_cleanup_noop_when_plan_uuid_none():
+    client = _ScriptedClient({})
+    results = asyncio.run(ls.run_tier3_plan_step_cleanup(client, None, "irrelevant"))
+    assert results == []
+    assert client.calls == []
+
+
+def test_run_tier3_todo_create_does_not_delete():
+    client = _ScriptedClient(
+        {
+            "todo_create": _ok({"uuid": "todo-1"}),
+            "todo_update": _ok({"uuid": "todo-1"}),
+            "todo_resolve": _ok({"uuid": "todo-1"}),
+            "todo_close": _ok({"uuid": "todo-1"}),
+        }
+    )
+    results, todo_uuid = asyncio.run(ls.run_tier3_todo_create(client))
+    assert todo_uuid == "todo-1"
+    assert [c[0] for c in client.calls] == ["todo_create", "todo_update", "todo_resolve", "todo_close"]
+    assert all(r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_tier3_todo_cleanup_deletes_and_verifies_via_failing_get():
+    client = _ScriptedClient(
+        {
+            "todo_delete": _ok({"deleted": True}),
+            "todo_get": RuntimeError("todo not found"),
+        }
+    )
+    results = asyncio.run(ls.run_tier3_todo_cleanup(client, "todo-1"))
+    assert [c[0] for c in client.calls] == ["todo_delete", "todo_get"]
+    assert all(r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_tier3_todo_cleanup_noop_when_todo_uuid_none():
+    client = _ScriptedClient({})
+    assert asyncio.run(ls.run_tier3_todo_cleanup(client, None)) == []
+    assert client.calls == []
+
+
+def test_run_tier3_bug_create_runs_full_fix_verify_close_chain_in_order():
+    """The exact fix for the third live run's bug_close failure (-32000
+    "source fix not verified", INVALID_RUNTIME_STATUS_TRANSITION): the full
+    documented closure path is bug_create -> bug_confirm -> bug_fix_create
+    -> bug_fix_verify(passed=True) -> bug_close, in that order."""
+    client = _ScriptedClient(
+        {
+            "bug_create": _ok({"uuid": "bug-1"}),
+            "bug_confirm": _ok({"uuid": "bug-1", "status": "confirmed"}),
+            "bug_fix_create": _ok({"bug_fix": {"uuid": "fix-1", "status": "proposed"}}),
+            "bug_fix_verify": _ok({"uuid": "fix-1", "status": "verified"}),
+            "bug_close": _ok({"uuid": "bug-1", "status": "closed"}),
+        }
+    )
+    results, bug_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
+    assert bug_uuid == "bug-1"
+    order = [name for name, _ in client.calls]
+    assert order == ["bug_create", "bug_confirm", "bug_fix_create", "bug_fix_verify", "bug_close"]
+    fix_verify_params = client.calls[3][1]
+    assert fix_verify_params["bug_fix"] == "fix-1"
+    assert fix_verify_params["passed"] is True
+    assert all(r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_tier3_bug_create_skips_verify_when_fix_create_fails():
+    client = _ScriptedClient(
+        {
+            "bug_create": _ok({"uuid": "bug-1"}),
+            "bug_confirm": _ok({"uuid": "bug-1"}),
+            "bug_fix_create": RuntimeError("boom"),
+            "bug_close": _ok({"uuid": "bug-1", "status": "closed"}),
+        }
+    )
+    results, bug_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
+    assert bug_uuid == "bug-1"
+    order = [name for name, _ in client.calls]
+    assert "bug_fix_verify" not in order
+    assert order == ["bug_create", "bug_confirm", "bug_fix_create", "bug_close"]
+    fix_result = next(r for r in results if r.name == "bug_fix_create")
+    assert fix_result.status == ls.STATUS_FAIL
+
+
+def test_run_r2_uses_correct_level_chain_never_skipping_level_4():
+    """Reproduces (as a unit test) the exact defect a prior R2 attempt had:
+    creating level-5 steps directly under a level-3 parent, which live
+    evidence showed fails downstream with GRAPH_CORRUPTED_CHAIN ("parent of
+    step A-001 not found in nodes"). The corrected recipe must create
+    levels 3 -> 4 -> 4 -> 5 -> 5, each level-5 step parented on a
+    DIFFERENT level-4 tactical step, never directly on the level-3 step."""
+    step_create_calls: list[dict] = []
+
+    def _step_create(params):
+        step_create_calls.append(dict(params))
+        idx = len(step_create_calls)
+        return _ok({"uuid": f"uuid-{idx}", "step_id": f"{params['slug']}-{idx}"})
+
+    client = _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r2-plan"}),
+            "context_common": _ok({"common_block_id": "blk"}),
+            "step_create": _step_create,
+            "step_update": _ok({"uuid": "updated"}),
+            "step_dependency_preview": _ok(
+                {"same_file_order": {"before_findings": [{"pair": 1}], "after_findings": [], "resolved_pairs": [], "introduced_pairs": []}}
+            ),
+            "step_dependency_apply": _sequence(
+                _ok({"dry_run": True, "applied": False}),
+                _ok({"dry_run": False, "applied": True}),
+            ),
+            "graph_order": _ok({"order": ["g/t-001/a", "g/t-002/a"]}),
+            "plan_delete": _ok({"deleted": True}),
+        }
+    )
+    results = asyncio.run(ls.run_r2_same_file_order_ambiguity(client))
+    failures = [r for r in results if r.status == ls.STATUS_FAIL]
+    assert failures == [], f"unexpected failures: {[r.line() for r in failures]}"
+
+    assert len(step_create_calls) == 5
+    levels = [c["level"] for c in step_create_calls]
+    assert levels == [3, 4, 4, 5, 5]
+
+    g_call, t1_call, t2_call, a1_call, a2_call = step_create_calls
+    assert "parent_step_id" not in g_call  # level 3: no parent
+
+    g_step_id = f"{g_call['slug']}-1"
+    assert t1_call["parent_step_id"] == g_step_id
+    assert t2_call["parent_step_id"] == g_step_id
+
+    t1_step_id = f"{t1_call['slug']}-2"
+    t2_step_id = f"{t2_call['slug']}-3"
+    # the two level-5 A steps are parented on DIFFERENT level-4 parents --
+    # never both directly on G (the level-3 step), and never on the same
+    # tactical parent either.
+    assert a1_call["parent_step_id"] == t1_step_id
+    assert a2_call["parent_step_id"] == t2_step_id
+    assert a1_call["parent_step_id"] != a2_call["parent_step_id"]
+
+    # context_common recompiled before EVERY step_create (5 creates -> 5
+    # context_common calls; a block compiled before an earlier sibling's
+    # create is stale for the next one, per has_current_common_block).
+    context_common_calls = [c for name, c in client.calls if name == "context_common"]
+    assert len(context_common_calls) == 5
+
+    # both A steps got the SAME target_file via step_update -- the
+    # pre-existing ambiguity the regression needs.
+    step_update_calls = [c for name, c in client.calls if name == "step_update"]
+    assert len(step_update_calls) == 2
+    target_files = {c["fields"]["target_file"] for c in step_update_calls}
+    assert len(target_files) == 1
+
+    # the curative step_dependency_apply batch references the two A steps'
+    # UUIDs (uuid-4, uuid-5 per the scripted _step_create), not their human
+    # step_ids, and is applied both dry-run then real.
+    apply_calls = [c for name, c in client.calls if name == "step_dependency_apply"]
+    assert len(apply_calls) == 2
+    assert apply_calls[0]["dry_run"] is True
+    assert apply_calls[1]["dry_run"] is False
+    assert apply_calls[0]["changes"] == apply_calls[1]["changes"]
+    assert apply_calls[0]["changes"][0]["step_id"] == "uuid-5"
+    assert apply_calls[0]["changes"][0]["depends_on"] == ["uuid-4"]
+
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
