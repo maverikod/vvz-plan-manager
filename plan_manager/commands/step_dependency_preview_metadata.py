@@ -20,7 +20,15 @@ def get_step_dependency_preview_metadata(cls) -> dict[str, Any]:
             "which steps would change, and the before/after topological execution "
             "order and parallel wave partition. References are validated the same "
             "way as the mutating commands, so an out-of-scope or unknown "
-            "reference is reported as a domain error."
+            "reference is reported as a domain error.\n"
+            "Same-file writer-order ambiguity is evaluated monotonically and NEVER "
+            "short-circuits this command (bug 64107707): a pre-existing ambiguity "
+            "in the before-state graph is reported in same_file_order.before_findings "
+            "and, if it survives the change unchanged, in resolved_pairs stays empty "
+            "and it reappears in after_findings — none of that makes the batch "
+            "invalid. valid is false only when the batch would create a cycle or "
+            "would introduce a NEW same-file ambiguous pair absent from the "
+            "before-state (same_file_order.introduced_pairs)."
         ),
         "parameters": {
             "plan": {
@@ -38,11 +46,35 @@ def get_step_dependency_preview_metadata(cls) -> dict[str, Any]:
             "success": {
                 "description": "Validity, cycle risk, changed steps, and before/after impact.",
                 "data": {
-                    "valid": "True when the simulated graph is acyclic.",
+                    "valid": (
+                        "True when the simulated graph is acyclic AND introduces no "
+                        "same-file writer ambiguity absent from the before-state. A "
+                        "pre-existing same-file ambiguity that the batch leaves "
+                        "unresolved does NOT make this false."
+                    ),
                     "would_create_cycle": "True when the changes would close a cycle.",
                     "changed_steps": "Canonical paths of steps whose depends_on would change.",
-                    "impact": "execution_order_before/after and parallel_waves_before/after as canonical paths.",
-                    "findings": "List of finding objects; a DEPENDENCY_CYCLE finding when a cycle is detected.",
+                    "impact": (
+                        "execution_order_before/after and parallel_waves_before/after as "
+                        "canonical paths; always computed via a deterministic tie-break "
+                        "even when same-file findings are non-empty, so the shown order "
+                        "may not reflect an audited same-file order for those pairs "
+                        "(see graph_order for the gated, audited order)."
+                    ),
+                    "same_file_order": {
+                        "before_findings": "{target_file, writers} pairs ambiguous in the before-state.",
+                        "after_findings": "{target_file, writers} pairs ambiguous in the simulated after-state.",
+                        "resolved_pairs": "Pairs ambiguous before the batch and resolved by it.",
+                        "introduced_pairs": (
+                            "Pairs newly ambiguous only after the batch (absent before); "
+                            "non-empty implies valid=false."
+                        ),
+                    },
+                    "findings": (
+                        "List of finding objects: a DEPENDENCY_CYCLE finding when a cycle "
+                        "is detected, and/or an AS_SAME_FILE_ORDER_AMBIGUOUS finding when "
+                        "introduced_pairs is non-empty."
+                    ),
                 },
                 "example": {
                     "valid": True,
@@ -53,6 +85,12 @@ def get_step_dependency_preview_metadata(cls) -> dict[str, Any]:
                         "execution_order_after": [],
                         "parallel_waves_before": [],
                         "parallel_waves_after": [],
+                    },
+                    "same_file_order": {
+                        "before_findings": [],
+                        "after_findings": [],
+                        "resolved_pairs": [],
+                        "introduced_pairs": [],
                     },
                     "findings": [],
                 },

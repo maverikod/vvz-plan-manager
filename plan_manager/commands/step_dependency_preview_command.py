@@ -13,6 +13,8 @@ from plan_manager.commands.step_dependency_ops import (
     execution_order_paths,
     parallel_wave_paths,
     plan_changes,
+    render_same_file_conflicts,
+    same_file_admission,
     simulate,
 )
 from plan_manager.commands.step_dependency_preview_metadata import (
@@ -83,8 +85,10 @@ class StepDependencyPreviewCommand(Command):
                 )
                 cycle = detect_cycle(nodes, new_by_uuid) if new_by_uuid else None
                 sim = simulate(nodes, new_by_uuid)
+                admission = same_file_admission(nodes, sim)
+                introduced_findings = render_same_file_conflicts(sim, admission["introduced"])
                 data: dict[str, Any] = {
-                    "valid": cycle is None,
+                    "valid": cycle is None and not admission["introduced"],
                     "would_create_cycle": cycle is not None,
                     "changed_steps": changed_steps,
                     "impact": {
@@ -93,17 +97,36 @@ class StepDependencyPreviewCommand(Command):
                         "parallel_waves_before": parallel_wave_paths(nodes),
                         "parallel_waves_after": parallel_wave_paths(sim),
                     },
+                    "same_file_order": {
+                        "before_findings": render_same_file_conflicts(nodes, admission["before_conflicts"]),
+                        "after_findings": render_same_file_conflicts(sim, admission["after_conflicts"]),
+                        "resolved_pairs": render_same_file_conflicts(nodes, admission["resolved"]),
+                        "introduced_pairs": introduced_findings,
+                    },
                     "findings": [],
                 }
                 if cycle is not None:
-                    data["findings"] = [
+                    data["findings"].append(
                         {
                             "code": "DEPENDENCY_CYCLE",
                             "path": changed_steps[0] if changed_steps else (cycle[0] if cycle else ""),
                             "message": "Dependency change would create a cycle.",
                             "cycle": cycle,
                         }
-                    ]
+                    )
+                if introduced_findings:
+                    data["findings"].append(
+                        {
+                            "code": "AS_SAME_FILE_ORDER_AMBIGUOUS",
+                            "path": changed_steps[0] if changed_steps else "",
+                            "message": (
+                                "The change would introduce a new same-file writer "
+                                "ambiguity; a pre-existing ambiguity elsewhere is not "
+                                "itself invalidating."
+                            ),
+                            "introduced_pairs": introduced_findings,
+                        }
+                    )
                 return SuccessResult(data=data)
         except Exception as exc:
             return map_exception(exc)
