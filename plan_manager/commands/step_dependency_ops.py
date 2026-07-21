@@ -31,6 +31,12 @@ from plan_manager.views.dependency_graph import (
     topological_order,
     waves,
 )
+from plan_manager.views.same_file_order import (
+    diff_same_file_conflicts,
+    same_file_order_conflicts,
+)
+
+SameFileConflict = tuple[uuid.UUID, uuid.UUID, str]
 
 
 # ---------------------------------------------------------------------------
@@ -198,29 +204,94 @@ def simulate(
 def detect_cycle(
     nodes: dict[uuid.UUID, Step], new_by_uuid: dict[uuid.UUID, list[str]]
 ) -> list[str] | None:
-    """Return the residual cycle paths a change would create, or None."""
+    """Return the residual cycle paths a change would create, or None.
+
+    Cycle detection is orthogonal to same-file writer ambiguity (bug
+    64107707): edges are built with ``strict_same_file_order=False`` so an
+    unrelated pre-existing (or still-unresolved) same-file ambiguity never
+    raises here and never masks the actual cycle-or-not verdict. Same-file
+    admission is evaluated separately by ``same_file_admission``.
+    """
     sim = simulate(nodes, new_by_uuid)
-    _order, residual = topological_order(sim, build_edges(sim))
+    _order, residual = topological_order(sim, build_edges(sim, strict_same_file_order=False))
     if residual:
         return sorted(canonical_step_path(sim, sim[u]) for u in residual)
     return None
 
 
 def execution_order_paths(nodes: dict[uuid.UUID, Step]) -> list[str]:
-    """Topological execution order rendered as canonical paths (empty on cycle)."""
-    order, residual = topological_order(nodes, build_edges(nodes))
+    """Topological execution order rendered as canonical paths (empty on cycle).
+
+    Built with ``strict_same_file_order=False`` (bug 64107707): an ambiguous
+    same-file pair does not prevent computing *a* valid topological order (Kahn's
+    algorithm still linearizes it via the deterministic tie-break; only a true
+    cycle makes the order uncomputable). Callers that need the audited,
+    gated order use ``graph_order`` instead.
+    """
+    order, residual = topological_order(nodes, build_edges(nodes, strict_same_file_order=False))
     if residual:
         return []
     return [canonical_step_path(nodes, nodes[u]) for u in order]
 
 
 def parallel_wave_paths(nodes: dict[uuid.UUID, Step]) -> list[list[str]]:
-    """Parallel waves rendered as canonical paths (empty list on cycle)."""
+    """Parallel waves rendered as canonical paths (empty list on cycle).
+
+    Built with ``strict_same_file_order=False`` (bug 64107707); see
+    ``execution_order_paths`` for why ambiguity alone does not block this.
+    """
     try:
-        w = waves(nodes, build_edges(nodes))
+        w = waves(nodes, build_edges(nodes, strict_same_file_order=False))
     except ValueError:
         return []
     return [[canonical_step_path(nodes, nodes[u]) for u in wave] for wave in w]
+
+
+# ---------------------------------------------------------------------------
+# Same-file writer-order admission (bug 64107707): monotone rule, never
+# short-circuited by a pre-existing before-state ambiguity.
+# ---------------------------------------------------------------------------
+
+
+def same_file_conflicts(nodes: dict[uuid.UUID, Step]) -> list[SameFileConflict]:
+    """Same-file writer-order conflicts of one node set, never raising."""
+    return same_file_order_conflicts(nodes, build_edges(nodes, strict_same_file_order=False))
+
+
+def same_file_admission(
+    before_nodes: dict[uuid.UUID, Step], after_nodes: dict[uuid.UUID, Step]
+) -> dict[str, list[SameFileConflict]]:
+    """Evaluate the monotone same-file-order admission rule for a candidate.
+
+    Same-file writer ambiguity is reported, never gated, on its own: a
+    mutation is refused only when it introduces a NEW ambiguous pair absent
+    from the before-state (see ``introduced``). A pre-existing ambiguity that
+    survives the candidate unchanged is a finding, never a rejection reason.
+    """
+    before_conflicts = same_file_conflicts(before_nodes)
+    after_conflicts = same_file_conflicts(after_nodes)
+    introduced, resolved, remaining = diff_same_file_conflicts(before_conflicts, after_conflicts)
+    return {
+        "before_conflicts": before_conflicts,
+        "after_conflicts": after_conflicts,
+        "introduced": introduced,
+        "resolved": resolved,
+        "remaining": remaining,
+    }
+
+
+def render_same_file_conflicts(
+    nodes: dict[uuid.UUID, Step], conflicts: list[SameFileConflict]
+) -> list[dict[str, Any]]:
+    """Render same-file conflict tuples as {target_file, writers} findings, sorted."""
+    out: list[dict[str, Any]] = []
+    for first_uuid, second_uuid, target_file in conflicts:
+        writers = sorted(
+            [canonical_step_path(nodes, nodes[first_uuid]), canonical_step_path(nodes, nodes[second_uuid])]
+        )
+        out.append({"target_file": target_file, "writers": writers})
+    out.sort(key=lambda finding: (finding["target_file"], finding["writers"]))
+    return out
 
 
 # ---------------------------------------------------------------------------
