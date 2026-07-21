@@ -15,7 +15,10 @@ from plan_manager.commands.step_dependency_ops import (
     head_revision_str,
     persist_changes,
     render_depends,
+    render_same_file_conflicts,
     resolve_target,
+    same_file_admission,
+    simulate,
 )
 from plan_manager.commands.step_dependency_set_metadata import (
     get_step_dependency_set_metadata,
@@ -96,6 +99,21 @@ class StepDependencySetCommand(Command):
                             "DEPENDENCY_CYCLE",
                             "Dependency change would create a cycle.",
                             {"path": canonical_step_path(nodes, target), "cycle": cycle},
+                        )
+                    sim = simulate(nodes, {target.uuid: new})
+                    admission = same_file_admission(nodes, sim)
+                    if admission["introduced"]:
+                        raise DomainCommandError(
+                            "AS_SAME_FILE_ORDER_AMBIGUOUS",
+                            "Dependency change would introduce a new same-file "
+                            "writer ambiguity; a pre-existing ambiguity elsewhere "
+                            "in the graph is not itself a rejection reason.",
+                            {
+                                "path": canonical_step_path(nodes, target),
+                                "introduced_pairs": render_same_file_conflicts(
+                                    sim, admission["introduced"]
+                                ),
+                            },
                         )
                     revision = persist_changes(
                         conn, p, {target.uuid: new}, cascade_uuid,
