@@ -19,9 +19,10 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 
 # Inventory baseline WITHOUT any CR-4 addition: 153 pre-CR-4 commands plus the
 # three paragraph text-editing commands (para_insert/para_update/para_delete)
-# shipped by user-ordered phase-3 maintenance in 0.1.40 — those are not CR-4
+# shipped by user-ordered phase-3 maintenance in 0.1.40, plus project_view
+# (phase-3 maintenance fix for bug 18951d08) — none of those four are CR-4
 # mechanisms (the fragment scan below guards against CR-4 mechanism commands).
-_PRE_CR4_INVENTORY_COUNT = 156
+_PRE_CR4_INVENTORY_COUNT = 157
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:
