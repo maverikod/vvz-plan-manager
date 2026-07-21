@@ -19,6 +19,8 @@ from plan_manager.commands.step_dependency_ops import (
     parallel_wave_paths,
     persist_changes,
     plan_changes,
+    render_same_file_conflicts,
+    same_file_admission,
     simulate,
 )
 from plan_manager.commands.step_ref import canonical_step_path
@@ -106,11 +108,28 @@ class StepDependencyApplyCommand(Command):
                         "Dependency change would create a cycle.",
                         {"cycle": cycle, "changed_steps": changed_steps},
                     )
+                sim = simulate(nodes, new_by_uuid)
+                admission = same_file_admission(nodes, sim)
+                if admission["introduced"]:
+                    raise DomainCommandError(
+                        "AS_SAME_FILE_ORDER_AMBIGUOUS",
+                        "Dependency change would introduce a new same-file writer "
+                        "ambiguity; a pre-existing ambiguity elsewhere in the graph "
+                        "is not itself a rejection reason.",
+                        {
+                            "changed_steps": changed_steps,
+                            "introduced_pairs": render_same_file_conflicts(
+                                sim, admission["introduced"]
+                            ),
+                        },
+                    )
                 order_before = execution_order_paths(nodes)
                 waves_before = parallel_wave_paths(nodes)
+                before_findings = render_same_file_conflicts(nodes, admission["before_conflicts"])
+                resolved_findings = render_same_file_conflicts(nodes, admission["resolved"])
                 if dry_run or not new_by_uuid:
                     revision = None
-                    after_nodes = simulate(nodes, new_by_uuid)
+                    after_nodes = sim
                     applied = not dry_run
                 else:
                     revision = persist_changes(
@@ -130,6 +149,14 @@ class StepDependencyApplyCommand(Command):
                         "execution_order_after": execution_order_paths(after_nodes),
                         "parallel_waves_before": waves_before,
                         "parallel_waves_after": parallel_wave_paths(after_nodes),
+                    },
+                    "same_file_order": {
+                        "before_findings": before_findings,
+                        "after_findings": render_same_file_conflicts(
+                            after_nodes, admission["after_conflicts"]
+                        ),
+                        "resolved_pairs": resolved_findings,
+                        "introduced_pairs": [],
                     },
                     "revision_uuid": str(revision) if revision is not None else head_revision_str(conn, p),
                 }

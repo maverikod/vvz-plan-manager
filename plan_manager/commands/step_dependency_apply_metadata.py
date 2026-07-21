@@ -20,7 +20,14 @@ def get_step_dependency_apply_metadata(cls) -> dict[str, Any]:
             "With dry_run=true (the default) no mutation happens and the "
             "before/after impact is returned. With dry_run=false the whole batch "
             "is written as exactly one revision under the step mutation regime "
-            "(direct for draft steps, or under cascade_uuid for frozen steps)."
+            "(direct for draft steps, or under cascade_uuid for frozen steps).\n"
+            "Same-file writer-order ambiguity (bug 64107707) is admitted "
+            "monotonically: a pre-existing ambiguity in the before-state graph "
+            "never refuses the batch — only a NEW ambiguous pair the batch would "
+            "introduce does, reported (and, on refusal, nothing is written) as "
+            "AS_SAME_FILE_ORDER_AMBIGUOUS with the specific introduced_pairs "
+            "named. This check runs the same way whether dry_run is true or "
+            "false, mirroring DEPENDENCY_CYCLE."
         ),
         "parameters": {
             "plan": {
@@ -55,6 +62,12 @@ def get_step_dependency_apply_metadata(cls) -> dict[str, Any]:
                     "would_create_cycle": "Always false on success (a cycle raises DEPENDENCY_CYCLE).",
                     "changed_steps": "Canonical paths of steps whose depends_on changed.",
                     "impact": "execution_order_before/after and parallel_waves_before/after as canonical paths.",
+                    "same_file_order": {
+                        "before_findings": "{target_file, writers} pairs ambiguous before the batch.",
+                        "after_findings": "{target_file, writers} pairs ambiguous after the batch.",
+                        "resolved_pairs": "Pairs ambiguous before and resolved by the batch.",
+                        "introduced_pairs": "Always [] on success — a non-empty set raises AS_SAME_FILE_ORDER_AMBIGUOUS instead.",
+                    },
                     "revision_uuid": "Revision UUID when applied, otherwise the head revision.",
                 },
                 "example": {
@@ -68,6 +81,12 @@ def get_step_dependency_apply_metadata(cls) -> dict[str, Any]:
                         "execution_order_after": [],
                         "parallel_waves_before": [],
                         "parallel_waves_after": [],
+                    },
+                    "same_file_order": {
+                        "before_findings": [],
+                        "after_findings": [],
+                        "resolved_pairs": [],
+                        "introduced_pairs": [],
                     },
                     "revision_uuid": "bbc68757-563a-4646-b5ba-6f01c53c105e",
                 },
@@ -137,6 +156,18 @@ def get_step_dependency_apply_metadata(cls) -> dict[str, Any]:
                 "description": "The batch would create a cycle; nothing is applied.",
                 "message": "Dependency change would create a cycle.",
                 "solution": "Adjust the changes so the graph stays acyclic.",
+            },
+            "AS_SAME_FILE_ORDER_AMBIGUOUS": {
+                "description": (
+                    "The batch would introduce a NEW same-file writer ambiguity absent "
+                    "from the before-state; nothing is applied. A pre-existing ambiguity "
+                    "the batch leaves unresolved does NOT trigger this."
+                ),
+                "message": "Dependency change would introduce a new same-file writer ambiguity.",
+                "solution": (
+                    "Add an explicit dependency between the branches of the newly "
+                    "conflicting pair(s) named in introduced_pairs, or preview first."
+                ),
             },
             "CASCADE_REQUIRED": {
                 "description": "A target is frozen at or below and no cascade was supplied.",
