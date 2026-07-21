@@ -26,6 +26,21 @@ applied unwrap of any nesting/combination of the queue and success/error
 envelope shapes) -- see its docstring in `scripts/live_smoke.py` for the
 full investigation and exact file:line citations into the adapter package.
 
+**Second-live-run finding (0.1.52, same run family):** with the envelope
+fix in place, Tier 0 went fully green, but `help`/catalog fetching still
+failed -- `help` is an `mcp_proxy_adapter` framework builtin, registered on
+the plain JSON-RPC dispatcher but NOT in the queue-executor registry the
+default queued path resolves commands against, so the queue runner reports
+"Command 'help' not found". `info`/`health` are plan_manager domain
+commands and resolve fine via the queued path. Fixed by routing
+`KNOWN_BUILTIN_COMMANDS` (help, echo, config, long_task, job_status, the
+`queue_*` family) proactively to the client's plain, non-queued
+`execute_command` path, with a one-shot fallback for any other command
+whose queued failure looks like an unresolved-command error -- see
+`unwrap_envelope`'s neighboring module note (`KNOWN_BUILTIN_COMMANDS` /
+`_looks_like_unresolved_command` / `DISPATCH_LOG`) in `scripts/live_smoke.py`
+for the full investigation and file:line citations.
+
 ## How to run
 
 ### On-host (loopback, typical local/dev run)
