@@ -138,5 +138,9 @@ class BugProjectCommandsMixin:
         """List the projects that directly depend on a given project (reverse-dependency lookup)."""
         return await self._call("project_dependents", params)
 
+    async def project_view(self, **params: Any) -> Any:
+        """Project-centric aggregate view: paginated todos/bugs (plus a comments count) scoped to one project, direct or transitive via bound plans."""
+        return await self._call("project_view", params)
+
 
 __all__ = ["BugProjectCommandsMixin"]
