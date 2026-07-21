@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Type
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -76,13 +77,13 @@ class PlanImportCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: When 'source' is empty or contains '/', '\\' or
-                '..'.
+            InvalidParamsError: When 'source' is empty or contains '/', '\\'
+                or '..'.
         """
         params = super().validate_params(params)
         source = params["source"]
         if not source or "/" in source or "\\" in source or ".." in source:
-            raise ValueError("source must be a bare layout name without path separators")
+            raise InvalidParamsError("source must be a bare layout name without path separators")
         return params
 
     async def execute(
