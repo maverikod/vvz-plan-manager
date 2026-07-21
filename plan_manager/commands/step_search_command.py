@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -94,34 +95,38 @@ class StepSearchCommand(Command):
 
         Note:
             A malformed regex pattern, an over-length pattern, or an
-            inconsistent scope/step-id combination is NOT converted to a
-            domain error here: a bare ValueError raised from validate_params
-            is wrapped by the adapter into a generic -32603 InternalError.
-            execute() re-validates the same conditions instead, so each one
-            surfaces as a clean INVALID_FILTER domain code.
+            inconsistent scope/step-id combination raises InvalidParamsError
+            here (JSON-RPC -32602 via the adapter's typed-error mapping in
+            Command.run), so a caller going through the real adapter
+            dispatch path (run()) gets a clean invalid-params ErrorResult.
+            execute() ALSO re-validates the same conditions (raising
+            DomainCommandError("INVALID_FILTER", ...)) for callers that
+            invoke execute() directly, bypassing validate_params entirely
+            (as this suite's other step_search tests do) -- that defensive
+            duplication is intentional and kept as-is.
         """
         params = super().validate_params(params)
         pattern = params.get("pattern")
         mode = params.get("mode", "substring")
         if isinstance(pattern, str):
             if len(pattern) > MAX_PATTERN_LENGTH:
-                raise ValueError(
+                raise InvalidParamsError(
                     f"pattern must be at most {MAX_PATTERN_LENGTH} characters, got {len(pattern)}"
                 )
             if mode == "regex":
                 try:
                     re.compile(pattern)
                 except re.error as exc:
-                    raise ValueError(f"invalid regular expression: {exc}") from exc
+                    raise InvalidParamsError(f"invalid regular expression: {exc}") from exc
         scope = params.get("scope", "plan")
         gs_step_id = params.get("gs_step_id")
         ts_step_id = params.get("ts_step_id")
         as_step_id = params.get("as_step_id")
         if scope == "branch":
             if not (gs_step_id and ts_step_id and as_step_id):
-                raise ValueError("scope 'branch' requires gs_step_id, ts_step_id, and as_step_id")
+                raise InvalidParamsError("scope 'branch' requires gs_step_id, ts_step_id, and as_step_id")
         elif gs_step_id or ts_step_id or as_step_id:
-            raise ValueError("scope 'plan' must not receive gs_step_id, ts_step_id, or as_step_id")
+            raise InvalidParamsError("scope 'plan' must not receive gs_step_id, ts_step_id, or as_step_id")
         return params
 
     async def execute(

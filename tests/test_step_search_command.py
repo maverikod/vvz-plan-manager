@@ -5,6 +5,8 @@ import asyncio
 import uuid
 from contextlib import contextmanager
 
+from mcp_proxy_adapter.core.errors import InvalidParamsError
+
 from plan_manager.commands import step_search_command
 from plan_manager.commands.step_search_command import StepSearchCommand
 from plan_manager.commands.errors import DOMAIN_CODES
@@ -114,7 +116,7 @@ def test_branch_scope_requires_all_three_step_ids() -> None:
     try:
         StepSearchCommand().validate_params({"plan": "p", "pattern": "needle", "scope": "branch", "gs_step_id": "G-001"})
         raised = False
-    except ValueError:
+    except InvalidParamsError:
         raised = True
     assert raised is True
 
@@ -123,7 +125,7 @@ def test_plan_scope_rejects_branch_step_ids() -> None:
     try:
         StepSearchCommand().validate_params({"plan": "p", "pattern": "needle", "scope": "plan", "gs_step_id": "G-001"})
         raised = False
-    except ValueError:
+    except InvalidParamsError:
         raised = True
     assert raised is True
 
@@ -132,7 +134,7 @@ def test_validate_params_rejects_invalid_regex() -> None:
     try:
         StepSearchCommand().validate_params({"plan": "p", "pattern": "(unclosed", "mode": "regex"})
         raised = False
-    except ValueError:
+    except InvalidParamsError:
         raised = True
     assert raised is True
 
