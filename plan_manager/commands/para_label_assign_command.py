@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -49,13 +50,25 @@ class ParaLabelAssignCommand(Command):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate para_label_assign parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If cascade_uuid is not a valid UUID string.
+        """
         params = super().validate_params(params)
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
             try:
                 uuid.UUID(cascade_uuid)
             except ValueError as exc:
-                raise ValueError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
