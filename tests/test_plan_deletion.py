@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from mcp_proxy_adapter.core.errors import ValidationError
+from mcp_proxy_adapter.core.errors import InvalidParamsError, ValidationError
 
 from plan_manager.commands.info_command import InfoCommand
 from plan_manager.commands.plan_delete_command import PlanDeleteCommand
@@ -120,12 +120,12 @@ def test_plan_delete_defaults_hard_false_and_strips_plan() -> None:
 
 
 def test_plan_delete_rejects_non_bool_hard() -> None:
-    with pytest.raises((ValidationError, ValueError)):
+    with pytest.raises((ValidationError, InvalidParamsError)):
         PlanDeleteCommand().validate_params({"plan": "my-plan", "hard": "yes"})
 
 
 def test_plan_delete_rejects_empty_plan() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidParamsError):
         PlanDeleteCommand().validate_params({"plan": "   "})
 
 

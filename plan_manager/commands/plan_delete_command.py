@@ -7,6 +7,7 @@ from typing import ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_delete_metadata import get_plan_delete_metadata
@@ -132,18 +133,18 @@ class PlanDeleteCommand(Command):
                 defaulted to False when absent.
 
         Raises:
-            ValueError: When "plan" is empty after stripping, or when
-                "hard" is present but not a boolean. These are
+            InvalidParamsError: When "plan" is empty after stripping, or
+                when "hard" is present but not a boolean. These are
                 parameter-shape violations, not domain conditions.
         """
         params = super().validate_params(params)
         plan = params.get("plan")
         if not isinstance(plan, str) or not plan.strip():
-            raise ValueError("plan must be a non-empty string")
+            raise InvalidParamsError("plan must be a non-empty string")
         params["plan"] = plan.strip()
         hard = params.get("hard", False)
         if not isinstance(hard, bool):
-            raise ValueError("hard must be a boolean")
+            raise InvalidParamsError("hard must be a boolean")
         params["hard"] = hard
         return params
 
