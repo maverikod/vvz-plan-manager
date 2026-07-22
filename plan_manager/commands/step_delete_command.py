@@ -51,7 +51,7 @@ class StepDeleteCommand(Command):
                 },
                 "step_id": {
                     "type": "string",
-                    "description": "Human-readable identifier of the step to delete.",
+                    "description": "Step to delete, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 },
                 "cascade_uuid": {
                     "type": "string",
