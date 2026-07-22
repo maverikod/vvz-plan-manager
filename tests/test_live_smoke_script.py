@@ -33,7 +33,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -1137,14 +1136,23 @@ def test_run_tier2_scoped_ordinary_command_unaffected_by_gate_red_labeling():
 
 
 # --------------------------------------------------------------------------
-# R4 (bug ad529347-925e-44c9-8b04-df9d82c07cb9): nested TS inputs/outputs
-# schema documentation. Two scripted-server scenarios: a "pre-fix" server
-# whose responses never carry ls.R4_TYPE_ENUM_MARKER (every marker-dependent
-# sub-check must SKIP, never FAIL) and a "post-fix" server whose responses
-# do carry it (every sub-check must PASS). Neither scenario touches the
-# live network -- both exercise run_r4_ts_inputs_outputs_schema purely
-# against a _ScriptedClient, verifying the logic before the orchestrator
-# ever deploys the corresponding production fix.
+# R4 (bug ad529347-925e-44c9-8b04-df9d82c07cb9 + its enforcement child
+# 26fa21a5-5487-4cf7-9b41-64a350a7074c): nested TS inputs/outputs schema.
+#
+# Two orthogonal knobs on the scripted server:
+#   - help_marker / field_schema_marker: whether ad529347's documentation
+#     fix is present. Absent -> the two doc sub-checks SKIP (cosmetic,
+#     never FAIL) -- a genuinely pre-ad529347 server is an expected,
+#     reportable state.
+#   - reject_malformed: whether 26fa21a5's write-time enforcement is
+#     present. This is a HARD functional requirement, not marker-gated: a
+#     server that still accepts a malformed level-4 item FAILs the
+#     rejection/currency checks outright (modeled realistically below: the
+#     wrongly-accepted write also stales the context block, matching the
+#     bug's own reproduction).
+#
+# Neither scenario touches the live network -- both exercise
+# run_r4_ts_inputs_outputs_schema purely against a _ScriptedClient.
 # --------------------------------------------------------------------------
 
 
@@ -1159,7 +1167,7 @@ def _r4_step_create_sequence():
     return calls, _step_create
 
 
-def _r4_client(*, help_marker: bool, field_schema_marker: bool, gate_marker: bool) -> "_ScriptedClient":
+def _r4_client(*, help_marker: bool, field_schema_marker: bool, reject_malformed: bool) -> "_ScriptedClient":
     _calls, step_create = _r4_step_create_sequence()
     help_payload = {
         "metadata": {
@@ -1175,30 +1183,44 @@ def _r4_client(*, help_marker: bool, field_schema_marker: bool, gate_marker: boo
         if field_schema_marker
         else [{"type": "field_schema", "level": 4, "schema": {"required_fields": ["inputs", "outputs"]}}]
     )
-    # plan_validate's real "report" field is itself JSON-encoded TEXT (a
-    # string produced by the server's own json.dumps of the findings
-    # structure -- confirmed live: "report":"{\"checks\":[...]}" alongside a
-    # sibling "format":"json"), never a nested object; build it the same
-    # way here so the marker's embedded quote characters round-trip through
-    # json.dumps -> json.loads exactly as they do against the live server.
-    gate_message = (
-        f"inputs[0].type must be a non-empty string; type must be {ls.R4_TYPE_ENUM_MARKER}"
-        if gate_marker
-        else "inputs[0].type must be a non-empty string"
-    )
-    gate_report = json.dumps(
-        {"checks": [{"check_id": "parse.inputs_outputs", "findings": [{"message": gate_message}]}]}
-    )
+    malformed_item = {"name": "x", "type": "", "description": "y"}
+    if reject_malformed:
+        rejection_message = (
+            f"inputs[0].type must be a non-empty string (expected item shape "
+            f"{{name, type, description}}; type must be {ls.R4_TYPE_ENUM_MARKER})"
+        )
+        malformed_outcome = {
+            "success": False,
+            "error": {
+                "code": -32000,
+                "message": rejection_message,
+                "data": {"domain_code": "INVALID_STEP_FIELD_SHAPE", "field": "fields"},
+            },
+        }
+    else:
+        # Pre-26fa21a5 behavior: the malformed item is accepted verbatim
+        # and a revision is recorded.
+        malformed_outcome = _ok({"uuid": "updated", "revision_uuid": "rev-1"})
     return _ScriptedClient(
         {
             "plan_create": _ok({"uuid": "r4-plan"}),
             "context_common": _sequence(
                 _ok({}),  # plan, level 3
                 _ok({"content": field_schema_content}),  # G, level 4
+                _ok({"common_block_id": "blk-1"}),  # T, level 5 (baseline)
             ),
             "step_create": step_create,
-            "step_update": _ok({"uuid": "updated"}),
-            "plan_validate": _ok({"green": False, "report": gate_report}),
+            "block_list": _sequence(
+                _ok({"blocks": [{"block_id": "blk-1", "is_live": True}]}),  # baseline: always current
+                # After the malformed attempt: current iff it was actually
+                # rejected -- a wrongly-accepted write stales the block,
+                # matching the bug's own live reproduction.
+                _ok({"blocks": [{"block_id": "blk-1", "is_live": reject_malformed}]}),
+            ),
+            "step_update": _sequence(
+                malformed_outcome,
+                _ok({"uuid": "updated2", "revision_uuid": "rev-2"}),  # valid write always succeeds
+            ),
             "plan_delete": _ok({"deleted": True}),
         },
         # "help" is a KNOWN_BUILTIN_COMMANDS name (routed via the direct
@@ -1207,45 +1229,56 @@ def _r4_client(*, help_marker: bool, field_schema_marker: bool, gate_marker: boo
     )
 
 
-def test_run_r4_pre_fix_server_skips_every_marker_check_without_failing():
-    client = _r4_client(help_marker=False, field_schema_marker=False, gate_marker=False)
+def test_run_r4_pre_fix_server_skips_doc_checks_but_fails_enforcement_checks():
+    """A server predating BOTH ad529347 (docs) and 26fa21a5 (enforcement):
+    the cosmetic doc checks SKIP, but the malformed-item write wrongly
+    succeeds and stales the context block -- both are HARD requirements
+    and correctly FAIL, not SKIP. The subsequent valid write still
+    succeeds regardless."""
+    client = _r4_client(help_marker=False, field_schema_marker=False, reject_malformed=False)
 
     results = asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
 
     by_name = {r.name: r for r in results}
     assert by_name["R4_help_documents_item_schema"].status == ls.STATUS_SKIP
     assert by_name["R4_field_schema_documents_item_schema"].status == ls.STATUS_SKIP
-    assert by_name["R4_gate_error_states_expected_shape"].status == ls.STATUS_SKIP
-    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
     assert ls.R4_PRE_FIX_SKIP_REASON in by_name["R4_help_documents_item_schema"].detail
+    assert by_name["R4_step_update_malformed_item_rejected"].status == ls.STATUS_FAIL
+    assert by_name["R4_context_currency_survives_rejected_write"].status == ls.STATUS_FAIL
+    assert by_name["R4_step_update_valid_item_accepted"].status == ls.STATUS_PASS
     assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
 
 
-def test_run_r4_post_fix_server_passes_every_marker_check():
-    client = _r4_client(help_marker=True, field_schema_marker=True, gate_marker=True)
+def test_run_r4_post_fix_server_passes_every_check():
+    client = _r4_client(help_marker=True, field_schema_marker=True, reject_malformed=True)
 
     results = asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
 
     by_name = {r.name: r for r in results}
     assert by_name["R4_help_documents_item_schema"].status == ls.STATUS_PASS
     assert by_name["R4_field_schema_documents_item_schema"].status == ls.STATUS_PASS
-    assert by_name["R4_gate_error_states_expected_shape"].status == ls.STATUS_PASS
-    assert by_name["R4_step_update_malformed_item_accepted"].status == ls.STATUS_PASS
+    assert by_name["R4_step_update_malformed_item_rejected"].status == ls.STATUS_PASS
+    assert by_name["R4_context_currency_survives_rejected_write"].status == ls.STATUS_PASS
+    assert by_name["R4_step_update_valid_item_accepted"].status == ls.STATUS_PASS
     assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
 
 
-def test_run_r4_malformed_item_shape_reaches_step_update_unrejected():
-    """The probe payload step_update receives is the deliberately malformed
-    item (empty "type") -- step_update is expected to ACCEPT it (no
-    write-boundary rejection change in scope for this bug); only
-    plan_validate is expected to flag it afterward."""
-    client = _r4_client(help_marker=True, field_schema_marker=True, gate_marker=True)
+def test_run_r4_malformed_probe_is_object_shaped_and_valid_write_follows():
+    """The first step_update probe is the malformed-but-object-shaped item
+    (empty "type", carrying the shape/enum marker in its rejection
+    message); the second is a fully valid item. A bare-string item is
+    covered separately by
+    tests/test_bug_26fa21a5_ts_inputs_outputs_write_rejection.py."""
+    client = _r4_client(help_marker=True, field_schema_marker=True, reject_malformed=True)
 
     asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
 
     step_update_calls = [params for name, params in client.calls if name == "step_update"]
-    assert len(step_update_calls) == 1
+    assert len(step_update_calls) == 2
     assert step_update_calls[0]["fields"]["inputs"] == [{"name": "x", "type": "", "description": "y"}]
+    assert step_update_calls[1]["fields"]["inputs"][0]["type"] == "input"
+    assert step_update_calls[1]["fields"]["outputs"][0]["type"] == "output"
 
 
 def test_run_r4_transport_failure_on_plan_create_fails_not_skips():

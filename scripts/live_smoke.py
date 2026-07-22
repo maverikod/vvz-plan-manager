@@ -1170,32 +1170,25 @@ def _r4_marker_present(payload: Any) -> bool:
     return R4_TYPE_ENUM_MARKER in str(payload)
 
 
-def _r4_gate_report_marker_present(validate_res: Any) -> bool:
-    """True iff R4_TYPE_ENUM_MARKER appears in plan_validate's gate report.
+def _r4_block_is_live(res: Any, block_id: Any) -> Optional[bool]:
+    """Return the ``is_live`` flag of one block_list entry matching block_id.
 
-    plan_validate's ``data.report`` field is itself JSON-encoded TEXT (a
-    string the server produced via its own json.dumps of the findings
-    structure -- confirmed live: ``"report":"{\\"checks\\":[...]}"``,
-    alongside a sibling ``"format":"json"`` field), not a nested object. A
-    message value containing literal quote characters therefore appears
-    INSIDE that report string as backslash-escaped quotes (JSON's own
-    encoding of an embedded quote), so a plain ``_r4_marker_present`` check
-    on the raw string never matches -- the report must be json.loads'd
-    first to decode those escapes back to literal characters, then
-    stringified with ``str()`` (never ``json.dumps`` again, for the same
-    reason as ``_r4_marker_present``). Falls back to checking the raw
-    payload directly if ``report`` is absent or not a JSON-decodable string
-    (e.g. a scripted test double already handing back a bare string).
+    ``res`` is block_list's own payload, ``{"blocks": [{"block_id": ...,
+    "is_live": ...}, ...], "total": ..., ...}``. Returns None when ``res``
+    is not shaped as expected or no entry matches ``block_id`` (a caller
+    treats None as "could not determine currency", distinct from a
+    definite True/False).
     """
-    if not isinstance(validate_res, dict):
-        return _r4_marker_present(validate_res)
-    report = validate_res.get("report")
-    if isinstance(report, str):
-        try:
-            report = json.loads(report)
-        except (TypeError, ValueError):
-            pass
-    return _r4_marker_present(report if report is not None else validate_res)
+    if not isinstance(res, dict):
+        return None
+    blocks = res.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+    for entry in blocks:
+        if isinstance(entry, dict) and entry.get("block_id") == block_id:
+            is_live = entry.get("is_live")
+            return is_live if isinstance(is_live, bool) else None
+    return None
 
 
 async def run_r1_todo_anchor_none(client: Any) -> list[CheckResult]:
@@ -1414,31 +1407,38 @@ async def run_r3_project_view(client: Any, catalog_names: frozenset[str], projec
 
 
 async def run_r4_ts_inputs_outputs_schema(client: Any) -> list[CheckResult]:
-    """Bug ad529347: step_update help and the level-4 (TS) context_common /
+    """Bug ad529347 (documentation) + bug 26fa21a5 (its enforcement child).
+
+    ad529347: step_update help and the level-4 (TS) context_common /
     context_bundle field_schema used to document fields.inputs /
     fields.outputs only as bare field names, with no nested item contract
-    ({name, type, description}, type one of "input" or "output") -- a
-    client could not construct a valid TS inputs/outputs payload from the
-    published metadata alone, and the mechanical gate's own
-    parse.inputs_outputs finding ("...type must be a non-empty string") did
-    not restate the expected shape or allowed type values either.
+    ({name, type, description}, type one of "input" or "output"). The two
+    doc-marker sub-checks below (R4_help_documents_item_schema,
+    R4_field_schema_documents_item_schema) still independently report SKIP
+    (never FAIL) when R4_TYPE_ENUM_MARKER is absent from the live
+    response -- this pipeline runs against whatever server is currently
+    deployed, and a pre-ad529347 server is an expected, reportable state
+    (redeploy pending), not a pipeline defect.
 
-    R4_TYPE_ENUM_MARKER is the exact substring committed into
-    step_update_metadata.py / context_blocks.py (TS_INPUT_OUTPUT_ITEM_SCHEMA)
-    / gate_structure.py (check_parse_inputs_outputs) as the fix for this
-    bug. Each of the three sub-checks below independently reports SKIP
-    (never FAIL) when the marker is absent from the live response -- this
-    pipeline runs against whatever server is currently deployed, and a
-    pre-fix server is an expected, reportable state (redeploy pending), not
-    a pipeline defect. A transport/call failure on the underlying command
-    itself (plan_create, context_common, step_create, step_update,
-    plan_validate) still FAILs normally, same as every other Tier-4 check.
+    26fa21a5: the documentation gap made it easy to construct exactly the
+    malformed payload step_update then persisted verbatim -- advancing the
+    working revision, staling current context blocks, and leaving
+    plan_validate as the only place the corruption surfaced. The fix
+    rejects a malformed level-4 inputs/outputs item atomically, before any
+    write. R4_step_update_malformed_item_rejected /
+    R4_step_update_valid_item_accepted / R4_context_currency_survives_rejected_write
+    below assert the NEW contract directly against the live server and are
+    NOT marker-gated SKIPs: a pre-26fa21a5 server FAILs them outright,
+    because on such a server the malformed write would wrongly succeed.
 
-    Deliberately does NOT change what step_update or plan_validate
-    accept/reject: the malformed item used to probe the gate message
-    (type="") is expected to be STORED by step_update (no write-time
-    rejection, out of scope per this bug) and only surfaced as a
-    parse.inputs_outputs finding by the subsequent plan_validate call.
+    The former R4_gate_error_states_expected_shape check (proving
+    plan_validate's parse.inputs_outputs message states the expected shape
+    for an already-persisted invalid TS) is retired: since both step_update
+    and layout_import now reject the malformed shape at write time, there
+    is no longer a live path to get an invalid TS past the write boundary
+    for plan_validate to later catch -- that unreachability is itself the
+    fix working. The same message wording is now asserted directly on the
+    rejection error from R4_step_update_malformed_item_rejected instead.
     """
     results: list[CheckResult] = []
 
@@ -1497,10 +1497,31 @@ async def run_r4_ts_inputs_outputs_schema(client: Any) -> list[CheckResult]:
         if not ok or t_id is None:
             results.append(CheckResult("4", "R4_step_create(T)", STATUS_FAIL, str(res)))
             return results
+        node_path = f"{g_id}/{t_id}"
 
-        # Deliberately malformed item (empty "type"): still accepted at
-        # write time by design (see docstring above) -- only plan_validate
-        # is expected to flag it.
+        # Baseline: compile a common context block for T's own AS children
+        # and confirm it is reported current, so the "survives a rejected
+        # write" check below has a known-current block to re-check.
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        block_id_before = res.get("common_block_id") if ok and isinstance(res, dict) else None
+        if not ok or block_id_before is None:
+            results.append(CheckResult("4", "R4_context_common(T,level5,baseline)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "node": node_path, "kind": "common"})
+        baseline_live = _r4_block_is_live(res, block_id_before)
+        if not ok or baseline_live is not True:
+            results.append(CheckResult("4", "R4_context_common(T,level5,baseline)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R4_context_common(T,level5,baseline)", STATUS_PASS))
+
+        # 26fa21a5: a malformed level-4 item -- an object with an empty
+        # "type" (the same probe ad529347's pre-fix check used to reach
+        # plan_validate; a plain-string item is covered by the unit suite
+        # in tests/test_bug_26fa21a5_ts_inputs_outputs_write_rejection.py)
+        # -- must now be REJECTED atomically, with a message stating the
+        # expected shape and allowed type values. Not marker-gated: a
+        # pre-26fa21a5 server wrongly accepts this and FAILs here.
         ok, res = await call(
             client, "step_update",
             {
@@ -1511,18 +1532,54 @@ async def run_r4_ts_inputs_outputs_schema(client: Any) -> list[CheckResult]:
                 },
             },
         )
-        if not ok:
-            results.append(CheckResult("4", "R4_step_update_malformed_item_accepted", STATUS_FAIL, str(res)))
-            return results
-        results.append(CheckResult("4", "R4_step_update_malformed_item_accepted", STATUS_PASS))
-
-        ok, validate_res = await call(client, "plan_validate", {"plan": plan_uuid})
-        gate_marker_present = ok and _r4_gate_report_marker_present(validate_res)
+        # call()/unwrap_envelope report a queued-path domain error as a
+        # formatted diagnostic STRING (not a dict -- see _call_queued's
+        # "non-success/incomplete envelope: {data!r}"), the same pattern
+        # already used for GATE_RED detection elsewhere in this pipeline;
+        # check the stable domain_code and shape marker as substrings.
+        rejected_correctly = (
+            (not ok)
+            and "INVALID_STEP_FIELD_SHAPE" in str(res)
+            and _r4_marker_present(res)
+        )
         results.append(
             CheckResult(
-                "4", "R4_gate_error_states_expected_shape",
-                STATUS_PASS if gate_marker_present else STATUS_SKIP,
-                "" if gate_marker_present else R4_PRE_FIX_SKIP_REASON,
+                "4", "R4_step_update_malformed_item_rejected",
+                STATUS_PASS if rejected_correctly else STATUS_FAIL,
+                "" if rejected_correctly else f"ok={ok} res={res!r}",
+            )
+        )
+
+        # Context currency must survive the rejected write above: the same
+        # block_id compiled at baseline is still reported current.
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "node": node_path, "kind": "common"})
+        still_live = _r4_block_is_live(res, block_id_before)
+        results.append(
+            CheckResult(
+                "4", "R4_context_currency_survives_rejected_write",
+                STATUS_PASS if (ok and still_live is True) else STATUS_FAIL,
+                "" if (ok and still_live is True) else f"ok={ok} res={res!r}",
+            )
+        )
+
+        # A subsequent VALID write must still succeed and advance the
+        # revision -- the rejection above is a shape check, not a lockout.
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": t_id,
+                "fields": {
+                    "inputs": [{"name": "source-file-path", "type": "input", "description": "Path to the file being read."}],
+                    "outputs": [{"name": "parsed-record-list", "type": "output", "description": "Records parsed from the source file."}],
+                },
+            },
+        )
+        valid_accepted = ok and isinstance(res, dict) and bool(res.get("revision_uuid"))
+        results.append(
+            CheckResult(
+                "4", "R4_step_update_valid_item_accepted",
+                STATUS_PASS if valid_accepted else STATUS_FAIL,
+                "" if valid_accepted else f"ok={ok} res={res!r}",
             )
         )
     finally:
