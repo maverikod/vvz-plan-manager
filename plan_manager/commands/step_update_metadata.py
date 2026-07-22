@@ -41,6 +41,15 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             " The optional top-level project_id sets or clears the step's "
             "analysis-server project binding; project_id is never nested "
             "inside fields."
+            " For a level-4 (TS) step, fields.inputs and fields.outputs are "
+            "each a list of JSON objects, never bare strings: each item is "
+            "{name, type, description} where name and description are "
+            "non-empty strings and type must be one of \"input\" or "
+            "\"output\". step_update itself stores inputs/outputs as given "
+            "and does not reject a malformed item at write time; malformed "
+            "items are instead surfaced as parse.inputs_outputs findings by "
+            "the plan_validate mechanical gate, whose message states this "
+            "same expected shape and allowed type values."
         ),
         "parameters": {
             "plan": {
@@ -124,6 +133,37 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 },
                 "explanation": "Validates that the project UUID is already attached to the plan, then stores it on the step.",
             },
+            {
+                "description": "VALID: patch a level-4 (TS) step's inputs/outputs with correctly shaped items.",
+                "command": {
+                    "plan": "plan_manager",
+                    "step_id": "T-006",
+                    "fields": {
+                        "inputs": [
+                            {"name": "source-file-path", "type": "input", "description": "Path to the file being read."}
+                        ],
+                        "outputs": [
+                            {"name": "parsed-record-list", "type": "output", "description": "Records parsed from the source file."}
+                        ],
+                    },
+                },
+                "explanation": "Each inputs/outputs item is an object with name, type ('input' or 'output'), and description; stored as given.",
+            },
+            {
+                "description": "INVALID (do not send): bare strings or an item missing type/description.",
+                "command": {
+                    "plan": "plan_manager",
+                    "step_id": "T-006",
+                    "fields": {"inputs": ["source-file-path"]},
+                },
+                "explanation": (
+                    "Accepted at write time by step_update (no rejection here), but plan_validate's "
+                    "parse.inputs_outputs check will report findings such as "
+                    "\"inputs[0] must be an object\" or \"inputs[0].type must be a non-empty string "
+                    "(expected item shape {name, type, description}; type must be one of \\\"input\\\" "
+                    "or \\\"output\\\")\"."
+                ),
+            },
         ],
         "error_cases": {
             "PLAN_NOT_FOUND": {
@@ -181,6 +221,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "Call step_get first to confirm the current fields before patching.",
             "Use concepts to replace top-level step concept bindings without a full plan import.",
             "Use fields.relations only with objects shaped as {type, from_concept, to_concept}.",
+            "For a level-4 (TS) step, use fields.inputs/fields.outputs only with objects shaped as "
+            "{name, type, description}, with type one of \"input\" or \"output\" -- see the "
+            "context_common/context_bundle field_schema item_schemas for the same contract.",
             "Omit cascade_uuid for direct-mode updates on non-frozen steps; supply it only when working inside an open cascade.",
             "Re-read the step with step_get after the call to confirm the patch was applied as expected.",
         ],
