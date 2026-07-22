@@ -26,6 +26,24 @@ from plan_manager.views.dependency_graph import load_steps
 
 TEMPLATE_VERSION = "2026-07-06.context-blocks.v1"
 TIER_BY_LEVEL = {3: "global", 4: "mid", 5: "atomic"}
+
+# Nested item contract for the level-4 (TS) fields.inputs / fields.outputs
+# lists (bug ad529347): each list holds JSON objects, never bare strings, so
+# a client cannot derive this shape from the flat required_fields name list
+# alone. Shared verbatim by _field_schema_block below and by
+# plan_manager.commands.info_reference.planning_standards_reference so the
+# nested contract is documented identically everywhere it is surfaced.
+TS_INPUT_OUTPUT_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["name", "type", "description"],
+    "properties": {
+        "name": "Non-empty stable kebab-case identifier string for the item.",
+        "type": 'Non-empty string; must be one of "input" or "output".',
+        "description": "Non-empty human-readable string describing the item.",
+    },
+    "example_valid": {"name": "source-file-path", "type": "input", "description": "Path to the file being read."},
+    "example_invalid": ["source-file-path"],
+}
 ORDER = {
     "authoring_template": 0,
     "standards": 1,
@@ -209,13 +227,23 @@ def _standards_block(child_level: int) -> dict[str, Any]:
 
 def _field_schema_block(child_level: int) -> dict[str, Any]:
     schema = default_plan_schema()
+    field_schema: dict[str, Any] = {
+        "identifier_pattern": schema.identifier_patterns[child_level],
+        "required_fields": schema.required_fields[child_level],
+    }
+    if child_level == 4:
+        # bug ad529347: required_fields only names "inputs"/"outputs" as
+        # bare fields; without this nested item_schemas key a client sees
+        # no way to tell those are lists of {name, type, description}
+        # objects (type one of "input" or "output"), not lists of strings.
+        field_schema["item_schemas"] = {
+            "inputs": TS_INPUT_OUTPUT_ITEM_SCHEMA,
+            "outputs": TS_INPUT_OUTPUT_ITEM_SCHEMA,
+        }
     return {
         "type": "field_schema",
         "level": child_level,
-        "schema": {
-            "identifier_pattern": schema.identifier_patterns[child_level],
-            "required_fields": schema.required_fields[child_level],
-        },
+        "schema": field_schema,
     }
 
 
