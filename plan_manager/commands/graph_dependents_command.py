@@ -47,7 +47,7 @@ class GraphDependentsCommand(Command):
                 },
                 "step_id": {
                     "type": "string",
-                    "description": "step_id of the target step within the plan.",
+                    "description": "Origin step, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 },
                 "direction": {
                     "type": "string",

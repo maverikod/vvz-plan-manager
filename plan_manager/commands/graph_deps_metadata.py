@@ -25,7 +25,7 @@ def get_graph_deps_metadata(cls) -> dict:
                 "required": True,
             },
             "step_id": {
-                "description": "step_id of the target step within the plan.",
+                "description": "Target step, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": True,
             },
@@ -46,9 +46,9 @@ def get_graph_deps_metadata(cls) -> dict:
             },
             "error": {
                 "description": "Domain error returned when the plan or the step cannot be resolved.",
-                "code": "PLAN_NOT_FOUND | STEP_NOT_FOUND",
-                "message": "Human-readable message identifying the missing plan or step.",
-                "details": "None for these error codes.",
+                "code": "PLAN_NOT_FOUND | STEP_NOT_FOUND | AMBIGUOUS_STEP_ID",
+                "message": "Human-readable message identifying the missing, or ambiguous, plan or step.",
+                "details": "matches (sorted candidate canonical paths) for AMBIGUOUS_STEP_ID; none otherwise.",
             },
         },
         "usage_examples": [
@@ -68,6 +68,11 @@ def get_graph_deps_metadata(cls) -> dict:
                 "description": "No step with the given step_id exists in the resolved plan.",
                 "message": "step not found: {step_id}",
                 "solution": "Inspect the plan tree to find a valid step_id and retry.",
+            },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare local step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
             },
         },
         "best_practices": [
