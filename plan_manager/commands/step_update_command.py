@@ -19,6 +19,7 @@ from plan_manager.domain.concept import CONCEPT_ID_PATTERN
 from plan_manager.domain.concept_store import list_concept_ids
 from plan_manager.domain.relation import RELATION_TYPES
 from plan_manager.domain.project_binding import require_project_bound
+from plan_manager.domain.step import validate_ts_inputs_outputs
 from plan_manager.domain.step_store import (
     get_step,
     update_step_fields_and_concepts,
@@ -98,6 +99,38 @@ def _validate_relations_field(fields: dict[str, Any]) -> list[dict[str, str]] | 
             {"type": relation_type, "from_concept": from_concept, "to_concept": to_concept}
         )
     return result
+
+
+def _validate_ts_fields(level: int, merged_fields: dict[str, Any]) -> None:
+    """Reject a level-4 (TS) step's merged fields if inputs/outputs are malformed.
+
+    Bug 26fa21a5: applies the shared nested item schema (see
+    plan_manager.domain.step.validate_ts_inputs_outputs) to the fully
+    merged fields dict -- the state that would actually be persisted --
+    before any write happens, so an invalid mutation is rejected
+    atomically: no revision is recorded and no context block is staled.
+
+    Args:
+        level: The target step's hierarchy level; only level 4 (TS) is
+            checked, since inputs/outputs only exist at that level.
+        merged_fields: The step's fields dict after applying this call's
+            patch on top of the existing stored fields.
+
+    Raises:
+        DomainCommandError: With code INVALID_STEP_FIELD_SHAPE when one or
+            more inputs/outputs items fail the nested schema, message
+            joining every problem found, and details carrying the
+            structured per-item problem list.
+    """
+    if level != 4:
+        return
+    problems = validate_ts_inputs_outputs(merged_fields)
+    if problems:
+        raise DomainCommandError(
+            "INVALID_STEP_FIELD_SHAPE",
+            "; ".join(problem["message"] for problem in problems),
+            {"field": "fields", "problems": problems},
+        )
 
 
 def _ensure_concepts_exist(
@@ -288,6 +321,7 @@ class StepUpdateCommand(Command):
                     return domain_error("CASCADE_REQUIRED", str(exc))
                 merged_fields = dict(target.fields)
                 merged_fields.update(fields)
+                _validate_ts_fields(target.level, merged_fields)
                 if project_present:
                     update_step_fields_concepts_project(
                         conn, target.uuid, merged_fields, new_concepts, normalized_project_id
