@@ -40,7 +40,7 @@ def get_step_get_metadata(cls: type) -> dict[str, Any]:
                 "required": True,
             },
             "step_id": {
-                "description": "Human-readable step identifier (e.g. G-001, T-006, A-003).",
+                "description": "Step to look up, as UUID, canonical path (e.g. G-001/T-006/A-003), or unambiguous local step id (e.g. G-001, T-006, A-003); a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": True,
             },

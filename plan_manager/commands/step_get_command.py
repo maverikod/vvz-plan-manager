@@ -49,7 +49,7 @@ class StepGetCommand(Command):
                 },
                 "step_id": {
                     "type": "string",
-                    "description": "Human-readable step identifier (e.g. G-001, T-006, A-003) to look up within the plan.",
+                    "description": "Step to look up, as UUID, canonical path (e.g. G-001/T-006/A-003), or unambiguous local step id (e.g. G-001, T-006, A-003); a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 },
                 "include_runtime": {
                     "type": "boolean",
