@@ -45,11 +45,16 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "each a list of JSON objects, never bare strings: each item is "
             "{name, type, description} where name and description are "
             "non-empty strings and type must be one of \"input\" or "
-            "\"output\". step_update itself stores inputs/outputs as given "
-            "and does not reject a malformed item at write time; malformed "
-            "items are instead surfaced as parse.inputs_outputs findings by "
-            "the plan_validate mechanical gate, whose message states this "
-            "same expected shape and allowed type values."
+            "\"output\". step_update validates the complete merged "
+            "inputs/outputs against this nested item schema BEFORE any "
+            "write: a malformed item (a bare string, a missing "
+            "name/type/description, or a type outside the \"input\"/"
+            "\"output\" enum) is rejected atomically with "
+            "INVALID_STEP_FIELD_SHAPE -- no revision is recorded and no "
+            "context block is staled. The same shape and allowed type "
+            "values are what the plan_validate mechanical gate's "
+            "parse.inputs_outputs check reports for any pre-existing "
+            "invalid state (bug 26fa21a5)."
         ),
         "parameters": {
             "plan": {
@@ -157,11 +162,13 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                     "fields": {"inputs": ["source-file-path"]},
                 },
                 "explanation": (
-                    "Accepted at write time by step_update (no rejection here), but plan_validate's "
-                    "parse.inputs_outputs check will report findings such as "
-                    "\"inputs[0] must be an object\" or \"inputs[0].type must be a non-empty string "
-                    "(expected item shape {name, type, description}; type must be one of \"input\" "
-                    "or \"output\")\"."
+                    "Rejected atomically at write time with INVALID_STEP_FIELD_SHAPE -- no "
+                    "revision is recorded and no context block is staled. The error message "
+                    "states findings such as \"inputs[0] must be an object\" or "
+                    "\"inputs[0].type must be a non-empty string (expected item shape "
+                    "{name, type, description}; type must be one of \"input\" or "
+                    "\"output\")\", the same wording plan_validate's parse.inputs_outputs "
+                    "check reports for any pre-existing invalid state."
                 ),
             },
         ],
@@ -187,9 +194,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "solution": "Call concept_list and retry with existing concept_id values.",
             },
             "INVALID_STEP_FIELD_SHAPE": {
-                "description": "The supplied fields or concepts payload has an invalid shape, such as fields.relations containing strings instead of relation objects.",
+                "description": "The supplied fields or concepts payload has an invalid shape, such as fields.relations containing strings instead of relation objects, or -- for a level-4 (TS) step -- fields.inputs/fields.outputs containing an item that is not an object with non-empty name/type/description and type one of \"input\"/\"output\".",
                 "message": "invalid step field shape",
-                "solution": "Use relation objects with type, from_concept, and to_concept, and concepts as a list of C-NNN strings.",
+                "solution": "Use relation objects with type, from_concept, and to_concept; concepts as a list of C-NNN strings; and, for a TS step, inputs/outputs items shaped {name, type, description} with type one of \"input\" or \"output\".",
             },
             "CASCADE_REQUIRED": {
                 "description": "The target step is not directly mutable and no cascade_uuid was supplied.",
@@ -223,7 +230,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "Use fields.relations only with objects shaped as {type, from_concept, to_concept}.",
             "For a level-4 (TS) step, use fields.inputs/fields.outputs only with objects shaped as "
             "{name, type, description}, with type one of \"input\" or \"output\" -- see the "
-            "context_common/context_bundle field_schema item_schemas for the same contract.",
+            "context_common/context_bundle field_schema item_schemas for the same contract. A "
+            "malformed item is now rejected atomically at write time (INVALID_STEP_FIELD_SHAPE), "
+            "not merely reported later by plan_validate.",
             "Omit cascade_uuid for direct-mode updates on non-frozen steps; supply it only when working inside an open cascade.",
             "Re-read the step with step_get after the call to confirm the patch was applied as expected.",
         ],
