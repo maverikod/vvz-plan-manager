@@ -33,6 +33,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -1457,3 +1458,184 @@ def test_run_r5_transport_failure_on_plan_create_fails_not_skips():
     plan_create_result = next(r for r in results if r.name == "R5_plan_create")
     assert plan_create_result.status == ls.STATUS_FAIL
     assert "boom" in plan_create_result.detail
+
+
+# --------------------------------------------------------------------------
+# run_r6_write_intent_negation (bug 5ebe3ce5, wrong_output, major): the
+# parse.atomic_single_code_file check used to flag a negated ("do not
+# modify X") second-file reference as an additional write target purely
+# because its sentence also carried a write-intent verb. The negation
+# sub-check is marker-gated SKIP on a pre-fix server -- judged by directly
+# inspecting the live plan_validate JSON report rather than a help/doc
+# marker, since this bug's fix is behavioral, not documentation. The
+# true-positive sub-check (a genuinely commanded second write) is never
+# marker-gated: it must hold on both a pre-fix and a post-fix server.
+# Exercised purely against a _ScriptedClient, no real network.
+# --------------------------------------------------------------------------
+
+
+def _r6_step_create_sequence():
+    """Stateful step_create outcome: G-001 (level 3), T-001 (level 4), then
+    one level-5 AS per call, its step_id echoing the requested slug."""
+    calls: list[dict] = []
+
+    def _step_create(params):
+        calls.append(dict(params))
+        level = params["level"]
+        if level == 3:
+            return _ok({"uuid": "g-uuid", "step_id": "G-001"})
+        if level == 4:
+            return _ok({"uuid": "t-uuid", "step_id": "T-001"})
+        idx = sum(1 for c in calls if c["level"] == 5)
+        return _ok({"uuid": f"a{idx}-uuid", "step_id": params["slug"]})
+
+    return calls, _step_create
+
+
+def _r6_report(*, negated_flagged: bool, second_write_flagged: bool) -> str:
+    """Build a plan_validate-shaped JSON report string carrying a
+    parse.atomic_single_code_file finding for the negated reference and/or
+    the true-positive second write, per the given flags -- mirroring the
+    real gate's render_json shape closely enough for
+    _r6_report_flags_path to parse."""
+    findings = []
+    if negated_flagged:
+        findings.append(
+            {
+                "check_id": "parse.atomic_single_code_file",
+                "severity": "error",
+                "artifact_path": "G-001/T-001/negation-case",
+                "message": (
+                    "AS_MULTIPLE_CODE_FILES: target_file="
+                    f"{ls.R6_NEGATED_TARGET!r}; additional_write_targets=[{ls.R6_NEGATED_REF!r}]; "
+                    "source_fields=['prompt']"
+                ),
+            }
+        )
+    if second_write_flagged:
+        findings.append(
+            {
+                "check_id": "parse.atomic_single_code_file",
+                "severity": "error",
+                "artifact_path": "G-001/T-001/true-positive-case",
+                "message": (
+                    "AS_MULTIPLE_CODE_FILES: target_file="
+                    f"{ls.R6_TP_TARGET!r}; additional_write_targets=[{ls.R6_TP_SECOND!r}]; "
+                    "source_fields=['prompt']"
+                ),
+            }
+        )
+    return json.dumps(
+        {
+            "checks": [{"check_id": "parse.atomic_single_code_file", "findings": findings, "passed": not findings}],
+            "green": not findings,
+        }
+    )
+
+
+def _r6_client(*, negated_flagged: bool, second_write_flagged: bool) -> "_ScriptedClient":
+    _calls, step_create = _r6_step_create_sequence()
+    report = _r6_report(negated_flagged=negated_flagged, second_write_flagged=second_write_flagged)
+    return _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r6-plan"}),
+            "context_common": _ok({}),
+            "step_create": step_create,
+            "step_update": _ok({"uuid": "updated", "revision_uuid": "rev-1"}),
+            "plan_validate": _ok({"green": not (negated_flagged or second_write_flagged), "report": report}),
+            "plan_delete": _ok({"deleted": True}),
+        }
+    )
+
+
+def test_run_r6_pre_fix_server_skips_negation_check_but_flags_true_positive():
+    """A server predating the 5ebe3ce5 fix: the negation check SKIPs
+    (AS_MULTIPLE_CODE_FILES still fires on the negated reference), but the
+    checker's pre-existing ability to flag a genuine second write still
+    PASSes -- both are how a real pre-fix server behaves."""
+    client = _r6_client(negated_flagged=True, second_write_flagged=True)
+
+    results = asyncio.run(ls.run_r6_write_intent_negation(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R6_negated_reference_not_flagged"].status == ls.STATUS_SKIP
+    assert ls.R6_PRE_FIX_SKIP_REASON in by_name["R6_negated_reference_not_flagged"].detail
+    assert by_name["R6_true_positive_second_write_still_flagged"].status == ls.STATUS_PASS
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+
+
+def test_run_r6_post_fix_server_passes_every_check():
+    client = _r6_client(negated_flagged=False, second_write_flagged=True)
+
+    results = asyncio.run(ls.run_r6_write_intent_negation(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R6_negated_reference_not_flagged"].status == ls.STATUS_PASS
+    assert by_name["R6_true_positive_second_write_still_flagged"].status == ls.STATUS_PASS
+
+
+def test_run_r6_true_positive_missing_is_a_fail_not_a_skip():
+    """If the checker's power regressed too (the genuine second write is no
+    longer flagged at all), that must FAIL loudly, never SKIP -- only the
+    negation sub-check is marker-gated."""
+    client = _r6_client(negated_flagged=False, second_write_flagged=False)
+
+    results = asyncio.run(ls.run_r6_write_intent_negation(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R6_true_positive_second_write_still_flagged"].status == ls.STATUS_FAIL
+
+
+def test_run_r6_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient({"plan_create": RuntimeError("boom")})
+
+    results = asyncio.run(ls.run_r6_write_intent_negation(client))
+
+    plan_create_result = next(r for r in results if r.name == "R6_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail
+
+
+def test_run_r6_step_create_recipe_covers_both_as_cases_under_one_ts():
+    client = _r6_client(negated_flagged=True, second_write_flagged=True)
+
+    asyncio.run(ls.run_r6_write_intent_negation(client))
+
+    step_create_calls = [params for name, params in client.calls if name == "step_create"]
+    levels = [c["level"] for c in step_create_calls]
+    assert levels == [3, 4, 5, 5]
+    slugs = [c["slug"] for c in step_create_calls if c["level"] == 5]
+    assert slugs == ["negation-case", "true-positive-case"]
+
+    context_common_calls = [c for name, c in client.calls if name == "context_common"]
+    assert len(context_common_calls) == 4  # recompiled before each of the 4 non-level-3 creates
+
+
+def test_r6_report_flags_path_matches_target_check_id_only():
+    report = json.dumps(
+        {
+            "checks": [
+                {
+                    "check_id": "parse.atomic_single_code_file",
+                    "findings": [
+                        {"message": f"AS_MULTIPLE_CODE_FILES: additional_write_targets=[{ls.R6_NEGATED_REF!r}]"},
+                    ],
+                },
+                {
+                    "check_id": "parse.target_file",
+                    "findings": [{"message": ls.R6_TP_SECOND}],
+                },
+            ],
+        }
+    )
+    assert ls._r6_report_flags_path(report, ls.R6_NEGATED_REF) is True
+    # A path mentioned only under a DIFFERENT check_id must not count.
+    assert ls._r6_report_flags_path(report, ls.R6_TP_SECOND) is False
+
+
+def test_r6_report_flags_path_handles_malformed_report_gracefully():
+    assert ls._r6_report_flags_path("not json", ls.R6_NEGATED_REF) is False
+    assert ls._r6_report_flags_path(None, ls.R6_NEGATED_REF) is False
+    assert ls._r6_report_flags_path(42, ls.R6_NEGATED_REF) is False

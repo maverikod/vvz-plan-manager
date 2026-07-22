@@ -1755,6 +1755,165 @@ async def run_r5_step_id_selector_docs(client: Any) -> list[CheckResult]:
     return results
 
 
+R6_PRE_FIX_SKIP_REASON = (
+    "server predates the 5ebe3ce5 write-intent negation fix "
+    "(AS_MULTIPLE_CODE_FILES still fires on a negated reference) "
+    "-- redeploy pending"
+)
+
+R6_NEGATED_TARGET = "src/live_smoke_r6_target_negation.py"
+R6_NEGATED_REF = "src/live_smoke_r6_legacy.py"
+R6_TP_TARGET = "src/live_smoke_r6_target_tp.py"
+R6_TP_SECOND = "src/live_smoke_r6_second.py"
+
+
+def _r6_report_flags_path(report_json: Any, path: str) -> bool:
+    """True iff ``path`` appears in any parse.atomic_single_code_file
+    finding message within a plan_validate JSON report string.
+
+    ``report_json`` is the raw ``report`` field of a plan_validate result
+    (a JSON-encoded string per plan_manager.verify.finding.render_json);
+    a non-string or unparseable value is treated as "not flagged" so a
+    malformed report surfaces as a FAIL on the caller's own assertion
+    rather than a spurious match here.
+    """
+    if not isinstance(report_json, str):
+        return False
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return False
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if not isinstance(check, dict) or check.get("check_id") != "parse.atomic_single_code_file":
+            continue
+        for finding in check.get("findings", []) or []:
+            if isinstance(finding, dict) and path in str(finding.get("message", "")):
+                return True
+    return False
+
+
+async def run_r6_write_intent_negation(client: Any) -> list[CheckResult]:
+    """Bug 5ebe3ce5 (wrong_output, major): the parse.atomic_single_code_file
+    check (finding AS_MULTIPLE_CODE_FILES) used to treat every path-like
+    token on a write-intent-bearing SENTENCE as an additional write target,
+    with no regard for negation or read-only reference intent -- "Do not
+    modify X" was flagged as commanding a second write to X purely because
+    its sentence also carried a write-intent verb ("modify").
+
+    R6_negated_reference_not_flagged is marker-gated SKIP (never FAIL) on a
+    server predating the fix: this pipeline runs against whatever server is
+    currently deployed, and a pre-fix server correctly (for ITS OWN,
+    unfixed code) still emits the finding for the negated reference -- an
+    expected, reportable state (redeploy pending), not a pipeline defect
+    (same convention as run_r4_ts_inputs_outputs_schema/run_r5_step_id_
+    selector_docs' marker-gated doc checks). It is judged by inspecting the
+    live plan_validate JSON report directly, not by a help/doc marker,
+    because this bug's fix is behavioral, not documentation.
+
+    R6_true_positive_second_write_still_flagged is NOT marker-gated: a
+    genuinely commanded second write ("Also update Y") must still be
+    flagged on both a pre-fix and a post-fix server -- the fix narrows the
+    check's false positives, it must not blunt its true positives.
+    """
+    results: list[CheckResult] = []
+    plan_name = unique_suffix("r6-plan")
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": plan_name})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R6_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R6_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R6_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R6_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R6_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        as_specs = [
+            (
+                "negation-case",
+                R6_NEGATED_TARGET,
+                f"Update {R6_NEGATED_TARGET} to add the helper. Do not modify {R6_NEGATED_REF}.",
+            ),
+            (
+                "true-positive-case",
+                R6_TP_TARGET,
+                f"Update {R6_TP_TARGET} to add the helper. Also update {R6_TP_SECOND}.",
+            ),
+        ]
+        for slug, target_file, prompt in as_specs:
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+            if not ok:
+                results.append(CheckResult("4", f"R6_context_common(T,level5,{slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": slug, "parent_step_id": t_id})
+            a_id = _extract_step_id(res) if ok else None
+            if not ok or a_id is None:
+                results.append(CheckResult("4", f"R6_step_create(A,{slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(
+                client, "step_update",
+                {
+                    "plan": plan_uuid, "step_id": a_id,
+                    "fields": {
+                        "name": slug, "target_file": target_file, "operation": "modify_file",
+                        "priority": 1, "prompt": prompt, "verification": "pytest tests/test_live_smoke_r6.py",
+                    },
+                },
+            )
+            if not ok:
+                results.append(CheckResult("4", f"R6_step_update(A,{slug})", STATUS_FAIL, str(res)))
+                return results
+        results.append(CheckResult("4", "R6_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_id}"))
+
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R6_plan_validate", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R6_plan_validate", STATUS_PASS))
+        report = res.get("report")
+
+        negated_flagged = _r6_report_flags_path(report, R6_NEGATED_REF)
+        if negated_flagged:
+            results.append(
+                CheckResult(
+                    "4", "R6_negated_reference_not_flagged", STATUS_SKIP,
+                    R6_PRE_FIX_SKIP_REASON,
+                )
+            )
+        else:
+            results.append(CheckResult("4", "R6_negated_reference_not_flagged", STATUS_PASS))
+
+        second_write_flagged = _r6_report_flags_path(report, R6_TP_SECOND)
+        results.append(
+            CheckResult(
+                "4", "R6_true_positive_second_write_still_flagged",
+                STATUS_PASS if second_write_flagged else STATUS_FAIL,
+                "" if second_write_flagged else f"report={report!r}",
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -1831,6 +1990,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r3_project_view(client, catalog_names, args.project)
     results += await run_r4_ts_inputs_outputs_schema(client)
     results += await run_r5_step_id_selector_docs(client)
+    results += await run_r6_write_intent_negation(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

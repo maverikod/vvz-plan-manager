@@ -114,12 +114,9 @@ _WRITE_INTENT_RE = re.compile(
     r"переименовать|переименовывать|переместить|перемещать|добавить|добавлять)\b",
     re.IGNORECASE,
 )
-# Negation cues that, anywhere in a clause, defeat that clause's write intent
-# regardless of which write verb the clause also contains -- covers pre-verb
-# negation ("do not modify", "не изменяй") and the "without/без <doing>" form
-# ("without changing it") without needing per-verb gerund matching: the cue's
-# mere presence in the same (already fine-grained, see _CLAUSE_SPLIT_RE)
-# clause is enough to void that clause's write verdict (bug 5ebe3ce5).
+# Cues that void a clause's write verdict regardless of which write verb it
+# also contains: pre-verb negation ("do not modify", "не изменяй") and the
+# "without/без <doing>" form (bug 5ebe3ce5).
 _NEGATION_CUE_RE = re.compile(
     r"\b(?:do\s+not|does\s+not|did\s+not|don't|doesn't|didn't|"
     r"must\s+not|should\s+not|shall\s+not|will\s+not|won't|"
@@ -127,33 +124,22 @@ _NEGATION_CUE_RE = re.compile(
     r"не|нельзя|никогда|без)\b",
     re.IGNORECASE,
 )
-# Explicit read-only / reference-only framing that also defeats a clause's
-# write intent even with no negation word present -- covers phrasing like
-# "reuse conventions from X" or "X as a pattern" where X is named purely as
-# a read-only reference, plus a bare "read" verb clause (bug 5ebe3ce5).
+# Explicit read-only/reference framing that also voids a clause's write
+# verdict with no negation word present, e.g. "reuse conventions from X" or
+# "X as a pattern" (bug 5ebe3ce5).
 _READ_ONLY_MARKER_RE = re.compile(
-    r"\b(?:"
-    r"read-only|reference\s+only|for\s+reference|for\s+comparison|"
+    r"\b(?:read-only|reference\s+only|for\s+reference|for\s+comparison|"
     r"as\s+a\s+(?:pattern|reference|template|guide|example)|"
     r"reus\w*\s+conventions?\s+from|"
-    r"(?:leave|left|remains?|stays?)\s+(?:it\s+)?unchanged|"
-    r"unchanged|"
-    r"read"
-    r")\b",
+    r"(?:leave|left|remains?|stays?)\s+(?:it\s+)?unchanged|unchanged|read)\b",
     re.IGNORECASE,
 )
-# Clause boundaries finer than plain sentence splits: also break on commas
-# and on contrastive conjunctions (English + Russian), so a single sentence
-# mixing a genuine write instruction with a negated/read-only reference to
-# another path ("Update A, don't touch B" / "do not modify B but DO update
-# C") is judged clause-by-clause instead of as one whole-segment verdict
-# (bug 5ebe3ce5 -- the prior whole-segment approach let any write verb
-# anywhere in the segment claim every path in it, negated or not).
+# Clause boundaries finer than plain sentences: also split on commas and
+# contrastive conjunctions, so one sentence mixing a real write with a
+# negated/read-only reference is judged clause-by-clause, not as one
+# whole-segment verdict (bug 5ebe3ce5).
 _CLAUSE_SPLIT_RE = re.compile(
-    r"(?<=[.!?;])\s+"
-    r"|\n+"
-    r"|\s*,\s+"
-    r"|\s+(?:but|however|while|whereas|yet|но|однако|зато)\s+",
+    r"(?<=[.!?;])\s+|\n+|\s*,\s+|\s+(?:but|however|while|whereas|yet|но|однако|зато)\s+",
     re.IGNORECASE,
 )
 
@@ -163,13 +149,8 @@ def _normal_path(value: str) -> str:
 
 
 def _clause_commands_write(clause: str) -> bool:
-    """Return True iff `clause` carries unnegated, non-read-only write intent.
-
-    A clause commands a write only when it contains a write-intent verb AND
-    contains neither a negation cue (_NEGATION_CUE_RE) nor an explicit
-    read-only/reference framing marker (_READ_ONLY_MARKER_RE); either one
-    voids the verb match for this clause (bug 5ebe3ce5).
-    """
+    """True iff `clause` has a write verb and neither a negation cue nor a
+    read-only/reference marker (either voids the verb match; bug 5ebe3ce5)."""
     if _NEGATION_CUE_RE.search(clause) or _READ_ONLY_MARKER_RE.search(clause):
         return False
     return bool(_WRITE_INTENT_RE.search(clause))
@@ -179,12 +160,9 @@ def _clause_commands_write(clause: str) -> bool:
 class WriteTargetHit:
     """One code path found on a commanded-write clause of a step field.
 
-    Attributes:
-        field_name: The step field ("prompt"/"verification"/"operation")
-            the clause was read from.
-        path: The normalized project-relative path named in the clause.
-        clause: The exact clause text the path was extracted from (its
-            source span), already stripped of leading/trailing whitespace.
+    field_name: step field ("prompt"/"verification"/"operation") read.
+    path: normalized project-relative path named in the clause.
+    clause: exact (stripped) clause text the path was extracted from.
     """
 
     field_name: str
@@ -194,16 +172,10 @@ class WriteTargetHit:
 
 def _additional_write_target_hits(step: Step, target_file: str) -> list[WriteTargetHit]:
     """Return every additional (non-target) code path on a commanded-write
-    clause across the step's prompt/verification/operation fields.
-
-    Each field's text is split into clauses (_CLAUSE_SPLIT_RE: sentence
-    boundaries, newlines, commas, and contrastive conjunctions) so a single
-    sentence mixing a real write instruction with a negated or read-only
-    reference to another path is judged clause-by-clause rather than as one
-    whole-segment verdict. A path is a hit only when its clause commands a
-    write (_clause_commands_write) and the path differs from `target_file`.
-    Hits are de-duplicated by (field_name, path), keeping the first clause
-    span encountered, and returned in field-then-first-seen order.
+    clause across prompt/verification/operation, clause-by-clause
+    (_CLAUSE_SPLIT_RE) so a negated/read-only reference in the same
+    sentence as a real write never counts (bug 5ebe3ce5). De-duplicated by
+    (field_name, path), first clause span kept.
     """
     normalized_target = _normal_path(target_file)
     hits: list[WriteTargetHit] = []
@@ -229,15 +201,10 @@ def _additional_write_target_hits(step: Step, target_file: str) -> list[WriteTar
 
 
 def _additional_write_targets(step: Step, target_file: str) -> dict[str, list[str]]:
-    """Return explicit code paths mentioned on commanded-write clauses, by field.
-
-    A thin path-only projection of _additional_write_target_hits, kept as
-    its own function because it is the stable shape existing unit tests and
-    callers pin: {field_name: sorted unique additional write-target paths}.
-    A path mentioned only under negated ("do not modify X") or read-only
-    ("reuse conventions from X", "X as a reference") intent is never
-    included (bug 5ebe3ce5); a genuinely commanded second write still is.
-    """
+    """Path-only projection of _additional_write_target_hits: the stable
+    {field_name: sorted unique paths} shape existing callers/tests pin. A
+    negated or read-only-framed path is never included (bug 5ebe3ce5); a
+    genuinely commanded second write still is."""
     result: dict[str, set[str]] = {}
     for hit in _additional_write_target_hits(step, target_file):
         result.setdefault(hit.field_name, set()).add(hit.path)
@@ -247,13 +214,11 @@ def _additional_write_targets(step: Step, target_file: str) -> dict[str, list[st
 def check_parse_atomic_single_code_file(tree: GateTree, steps: list[Step]) -> list[Finding]:
     """Reject an AS that explicitly commands writes to a second code file.
 
-    Uses clause-level intent classification (_additional_write_target_hits)
-    so a path mentioned only under negated or read-only intent never counts
-    as an additional write target (bug 5ebe3ce5); the finding message keeps
-    its prior stable prefix (AS_MULTIPLE_CODE_FILES / target_file=
-    / additional_write_targets= / source_fields=) and appends a `spans`
-    list carrying, per flagged path, the source field, the exact clause it
-    was found on, and its inferred intent.
+    Clause-level intent classification (_additional_write_target_hits)
+    means a negated/read-only-framed path never counts (bug 5ebe3ce5); the
+    message keeps its prior stable prefix (AS_MULTIPLE_CODE_FILES/
+    target_file=/additional_write_targets=/source_fields=) plus an appended
+    `spans` list: per flagged path, its source field, exact clause, intent.
     """
     findings: list[Finding] = []
     for step in steps:
@@ -268,12 +233,7 @@ def check_parse_atomic_single_code_file(tree: GateTree, steps: list[Step]) -> li
         paths = sorted({hit.path for hit in hits})
         source_fields = sorted({hit.field_name for hit in hits})
         spans = [
-            {
-                "field": hit.field_name,
-                "path": hit.path,
-                "clause": hit.clause,
-                "intent": "commanded_write",
-            }
+            {"field": hit.field_name, "path": hit.path, "clause": hit.clause, "intent": "commanded_write"}
             for hit in sorted(hits, key=lambda h: (h.field_name, h.path))
         ]
         findings.append(Finding(
