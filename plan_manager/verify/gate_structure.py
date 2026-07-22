@@ -4,7 +4,7 @@ import re
 from pathlib import PurePosixPath
 
 from plan_manager.domain.concept import CONCEPT_ID_PATTERN
-from plan_manager.domain.step import SLUG_PATTERN, STEP_ID_PATTERNS, Step
+from plan_manager.domain.step import SLUG_PATTERN, STEP_ID_PATTERNS, Step, validate_ts_inputs_outputs
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
 from plan_manager.views.branch import Branch
@@ -48,49 +48,29 @@ def check_parse_required_fields(tree: GateTree, steps: list[Step]) -> list[Findi
 
 
 def check_parse_inputs_outputs(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """Check structured tactical inputs and outputs."""
+    """Check structured tactical inputs and outputs.
+
+    Delegates the nested {name, type, description} item schema (including
+    the type enum "input"/"output") to the shared
+    plan_manager.domain.step.validate_ts_inputs_outputs validator, the same
+    single source of truth enforced at the step_update and layout_import
+    write boundaries (bug 26fa21a5). This check remains the read-time
+    reporting surface; the write boundaries now reject the payload before
+    it ever reaches here.
+    """
     findings: list[Finding] = []
     for step in steps:
         if step.level != 4:
             continue
-        for field_name in ("inputs", "outputs"):
-            value = step.fields.get(field_name)
-            if not isinstance(value, list):
-                findings.append(
-                    Finding(
-                        check_id="parse.inputs_outputs",
-                        severity="error",
-                        artifact_path=_path(tree, step),
-                        message=f"{field_name} must be a list",
-                    )
+        for problem in validate_ts_inputs_outputs(step.fields):
+            findings.append(
+                Finding(
+                    check_id="parse.inputs_outputs",
+                    severity="error",
+                    artifact_path=_path(tree, step),
+                    message=problem["message"],
                 )
-                continue
-            for index, item in enumerate(value):
-                if not isinstance(item, dict):
-                    findings.append(
-                        Finding(
-                            check_id="parse.inputs_outputs",
-                            severity="error",
-                            artifact_path=_path(tree, step),
-                            message=f"{field_name}[{index}] must be an object",
-                        )
-                    )
-                    continue
-                for key in ("name", "type", "description"):
-                    if not isinstance(item.get(key), str) or not item[key].strip():
-                        findings.append(
-                            Finding(
-                                check_id="parse.inputs_outputs",
-                                severity="error",
-                                artifact_path=_path(tree, step),
-                                message=(
-                                    f"{field_name}[{index}].{key} must be "
-                                    "a non-empty string (expected item shape "
-                                    "{name, type, description}; type must be "
-                                    'one of "input" or "output")'
-                                ),
-                            )
-                        )
+            )
     return findings
 
 
