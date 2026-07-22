@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from plan_manager.views.context_blocks import TS_INPUT_OUTPUT_ITEM_SCHEMA
+
 
 def project_binding_capabilities() -> dict[str, Any]:
     """Return machine-readable notes for project binding APIs."""
@@ -501,6 +503,10 @@ def planning_standards_reference() -> dict[str, Any]:
                     "atomic_steps",
                     "status",
                 ],
+                "item_schemas": {
+                    "inputs": TS_INPUT_OUTPUT_ITEM_SCHEMA,
+                    "outputs": TS_INPUT_OUTPUT_ITEM_SCHEMA,
+                },
             },
             "AS": {
                 "level": 5,
