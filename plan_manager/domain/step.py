@@ -6,7 +6,7 @@ per-level identifier patterns and validation rules.
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID
 
 from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
@@ -26,6 +26,95 @@ SLUG_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 CONCEPT_ID_PATTERN: re.Pattern[str] = re.compile(r"^C-\d{3}$")
+
+
+# Bug 26fa21a5: allowed values of a level-4 (TS) inputs/outputs item's "type"
+# key. Enforced (not merely documented) by validate_ts_inputs_outputs below.
+TS_INPUT_OUTPUT_TYPE_VALUES: frozenset[str] = frozenset({"input", "output"})
+
+
+def validate_ts_inputs_outputs(fields: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Validate the nested item schema of a level-4 step's inputs/outputs.
+
+    Single source of truth for the {name, type, description} item contract
+    of a level-4 (TS) step's fields.inputs and fields.outputs -- shared by
+    every write/import boundary that persists a TS step's fields
+    (step_update_command, layout_import), by the context-compilation
+    boundary that refuses to use a structurally invalid TS as a parent
+    (views.context_blocks.common_context), and by the plan_validate
+    mechanical gate's parse.inputs_outputs check (verify.gate_structure),
+    so the accept/reject decision and the finding wording are identical
+    everywhere this shape is enforced or reported (bug 26fa21a5).
+
+    Args:
+        fields: The step's level-specific fields dict (or a merged patch
+            of it) to inspect; only the "inputs" and "outputs" keys are
+            read, each expected to be a list of {name, type, description}
+            objects with type one of "input" or "output".
+
+    Returns:
+        A list of problem dicts, each shaped {"field_name": "inputs" |
+        "outputs", "index": int | None, "message": str}, in field-then-index
+        order; "index" is None when the whole field value is not a list.
+        An empty list means both fields pass the nested item schema.
+    """
+    problems: list[dict[str, Any]] = []
+    for field_name in ("inputs", "outputs"):
+        value = fields.get(field_name)
+        if not isinstance(value, list):
+            problems.append(
+                {"field_name": field_name, "index": None, "message": f"{field_name} must be a list"}
+            )
+            continue
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                problems.append(
+                    {
+                        "field_name": field_name,
+                        "index": index,
+                        "message": f"{field_name}[{index}] must be an object",
+                    }
+                )
+                continue
+            for key in ("name", "description"):
+                if not isinstance(item.get(key), str) or not item[key].strip():
+                    problems.append(
+                        {
+                            "field_name": field_name,
+                            "index": index,
+                            "message": (
+                                f"{field_name}[{index}].{key} must be a non-empty string "
+                                "(expected item shape {name, type, description}; type "
+                                'must be one of "input" or "output")'
+                            ),
+                        }
+                    )
+            type_value = item.get("type")
+            if not isinstance(type_value, str) or not type_value.strip():
+                problems.append(
+                    {
+                        "field_name": field_name,
+                        "index": index,
+                        "message": (
+                            f"{field_name}[{index}].type must be a non-empty string "
+                            "(expected item shape {name, type, description}; type "
+                            'must be one of "input" or "output")'
+                        ),
+                    }
+                )
+            elif type_value not in TS_INPUT_OUTPUT_TYPE_VALUES:
+                problems.append(
+                    {
+                        "field_name": field_name,
+                        "index": index,
+                        "message": (
+                            f'{field_name}[{index}].type must be one of "input" or '
+                            f'"output", got {type_value!r} (expected item shape '
+                            "{name, type, description})"
+                        ),
+                    }
+                )
+    return problems
 
 
 class StepValidationError(ValueError):
