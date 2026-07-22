@@ -33,6 +33,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -578,6 +579,17 @@ class _FakeRpc:
 
     async def execute_command(self, name, params=None, use_cmd_endpoint=False):
         self._outer.direct_calls.append((name, params or {}))
+        # Per-name scripted direct responses (used by _ScriptedClient for
+        # KNOWN_BUILTIN_COMMANDS names like "help") take priority over the
+        # single shared _direct_outcome fallback below.
+        direct_responses = getattr(self._outer, "_direct_responses", None)
+        if direct_responses and name in direct_responses:
+            outcome = direct_responses[name]
+            if callable(outcome) and not isinstance(outcome, BaseException):
+                outcome = outcome(params or {})
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
         outcome = self._outer._direct_outcome
         if outcome is _UNSET:
             raise AssertionError(
@@ -804,13 +816,17 @@ class _ScriptedClient:
     """Fake client whose queued path (_call) returns a scripted response per
     command name -- a value, an exception instance, or a callable(params)
     for dynamic/stateful behavior -- and records every (name, params) call
-    in call order. None of the coroutines tested below invoke a
-    KNOWN_BUILTIN_COMMANDS name, so the direct path is left unconfigured
-    (reached only, and loudly, on a routing mistake).
+    in call order. Most coroutines tested below never invoke a
+    KNOWN_BUILTIN_COMMANDS name, so the direct path is left unconfigured by
+    default (reached only, and loudly, on a routing mistake); pass
+    ``direct_responses`` (same value shapes as ``responses``) for tests
+    that DO call a builtin like "help" (routed via client._rpc.execute_command,
+    not client._call -- see live_smoke.py's KNOWN_BUILTIN_COMMANDS module note).
     """
 
-    def __init__(self, responses: dict[str, Any]):
+    def __init__(self, responses: dict[str, Any], direct_responses: dict[str, Any] | None = None):
         self._responses = responses
+        self._direct_responses = direct_responses or {}
         self.calls: list[tuple[str, dict]] = []
         self.direct_calls: list[tuple[str, dict]] = []
         self._direct_outcome = _UNSET
@@ -1118,3 +1134,130 @@ def test_run_tier2_scoped_ordinary_command_unaffected_by_gate_red_labeling():
     result = results[0]
     assert result.name == "plan_status"
     assert result.status == ls.STATUS_PASS
+
+
+# --------------------------------------------------------------------------
+# R4 (bug ad529347-925e-44c9-8b04-df9d82c07cb9): nested TS inputs/outputs
+# schema documentation. Two scripted-server scenarios: a "pre-fix" server
+# whose responses never carry ls.R4_TYPE_ENUM_MARKER (every marker-dependent
+# sub-check must SKIP, never FAIL) and a "post-fix" server whose responses
+# do carry it (every sub-check must PASS). Neither scenario touches the
+# live network -- both exercise run_r4_ts_inputs_outputs_schema purely
+# against a _ScriptedClient, verifying the logic before the orchestrator
+# ever deploys the corresponding production fix.
+# --------------------------------------------------------------------------
+
+
+def _r4_step_create_sequence():
+    calls: list[dict] = []
+
+    def _step_create(params):
+        calls.append(dict(params))
+        idx = len(calls)
+        return _ok({"uuid": f"uuid-{idx}", "step_id": f"{params['slug']}-{idx}"})
+
+    return calls, _step_create
+
+
+def _r4_client(*, help_marker: bool, field_schema_marker: bool, gate_marker: bool) -> "_ScriptedClient":
+    _calls, step_create = _r4_step_create_sequence()
+    help_payload = {
+        "metadata": {
+            "detailed_description": (
+                f"inputs item shape {{name, type, description}}; type must be {ls.R4_TYPE_ENUM_MARKER}"
+                if help_marker
+                else "inputs is a list."
+            )
+        }
+    }
+    field_schema_content = (
+        [{"type": "field_schema", "level": 4, "schema": {"item_schemas": {"inputs": {"properties": {"type": f"must be {ls.R4_TYPE_ENUM_MARKER}"}}}}}]
+        if field_schema_marker
+        else [{"type": "field_schema", "level": 4, "schema": {"required_fields": ["inputs", "outputs"]}}]
+    )
+    # plan_validate's real "report" field is itself JSON-encoded TEXT (a
+    # string produced by the server's own json.dumps of the findings
+    # structure -- confirmed live: "report":"{\"checks\":[...]}" alongside a
+    # sibling "format":"json"), never a nested object; build it the same
+    # way here so the marker's embedded quote characters round-trip through
+    # json.dumps -> json.loads exactly as they do against the live server.
+    gate_message = (
+        f"inputs[0].type must be a non-empty string; type must be {ls.R4_TYPE_ENUM_MARKER}"
+        if gate_marker
+        else "inputs[0].type must be a non-empty string"
+    )
+    gate_report = json.dumps(
+        {"checks": [{"check_id": "parse.inputs_outputs", "findings": [{"message": gate_message}]}]}
+    )
+    return _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r4-plan"}),
+            "context_common": _sequence(
+                _ok({}),  # plan, level 3
+                _ok({"content": field_schema_content}),  # G, level 4
+            ),
+            "step_create": step_create,
+            "step_update": _ok({"uuid": "updated"}),
+            "plan_validate": _ok({"green": False, "report": gate_report}),
+            "plan_delete": _ok({"deleted": True}),
+        },
+        # "help" is a KNOWN_BUILTIN_COMMANDS name (routed via the direct
+        # execute_command path, never the queued client._call path).
+        direct_responses={"help": _ok(help_payload)},
+    )
+
+
+def test_run_r4_pre_fix_server_skips_every_marker_check_without_failing():
+    client = _r4_client(help_marker=False, field_schema_marker=False, gate_marker=False)
+
+    results = asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R4_help_documents_item_schema"].status == ls.STATUS_SKIP
+    assert by_name["R4_field_schema_documents_item_schema"].status == ls.STATUS_SKIP
+    assert by_name["R4_gate_error_states_expected_shape"].status == ls.STATUS_SKIP
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert ls.R4_PRE_FIX_SKIP_REASON in by_name["R4_help_documents_item_schema"].detail
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+
+
+def test_run_r4_post_fix_server_passes_every_marker_check():
+    client = _r4_client(help_marker=True, field_schema_marker=True, gate_marker=True)
+
+    results = asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R4_help_documents_item_schema"].status == ls.STATUS_PASS
+    assert by_name["R4_field_schema_documents_item_schema"].status == ls.STATUS_PASS
+    assert by_name["R4_gate_error_states_expected_shape"].status == ls.STATUS_PASS
+    assert by_name["R4_step_update_malformed_item_accepted"].status == ls.STATUS_PASS
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+
+
+def test_run_r4_malformed_item_shape_reaches_step_update_unrejected():
+    """The probe payload step_update receives is the deliberately malformed
+    item (empty "type") -- step_update is expected to ACCEPT it (no
+    write-boundary rejection change in scope for this bug); only
+    plan_validate is expected to flag it afterward."""
+    client = _r4_client(help_marker=True, field_schema_marker=True, gate_marker=True)
+
+    asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
+
+    step_update_calls = [params for name, params in client.calls if name == "step_update"]
+    assert len(step_update_calls) == 1
+    assert step_update_calls[0]["fields"]["inputs"] == [{"name": "x", "type": "", "description": "y"}]
+
+
+def test_run_r4_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient(
+        {
+            "help": _ok({"metadata": {"detailed_description": "no marker here"}}),
+            "plan_create": RuntimeError("boom"),
+        }
+    )
+
+    results = asyncio.run(ls.run_r4_ts_inputs_outputs_schema(client))
+
+    plan_create_result = next(r for r in results if r.name == "R4_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail

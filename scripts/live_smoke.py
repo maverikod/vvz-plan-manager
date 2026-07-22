@@ -1138,6 +1138,65 @@ async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckR
 
 # ---- Tier 4: named bug regressions -----------------------------------------
 
+# Bug ad529347: exact substring committed as the fix into
+# plan_manager/commands/step_update_metadata.py (detailed_description +
+# best_practices), plan_manager/views/context_blocks.py
+# (TS_INPUT_OUTPUT_ITEM_SCHEMA, surfaced in level-4 field_schema.item_schemas),
+# and plan_manager/verify/gate_structure.py (check_parse_inputs_outputs's
+# parse.inputs_outputs finding message). Kept as one named constant so a
+# future wording change updates every call site below in one place.
+R4_TYPE_ENUM_MARKER = 'one of "input" or "output"'
+
+R4_PRE_FIX_SKIP_REASON = (
+    "server predates the ad529347 nested inputs/outputs schema-doc fix "
+    "(marker text absent) -- redeploy pending"
+)
+
+
+def _r4_marker_present(payload: Any) -> bool:
+    """True iff R4_TYPE_ENUM_MARKER appears literally in ``payload``.
+
+    Deliberately uses ``str(payload)`` rather than ``json.dumps(payload)``:
+    the marker itself contains literal double-quote characters (``one of
+    "input" or "output"``), and json.dumps ALWAYS backslash-escapes
+    embedded quotes in string values, so a naive
+    ``marker in json.dumps(payload)`` check can never match -- confirmed by
+    direct experiment (``json.dumps({"a": marker})`` yields ``\\"input\\"``,
+    never a bare ``"input"``). Python's own ``str()``/``repr()`` of a dict
+    shows string values containing double quotes UNCHANGED (it switches to
+    single-quote wrapping instead of escaping), so the marker's literal
+    quote characters survive the round trip.
+    """
+    return R4_TYPE_ENUM_MARKER in str(payload)
+
+
+def _r4_gate_report_marker_present(validate_res: Any) -> bool:
+    """True iff R4_TYPE_ENUM_MARKER appears in plan_validate's gate report.
+
+    plan_validate's ``data.report`` field is itself JSON-encoded TEXT (a
+    string the server produced via its own json.dumps of the findings
+    structure -- confirmed live: ``"report":"{\\"checks\\":[...]}"``,
+    alongside a sibling ``"format":"json"`` field), not a nested object. A
+    message value containing literal quote characters therefore appears
+    INSIDE that report string as backslash-escaped quotes (JSON's own
+    encoding of an embedded quote), so a plain ``_r4_marker_present`` check
+    on the raw string never matches -- the report must be json.loads'd
+    first to decode those escapes back to literal characters, then
+    stringified with ``str()`` (never ``json.dumps`` again, for the same
+    reason as ``_r4_marker_present``). Falls back to checking the raw
+    payload directly if ``report`` is absent or not a JSON-decodable string
+    (e.g. a scripted test double already handing back a bare string).
+    """
+    if not isinstance(validate_res, dict):
+        return _r4_marker_present(validate_res)
+    report = validate_res.get("report")
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except (TypeError, ValueError):
+            pass
+    return _r4_marker_present(report if report is not None else validate_res)
+
 
 async def run_r1_todo_anchor_none(client: Any) -> list[CheckResult]:
     """Bug c72e047c: literal anchor_type="none" (and description="none") used
@@ -1354,6 +1413,124 @@ async def run_r3_project_view(client: Any, catalog_names: frozenset[str], projec
     return results
 
 
+async def run_r4_ts_inputs_outputs_schema(client: Any) -> list[CheckResult]:
+    """Bug ad529347: step_update help and the level-4 (TS) context_common /
+    context_bundle field_schema used to document fields.inputs /
+    fields.outputs only as bare field names, with no nested item contract
+    ({name, type, description}, type one of "input" or "output") -- a
+    client could not construct a valid TS inputs/outputs payload from the
+    published metadata alone, and the mechanical gate's own
+    parse.inputs_outputs finding ("...type must be a non-empty string") did
+    not restate the expected shape or allowed type values either.
+
+    R4_TYPE_ENUM_MARKER is the exact substring committed into
+    step_update_metadata.py / context_blocks.py (TS_INPUT_OUTPUT_ITEM_SCHEMA)
+    / gate_structure.py (check_parse_inputs_outputs) as the fix for this
+    bug. Each of the three sub-checks below independently reports SKIP
+    (never FAIL) when the marker is absent from the live response -- this
+    pipeline runs against whatever server is currently deployed, and a
+    pre-fix server is an expected, reportable state (redeploy pending), not
+    a pipeline defect. A transport/call failure on the underlying command
+    itself (plan_create, context_common, step_create, step_update,
+    plan_validate) still FAILs normally, same as every other Tier-4 check.
+
+    Deliberately does NOT change what step_update or plan_validate
+    accept/reject: the malformed item used to probe the gate message
+    (type="") is expected to be STORED by step_update (no write-time
+    rejection, out of scope per this bug) and only surfaced as a
+    parse.inputs_outputs finding by the subsequent plan_validate call.
+    """
+    results: list[CheckResult] = []
+
+    ok, help_res = await call(client, "help", {"cmdname": "step_update"})
+    if not ok:
+        results.append(CheckResult("4", "R4_help_documents_item_schema", STATUS_FAIL, str(help_res)))
+    else:
+        marker_present = _r4_marker_present(help_res)
+        results.append(
+            CheckResult(
+                "4", "R4_help_documents_item_schema",
+                STATUS_PASS if marker_present else STATUS_SKIP,
+                "" if marker_present else R4_PRE_FIX_SKIP_REASON,
+            )
+        )
+
+    plan_name = unique_suffix("r4-plan")
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": plan_name})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R4_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R4_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R4_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, common = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok or not isinstance(common, dict):
+            results.append(CheckResult("4", "R4_context_common(G,level4)", STATUS_FAIL, str(common)))
+            return results
+        blocks = common.get("content") or common.get("blocks") or []
+        field_schema_block = next(
+            (b for b in blocks if isinstance(b, dict) and b.get("type") == "field_schema"), None
+        )
+        field_schema_marker_present = field_schema_block is not None and _r4_marker_present(field_schema_block)
+        results.append(
+            CheckResult(
+                "4", "R4_field_schema_documents_item_schema",
+                STATUS_PASS if field_schema_marker_present else STATUS_SKIP,
+                "" if field_schema_marker_present else R4_PRE_FIX_SKIP_REASON,
+            )
+        )
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R4_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        # Deliberately malformed item (empty "type"): still accepted at
+        # write time by design (see docstring above) -- only plan_validate
+        # is expected to flag it.
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": t_id,
+                "fields": {
+                    "inputs": [{"name": "x", "type": "", "description": "y"}],
+                    "outputs": [],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R4_step_update_malformed_item_accepted", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R4_step_update_malformed_item_accepted", STATUS_PASS))
+
+        ok, validate_res = await call(client, "plan_validate", {"plan": plan_uuid})
+        gate_marker_present = ok and _r4_gate_report_marker_present(validate_res)
+        results.append(
+            CheckResult(
+                "4", "R4_gate_error_states_expected_shape",
+                STATUS_PASS if gate_marker_present else STATUS_SKIP,
+                "" if gate_marker_present else R4_PRE_FIX_SKIP_REASON,
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -1428,6 +1605,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r1_todo_anchor_none(client)
     results += await run_r2_same_file_order_ambiguity(client)
     results += await run_r3_project_view(client, catalog_names, args.project)
+    results += await run_r4_ts_inputs_outputs_schema(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
