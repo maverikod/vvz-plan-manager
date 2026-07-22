@@ -63,7 +63,7 @@ def get_step_create_metadata(cls: type) -> dict[str, Any]:
                 "required": True,
             },
             "parent_step_id": {
-                "description": "Human-readable step_id of the parent step; required for levels 4 and 5, must be absent for level 3.",
+                "description": "Parent step, as UUID, canonical path, or unambiguous local step id; required for levels 4 and 5, must be absent for level 3. A bare local id matching more than one step is rejected with AMBIGUOUS_PARENT_STEP_ID.",
                 "type": "string",
                 "required": False,
             },
