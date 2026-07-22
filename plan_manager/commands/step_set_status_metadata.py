@@ -57,7 +57,7 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
                 "required": True,
             },
             "step_id": {
-                "description": "Human-readable identifier of the step to transition.",
+                "description": "Step to transition, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": True,
             },
@@ -151,6 +151,11 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
                 "description": "No step with the given step_id exists in the resolved plan.",
                 "message": "step not found: {step_id}",
                 "solution": "Call step_tree to list valid step_id values for the plan.",
+            },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare local step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
             },
             "INVALID_TRANSITION": {
                 "description": "The requested status is not a legal transition from the step's current status, or is needs_review, which is reserved for cascade propagation.",

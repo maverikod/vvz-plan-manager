@@ -50,7 +50,7 @@ class StepSetStatusCommand(Command):
                 },
                 "step_id": {
                     "type": "string",
-                    "description": "Human-readable identifier of the step to transition.",
+                    "description": "Step to transition, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 },
                 "status": {
                     "type": "string",
