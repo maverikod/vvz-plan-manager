@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from plan_manager.cascade.write import step_snapshot
+from plan_manager.domain.step import validate_ts_inputs_outputs
 from plan_manager.domain.step_store import create_step
 
 _DIR_PATTERN = re.compile(r"^([GT])-(\d{3})-[a-z0-9-]+$")
@@ -34,7 +35,15 @@ def validate_descriptor_dir(dir_path: Path, expected_prefix: str) -> list[str]:
         return [
             f"{readme_path}: step_id {data['step_id']!r} does not match directory {declared_id!r}"
         ]
-    return []
+    issues: list[str] = []
+    if expected_prefix == "T":
+        # Bug 26fa21a5: catch a malformed nested inputs/outputs item shape
+        # during the pre-flight (dry-run-safe) layout validation pass, before
+        # import_steps ever reaches the write boundary in
+        # _create_step_from_descriptor below.
+        for problem in validate_ts_inputs_outputs(data):
+            issues.append(f"{readme_path}: {problem['message']}")
+    return issues
 
 
 def validate_as_file(as_path: Path) -> list[str]:
@@ -68,6 +77,19 @@ def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: s
         for k, v in data.items()
         if k not in {"step_id", "depends_on", "concepts", "project_id", "status"}
     }
+    if level == 4:
+        # Bug 26fa21a5: last-resort defense at the actual write boundary --
+        # validate_descriptor_dir above already screens this during
+        # validate_layout, but a caller that invokes import_steps directly
+        # must still get atomic rejection (the surrounding db_connection()
+        # transaction rolls back on this exception, so nothing partial is
+        # persisted).
+        problems = validate_ts_inputs_outputs(fields)
+        if problems:
+            raise ValueError(
+                f"{descriptor_path}: invalid TS inputs/outputs item shape: "
+                + "; ".join(problem["message"] for problem in problems)
+            )
     step = create_step(
         conn,
         plan_uuid,
