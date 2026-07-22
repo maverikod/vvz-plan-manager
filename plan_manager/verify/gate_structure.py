@@ -85,7 +85,9 @@ def check_parse_inputs_outputs(tree: GateTree, steps: list[Step]) -> list[Findin
                                 artifact_path=_path(tree, step),
                                 message=(
                                     f"{field_name}[{index}].{key} must be "
-                                    "a non-empty string"
+                                    "a non-empty string (expected item shape "
+                                    "{name, type, description}; type must be "
+                                    'one of "input" or "output")'
                                 ),
                             )
                         )
