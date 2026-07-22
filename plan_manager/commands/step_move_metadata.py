@@ -51,12 +51,12 @@ def get_step_move_metadata(cls: type) -> dict[str, Any]:
                 "required": True,
             },
             "step_id": {
-                "description": "Human-readable identifier of the step to move.",
+                "description": "Step to move, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": True,
             },
             "new_parent_step_id": {
-                "description": "Human-readable step_id of the new parent step.",
+                "description": "New parent step, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_PARENT_STEP_ID.",
                 "type": "string",
                 "required": True,
             },
