@@ -36,7 +36,7 @@ class ContextBundleCommand(Command):
             "type": "object",
             "properties": {
                 "plan": {"type": "string", "description": "Plan identifier."},
-                "node": {"type": "string", "description": "Parent node path, UUID, local step id, or 'plan'."},
+                "node": {"type": "string", "description": "Parent node: 'plan', a canonical step path, a step UUID, or an unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID."},
                 "child_level": {"type": "integer", "description": "Level of children being authored: 3, 4, or 5."},
                 "children": {"type": "array", "description": "Children array; each item has ref and concepts."},
                 "shared_concepts": {"type": "array", "items": {"type": "string"}, "description": "Optional shared concept scope."},
@@ -51,7 +51,7 @@ class ContextBundleCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
-            "node": {"description": "Parent node path, UUID, local step id, or 'plan'.", "type": "string", "required": True},
+            "node": {"description": "Parent node: 'plan', a canonical step path, a step UUID, or an unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.", "type": "string", "required": True},
             "child_level": {"description": "Level of children being authored: 3, 4, or 5.", "type": "integer", "required": True},
             "children": {"description": "Children array; each item has ref and concepts.", "type": "array", "required": True},
             "shared_concepts": {"description": "Optional common scope.", "type": "array", "required": False},

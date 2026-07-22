@@ -14,6 +14,11 @@ ERROR_CASES = {
         "message": "step not found: {node}",
         "solution": "Call step_tree and retry with a canonical step path.",
     },
+    "AMBIGUOUS_STEP_ID": {
+        "description": "A bare local step_id such as T-001 or A-001 given as node (or as step_definition_of) resolves to more than one step.",
+        "message": "step_id {node} resolves to multiple steps",
+        "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
+    },
     "CONCEPT_NOT_FOUND": {
         "description": "A supplied concept id is not present in the plan MRS.",
         "message": "concept not found: {concept_id}",

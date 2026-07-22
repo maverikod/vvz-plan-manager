@@ -36,7 +36,7 @@ class ContextCompileCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier."},
                 "concepts": {"type": "array", "items": {"type": "string"}, "description": "MRS concept ids to compile."},
                 "child_level": {"type": "integer", "description": "Target child level: 3, 4, or 5. Defaults to 5."},
-                "include": {"type": "object", "description": "Optional include flags for standards, field_schema, authoring_template, and step_definition_of."},
+                "include": {"type": "object", "description": "Optional include flags for standards, field_schema, authoring_template, and step_definition_of (a step reference: UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID)."},
                 "revision": {"type": "string", "description": "Optional current head revision UUID."},
                 "cascade_uuid": {"type": "string", "description": "Optional open cascade UUID."},
             },
@@ -50,7 +50,7 @@ class ContextCompileCommand(Command):
             **BASE_PARAMETERS,
             "concepts": {"description": "MRS concept ids to compile.", "type": "array", "required": True},
             "child_level": {"description": "Target child level: 3, 4, or 5. Defaults to 5.", "type": "integer", "required": False},
-            "include": {"description": "Optional include flags for baked blocks and step_definition_of.", "type": "object", "required": False},
+            "include": {"description": "Optional include flags for baked blocks and step_definition_of (a step reference: UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID).", "type": "object", "required": False},
         }
         return context_metadata(
             cls,
