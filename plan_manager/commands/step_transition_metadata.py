@@ -180,6 +180,11 @@ def get_step_transition_metadata(cls: type) -> dict[str, Any]:
                 "message": "step not found: {step_id}",
                 "solution": "Call step_tree and retry with a valid canonical path.",
             },
+            "AMBIGUOUS_STEP_ID": {
+                "description": "A bare local step_id such as T-001 or A-001 resolves to more than one step.",
+                "message": "step_id {step_id} resolves to multiple steps",
+                "solution": "Retry with the canonical step path from step_tree or with the step UUID.",
+            },
             "INVALID_SCOPE": {
                 "description": "scope is not whole_plan, G-NNN, or G-NNN/T-NNN, or was supplied together with step_id.",
                 "message": "invalid transition scope",
