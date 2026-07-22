@@ -7,8 +7,16 @@ reference all documented those fields only as bare field names -- with no
 nested item contract ({name, type, description}, type one of "input" or
 "output"). The mechanical gate's own validation finding
 ("*.type must be a non-empty string") did not restate that shape either.
-These tests pin the documentation/metadata/error-wording fix in place;
-none of them change what step_update or the gate accept/reject.
+Most of these tests pin the documentation/metadata/error-wording fix in
+place and do not change what step_update or the gate accept/reject.
+
+EXCEPTION: test_gate_inputs_outputs_now_rejects_out_of_enum_type below was
+originally test_gate_inputs_outputs_still_accepts_any_non_empty_type_string,
+pinning that an out-of-enum type string was accepted. Bug 26fa21a5 (the
+child bug filed off this one's own documentation gap) closed that
+enforcement hole: the gate and every write boundary now reject it. See
+tests/test_bug_26fa21a5_ts_inputs_outputs_write_rejection.py for the full
+write-time-rejection regression suite.
 """
 
 import uuid
@@ -168,10 +176,11 @@ def test_gate_inputs_outputs_message_states_expected_shape_and_type_values() -> 
     assert _TYPE_ENUM_MARKER in message
 
 
-def test_gate_inputs_outputs_still_accepts_any_non_empty_type_string() -> None:
-    """Documentation-only fix: an out-of-enum but non-empty type string
-    (e.g. "banana") is still NOT rejected -- write-boundary enum enforcement
-    is explicitly out of scope for bug ad529347 (tracked separately)."""
+def test_gate_inputs_outputs_now_rejects_out_of_enum_type() -> None:
+    """Bug 26fa21a5 flips this: an out-of-enum but non-empty type string
+    (e.g. "banana") is now rejected by the shared validator, both here at
+    gate-check time and (per test_bug_26fa21a5) at every write boundary --
+    superseding the old ad529347-era pin that this was accepted."""
     step = _step(
         4,
         "T-002",
@@ -184,7 +193,11 @@ def test_gate_inputs_outputs_still_accepts_any_non_empty_type_string() -> None:
 
     findings = check_parse_inputs_outputs(tree, [step])
 
-    assert findings == []
+    assert len(findings) == 1
+    message = findings[0].message
+    assert message.startswith("inputs[0].type")
+    assert "must be one of" in message
+    assert "banana" in message
 
 
 def test_gate_inputs_outputs_reports_object_shape_error_for_string_items() -> None:
