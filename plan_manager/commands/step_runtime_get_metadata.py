@@ -26,7 +26,7 @@ def get_step_runtime_get_metadata(cls) -> dict:
                 "required": True,
             },
             "step_id": {
-                "description": "Step identifier to resolve within the plan.",
+                "description": "Step to read runtime for, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": True,
             },

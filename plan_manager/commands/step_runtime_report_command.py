@@ -36,7 +36,7 @@ class StepRuntimeReportCommand(Command):
             "type": "object",
             "properties": {
                 "plan": {"type": "string", "description": "Plan identifier."},
-                "step_id": {"type": "string", "description": "Step identifier."},
+                "step_id": {"type": "string", "description": "Step to merge runtime into, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID."},
                 "payload": {
                     "type": "object",
                     "description": "Partial RuntimeRecord payload.",
