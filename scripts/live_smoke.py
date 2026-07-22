@@ -1588,6 +1588,173 @@ async def run_r4_ts_inputs_outputs_schema(client: Any) -> list[CheckResult]:
     return results
 
 
+R5_PRE_FIX_SKIP_REASON = (
+    "server predates the 761ee3dd step-id-selector documentation fix "
+    "(marker text absent) -- redeploy pending"
+)
+
+# (command_name, ambiguous_code) for every command audited under bug
+# 761ee3dd whose step-addressing parameter now documents all three selector
+# forms (UUID, canonical path, unambiguous local step id) and the ambiguity
+# error case it can raise.
+R5_DOC_TARGETS: list[tuple[str, str]] = [
+    ("step_get", "AMBIGUOUS_STEP_ID"),
+    ("step_delete", "AMBIGUOUS_STEP_ID"),
+    ("step_move", "AMBIGUOUS_STEP_ID"),
+    ("step_set_status", "AMBIGUOUS_STEP_ID"),
+    ("graph_deps", "AMBIGUOUS_STEP_ID"),
+    ("graph_dependents", "AMBIGUOUS_STEP_ID"),
+    ("graph_impact", "AMBIGUOUS_STEP_ID"),
+    ("step_create", "AMBIGUOUS_PARENT_STEP_ID"),
+    ("step_update", "AMBIGUOUS_STEP_ID"),
+    ("step_transition", "AMBIGUOUS_STEP_ID"),
+    ("context_common", "AMBIGUOUS_STEP_ID"),
+    ("step_runtime_get", "AMBIGUOUS_STEP_ID"),
+    ("step_runtime_report", "AMBIGUOUS_STEP_ID"),
+]
+
+
+def _r5_doc_marker_present(payload: Any, ambiguous_code: str) -> bool:
+    """True iff ``payload`` documents a selector-form wording marker
+    ("unambiguous" or "canonical path") AND names ``ambiguous_code``
+    somewhere in the payload (its error_cases). Uses ``str(payload)`` the
+    same way ``_r4_marker_present`` does (see its docstring for why a naive
+    json.dumps substring check is unsafe for embedded-quote markers; this
+    marker has none, but the helper stays consistent with its sibling)."""
+    text = str(payload)
+    return ("unambiguous" in text or "canonical path" in text) and ambiguous_code in text
+
+
+async def run_r5_step_id_selector_docs(client: Any) -> list[CheckResult]:
+    """Bug 761ee3dd (documentation, critical): step-addressing commands
+    accept a UUID, a canonical path, or an unambiguous bare local step id,
+    and reject an ambiguous bare id with AMBIGUOUS_STEP_ID (or
+    AMBIGUOUS_PARENT_STEP_ID for a parent/new-parent reference) --
+    resolve_step_ref's ambiguity rejection itself already shipped before
+    this bug and is exercised unconditionally below. What used to be
+    missing was the DOCUMENTATION: several command schemas/metadata named
+    only a plain "human-readable step_id" and omitted the ambiguity error
+    case from error_cases entirely.
+
+    The R5_help_documents_selector(*) sub-checks are marker-gated SKIP
+    (never FAIL) when the marker text is absent from the live help
+    response -- this pipeline runs against whatever server is currently
+    deployed, and a pre-761ee3dd server is an expected, reportable state
+    (redeploy pending), not a pipeline defect (same convention as
+    run_r4_ts_inputs_outputs_schema's R4_PRE_FIX_SKIP_REASON checks).
+
+    The R5_step_get_* behavioral sub-checks assert the pre-existing
+    resolution contract directly against a throwaway scratch plan and are
+    NOT marker-gated: two atomic steps are created with the same local id
+    "A-001" under two different tactical parents, so the bare id is
+    genuinely ambiguous; step_get with that bare id must fail with
+    AMBIGUOUS_STEP_ID while the canonical path and the UUID of one of them
+    must each resolve.
+    """
+    results: list[CheckResult] = []
+
+    for command_name, ambiguous_code in R5_DOC_TARGETS:
+        ok, help_res = await call(client, "help", {"cmdname": command_name})
+        if not ok:
+            results.append(
+                CheckResult("4", f"R5_help_documents_selector({command_name})", STATUS_FAIL, str(help_res))
+            )
+            continue
+        marker_present = _r5_doc_marker_present(help_res, ambiguous_code)
+        results.append(
+            CheckResult(
+                "4", f"R5_help_documents_selector({command_name})",
+                STATUS_PASS if marker_present else STATUS_SKIP,
+                "" if marker_present else R5_PRE_FIX_SKIP_REASON,
+            )
+        )
+
+    plan_name = unique_suffix("r5-plan")
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": plan_name})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R5_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "root"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R5_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        t_ids: list[str] = []
+        for slug in ("tactical-one", "tactical-two"):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+            if not ok:
+                results.append(CheckResult("4", f"R5_context_common(G,level4,{slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(
+                client, "step_create", {"plan": plan_uuid, "level": 4, "slug": slug, "parent_step_id": g_id}
+            )
+            t_id = _extract_step_id(res) if ok else None
+            if not ok or t_id is None:
+                results.append(CheckResult("4", f"R5_step_create(T,{slug})", STATUS_FAIL, str(res)))
+                return results
+            t_ids.append(t_id)
+
+        a_uuid_first: Optional[str] = None
+        for index, (t_id, slug) in enumerate(zip(t_ids, ("atomic-one", "atomic-two"))):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+            if not ok:
+                results.append(CheckResult("4", f"R5_context_common(T,level5,{slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(
+                client, "step_create", {"plan": plan_uuid, "level": 5, "slug": slug, "parent_step_id": t_id}
+            )
+            a_id = _extract_step_id(res) if ok else None
+            if not ok or a_id is None:
+                results.append(CheckResult("4", f"R5_step_create(A,{slug})", STATUS_FAIL, str(res)))
+                return results
+            if index == 0:
+                a_uuid_first = res.get("uuid") if isinstance(res, dict) else None
+        results.append(CheckResult("4", "R5_scratch_ambiguous_A-001_created", STATUS_PASS, f"parents={t_ids}"))
+
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": "A-001"})
+        bare_rejected = (not ok) and "AMBIGUOUS_STEP_ID" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R5_step_get_bare_ambiguous_id_rejected",
+                STATUS_PASS if bare_rejected else STATUS_FAIL,
+                "" if bare_rejected else f"ok={ok} res={res!r}",
+            )
+        )
+
+        canonical_path = f"{g_id}/{t_ids[0]}/A-001"
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": canonical_path})
+        canonical_resolved = ok and isinstance(res, dict) and res.get("step_id") == "A-001"
+        results.append(
+            CheckResult(
+                "4", "R5_step_get_canonical_path_resolves",
+                STATUS_PASS if canonical_resolved else STATUS_FAIL,
+                "" if canonical_resolved else f"ok={ok} res={res!r}",
+            )
+        )
+
+        if a_uuid_first is None:
+            results.append(CheckResult("4", "R5_step_get_uuid_resolves", STATUS_FAIL, "no uuid captured at creation"))
+        else:
+            ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_uuid_first})
+            uuid_resolved = ok and isinstance(res, dict) and res.get("step_id") == "A-001"
+            results.append(
+                CheckResult(
+                    "4", "R5_step_get_uuid_resolves",
+                    STATUS_PASS if uuid_resolved else STATUS_FAIL,
+                    "" if uuid_resolved else f"ok={ok} res={res!r}",
+                )
+            )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -1663,6 +1830,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r2_same_file_order_ambiguity(client)
     results += await run_r3_project_view(client, catalog_names, args.project)
     results += await run_r4_ts_inputs_outputs_schema(client)
+    results += await run_r5_step_id_selector_docs(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

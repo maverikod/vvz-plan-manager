@@ -1294,3 +1294,166 @@ def test_run_r4_transport_failure_on_plan_create_fails_not_skips():
     plan_create_result = next(r for r in results if r.name == "R4_plan_create")
     assert plan_create_result.status == ls.STATUS_FAIL
     assert "boom" in plan_create_result.detail
+
+
+# --------------------------------------------------------------------------
+# run_r5_step_id_selector_docs (bug 761ee3dd, documentation): step-addressing
+# commands accept UUID/canonical-path/unambiguous-local-id and reject an
+# ambiguous bare id with AMBIGUOUS_STEP_ID (or AMBIGUOUS_PARENT_STEP_ID for a
+# parent reference); several command schemas/metadata used to omit that from
+# their step_id-family parameter description and error_cases. The doc-marker
+# sub-checks are marker-gated SKIP on a pre-fix server (same convention as
+# R4); the behavioral sub-checks assert the pre-existing (already shipped)
+# ambiguity-rejection resolution logic directly and are never marker-gated.
+# Exercised purely against a _ScriptedClient, no real network.
+# --------------------------------------------------------------------------
+
+
+def _r5_help_responder(*, doc_marker: bool):
+    """Callable direct_responses["help"] value: keys its payload off the
+    requested cmdname, using ls.R5_DOC_TARGETS as the single source of truth
+    for which ambiguous code each command's help is expected to advertise."""
+    codes_by_command = dict(ls.R5_DOC_TARGETS)
+
+    def _respond(params):
+        command_name = params.get("cmdname")
+        ambiguous_code = codes_by_command.get(command_name, "AMBIGUOUS_STEP_ID")
+        if doc_marker:
+            text = (
+                f"Step reference, as UUID, canonical path, or unambiguous local "
+                f"step id; a bare local id matching more than one step is "
+                f"rejected with {ambiguous_code}."
+            )
+            error_cases = {ambiguous_code: {"description": "ambiguous bare id"}}
+        else:
+            text = "Human-readable step identifier."
+            error_cases = {}
+        return _ok({"metadata": {"parameters": {"step_id": {"description": text}}, "error_cases": error_cases}})
+
+    return _respond
+
+
+def _r5_step_create_sequence():
+    """Stateful step_create outcome: G-001 (level 3), T-001/T-002 (level 4,
+    both children of G-001), and A-001 TWICE at level 5 -- one under T-001,
+    one under T-002 -- reproducing the genuine cross-parent local-id
+    ambiguity bug 761ee3dd's behavioral checks exercise."""
+    calls: list[dict] = []
+
+    def _step_create(params):
+        calls.append(dict(params))
+        level = params["level"]
+        if level == 3:
+            return _ok({"uuid": "g-uuid", "step_id": "G-001"})
+        if level == 4:
+            idx = sum(1 for c in calls if c["level"] == 4)
+            return _ok({"uuid": f"t{idx}-uuid", "step_id": f"T-00{idx}"})
+        idx = sum(1 for c in calls if c["level"] == 5)
+        return _ok({"uuid": f"a{idx}-uuid", "step_id": "A-001"})
+
+    return calls, _step_create
+
+
+def _r5_step_get(params):
+    """Stateful step_get outcome: the bare local id "A-001" is genuinely
+    ambiguous (two live matches) and fails with AMBIGUOUS_STEP_ID; any other
+    reference (a canonical path or a UUID) resolves to the first A step."""
+    step_id = params.get("step_id")
+    if step_id == "A-001":
+        return {
+            "success": False,
+            "error": {
+                "code": -32000,
+                "message": "step_id A-001 resolves to multiple steps",
+                "data": {
+                    "domain_code": "AMBIGUOUS_STEP_ID",
+                    "step_id": "A-001",
+                    "matches": ["G-001/T-001/A-001", "G-001/T-002/A-001"],
+                },
+            },
+        }
+    return _ok({"uuid": "a1-uuid", "step_id": "A-001", "path": "G-001/T-001/A-001"})
+
+
+def _r5_client(*, doc_marker: bool) -> "_ScriptedClient":
+    _calls, step_create = _r5_step_create_sequence()
+    return _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r5-plan"}),
+            "context_common": _ok({"common_block_id": "blk"}),
+            "step_create": step_create,
+            "step_get": _r5_step_get,
+            "plan_delete": _ok({"deleted": True}),
+        },
+        direct_responses={"help": _r5_help_responder(doc_marker=doc_marker)},
+    )
+
+
+def test_run_r5_pre_fix_server_skips_doc_checks_but_passes_behavioral_checks():
+    """A server predating the 761ee3dd doc fix: every R5_help_documents_selector
+    sub-check SKIPs (marker text absent), but the ambiguity-rejection
+    behavior itself already shipped and must PASS unconditionally."""
+    client = _r5_client(doc_marker=False)
+
+    results = asyncio.run(ls.run_r5_step_id_selector_docs(client))
+
+    by_name = {r.name: r for r in results}
+    for command_name, _code in ls.R5_DOC_TARGETS:
+        result = by_name[f"R5_help_documents_selector({command_name})"]
+        assert result.status == ls.STATUS_SKIP, (command_name, result)
+        assert ls.R5_PRE_FIX_SKIP_REASON in result.detail
+
+    assert by_name["R5_scratch_ambiguous_A-001_created"].status == ls.STATUS_PASS
+    assert by_name["R5_step_get_bare_ambiguous_id_rejected"].status == ls.STATUS_PASS
+    assert by_name["R5_step_get_canonical_path_resolves"].status == ls.STATUS_PASS
+    assert by_name["R5_step_get_uuid_resolves"].status == ls.STATUS_PASS
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+
+
+def test_run_r5_post_fix_server_passes_every_check():
+    client = _r5_client(doc_marker=True)
+
+    results = asyncio.run(ls.run_r5_step_id_selector_docs(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    for command_name, _code in ls.R5_DOC_TARGETS:
+        assert by_name[f"R5_help_documents_selector({command_name})"].status == ls.STATUS_PASS
+
+
+def test_run_r5_step_create_recipe_uses_two_different_tactical_parents():
+    """The two level-5 creates must be parented on DIFFERENT level-4 tactical
+    steps (T-001 and T-002) -- both under the same level-3 G-001 -- so the
+    resulting "A-001" local id collision is a genuine cross-parent
+    ambiguity, not an accidental same-parent duplicate the server would
+    have refused as DUPLICATE_ID."""
+    client = _r5_client(doc_marker=True)
+    asyncio.run(ls.run_r5_step_id_selector_docs(client))
+
+    step_create_calls = [params for name, params in client.calls if name == "step_create"]
+    levels = [c["level"] for c in step_create_calls]
+    assert levels == [3, 4, 4, 5, 5]
+    g_call, t1_call, t2_call, a1_call, a2_call = step_create_calls
+    assert "parent_step_id" not in g_call
+    assert t1_call["parent_step_id"] == "G-001"
+    assert t2_call["parent_step_id"] == "G-001"
+    assert a1_call["parent_step_id"] == "T-001"
+    assert a2_call["parent_step_id"] == "T-002"
+    assert a1_call["parent_step_id"] != a2_call["parent_step_id"]
+
+    context_common_calls = [c for name, c in client.calls if name == "context_common"]
+    assert len(context_common_calls) == 4  # recompiled before each of the 4 non-level-3 creates
+
+
+def test_run_r5_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient(
+        {"plan_create": RuntimeError("boom")},
+        direct_responses={"help": _r5_help_responder(doc_marker=True)},
+    )
+
+    results = asyncio.run(ls.run_r5_step_id_selector_docs(client))
+
+    plan_create_result = next(r for r in results if r.name == "R5_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail
