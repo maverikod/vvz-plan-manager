@@ -160,8 +160,8 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                     "Accepted at write time by step_update (no rejection here), but plan_validate's "
                     "parse.inputs_outputs check will report findings such as "
                     "\"inputs[0] must be an object\" or \"inputs[0].type must be a non-empty string "
-                    "(expected item shape {name, type, description}; type must be one of \\\"input\\\" "
-                    "or \\\"output\\\")\"."
+                    "(expected item shape {name, type, description}; type must be one of \"input\" "
+                    "or \"output\")\"."
                 ),
             },
         ],
