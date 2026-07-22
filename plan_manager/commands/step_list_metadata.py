@@ -44,7 +44,7 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
                 "required": False,
             },
             "parent": {
-                "description": "Optional parent step reference to filter to direct children.",
+                "description": "Optional parent step reference to filter to direct children, as UUID, canonical path, or unambiguous local step id; a bare local id matching more than one step is rejected with AMBIGUOUS_STEP_ID.",
                 "type": "string",
                 "required": False,
             },
