@@ -19,6 +19,7 @@ from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.domain.plan import Plan
 from plan_manager.domain.plan_schema import default_plan_schema
 from plan_manager.domain.relation_store import list_relations
+from plan_manager.domain.step import validate_ts_inputs_outputs
 from plan_manager.storage.canonical import content_hash
 from plan_manager.storage.version_store import get_ref
 from plan_manager.views.dependency_graph import load_steps
@@ -362,6 +363,21 @@ def common_context(
         step = resolve_step_ref(nodes, node, not_found_code="NODE_NOT_FOUND")
         node_path = canonical_step_path(nodes, step)
         concepts = shared_concepts if shared_concepts is not None else list(step.concepts)
+
+    if step is not None and step.level == 4:
+        # Bug 26fa21a5: a level-4 (TS) parent whose own inputs/outputs fail
+        # the nested item schema must never be used to compile context for
+        # its descendants -- the step_definition block below would hand a
+        # structurally invalid parent artifact to a child author. Refuse
+        # before compiling anything, naming the parent and every problem.
+        problems = validate_ts_inputs_outputs(step.fields)
+        if problems:
+            raise DomainCommandError(
+                "PARENT_STEP_INVALID",
+                f"parent {node_path} fails structural parsing: "
+                + "; ".join(problem["message"] for problem in problems),
+                {"node_path": node_path, "problems": problems},
+            )
 
     content = [_authoring_template(child_level), _standards_block(child_level), _field_schema_block(child_level)]
     if step is not None:

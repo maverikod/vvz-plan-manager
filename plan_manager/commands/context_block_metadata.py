@@ -44,6 +44,20 @@ ERROR_CASES = {
         "message": "supplied cascade_uuid is not the plan's open cascade",
         "solution": "Call cascade_begin or cascade_preview and pass the open cascade UUID.",
     },
+    "PARENT_STEP_INVALID": {
+        "description": (
+            "The parent node is a level-4 (TS) step whose fields.inputs/fields.outputs "
+            "fail the nested {name, type, description} item schema (bug 26fa21a5); "
+            "compiling context for its descendants is refused so no child author receives "
+            "a structurally invalid parent artifact."
+        ),
+        "message": "parent {node_path} fails structural parsing: {problems}",
+        "solution": (
+            "Fix the parent TS's inputs/outputs with step_update (each item must be "
+            'an object {name, type, description} with type one of "input" or "output"), '
+            "then retry."
+        ),
+    },
 }
 
 
