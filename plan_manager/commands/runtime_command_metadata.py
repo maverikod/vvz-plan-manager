@@ -37,6 +37,11 @@ COMMON_ERROR_CASES = {
         "message": "cannot mutate frozen plan truth: {details}",
         "solution": "Runtime commands never modify frozen truth; verify the target entity is a runtime entity, not a frozen-truth artifact.",
     },
+    "PLAN_COMPLETED": {
+        "description": "The target plan is marked completed (bug c3950b83): every mutating command that resolves its plan is refused except plan_completed_set and plan_comment_set.",
+        "message": "plan {plan_uuid} is marked completed; call plan_completed_set to unset the completion lock before mutating it",
+        "solution": "Call plan_completed_set(plan, completed=false, changed_by=...) to unlock the plan, then retry.",
+    },
     "INVALID_ANCHOR": {
         "description": "The supplied primary anchor is malformed or does not reference an existing anchor target.",
         "message": "invalid anchor: {details}",
