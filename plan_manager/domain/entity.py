@@ -136,6 +136,14 @@ CENTRAL_REFERENCE_CHECKS: dict[str, tuple[ReferenceCheck, ...]] = {
 class EntityRecord(ABC):
     """Abstract contract shared by addressable Plan Manager entities."""
 
+    # Compact-projection support (bug 8a13977d): the ordered field names a
+    # view=summary caller receives, drawn from this entity's own to_payload()
+    # keys. Declared per-entity, next to that entity's serialization (its
+    # to_payload/dataclass definition) -- empty by default, which makes
+    # to_summary_payload() fall back to the full payload (safe default for
+    # any entity that has not opted into a summary shape yet).
+    SUMMARY_FIELDS: ClassVar[tuple[str, ...]] = ()
+
     @classmethod
     @abstractmethod
     def entity_type(cls) -> str:
@@ -159,6 +167,21 @@ class EntityRecord(ABC):
     @abstractmethod
     def to_payload(self) -> dict[str, Any]:
         """Render the record as a JSON-safe API payload."""
+
+    def to_summary_payload(self) -> dict[str, Any]:
+        """Render a compact projection of this record, restricted to SUMMARY_FIELDS.
+
+        The single shared implementation every entity gets for free: it
+        always starts from this entity's own to_payload() (so any override
+        of to_payload is respected) and whitelists SUMMARY_FIELDS from it.
+        Falls back to the full payload when SUMMARY_FIELDS is empty (the
+        entity has not declared a summary projection yet), so callers always
+        get a JSON-safe dict either way.
+        """
+        full = self.to_payload()
+        if not self.SUMMARY_FIELDS:
+            return full
+        return {name: full.get(name) for name in self.SUMMARY_FIELDS}
 
 
 def _json_safe(value: Any) -> Any:
