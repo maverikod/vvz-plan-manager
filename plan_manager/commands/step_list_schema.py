@@ -3,6 +3,7 @@
 from typing import Any
 
 from plan_manager.commands.runtime_filtering import pagination_schema_properties
+from plan_manager.commands.list_projection import view_schema_properties
 
 def get_step_list_schema() -> dict[str, Any]:
     """Return the machine-readable JSON input schema for step_list.
@@ -42,10 +43,11 @@ def get_step_list_schema() -> dict[str, Any]:
         },
         "fields": {
             "type": "array",
-            "description": "Optional list of entry key names to project each returned step to; when omitted, every entry key is returned in full. Valid names: uuid, step_id, slug, level, project_id, status, parent_path, parent_uuid, fields, depends_on, concepts, path, artifact_path.",
+            "description": "Optional list of entry key names to project each returned step to; when omitted, every entry key is returned in full (or the view=summary default projection, see `view`). Valid names: uuid, step_id, slug, level, project_id, status, parent_path, parent_uuid, fields, depends_on, concepts, path, artifact_path. An explicit fields list always takes precedence over view.",
             "items": {"type": "string"},
         },
         **pagination_schema_properties(),
+        **view_schema_properties(),
     }
     return {
         "type": "object",

@@ -3,6 +3,7 @@
 from typing import Any
 
 from plan_manager.commands.runtime_filtering import pagination_metadata_params
+from plan_manager.commands.list_projection import view_metadata_params
 
 def get_step_list_metadata(cls: type) -> dict[str, Any]:
     """Return the extended metadata dictionary for StepListCommand.
@@ -59,11 +60,12 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
                 "required": False,
             },
             "fields": {
-                "description": "Optional projection of entry key names to return.",
+                "description": "Optional projection of entry key names to return; when supplied, takes precedence over view.",
                 "type": "array",
                 "required": False,
             },
             **pagination_metadata_params(),
+            **view_metadata_params(),
         },
         "return_value": {
             "success": {
@@ -153,6 +155,7 @@ def get_step_list_metadata(cls: type) -> dict[str, Any]:
         },
         "best_practices": [
             "Use the fields parameter to project only the step fields you need and reduce payload size.",
+            "view=summary is a convenience default for fields: every entry key except \"fields\" itself (the level-specific payload, which for atomic steps carries the whole frozen prompt text and dominates row size); pass an explicit fields=[...] to override it -- fields always wins over view when both are given.",
             "Use target_file to find all steps that touch or reference a given file.",
             "Combine level, parent, and status filters to efficiently discover relevant steps.",
             "This command never mutates state; it is safe to call at any time and any status.",

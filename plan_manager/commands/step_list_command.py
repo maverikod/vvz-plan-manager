@@ -24,6 +24,12 @@ from plan_manager.domain.step import Step
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.views.dependency_graph import load_steps
+from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    parse_view,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 ENTRY_KEYS: frozenset[str] = frozenset({
     'uuid',
@@ -40,6 +46,13 @@ ENTRY_KEYS: frozenset[str] = frozenset({
     'path',
     'artifact_path',
 })
+
+# Compact view=summary projection (bug 8a13977d): every ENTRY_KEYS name except
+# "fields", the level-specific payload dict that carries the bulk of a step's
+# size (for level-5/atomic steps, up to and including the whole frozen
+# prompt text). An explicit `fields` argument always takes precedence over
+# `view` -- `view` only supplies a default projection when fields is omitted.
+STEP_SUMMARY_KEYS: list[str] = sorted(ENTRY_KEYS - {"fields"})
 
 
 def _build_entry(nodes: dict[uuid.UUID, Step], step: Step) -> dict[str, Any]:
@@ -129,10 +142,15 @@ class StepListCommand(Command):
         fields: list[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         """Return a flat, paginated listing of a plan's steps with full step fields."""
         try:
+            view_value = parse_view(view)
+            effective_fields = fields
+            if effective_fields is None and view_value == VIEW_SUMMARY:
+                effective_fields = STEP_SUMMARY_KEYS
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
@@ -149,7 +167,7 @@ class StepListCommand(Command):
                 entries.sort(key=lambda entry: (entry["level"], entry["path"]))
                 total = len(entries)
                 page = entries[pagination.offset : pagination.offset + pagination.limit]
-                page = [_project(entry, fields) for entry in page]
+                page = [_project(entry, effective_fields) for entry in page]
                 return SuccessResult(data={
                     "steps": page,
                     "total": total,
