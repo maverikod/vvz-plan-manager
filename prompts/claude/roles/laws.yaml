@@ -108,3 +108,29 @@ laws:
     callers may receive a valid queued handoff. The client is published to PyPI
     (credentials via ~/.pypirc), and the versions of client, server, and docker image
     (when one exists) are ALWAYS identical. Release mechanics: ops/delivery-release.yaml.
+  bugfix_acceptance_cycle: >-
+    [TRIGGER: any bug fix AND any acceptance of new code; user order 2026-07-23]
+    The mandatory cycle is, in order: (1) REPRODUCE the defect (live, through the
+    project's real access surface when the project is a server); (2) FIND THE CAUSE
+    in code; (3) PROVE cause->symptom with concrete evidence; (4) FIX with focused
+    regression tests; (5) BUMP the version (single version source) - always before
+    any deploy; (6) DEPLOY to the project server over ssh root@192.168.254.26 -
+    only when the current project is a server; (7) RUN THE FULL real-server test
+    pipeline and require it green. After the cause of an error is found, checks
+    proving its elimination MUST be added to that pipeline (named after the bug).
+    Work is not accepted until every applicable step has passed.
+  single_real_server_pipeline: >-
+    [once per session; applies when the current project is a server] Verify that
+    the project HAS a full-testing pipeline that runs against the REAL deployed
+    server, and that it exists in EXACTLY ONE instance. A missing pipeline is a
+    gap to close immediately; a duplicate is a defect to merge into the single
+    pipeline. New checks always extend the existing pipeline - never create a
+    second one.
+  template_prompt_reconciliation: >-
+    [once per session] Reconcile the project's prompt bundle (prompts/) with its
+    source template: claude - /home/vasilyvz/projects/prompts/claude-prompts-v1.tar.gz,
+    codex - /home/vasilyvz/projects/prompts/codex-prompts-v1.tar.gz. The model
+    REQUESTS the user's permission to update; only after the user confirms does it
+    diff template vs project bundle and update the project prompt (project-specific
+    values preserved). Template improvements flow back to the template only on the
+    user's explicit order.
