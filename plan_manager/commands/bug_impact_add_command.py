@@ -9,10 +9,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_impact_command_metadata import BASE_PARAMETERS, bug_impact_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.domain.plan import refuse_if_completed
 from plan_manager.domain.runtime_validation import RuntimeValidationError, check_row_exists, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import create_bug_impact
+from plan_manager.storage.bug_report_store import get_bug
 
 
 class BugImpactAddCommand(Command):
@@ -136,6 +139,11 @@ class BugImpactAddCommand(Command):
                     check_row_exists(conn, "bug_report", bug_uuid, frozenset({"bug_report"}))
                 except RuntimeValidationError:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                parent_bug = get_bug(conn, bug_uuid)
+                if parent_bug is not None:
+                    refuse_if_bug_plan_completed(conn, parent_bug)
+                parsed_target_plan_uuid = validate_uuid(target_plan_uuid) if target_plan_uuid is not None else None
+                refuse_if_completed(conn, parsed_target_plan_uuid)
                 record = create_bug_impact(
                     conn,
                     bug_uuid=bug_uuid,
@@ -148,7 +156,7 @@ class BugImpactAddCommand(Command):
                     discovery_method=discovery_method,
                     target_project_id=validate_uuid(target_project_id) if target_project_id is not None else None,
                     target_file_path=target_file_path,
-                    target_plan_uuid=validate_uuid(target_plan_uuid) if target_plan_uuid is not None else None,
+                    target_plan_uuid=parsed_target_plan_uuid,
                     target_revision_uuid=validate_uuid(target_revision_uuid) if target_revision_uuid is not None else None,
                     target_step_uuid=validate_uuid(target_step_uuid) if target_step_uuid is not None else None,
                     target_step_path=target_step_path,

@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_impact_command_metadata import BASE_PARAMETERS, bug_impact_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_impact_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -96,6 +97,7 @@ class BugImpactUpdateCommand(Command):
                 current = get_bug_impact(conn, impact_id)
                 if current is None:
                     raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_uuid}")
+                refuse_if_bug_impact_plan_completed(conn, current)
                 if status == "skipped":
                     resulting_reason = reason if reason is not None else current.reason
                     resulting_decider = skip_decided_by if skip_decided_by is not None else current.skip_decided_by
