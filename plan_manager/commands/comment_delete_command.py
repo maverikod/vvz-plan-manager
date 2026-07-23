@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.comment_command_metadata import comment_metadata
+from plan_manager.commands.plan_completion_guard import refuse_if_comment_plan_completed
 from plan_manager.domain.entity import EntityReferencedError
 from plan_manager.domain.runtime_comment import RuntimeComment
 from plan_manager.runtime.context import db_connection
@@ -74,6 +75,7 @@ class CommentDeleteCommand(Command):
                         "blocked": bool(references),
                         "references": references,
                     })
+                refuse_if_comment_plan_completed(conn, record)
                 if references:
                     raise EntityReferencedError("comment", comment_uuid, references)
                 if hard:

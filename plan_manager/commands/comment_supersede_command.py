@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.comment_command_metadata import comment_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_comment_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_comment_store import get_comment, supersede_comment
@@ -72,8 +73,10 @@ class CommentSupersedeCommand(Command):
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 comment_uuid_val = uuid.UUID(comment_uuid)
-                if get_comment(conn, comment_uuid_val) is None:
+                existing = get_comment(conn, comment_uuid_val)
+                if existing is None:
                     raise DomainCommandError("COMMENT_NOT_FOUND", f"comment not found: {comment_uuid}")
+                refuse_if_comment_plan_completed(conn, existing)
                 record = supersede_comment(conn, comment_uuid_val, new_body=body, changed_by=changed_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:
