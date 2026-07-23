@@ -83,6 +83,7 @@ def _row(name: str, deleted: bool):
         uuid.uuid4(), name, "draft", 4000, None,
         ["4acd4be1-d166-417d-81c6-76bf77b4a392"], None,
         datetime.now(timezone.utc) if deleted else None,
+        False, None,
     )
 
 

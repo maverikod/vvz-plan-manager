@@ -2080,3 +2080,148 @@ def test_r8_report_flags_gs_missing_handles_malformed_report_gracefully():
     assert ls._r8_report_flags_gs_missing("not json", "G-001", "C-001") is False
     assert ls._r8_report_flags_gs_missing(None, "G-001", "C-001") is False
     assert ls._r8_report_flags_gs_missing(42, "G-001", "C-001") is False
+
+
+# --------------------------------------------------------------------------
+# R9 (bug c3950b83): the plan-level completion lock. Marker-gated on catalog
+# PRESENCE (R9_REQUIRED_COMMANDS <= catalog_names), exactly like R7, since a
+# pre-fix server lacks the two setter commands entirely rather than merely
+# behaving differently. Exercised purely against a _ScriptedClient, no real
+# network.
+# --------------------------------------------------------------------------
+
+
+def _r9_success_responses() -> dict[str, Any]:
+    """A fully-successful scripted response table for every command
+    run_r9_plan_completion_lock invokes on a post-fix server, in the exact
+    call order the function itself uses."""
+    return {
+        "plan_create": _ok({"uuid": "r9-plan"}),
+        "plan_comment_set": _ok({"plan_uuid": "r9-plan", "comment": "live-smoke R9 scratch plan for bug c3950b83.", "audit_uuid": "audit-comment-1"}),
+        "plan_completed_set": _sequence(
+            _ok({"plan_uuid": "r9-plan", "completed": True, "audit_uuid": "audit-lock-1"}),
+            _ok({"plan_uuid": "r9-plan", "completed": False, "audit_uuid": "audit-unlock-1"}),
+        ),
+        "step_create": _sequence(
+            {
+                "success": False,
+                "error": {
+                    "code": -32000, "message": "plan r9-plan is marked completed",
+                    "data": {"domain_code": "PLAN_COMPLETED"},
+                },
+            },
+            _ok({"uuid": "step-unlocked", "step_id": "G-001"}),
+        ),
+        "step_tree": _ok({"tree": [], "total": 0, "limit": 50, "offset": 0}),
+        "plan_delete": _ok({"deleted": True}),
+    }
+
+
+def test_run_r9_pre_deploy_server_skips_group_not_per_command():
+    """A server predating the fix (neither setter command in the live
+    catalog): ONE aggregate SKIP naming bug c3950b83, never a per-check
+    FAIL from a misleading 'command not found' routing failure."""
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r9_plan_completion_lock(client, frozenset()))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.status == ls.STATUS_SKIP
+    assert result.name == "R9_plan_completion_lock"
+    assert "c3950b83" in result.detail
+    assert client.calls == []
+
+
+def test_run_r9_partial_deploy_still_skips_as_one_group():
+    """Only one of the two setter commands present: still a single SKIP,
+    not a partial run against a half-deployed surface."""
+    client = _ScriptedClient({})
+    partial = frozenset({"plan_completed_set"})
+
+    results = asyncio.run(ls.run_r9_plan_completion_lock(client, partial))
+
+    assert len(results) == 1
+    assert results[0].status == ls.STATUS_SKIP
+    assert client.calls == []
+
+
+def test_run_r9_full_success_every_check_passes():
+    client = _ScriptedClient(_r9_success_responses())
+
+    results = asyncio.run(ls.run_r9_plan_completion_lock(client, ls.R9_REQUIRED_COMMANDS))
+
+    assert results, "expected at least one check result"
+    for r in results:
+        assert r.status == ls.STATUS_PASS, f"{r.name}: {r.detail}"
+    names = [name for name, _ in client.calls]
+    assert names == [
+        "plan_create",
+        "plan_comment_set",
+        "plan_completed_set",
+        "step_create",
+        "step_tree",
+        "plan_completed_set",
+        "step_create",
+        "plan_delete",
+    ]
+    # cleanup must not re-issue plan_completed_set once the body already
+    # unlocked the plan itself.
+    assert names.count("plan_completed_set") == 2
+
+
+def test_run_r9_mutation_not_actually_refused_fails():
+    """If a (mis)deployed server admits the mutation anyway while
+    completed=true, the check must FAIL, not silently PASS."""
+    responses = dict(_r9_success_responses())
+    responses["step_create"] = _sequence(
+        _ok({"uuid": "should-not-exist", "step_id": "G-001"}),
+        _ok({"uuid": "step-unlocked", "step_id": "G-001"}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r9_plan_completion_lock(client, ls.R9_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R9_mutation_refused_while_completed"].status == ls.STATUS_FAIL
+    # the run still tears the throwaway plan down.
+    names = [name for name, _ in client.calls]
+    assert names[-1] == "plan_delete"
+
+
+def test_run_r9_cleanup_unsets_flag_before_delete_when_bodys_own_unlock_fails():
+    """If the body's own explicit plan_completed_set(false) call itself
+    fails, the plan is left completed=true -- cleanup's finally block must
+    notice and unset the flag BEFORE plan_delete, which is itself refused
+    while completed is true."""
+    responses = dict(_r9_success_responses())
+    responses["plan_completed_set"] = _sequence(
+        _ok({"plan_uuid": "r9-plan", "completed": True, "audit_uuid": "audit-lock-1"}),
+        {
+            "success": False,
+            "error": {
+                "code": -32000, "message": "transient failure unsetting the lock",
+                "data": {"domain_code": "RUNTIME_VALIDATION_ERROR"},
+            },
+        },
+        _ok({"plan_uuid": "r9-plan", "completed": False, "audit_uuid": "audit-cleanup-unlock"}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r9_plan_completion_lock(client, ls.R9_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R9_plan_completed_set(false)"].status == ls.STATUS_FAIL
+    names = [name for name, _ in client.calls]
+    # three plan_completed_set calls total: lock, the body's own failed
+    # unlock attempt, and cleanup's successful unlock immediately before
+    # plan_delete.
+    assert names.count("plan_completed_set") == 3
+    assert names[-2:] == ["plan_completed_set", "plan_delete"]
+
+
+def test_run_r9_required_commands_land_in_tier4_handled_not_skipped():
+    result = ls.classify_catalog(ls.R9_REQUIRED_COMMANDS)
+    skipped_names = {name for name, _ in result.skipped}
+    assert skipped_names.isdisjoint(ls.R9_REQUIRED_COMMANDS)
+    assert ls.R9_REQUIRED_COMMANDS <= set(result.tier4_handled)

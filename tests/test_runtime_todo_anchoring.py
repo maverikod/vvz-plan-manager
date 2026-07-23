@@ -30,6 +30,12 @@ class _FakeConnection:
         self._row = row
 
     def execute(self, sql: str, params: tuple) -> _FakeCursor:
+        # The plan-completed guard (bug c3950b83) issues its own
+        # "SELECT completed FROM plan" query on the same fake connection;
+        # answer it distinctly (plan not completed) so it never conflates
+        # this fixture's canned existence-check row with a completed flag.
+        if "SELECT completed FROM plan" in sql:
+            return _FakeCursor((False,))
         return _FakeCursor(self._row)
 
 

@@ -29,13 +29,15 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # (tool, toolset [+2 membership ops], role, provider [+set_status], model,
 # invocation_profile) plus 3 resolve commands (role_model_resolve,
 # step_assignment_resolve, invocation_profile_resolve) — bringing the pinned
-# total to 193. The constant is intentionally kept in lockstep with the
-# CURRENT inventory size (not frozen at the historical CR-4 baseline) so this
-# test still catches any FUTURE accidental top-level command addition; the
-# CR-4-specific invariant (its mechanisms never became commands in their own
-# right) remains independently enforced by the fragment scan below, which is
-# unaffected by CR-5a's additions.
-_PRE_CR4_INVENTORY_COUNT = 193
+# total to 193. Bug c3950b83's plan-level completion lock then legitimately
+# registered 2 more top-level commands (plan_completed_set, plan_comment_set),
+# bringing the pinned total to 195. The constant is intentionally kept in
+# lockstep with the CURRENT inventory size (not frozen at the historical CR-4
+# baseline) so this test still catches any FUTURE accidental top-level command
+# addition; the CR-4-specific invariant (its mechanisms never became commands
+# in their own right) remains independently enforced by the fragment scan
+# below, which is unaffected by these later additions.
+_PRE_CR4_INVENTORY_COUNT = 195
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:
