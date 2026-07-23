@@ -1639,3 +1639,270 @@ def test_r6_report_flags_path_handles_malformed_report_gracefully():
     assert ls._r6_report_flags_path("not json", ls.R6_NEGATED_REF) is False
     assert ls._r6_report_flags_path(None, ls.R6_NEGATED_REF) is False
     assert ls._r6_report_flags_path(42, ls.R6_NEGATED_REF) is False
+
+
+# --------------------------------------------------------------------------
+# R7 (CR-5a agent-config surface, delivery fixup): the 36 tool/toolset/role/
+# provider/model/invocation_profile/resolve commands this change request
+# adds. Marker-gated on catalog PRESENCE (R7_REQUIRED_COMMANDS <=
+# catalog_names) rather than a response-shape marker, since on a pre-CR-5a
+# server the entire command surface is absent, not merely differently
+# behaved -- the same pre-fix SKIP convention as R4/R5/R6, one level up.
+# Exercised purely against a _ScriptedClient, no real network.
+# --------------------------------------------------------------------------
+
+
+def _r7_success_responses() -> dict[str, Any]:
+    """A fully-successful scripted response table for every command
+    run_r7_agent_config_lifecycle invokes on a post-CR-5a server, in the
+    exact call order the function itself uses."""
+    return {
+        "plan_create": _ok({"uuid": "r7-plan"}),
+        "tool_create": _ok({"uuid": "tool-1"}),
+        "tool_get": _ok({"uuid": "tool-1"}),
+        "tool_list": _ok({"tools": [{"uuid": "tool-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "tool_update": _ok({"uuid": "tool-1", "description": "updated by live_smoke.py R7"}),
+        "toolset_create": _ok({"uuid": "toolset-1"}),
+        "toolset_get": _ok({"uuid": "toolset-1"}),
+        "toolset_list": _ok({"toolsets": [{"uuid": "toolset-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "toolset_update": _ok({"uuid": "toolset-1", "description": "updated by live_smoke.py R7"}),
+        "toolset_member_add": _ok({"uuid": "membership-1", "toolset_uuid": "toolset-1", "tool_uuid": "tool-1", "position": 0}),
+        "tool_delete": _ok({"dry_run": False, "mode": "soft", "tool": {"uuid": "tool-1"}}),
+        "toolset_member_remove": _ok({"uuid": "membership-1", "deleted_at": "2026-07-23T00:00:00Z"}),
+        "toolset_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "toolset-1"}),
+        "role_create": _ok({"uuid": "role-1"}),
+        "role_get": _ok({"uuid": "role-1"}),
+        "role_list": _ok({"roles": [{"uuid": "role-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "role_update": _ok({"uuid": "role-1", "description": "updated by live_smoke.py R7"}),
+        "role_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "role-1"}),
+        "provider_create": _ok({"uuid": "provider-1", "status": "active"}),
+        "provider_set_status": _ok({"uuid": "provider-1", "status": "suspended"}),
+        "provider_get": _ok({"uuid": "provider-1", "status": "suspended"}),
+        "provider_list": _ok({"providers": [{"uuid": "provider-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "provider_update": _ok({"uuid": "provider-1", "status": "active"}),
+        "model_create": _ok({"uuid": "model-1"}),
+        "model_get": _ok({"uuid": "model-1"}),
+        "model_list": _ok({"models": [{"uuid": "model-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "model_update": _ok({"uuid": "model-1", "cost_class": "live-smoke-cost-class"}),
+        "role_model_resolve": _ok(
+            {"source": "step_requirement", "chosen_provider": "provider-name", "chosen_model": "model-name", "chosen_level": "lvl", "provenance": {}}
+        ),
+        "model_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "model-1"}),
+        "provider_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "provider-1"}),
+        "invocation_profile_create": _ok({"uuid": "profile-1"}),
+        "invocation_profile_get": _ok({"uuid": "profile-1"}),
+        "invocation_profile_list": _ok({"profiles": [{"uuid": "profile-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "invocation_profile_update": _ok({"uuid": "profile-1", "temperature": 0.5}),
+        "invocation_profile_resolve": _ok(
+            {"profile": {"uuid": "profile-1"}, "source_scope": "system", "source_profile_uuid": "profile-1", "inheritance_path": []}
+        ),
+        "invocation_profile_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "profile-1"}),
+        "step_assignment_resolve": {
+            "success": False,
+            "error": {
+                "code": -32000, "message": "no applicable step assignment for target",
+                "data": {"domain_code": "NO_APPLICABLE_ASSIGNMENT"},
+            },
+        },
+        "plan_delete": _ok({"deleted": True}),
+    }
+
+
+def test_run_r7_pre_deploy_server_skips_entire_group_not_per_command():
+    """A server predating CR-5a entirely (none of the 36 commands in the
+    live catalog): ONE aggregate SKIP, never 36 individual FAILs from a
+    misleading 'command not found' routing failure."""
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, frozenset()))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "R7_agent_config_lifecycle"
+    assert result.status == ls.STATUS_SKIP
+    assert ls.R7_PRE_DEPLOY_SKIP_REASON in result.detail
+    assert client.calls == []  # no call is even attempted
+
+
+def test_run_r7_partial_deploy_still_skips_as_one_group():
+    """Some but not all of the 36 commands present: still gated as a whole
+    (the recipe below assumes the full CR-5a surface ships as one unit)."""
+    partial = frozenset({"tool_create", "tool_get"})
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, partial))
+
+    assert len(results) == 1
+    assert results[0].status == ls.STATUS_SKIP
+    assert "tool_create" not in results[0].detail  # only the MISSING names are listed
+    assert "role_create" in results[0].detail
+
+
+def test_run_r7_full_success_every_check_passes():
+    client = _ScriptedClient(_r7_success_responses())
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    assert len(results) >= 30
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs last
+
+
+def test_run_r7_tool_delete_is_soft_never_hard():
+    """tool_delete is deliberately soft (the tool is still referenced by the
+    live toolset membership at that point in the recipe) -- hard=true is
+    never passed."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    tool_delete_calls = [params for name, params in client.calls if name == "tool_delete"]
+    assert len(tool_delete_calls) == 1
+    assert tool_delete_calls[0].get("hard") is not True
+
+
+def test_run_r7_membership_lifecycle_ordering():
+    """toolset_member_add happens while the tool is still live; tool_delete
+    (soft) follows; the membership is detached before the toolset itself is
+    hard-deleted."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    names = [name for name, _ in client.calls]
+    assert names.index("toolset_member_add") < names.index("tool_delete")
+    assert names.index("tool_delete") < names.index("toolset_member_remove")
+    assert names.index("toolset_member_remove") < names.index("toolset_delete")
+
+
+def test_run_r7_model_deleted_before_its_provider():
+    """model_delete must precede provider_delete: deleting the provider
+    first would be DELETE_BLOCKED by the still-live model.provider_uuid
+    reference."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    names = [name for name, _ in client.calls]
+    assert names.index("model_delete") < names.index("provider_delete")
+
+
+def test_run_r7_provider_reactivated_before_role_model_resolve():
+    """provider_set_status(suspended) is exercised, but provider_update
+    flips status back to active BEFORE role_model_resolve -- its candidate
+    list is built only from active providers."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    names = [name for name, _ in client.calls]
+    assert names.index("provider_update") < names.index("role_model_resolve")
+    provider_update_params = next(p for n, p in client.calls if n == "provider_update")
+    assert provider_update_params["status"] == "active"
+
+
+def test_run_r7_role_model_resolve_asserts_shape_not_specific_winner():
+    """The resolve result is asserted for SHAPE only (source/chosen_provider/
+    chosen_model present) -- a genuine live server may resolve via an
+    explicit binding instead of the step-level-requirement path, and that
+    must still PASS."""
+    responses = _r7_success_responses()
+    responses["role_model_resolve"] = _ok(
+        {"source": "explicit_binding", "chosen_provider": "some-other-provider", "chosen_model": "some-other-model", "chosen_level": None, "provenance": {}}
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_role_model_resolve"].status == ls.STATUS_PASS
+
+
+def test_run_r7_role_model_resolve_missing_shape_fails():
+    responses = _r7_success_responses()
+    responses["role_model_resolve"] = _ok({"source": "step_requirement"})  # missing chosen_provider/chosen_model
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_role_model_resolve"].status == ls.STATUS_FAIL
+
+
+def test_run_r7_invocation_profile_resolve_asserts_shape_not_specific_winner():
+    responses = _r7_success_responses()
+    responses["invocation_profile_resolve"] = _ok(
+        {"profile": {"uuid": "some-other-profile"}, "source_scope": "role", "source_profile_uuid": "some-other-profile", "inheritance_path": []}
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_invocation_profile_resolve"].status == ls.STATUS_PASS
+
+
+def test_run_r7_step_assignment_resolve_no_applicable_assignment_is_pass():
+    """No step_assignment_create command exists anywhere in this server's
+    surface, so NO_APPLICABLE_ASSIGNMENT is the deterministic, expected
+    outcome -- and it is this check's PASS condition, not a failure."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_step_assignment_resolve_no_applicable"].status == ls.STATUS_PASS
+
+
+def test_run_r7_step_assignment_resolve_unexpected_success_fails():
+    """If step_assignment_resolve ever DOES succeed (e.g. a future CR ships
+    a write path and seed data), that is a surprise this pipeline must FAIL
+    on, not silently accept as if it were the expected empty-table state."""
+    responses = _r7_success_responses()
+    responses["step_assignment_resolve"] = _ok(
+        {"resolved_assigned_role": "as_author", "resolved_toolset_uuid": None, "source": "system", "source_assignment_uuid": "x", "inheritance_path": []}
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_step_assignment_resolve_no_applicable"].status == ls.STATUS_FAIL
+
+
+def test_run_r7_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient({"plan_create": RuntimeError("boom")})
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    plan_create_result = next(r for r in results if r.name == "R7_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail
+    assert [name for name, _ in client.calls] == ["plan_create"]  # nothing else attempted, no double-cleanup
+
+
+def test_run_r7_mid_sequence_failure_still_cleans_up_created_entities():
+    """toolset_create fails after tool_create succeeded: the tool must
+    still be (soft-)deleted and the throwaway plan hard-deleted, via the
+    top-level finally block."""
+    responses = _r7_success_responses()
+    responses["toolset_create"] = {"success": False, "error": {"message": "boom", "data": {"domain_code": "RUNTIME_VALIDATION_ERROR"}}}
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_toolset_create"].status == ls.STATUS_FAIL
+    names = [name for name, _ in client.calls]
+    assert "tool_delete" in names  # cleanup fallback in finally
+    assert names[-1] == "plan_delete"
+    tool_delete_params = next(p for n, p in client.calls if n == "tool_delete")
+    assert tool_delete_params.get("hard") is not True
+
+
+def test_run_r7_required_commands_land_in_tier4_handled_not_skipped():
+    result = ls.classify_catalog(ls.R7_REQUIRED_COMMANDS)
+    skipped_names = {n for n, _ in result.skipped}
+    assert skipped_names.isdisjoint(ls.R7_REQUIRED_COMMANDS)
+    assert ls.R7_REQUIRED_COMMANDS <= set(result.tier4_handled)
