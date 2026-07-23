@@ -134,6 +134,8 @@ class PlanStatusCommand(Command):
                             "uuid": str(p.uuid),
                             "name": p.name,
                             "status": p.status,
+                            "completed": p.completed,
+                            "comment": p.comment,
                         },
                         "projects": {
                             "count": len(p.project_ids),

@@ -177,6 +177,11 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
                 "message": "target is frozen at or below the change point",
                 "solution": "Begin a cascade to transition a frozen step.",
             },
+            "PLAN_COMPLETED": {
+                "description": "The plan is marked completed (bug c3950b83); every mutating command that resolves its plan is refused except plan_completed_set and plan_comment_set.",
+                "message": "plan {plan_uuid} is marked completed; call plan_completed_set to unset the completion lock before mutating it",
+                "solution": "Call plan_completed_set(plan, completed=false, changed_by=...) to unlock the plan, then retry.",
+            },
         },
         "best_practices": [
             "Call step_get first to confirm the step's current status before requesting a transition.",

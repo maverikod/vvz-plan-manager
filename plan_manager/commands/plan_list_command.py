@@ -127,6 +127,8 @@ class PlanListCommand(Command):
                                 "project_count": len(pl.project_ids),
                                 "primary_project_id": pl.primary_project_id,
                                 "deleted": pl.deleted_at is not None,
+                                "completed": pl.completed,
+                                "comment": pl.comment,
                             }
                             for pl in page
                         ],
