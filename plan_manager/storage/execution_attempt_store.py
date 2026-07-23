@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 from plan_manager.domain.execution_attempt import (
     ExecutionAttempt, ATTEMPT_STATUSES, TERMINAL_ATTEMPT_STATUSES,
     validate_attempt_status, is_terminal_status,
+    validate_resource_accounting, validate_transcript_ref,
 )
 from plan_manager.domain.primary_anchor import PrimaryAnchor, validate_anchor
 from plan_manager.domain.runtime_validation import RuntimeValidationError, check_row_exists
@@ -21,6 +22,8 @@ _COLUMNS = (
     "finished_at", "status", "input_context_hash", "result_summary", "changed_files",
     "command_test_results", "resource_accounting", "error", "escalation_reason",
     "parent_attempt_uuid", "created_by", "created_at", "updated_at", "deleted_at",
+    "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
+    "acct_cost_estimate", "transcript_ref",
 )
 
 
@@ -50,6 +53,13 @@ def _row_to_record(row: tuple[Any, ...]) -> ExecutionAttempt:
         changed_files=data["changed_files"],
         command_test_results=data["command_test_results"],
         resource_accounting=data["resource_accounting"],
+        acct_tokens_in=data["acct_tokens_in"],
+        acct_tokens_out=data["acct_tokens_out"],
+        acct_provider=data["acct_provider"],
+        acct_model=data["acct_model"],
+        acct_wall_ms=data["acct_wall_ms"],
+        acct_cost_estimate=float(data["acct_cost_estimate"]) if data["acct_cost_estimate"] is not None else None,
+        transcript_ref=data["transcript_ref"],
         error=data["error"],
         escalation_reason=data["escalation_reason"],
         parent_attempt_uuid=data["parent_attempt_uuid"],
@@ -96,6 +106,8 @@ def create_execution_attempt(
             None, status, input_context_hash, None, None,
             None, None, None, None,
             parent_attempt_uuid, created_by, now, now, None,
+            None, None, None, None, None,
+            None, None,
         ),
     )
     record_runtime_change(
@@ -114,10 +126,14 @@ def report_execution_attempt(
     changed_files: list[Any] | None = None, command_test_results: dict[str, Any] | None = None,
     resource_accounting: dict[str, Any] | None = None, error: str | None = None,
     escalation_reason: str | None = None, input_context_hash: str | None = None,
+    transcript_ref: str | None = None,
 ) -> ExecutionAttempt:
     """Patch only the supplied (non-None) fields on an execution_attempt row; stamp
-    finished_at when the new status is terminal; record an audit update. Never sets any
-    verified/accepted flag — correctness is recorded separately by a ReviewResult (C-016 {7kaw})."""
+    finished_at when the new status is terminal; validate and project resource_accounting
+    onto the typed acct_* columns (C-013) while keeping the resource_accounting jsonb bag as
+    the canonical store; validate and persist transcript_ref when supplied; record an audit
+    update. Never sets any verified/accepted flag — correctness is recorded separately by a
+    ReviewResult (C-016 {7kaw})."""
     now = datetime.now(timezone.utc)
     set_clauses: list[str] = ["updated_at = %s"]
     params: list[Any] = [now]
@@ -145,8 +161,21 @@ def report_execution_attempt(
         set_clauses.append("command_test_results = %s")
         params.append(Jsonb(command_test_results))
     if resource_accounting is not None:
+        validated_accounting = validate_resource_accounting(resource_accounting)
         set_clauses.append("resource_accounting = %s")
-        params.append(Jsonb(resource_accounting))
+        params.append(Jsonb(validated_accounting))
+        set_clauses.append("acct_tokens_in = %s")
+        params.append(validated_accounting["tokens_in"])
+        set_clauses.append("acct_tokens_out = %s")
+        params.append(validated_accounting["tokens_out"])
+        set_clauses.append("acct_provider = %s")
+        params.append(validated_accounting["provider"])
+        set_clauses.append("acct_model = %s")
+        params.append(validated_accounting["model"])
+        set_clauses.append("acct_wall_ms = %s")
+        params.append(validated_accounting["wall_ms"])
+        set_clauses.append("acct_cost_estimate = %s")
+        params.append(validated_accounting["cost_estimate"])
     if error is not None:
         set_clauses.append("error = %s")
         params.append(error)
@@ -156,6 +185,10 @@ def report_execution_attempt(
     if input_context_hash is not None:
         set_clauses.append("input_context_hash = %s")
         params.append(input_context_hash)
+    if transcript_ref is not None:
+        validated_transcript_ref = validate_transcript_ref(transcript_ref)
+        set_clauses.append("transcript_ref = %s")
+        params.append(validated_transcript_ref)
 
     params.append(attempt_uuid)
     conn.execute(
@@ -184,10 +217,11 @@ def get_execution_attempt(conn: psycopg.Connection, attempt_uuid: uuid.UUID) -> 
 def list_execution_attempts(
     conn: psycopg.Connection, *, plan_uuid: uuid.UUID | None = None, step_uuid: uuid.UUID | None = None,
     status: str | None = None, parent_attempt_uuid: uuid.UUID | None = None, include_deleted: bool = False,
+    acct_provider: str | None = None, acct_model: str | None = None,
 ) -> list[ExecutionAttempt]:
     """List execution_attempt rows filtered by the provided plan_uuid/step_uuid/status/
-    parent_attempt_uuid; exclude soft-deleted rows unless include_deleted is True; order by
-    created_at ascending."""
+    parent_attempt_uuid/acct_provider/acct_model; exclude soft-deleted rows unless
+    include_deleted is True; order by created_at ascending."""
     clauses: list[str] = []
     params: list[Any] = []
     if plan_uuid is not None:
@@ -202,6 +236,12 @@ def list_execution_attempts(
     if parent_attempt_uuid is not None:
         clauses.append("parent_attempt_uuid = %s")
         params.append(parent_attempt_uuid)
+    if acct_provider is not None:
+        clauses.append("acct_provider = %s")
+        params.append(acct_provider)
+    if acct_model is not None:
+        clauses.append("acct_model = %s")
+        params.append(acct_model)
     if not include_deleted:
         clauses.append("deleted_at IS NULL")
 
