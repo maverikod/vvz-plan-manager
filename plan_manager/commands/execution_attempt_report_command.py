@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
+from plan_manager.commands.plan_completion_guard import refuse_if_execution_attempt_plan_completed
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import get_execution_attempt, report_execution_attempt
 
@@ -150,10 +151,12 @@ class ExecutionAttemptReportCommand(Command):
         try:
             with db_connection() as conn:
                 attempt_uuid_val = uuid.UUID(attempt_id)
-                if get_execution_attempt(conn, attempt_uuid_val) is None:
+                existing_attempt = get_execution_attempt(conn, attempt_uuid_val)
+                if existing_attempt is None:
                     raise DomainCommandError(
                         "EXECUTION_ATTEMPT_NOT_FOUND", f"execution attempt not found: {attempt_id}"
                     )
+                refuse_if_execution_attempt_plan_completed(conn, existing_attempt)
                 attempt = report_execution_attempt(
                     conn,
                     attempt_uuid_val,

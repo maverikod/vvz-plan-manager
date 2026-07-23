@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
 from plan_manager.domain.model_binding import InvalidRuntimeRoleError
+from plan_manager.domain.plan import refuse_if_completed
 from plan_manager.domain.runtime_role import validate_runtime_role
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -118,6 +119,7 @@ class ModelBindingSetCommand(Command):
                     except RuntimeValidationError as exc:
                         raise InvalidRuntimeRoleError(str(exc)) from exc
                 plan_uuid = validate_uuid(plan) if plan is not None else None
+                refuse_if_completed(conn, plan_uuid)
                 branch_step_uuid = validate_uuid(branch_step) if branch_step is not None else None
                 revision_uuid = validate_uuid(revision) if revision is not None else None
                 step_uuid = validate_uuid(step) if step is not None else None

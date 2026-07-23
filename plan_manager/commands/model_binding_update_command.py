@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
+from plan_manager.commands.plan_completion_guard import refuse_if_model_binding_plan_completed
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_binding_store import get_model_binding, update_model_binding
@@ -89,6 +90,7 @@ class ModelBindingUpdateCommand(Command):
                 existing = get_model_binding(conn, parsed_uuid)
                 if existing is None:
                     raise DomainCommandError("MODEL_BINDING_NOT_FOUND", f"model binding not found: {binding_uuid}")
+                refuse_if_model_binding_plan_completed(conn, existing)
                 if all(
                     value is None
                     for value in (provider, model, fallback_provider, fallback_model, max_retries, timeout, context_budget, active)
