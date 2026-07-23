@@ -22,7 +22,20 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # shipped by user-ordered phase-3 maintenance in 0.1.40, plus project_view
 # (phase-3 maintenance fix for bug 18951d08) — none of those four are CR-4
 # mechanisms (the fragment scan below guards against CR-4 mechanism commands).
-_PRE_CR4_INVENTORY_COUNT = 157
+# This constant was 157 through CR-4 (proving CR-4 itself added zero top-level
+# commands — CR-4's four mechanisms all integrate into existing commands, per
+# the fragment scan below). CR-5a (commit e64527c) then legitimately registered
+# 36 new top-level commands — the agent-configuration entity CRUD families
+# (tool, toolset [+2 membership ops], role, provider [+set_status], model,
+# invocation_profile) plus 3 resolve commands (role_model_resolve,
+# step_assignment_resolve, invocation_profile_resolve) — bringing the pinned
+# total to 193. The constant is intentionally kept in lockstep with the
+# CURRENT inventory size (not frozen at the historical CR-4 baseline) so this
+# test still catches any FUTURE accidental top-level command addition; the
+# CR-4-specific invariant (its mechanisms never became commands in their own
+# right) remains independently enforced by the fragment scan below, which is
+# unaffected by CR-5a's additions.
+_PRE_CR4_INVENTORY_COUNT = 193
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:
