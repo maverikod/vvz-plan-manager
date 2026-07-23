@@ -159,3 +159,52 @@ def create_invocation_profile(
     if created is None:
         raise RuntimeValidationError(f"invocation profile with uuid={profile_uuid} not found after create")
     return created
+
+
+def get_invocation_profile(conn: psycopg.Connection, profile_uuid: uuid.UUID) -> InvocationProfile | None:
+    """Retrieve a single invocation profile by UUID (includes soft-deleted rows)."""
+    return _fetch_by_uuid(conn, profile_uuid)
+
+
+def list_invocation_profiles(
+    conn: psycopg.Connection,
+    *,
+    plan_uuid: uuid.UUID | None = None,
+    scope: str | None = None,
+    role: str | None = None,
+    include_deleted: bool = False,
+) -> list[InvocationProfile]:
+    """List invocation profiles with optional filtering and soft-delete handling."""
+    conditions = []
+    params: list[Any] = []
+
+    if plan_uuid is not None:
+        conditions.append("plan_uuid = %s")
+        params.append(plan_uuid)
+    if scope is not None:
+        conditions.append("scope = %s")
+        params.append(scope)
+    if role is not None:
+        conditions.append("role = %s")
+        params.append(role)
+    if not include_deleted:
+        conditions.append("deleted_at IS NULL")
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    sql = _SELECT_COLUMNS + where_clause + " ORDER BY created_at ASC"
+    rows = conn.execute(sql, params).fetchall()
+    return [_row_to_record(row) for row in rows]
+
+
+def list_profiles_for_resolution(conn: psycopg.Connection, *, plan_uuid: uuid.UUID) -> list[InvocationProfile]:
+    """List active, non-deleted invocation profiles matching the plan or system-wide."""
+    sql = (
+        _SELECT_COLUMNS
+        + "WHERE active = true AND deleted_at IS NULL AND (plan_uuid = %s OR plan_uuid IS NULL) "
+        "ORDER BY created_at ASC"
+    )
+    rows = conn.execute(sql, (plan_uuid,)).fetchall()
+    return [_row_to_record(row) for row in rows]
