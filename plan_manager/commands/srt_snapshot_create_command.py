@@ -9,7 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.srt_command_metadata import BASE_PARAMETERS, srt_metadata
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.scoring.reproduction_input import (

@@ -9,7 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.bug_closure_discipline import reopen_status
 from plan_manager.domain.bug_status_transitions import guard_bug_transition
 from plan_manager.domain.runtime_validation import validate_uuid

@@ -11,7 +11,7 @@ from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_delete_metadata import get_plan_delete_metadata
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.plan import (
     PlanNotFoundError,
     get_plan,

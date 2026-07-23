@@ -10,7 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_derived_status_store import recompute_bug_status
 from plan_manager.storage.bug_fix_store import get_bug_fix, verify_bug_fix

@@ -8,7 +8,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.domain.project_dependency import DEPENDENCY_TYPES
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid

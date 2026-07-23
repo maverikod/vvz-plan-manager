@@ -11,7 +11,7 @@ from plan_manager.cascade.regime import check_admission, frozen_at_or_below
 from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.cascade.propagation import step_invalidation
 from plan_manager.commands.errors import domain_error, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.step_set_status_metadata import get_step_set_status_metadata
 from plan_manager.commands.step_ref import resolve_step_ref
 from plan_manager.domain.step_ops import set_step_status

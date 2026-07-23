@@ -18,7 +18,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.export_archive_metadata import get_export_archive_metadata
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.exchange.archiver import (
     ExportArchiveBoundaryError,
     ExportArchiveTreeMissingError,

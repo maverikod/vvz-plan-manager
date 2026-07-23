@@ -7,7 +7,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_project_metadata import get_plan_project_clear_primary_metadata
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.project_binding import clear_primary_project
 from plan_manager.runtime.context import db_connection
 

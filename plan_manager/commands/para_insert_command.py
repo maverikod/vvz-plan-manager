@@ -10,7 +10,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import domain_error, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission

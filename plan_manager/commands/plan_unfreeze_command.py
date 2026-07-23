@@ -20,7 +20,7 @@ from plan_manager.cascade.begin import _all_steps_frozen, begin_cascade
 from plan_manager.cascade.record import get_open_cascade
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.plan_unfreeze_metadata import get_plan_unfreeze_metadata
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 

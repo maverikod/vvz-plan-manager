@@ -4,7 +4,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from plan_manager.commands.errors import map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.cascade.record import get_open_cascade
 from plan_manager.cascade.begin import begin_cascade

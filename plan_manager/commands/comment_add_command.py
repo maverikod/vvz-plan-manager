@@ -10,7 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.comment_command_metadata import comment_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.primary_anchor import PrimaryAnchor
 from plan_manager.domain.runtime_comment import validate_comment_anchor_type
 from plan_manager.runtime.context import db_connection
