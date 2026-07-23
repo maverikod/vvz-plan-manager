@@ -9,10 +9,12 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_impact_command_metadata import BASE_PARAMETERS, bug_impact_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
-from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
+from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.runtime_validation import RuntimeValidationError, check_row_exists, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import create_bug_impact
+from plan_manager.storage.bug_report_store import get_bug
 from plan_manager.storage.project_dependency_store import discover_suspected_targets
 
 _DEFAULT_DISCOVERY_METHOD = "project_dependency_reverse_graph"
@@ -95,6 +97,9 @@ class BugImpactDiscoverCommand(Command):
                     check_row_exists(conn, "bug_report", bug_uuid, frozenset({"bug_report"}))
                 except RuntimeValidationError:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                parent_bug = get_bug(conn, bug_uuid)
+                if parent_bug is not None:
+                    refuse_if_bug_plan_completed(conn, parent_bug)
                 source_uuid = validate_uuid(source_project_id)
                 method = discovery_method if discovery_method is not None else _DEFAULT_DISCOVERY_METHOD
                 discovered = discover_suspected_targets(conn, source_uuid)

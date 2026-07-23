@@ -56,6 +56,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands import (
     bug_confirm_command,
+    bug_impact_discover_command,
     cascade_begin_command,
     comment_delete_command,
     plan_comment_set_command,
@@ -64,6 +65,7 @@ from plan_manager.commands import (
     plan_delete_command,
     runtime_link_remove_command,
     step_create_command,
+    step_runtime_report_command,
     step_set_status_command,
     step_update_command,
     todo_create_command,
@@ -358,6 +360,13 @@ def _command_class_for(module: Any) -> type:
         cascade_begin_command,
         plan_delete_command,
         bug_confirm_command,
+        # Found during the third-seam sweep (2026-07-23): both were
+        # mis-triaged as read-only in the original pass and still imported
+        # the plain, unguarded resolve_plan despite writing (step_runtime_
+        # report merges a runtime record; bug_impact_discover persists a
+        # BugImpact per discovered project).
+        step_runtime_report_command,
+        bug_impact_discover_command,
     ],
 )
 def test_representative_mutating_commands_refuse_with_plan_completed(monkeypatch, module) -> None:
@@ -377,6 +386,13 @@ def test_representative_mutating_commands_refuse_with_plan_completed(monkeypatch
         kwargs.update(hard=False)
     elif module is bug_confirm_command:
         kwargs.update(bug_id=str(uuid.uuid4()), changed_by="tester")
+    elif module is step_runtime_report_command:
+        kwargs.update(step_id="A-001", payload={"note": "x"})
+    elif module is bug_impact_discover_command:
+        kwargs.update(
+            bug_id=str(uuid.uuid4()), source_project_id=str(uuid.uuid4()),
+            impact_type="needs_rebuild", created_by="tester",
+        )
 
     result = _run(cmd.execute(**kwargs))
 
