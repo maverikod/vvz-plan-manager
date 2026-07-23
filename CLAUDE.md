@@ -153,32 +153,39 @@ and `common.yaml`. The project-specific rules below refine them:
 
 ## Current phase
 
-**CR-4 EXECUTION (phase 2, user-ordered "Замораживай, создавай промпты,
-проверь промпты ... и запускай исполнение" 2026-07-16).** The plan
-**`planmgr-cr4-structure-integrity`** (uuid
-af1ecb08-c44c-4c91-b165-41f3c40425a1) is FROZEN and gate-green (cascade
-8cdb1c74 committed head bf84ba1a; whole-plan freeze revision 6f0a5774, 50
-steps frozen, 21/21 checks, 0 findings). Its deliverables — the context-block
-admission stopper (CONTEXT_BLOCKS_MISSING guard + read-time currency, NO
-migration), the context_coverage gate group, the audited subtree unfreeze +
-frozen-ancestor admission fixes (three real gaps: frozen_ancestor missing in
-check_admission, step_move unchecked new parent, unaudited scoped unfreeze),
-the recursive flag on step_delete (delete_subtree leaves-first,
-cascade_write_many single-revision tombstones), and the closure docs/tests —
-are UNDER EXECUTION per phase 2 and
+**CR-5a EXECUTION (phase 2, user-ordered "замораживай, запускай генератор
+промптов … запускай исполнение" 2026-07-23).** CR-4 is SHIPPED (0.1.39+;
+its plan af1ecb08 stays frozen/read-only). The plan
+**`planmgr-cr5a-agent-config-data-layer`** (uuid
+6d12ea18-c264-4db7-871b-47149e08d906) is FROZEN and gate-green (freeze
+revision dc21ed53, 114 steps frozen — 6 GS / 19 TS / 89 AS; gate 25/25
+checks 0 findings, validate job 5110b7b7; context blocks recompiled at the
+frozen head; prompt-chain corpus generated — 89-step assembly, 4 dependency
+waves). Its deliverables — the agent-configuration DATA LAYER: tool /
+toolset / role / provider / model entities with level indirection, manual
+role↔model assignment, per-step role+toolset, informational invocation
+profile (+ batch-mode attr), escalation data extensions + owner-context
+assembly command, typed cost sub-schema in execution_attempt, structured
+changed_by; migrations 0018–0021; ~36 commands (21 mutating) + 10 new
+DOMAIN_CODES — are UNDER EXECUTION per phase 2 and
 `docs/standards/planning/atomic_step_execution_standard.yaml`. Executors
 fetch the frozen atomic-step prompts READ-ONLY from the store (step_get) and
 DO write the mandated production files; prompts are byte/hash-verified via
-step_prompt_verify before dispatch. Reality supplements: prompts are
-grounded on repo commit dbfe200 — re-verify current disk before each write
+step_prompt_verify before dispatch. Reality supplements: prompts were
+authored against the pre-0.1.53 repo — the Sonnet TS-owner re-verifies
+current disk (commit 3319fda or later) before each write
 (CREATE/INTEGRATE/REPLACE). VERIFY THE FILE, NEVER THE WRITER ECHO.
 ⛔ ABSOLUTE: no destructive git (stash/checkout--/reset/restore/clean) in the
-shared tree — a prior agent's git stash destroyed sibling work; L1 commits.
-After execution + green suite: bump 0.1.38→0.1.39, build, deploy
-(standing-authorized), mandatory MCP smoke via proxy. NO new migrations and
-NO new dependencies in CR-4. CR-5 pre-work stays settled (ratings deferred
-cf86d2c3; manual role↔model 88d4e7c5; invocation profile b247bc9d). All
-other plans stay frozen/read-only.
+shared tree. COMMIT POLICY (user decision 2026-07-20): work unit ACCEPTED by
+its owner → commit immediately on `local` (agents are distributed by files;
+no batching of accepted-but-uncommitted work); merge to main stays L1/user.
+NEW migrations 0018–0021 are IN SCOPE for CR-5a; NO new dependencies.
+Escalation discipline (2026-07-20): 4-outcome owner typology (interpret /
+supplement / needs-plan-change→cascade / abort), 2-round ping-pong guard
+then force up, terminal user escalation parks the whole wave. After
+execution + green suite: bugfix_acceptance_cycle law applies (version bump,
+build, deploy over ssh, full live_smoke pipeline); production deploy still
+awaits the user's explicit order. All other plans stay frozen/read-only.
 
 **ROADMAP WORK (standing, user-authorized 2026-07-12).** The runtime-work-layer
 plan is EXECUTED and SHIPPED (0.1.25→0.1.27 on 192.168.254.26; its plan
