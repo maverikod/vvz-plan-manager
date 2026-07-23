@@ -392,6 +392,10 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         "invocation_profile_create", "invocation_profile_get", "invocation_profile_list",
         "invocation_profile_update", "invocation_profile_delete", "invocation_profile_resolve",
         "role_model_resolve", "step_assignment_resolve",
+        # R9 (bug c3950b83): the plan-level completion lock's two exempt
+        # setter commands, exercised end-to-end by
+        # run_r9_plan_completion_lock below.
+        "plan_completed_set", "plan_comment_set",
     }
 )
 
@@ -2546,6 +2550,123 @@ async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]
     return results
 
 
+R9_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the plan-level completion-lock commands (bug c3950b83: "
+    "plan_completed_set/plan_comment_set not yet present in the live help "
+    "catalog) -- redeploy pending"
+)
+
+# Presence of both setter commands in the live help catalog is this
+# pipeline's proxy for "this server has the bug c3950b83 fix deployed" --
+# see run_r9_plan_completion_lock's docstring.
+R9_REQUIRED_COMMANDS: frozenset[str] = frozenset({"plan_completed_set", "plan_comment_set"})
+
+
+async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]) -> list[CheckResult]:
+    """Bug c3950b83 (plan-level completion lock; L1 design ruling
+    2026-07-23, superseding an earlier per-step-status carve-out attempt):
+    a shipped, frozen plan could never record that it had been executed --
+    step_set_status/cascade_begin both refuse a frozen plan and
+    plan_unfreeze is disproportionate for routine closeout bookkeeping. The
+    fix is a single boolean `completed` flag (plus a free-form `comment`)
+    on the plan row: once set, every OTHER mutating command that resolves
+    its `plan` parameter to that plan refuses with PLAN_COMPLETED, while
+    plan_completed_set/plan_comment_set stay reachable at all times so the
+    flag itself (and the plan's comment) are always settable, and reads
+    (plan_list, step_tree, ...) are never blocked either way.
+
+    Availability-gated exactly like R7: if the live server predates this
+    surface (R9_REQUIRED_COMMANDS not a subset of the live help catalog),
+    every check here is SKIPped (never FAILed) naming bug c3950b83, rather
+    than failing the pipeline outright against an as-yet-undeployed server.
+
+    Recipe (throwaway, ``live-smoke-`` prefixed plan, hard-deleted in a
+    top-level try/finally -- the flag is unset in that finally BEFORE the
+    delete attempt, since plan_delete itself is refused while completed is
+    true): plan_create -> plan_comment_set (attach a note) ->
+    plan_completed_set(true) -> a representative mutating command
+    (step_create) asserted to refuse with PLAN_COMPLETED -> a representative
+    read (step_tree) asserted to still succeed -> plan_completed_set(false)
+    -> the same mutating command (step_create) asserted to succeed again.
+    """
+    results: list[CheckResult] = []
+    if not R9_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R9_REQUIRED_COMMANDS - catalog_names)
+        results.append(
+            CheckResult(
+                "4", "R9_plan_completion_lock", STATUS_SKIP,
+                f"{R9_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        )
+        return results
+
+    plan_uuid: Optional[str] = None
+    completed_set = False
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r9-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R9_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R9_plan_create", STATUS_PASS, f"plan_uuid={plan_uuid}"))
+
+        ok, res = await call(
+            client, "plan_comment_set",
+            {"plan": plan_uuid, "comment": "live-smoke R9 scratch plan for bug c3950b83.", "changed_by": "live-smoke"},
+        )
+        comment_ok = ok and isinstance(res, dict) and res.get("comment") == "live-smoke R9 scratch plan for bug c3950b83."
+        results.append(CheckResult("4", "R9_plan_comment_set", STATUS_PASS if comment_ok else STATUS_FAIL, "" if comment_ok else str(res)))
+        if not comment_ok:
+            return results
+
+        ok, res = await call(
+            client, "plan_completed_set",
+            {"plan": plan_uuid, "completed": True, "changed_by": "live-smoke"},
+        )
+        lock_ok = ok and isinstance(res, dict) and res.get("completed") is True and res.get("audit_uuid")
+        results.append(CheckResult("4", "R9_plan_completed_set(true)", STATUS_PASS if lock_ok else STATUS_FAIL, "" if lock_ok else str(res)))
+        if not lock_ok:
+            return results
+        completed_set = True
+
+        # A representative mutating command must refuse with PLAN_COMPLETED
+        # while the lock is set.
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-locked"})
+        refused_ok = (not ok) and "PLAN_COMPLETED" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R9_mutation_refused_while_completed", STATUS_PASS if refused_ok else STATUS_FAIL,
+                "" if refused_ok else str(res),
+            )
+        )
+
+        # A representative read must still succeed while the lock is set.
+        ok, res = await call(client, "step_tree", {"plan": plan_uuid})
+        read_ok = ok and isinstance(res, dict) and "tree" in res
+        results.append(CheckResult("4", "R9_read_still_allowed_while_completed", STATUS_PASS if read_ok else STATUS_FAIL, "" if read_ok else str(res)))
+
+        ok, res = await call(
+            client, "plan_completed_set",
+            {"plan": plan_uuid, "completed": False, "changed_by": "live-smoke"},
+        )
+        unlock_ok = ok and isinstance(res, dict) and res.get("completed") is False
+        results.append(CheckResult("4", "R9_plan_completed_set(false)", STATUS_PASS if unlock_ok else STATUS_FAIL, "" if unlock_ok else str(res)))
+        if unlock_ok:
+            completed_set = False
+
+        # The same mutation must be admitted again once the lock is cleared.
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-unlocked"})
+        results.append(CheckResult("4", "R9_mutation_admitted_after_unlock", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    finally:
+        if plan_uuid is not None:
+            if completed_set:
+                # cleanup must unset the flag first -- while set, plan_delete
+                # is itself refused with PLAN_COMPLETED.
+                await call(client, "plan_completed_set", {"plan": plan_uuid, "completed": False, "changed_by": "live-smoke-cleanup"})
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -2625,6 +2746,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r6_write_intent_negation(client)
     results += await run_r7_agent_config_lifecycle(client, catalog_names)
     results += await run_r8_gs_coverage_live_cascade_read(client)
+    results += await run_r9_plan_completion_lock(client, catalog_names)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
