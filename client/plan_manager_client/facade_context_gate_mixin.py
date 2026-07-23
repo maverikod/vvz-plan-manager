@@ -87,7 +87,7 @@ class ContextGateCommandsMixin:
         return await self._call("plan_unfreeze", params)
 
     async def srt_snapshot_create(self, **params: Any) -> Any:
-        """Create a semantic tree snapshot: the sole write operation of the SRT command surface."""
+        """Create a semantic tree snapshot: the sole write operation of the SRT command surface. Snapshots the committed head by default; pass cascade_uuid to snapshot an open cascade's working tip instead (revision and cascade_uuid are mutually exclusive)."""
         return await self._call("srt_snapshot_create", params)
 
     async def srt_snapshot_list(self, **params: Any) -> Any:
