@@ -20,6 +20,7 @@ from contextlib import contextmanager
 import pytest
 
 from plan_manager.commands import (
+    plan_completion_guard,
     bug_propagation_create_command,
     comment_add_command,
     comment_resolve_command,
@@ -231,9 +232,13 @@ def test_bug_propagation_create_rejects_missing_bug_fix(monkeypatch) -> None:
 
 
 def test_bug_propagation_create_rejects_missing_bug_impact(monkeypatch) -> None:
+    class _FixStub:
+        bug_uuid = uuid.uuid4()
+
     monkeypatch.setattr(bug_propagation_create_command, "db_connection", _fake_db)
     monkeypatch.setattr(bug_propagation_create_command, "resolve_plan", lambda conn, plan: _DummyPlan())
-    monkeypatch.setattr(bug_propagation_create_command, "get_bug_fix", lambda conn, bug_fix_uuid: object())
+    monkeypatch.setattr(bug_propagation_create_command, "get_bug_fix", lambda conn, bug_fix_uuid: _FixStub())
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, bug_uuid: None)
     monkeypatch.setattr(bug_propagation_create_command, "get_bug_impact", lambda conn, impact_uuid: None)
     result = asyncio.run(
         bug_propagation_create_command.BugPropagationCreateCommand().execute(

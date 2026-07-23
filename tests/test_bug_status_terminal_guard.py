@@ -68,6 +68,7 @@ def _fake_db():
 class _Bug:
     def __init__(self, status: str):
         self.status = status
+        self.source_plan_uuid = None  # not plan-bound: refuse_if_bug_plan_completed is a no-op
 
     def to_payload(self) -> dict:
         return {"status": self.status}

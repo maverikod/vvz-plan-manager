@@ -192,6 +192,7 @@ def test_bug_reanchor_not_found_moves_bug_to_unanchored(monkeypatch) -> None:
     monkeypatch.setattr(bug_reanchor_command, "db_connection", _fake_db_ctx())
     monkeypatch.setattr(bug_reanchor_command, "app_config", lambda: None)
     monkeypatch.setattr(bug_reanchor_command, "resolve_plan", lambda conn, plan: _FakePlan())
+    monkeypatch.setattr(bug_reanchor_command, "get_bug", lambda conn, u: None)
     monkeypatch.setattr(bug_reanchor_command, "reanchor_bug_source", fake_reanchor_bug_source)
     monkeypatch.setattr(
         bug_reanchor_command, "confirm_anchor", _confirm_anchor_stub(True, False, "not_found", {})
@@ -221,6 +222,7 @@ def test_bug_reanchor_confirmed_moves_as_requested(monkeypatch) -> None:
     monkeypatch.setattr(bug_reanchor_command, "db_connection", _fake_db_ctx())
     monkeypatch.setattr(bug_reanchor_command, "app_config", lambda: None)
     monkeypatch.setattr(bug_reanchor_command, "resolve_plan", lambda conn, plan: _FakePlan())
+    monkeypatch.setattr(bug_reanchor_command, "get_bug", lambda conn, u: None)
     monkeypatch.setattr(bug_reanchor_command, "reanchor_bug_source", fake_reanchor_bug_source)
     monkeypatch.setattr(
         bug_reanchor_command, "confirm_anchor", _confirm_anchor_stub(True, True, None, {})
@@ -344,6 +346,7 @@ def test_todo_reanchor_not_found_moves_to_unanchored(monkeypatch) -> None:
 
     monkeypatch.setattr(todo_reanchor_command, "db_connection", _fake_db_ctx())
     monkeypatch.setattr(todo_reanchor_command, "app_config", lambda: None)
+    monkeypatch.setattr(todo_reanchor_command, "get_todo", lambda conn, u: None)
     monkeypatch.setattr(todo_reanchor_command, "reanchor_todo", fake_reanchor_todo)
     monkeypatch.setattr(
         todo_reanchor_command, "confirm_anchor", _confirm_anchor_stub(True, False, "not_found", {})
@@ -371,6 +374,7 @@ def test_todo_reanchor_confirmed_moves_as_requested(monkeypatch) -> None:
 
     monkeypatch.setattr(todo_reanchor_command, "db_connection", _fake_db_ctx())
     monkeypatch.setattr(todo_reanchor_command, "app_config", lambda: None)
+    monkeypatch.setattr(todo_reanchor_command, "get_todo", lambda conn, u: None)
     monkeypatch.setattr(todo_reanchor_command, "reanchor_todo", fake_reanchor_todo)
     monkeypatch.setattr(
         todo_reanchor_command, "confirm_anchor", _confirm_anchor_stub(True, True, None, {})
