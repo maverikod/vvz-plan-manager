@@ -171,6 +171,49 @@ INVENTORY: tuple[str, ...] = (
     "command_timing_stats",
     # runtime audit (C-010)
     "audit_list",
+    # CR-5a entity CRUD: tool (C-001)
+    "tool_create",
+    "tool_get",
+    "tool_update",
+    "tool_list",
+    "tool_delete",
+    # CR-5a entity CRUD: toolset (C-002) and toolset membership
+    "toolset_create",
+    "toolset_get",
+    "toolset_update",
+    "toolset_list",
+    "toolset_delete",
+    "toolset_member_add",
+    "toolset_member_remove",
+    # CR-5a entity CRUD: role (C-003)
+    "role_create",
+    "role_get",
+    "role_update",
+    "role_list",
+    "role_delete",
+    # CR-5a entity CRUD: provider (C-004)
+    "provider_create",
+    "provider_get",
+    "provider_update",
+    "provider_list",
+    "provider_delete",
+    "provider_set_status",
+    # CR-5a entity CRUD: model (C-005)
+    "model_create",
+    "model_get",
+    "model_update",
+    "model_list",
+    "model_delete",
+    # CR-5a entity CRUD: invocation profile (C-008)
+    "invocation_profile_create",
+    "invocation_profile_get",
+    "invocation_profile_update",
+    "invocation_profile_list",
+    "invocation_profile_delete",
+    # CR-5a resolve commands (C-006, C-007, C-008)
+    "role_model_resolve",
+    "step_assignment_resolve",
+    "invocation_profile_resolve",
 )
 
 MUTATING: frozenset[str] = frozenset({
@@ -212,4 +255,26 @@ MUTATING: frozenset[str] = frozenset({
     "plan_unfreeze",
     "bug_reanchor",
     "todo_reanchor",
+    # CR-5a entity mutations
+    "tool_create",
+    "tool_update",
+    "tool_delete",
+    "toolset_create",
+    "toolset_update",
+    "toolset_delete",
+    "toolset_member_add",
+    "toolset_member_remove",
+    "role_create",
+    "role_update",
+    "role_delete",
+    "provider_create",
+    "provider_update",
+    "provider_delete",
+    "provider_set_status",
+    "model_create",
+    "model_update",
+    "model_delete",
+    "invocation_profile_create",
+    "invocation_profile_update",
+    "invocation_profile_delete",
 })
