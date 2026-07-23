@@ -30,6 +30,54 @@ class PlanCompletedError(ValueError):
     the PLAN_COMPLETED domain code at the commands layer."""
 
 
+def refuse_if_completed(conn: psycopg.Connection, plan_uuid: "uuid.UUID | None") -> None:
+    """The single shared completion-lock check (bug c3950b83).
+
+    Every seam that enforces the plan-level completion lock ultimately
+    reduces to this one raw check against a bare plan_uuid:
+
+    - resolve_plan_guarded (commands/resolve.py) checks an already-loaded
+      Plan's `.completed` field directly (no extra query needed) for
+      every command that resolves a `plan` name-or-uuid parameter.
+    - domain.primary_anchor.validate_anchor calls this function for
+      anchor_type "plan"/"step", covering todo_create and the shared
+      anchor path used by comment/execution_attempt/review_result/
+      escalation/bug-source anchors.
+    - plan_manager.commands.plan_completion_guard (the third seam) calls
+      this function after deriving the TRUE owning plan_uuid of an
+      entity addressed by its own UUID (a todo, comment, escalation,
+      execution attempt, model binding, bug, bug fix, bug impact, bug
+      fix propagation, or a runtime/todo link's endpoint) rather than
+      trusting a caller-supplied `plan` parameter that may not actually
+      match the entity being mutated.
+
+    Args:
+        conn: Open psycopg 3 connection.
+        plan_uuid: The plan to check, or None when the addressed entity
+            is not plan-bound at all (e.g. a TODO anchored none/project/
+            file, or a system/role-scoped model binding) -- a no-op in
+            that case, by design: an entity that was never plan-bound
+            cannot be locked by any plan's completion.
+
+    Returns:
+        None.
+
+    Raises:
+        PlanCompletedError: If plan_uuid is not None and that plan's
+            `completed` column is True.
+    """
+    if plan_uuid is None:
+        return
+    row = conn.execute(
+        "SELECT completed FROM plan WHERE uuid = %s", (plan_uuid,)
+    ).fetchone()
+    if row is not None and row[0]:
+        raise PlanCompletedError(
+            f"plan {plan_uuid} is marked completed; call plan_completed_set "
+            "to unset the completion lock before mutating an entity owned by it"
+        )
+
+
 @dataclass
 class Plan(DataclassEntity):
     """Domain representation of the Plan aggregate (C-001).

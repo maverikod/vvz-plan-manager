@@ -7,38 +7,21 @@ from typing import Any
 
 import psycopg
 
-from plan_manager.domain.plan import PlanCompletedError
+from plan_manager.domain.plan import refuse_if_completed
 from plan_manager.domain.runtime_validation import (
     RuntimeValidationError, validate_uuid, validate_file_reference,
     validate_step_in_plan_revision, check_row_exists,
 )
 
-
-def _check_plan_not_completed(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
-    """Refuse anchoring to a plan marked completed (bug c3950b83).
-
-    Anchor validation (todo_create/comment/execution_attempt/review_result/
-    escalation/bug anchors of anchor_type "plan" or "step") is the one
-    plan-resolution path that does not go through
-    plan_manager.commands.resolve.resolve_plan_guarded, since it takes a
-    raw anchor_plan_uuid rather than a `plan` (name-or-uuid) command
-    parameter. This is the parallel single seam for that path.
-
-    Args:
-        conn: An open psycopg 3 connection.
-        plan_uuid: The anchor's plan UUID, already confirmed to exist.
-
-    Raises:
-        PlanCompletedError: If the plan's `completed` column is True.
-    """
-    row = conn.execute(
-        "SELECT completed FROM plan WHERE uuid = %s", (plan_uuid,)
-    ).fetchone()
-    if row is not None and row[0]:
-        raise PlanCompletedError(
-            f"plan {plan_uuid} is marked completed; call plan_completed_set "
-            "to unset the completion lock before anchoring to it"
-        )
+# Anchor validation (todo_create/comment/execution_attempt/review_result/
+# escalation/bug anchors of anchor_type "plan" or "step") is the one
+# plan-resolution path that does not go through
+# plan_manager.commands.resolve.resolve_plan_guarded, since it takes a raw
+# anchor_plan_uuid rather than a `plan` (name-or-uuid) command parameter.
+# The completion-lock check itself is the single shared
+# domain.plan.refuse_if_completed (bug c3950b83); this module has no
+# private copy of that logic.
+_check_plan_not_completed = refuse_if_completed
 
 
 class InvalidAnchorError(RuntimeValidationError):
