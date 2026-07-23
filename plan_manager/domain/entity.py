@@ -124,6 +124,12 @@ CENTRAL_REFERENCE_CHECKS: dict[str, tuple[ReferenceCheck, ...]] = {
         ReferenceCheck("execution_attempt", "bug_fix_uuid", live_column="deleted_at"),
         ReferenceCheck("bug_fix_propagation", "bug_fix_uuid", live_column="deleted_at"),
     ),
+    "provider": (
+        ReferenceCheck("model", "provider_uuid", live_column="deleted_at"),
+    ),
+    "tool": (
+        ReferenceCheck("toolset_membership", "tool_uuid", live_column="deleted_at"),
+    ),
 }
 
 
