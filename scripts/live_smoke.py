@@ -2884,6 +2884,113 @@ async def run_r10_branch_scope_hierarchical_selectors(client: Any) -> list[Check
     return results
 
 
+R11_SUMMARY_ROW_BYTE_CEILING = 512
+
+R11_PRE_FIX_SKIP_REASON = (
+    "server does not accept the view parameter on the list-family commands "
+    "yet (bug 8a13977d: todo_list(active_only=true, limit=50) serialized "
+    "137,022 chars with no compact projection) -- redeploy pending"
+)
+
+
+async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
+    """Bug 8a13977d: todo_list(active_only=true, limit=50) serialized
+    137,022 chars on 0.1.60 (222,558 bytes of raw JSON, ~4.45 KB/item over
+    50 rows) -- list-family commands always inlined the full record with no
+    caller-selectable compact shape, an unusable response for a
+    token-budgeted agent caller.
+
+    Fix: a uniform `view` parameter ("full", unchanged default; "summary",
+    a compact per-entity projection) across the *_list command surface,
+    implemented once in plan_manager.commands.list_projection and declared
+    per-entity via SUMMARY_FIELDS.
+
+    Read-only, no throwaway entities: every check here reads whatever data
+    already exists live (rows may be zero -- the shape/size assertions
+    apply per-row, vacuously true on an empty page).
+
+    Availability-gated exactly like R6/R8/R10 (a behavioral gate: `view` is
+    a brand-new parameter, so get_schema's additionalProperties=False
+    rejects it outright on a pre-fix server). The todo_list(view=summary)
+    call is itself the version probe: if it is rejected as an unknown
+    property, every check in this group is SKIPped (never FAILed) naming
+    bug 8a13977d, rather than failing the pipeline against a not-yet-deployed
+    fix.
+    """
+    results: list[CheckResult] = []
+
+    ok, res = await call(client, "todo_list", {"limit": 5, "view": "summary"})
+    pre_fix_detected = (not ok) and (
+        "view" in str(res) and (
+            "additional" in str(res).lower() or "unexpected" in str(res).lower() or "not allowed" in str(res).lower()
+        )
+    )
+    if pre_fix_detected:
+        results.append(CheckResult("4", "R11_list_view_projection", STATUS_SKIP, R11_PRE_FIX_SKIP_REASON))
+        return results
+
+    todo_summary_ok = ok and isinstance(res, dict) and isinstance(res.get("todos"), list)
+    results.append(CheckResult("4", "R11_todo_list(view=summary)_call", STATUS_PASS if todo_summary_ok else STATUS_FAIL, "" if todo_summary_ok else str(res)))
+    if todo_summary_ok:
+        expected_todo_fields = {
+            "uuid", "todo_uuid", "title", "status", "kind",
+            "priority_nice", "primary_anchor_type", "anchor_ref_id", "updated_at",
+        }
+        oversized = [row for row in res["todos"] if len(json.dumps(row).encode("utf-8")) >= R11_SUMMARY_ROW_BYTE_CEILING]
+        wrong_shape = [row for row in res["todos"] if isinstance(row, dict) and set(row) != expected_todo_fields]
+        results.append(CheckResult("4", "R11_todo_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_SUMMARY_ROW_BYTE_CEILING} bytes"))
+        results.append(CheckResult("4", "R11_todo_list(view=summary)_row_fields", STATUS_PASS if not wrong_shape else STATUS_FAIL, "" if not wrong_shape else f"unexpected shape: {wrong_shape[:1]}"))
+
+    ok, res = await call(client, "bug_list", {"limit": 5, "view": "summary"})
+    bug_summary_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list)
+    results.append(CheckResult("4", "R11_bug_list(view=summary)_call", STATUS_PASS if bug_summary_ok else STATUS_FAIL, "" if bug_summary_ok else str(res)))
+    if bug_summary_ok:
+        expected_bug_fields = {
+            "uuid", "bug_uuid", "title", "kind", "severity", "status",
+            "priority_nice", "source_anchor_type", "source_ref_id", "updated_at",
+        }
+        oversized = [row for row in res["bugs"] if len(json.dumps(row).encode("utf-8")) >= R11_SUMMARY_ROW_BYTE_CEILING]
+        wrong_shape = [row for row in res["bugs"] if isinstance(row, dict) and set(row) != expected_bug_fields]
+        results.append(CheckResult("4", "R11_bug_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_SUMMARY_ROW_BYTE_CEILING} bytes"))
+        results.append(CheckResult("4", "R11_bug_list(view=summary)_row_fields", STATUS_PASS if not wrong_shape else STATUS_FAIL, "" if not wrong_shape else f"unexpected shape: {wrong_shape[:1]}"))
+
+    # One CR-5a agent-config family member, per the mandate.
+    ok, res = await call(client, "tool_list", {"limit": 5, "view": "summary"})
+    tool_summary_ok = ok and isinstance(res, dict) and isinstance(res.get("tools"), list)
+    results.append(CheckResult("4", "R11_tool_list(view=summary)_call", STATUS_PASS if tool_summary_ok else STATUS_FAIL, "" if tool_summary_ok else str(res)))
+    if tool_summary_ok:
+        expected_tool_fields = {"uuid", "name", "server_id", "command", "updated_at"}
+        oversized = [row for row in res["tools"] if len(json.dumps(row).encode("utf-8")) >= R11_SUMMARY_ROW_BYTE_CEILING]
+        wrong_shape = [row for row in res["tools"] if isinstance(row, dict) and set(row) != expected_tool_fields]
+        results.append(CheckResult("4", "R11_tool_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_SUMMARY_ROW_BYTE_CEILING} bytes"))
+        results.append(CheckResult("4", "R11_tool_list(view=summary)_row_fields", STATUS_PASS if not wrong_shape else STATUS_FAIL, "" if not wrong_shape else f"unexpected shape: {wrong_shape[:1]}"))
+
+    # view=full (the default) still returns the pre-fix, verbose shape.
+    ok, res = await call(client, "todo_list", {"limit": 1, "view": "full"})
+    full_verbose_ok = ok and isinstance(res, dict) and isinstance(res.get("todos"), list) and all(
+        "description" in row and "blocking_reason" in row for row in res["todos"] if isinstance(row, dict)
+    )
+    results.append(CheckResult("4", "R11_todo_list(view=full)_still_verbose", STATUS_PASS if full_verbose_ok else STATUS_FAIL, "" if full_verbose_ok else str(res)))
+
+    # Omitting view entirely must behave identically to view=full (default pinned).
+    ok_default, res_default = await call(client, "todo_list", {"limit": 1})
+    ok_explicit_full, res_explicit_full = await call(client, "todo_list", {"limit": 1, "view": "full"})
+    default_matches_full = (
+        ok_default and ok_explicit_full
+        and isinstance(res_default, dict) and isinstance(res_explicit_full, dict)
+        and set(res_default.get("todos", [{}])[0] if res_default.get("todos") else {}) ==
+        set(res_explicit_full.get("todos", [{}])[0] if res_explicit_full.get("todos") else {})
+    )
+    results.append(CheckResult("4", "R11_default_view_matches_full", STATUS_PASS if default_matches_full else STATUS_FAIL, "" if default_matches_full else f"default={res_default} explicit_full={res_explicit_full}"))
+
+    # An invalid view value must error cleanly (INVALID_FILTER), not crash or hang.
+    ok, res = await call(client, "todo_list", {"limit": 1, "view": "bogus"})
+    invalid_view_rejected = (not ok) and "view" in str(res).lower()
+    results.append(CheckResult("4", "R11_invalid_view_rejected", STATUS_PASS if invalid_view_rejected else STATUS_FAIL, "" if invalid_view_rejected else str(res)))
+
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -2965,6 +3072,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r8_gs_coverage_live_cascade_read(client)
     results += await run_r9_plan_completion_lock(client, catalog_names)
     results += await run_r10_branch_scope_hierarchical_selectors(client)
+    results += await run_r11_list_view_projection(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

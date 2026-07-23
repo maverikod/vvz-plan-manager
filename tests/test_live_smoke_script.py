@@ -2419,3 +2419,179 @@ def test_run_r10_is_wired_into_run_pipeline():
 
     source = inspect.getsource(ls.run_pipeline)
     assert "run_r10_branch_scope_hierarchical_selectors(client)" in source
+
+
+# --------------------------------------------------------------------------
+# R11 (bug 8a13977d): view=summary compact projection on the list-family
+# commands. Read-only, no throwaway entities, so the fake client only needs
+# to script todo_list/bug_list/tool_list -- no plan_create/plan_delete calls
+# are made by this group at all. Availability-gated exactly like R6/R8/R10:
+# `view` is a brand-new parameter, so a pre-fix server's
+# additionalProperties=False schema rejects it outright; the
+# todo_list(view=summary) call is itself the version probe.
+# --------------------------------------------------------------------------
+
+_R11_PRE_FIX_ERROR = {
+    "success": False,
+    "error": {
+        "code": -32602,
+        "message": "Additional properties are not allowed ('view' was unexpected)",
+    },
+}
+
+_R11_TODO_SUMMARY_ROW = {
+    "uuid": "todo-1", "todo_uuid": "todo-1", "title": "t", "status": "open",
+    "kind": "task", "priority_nice": 0, "primary_anchor_type": "none",
+    "anchor_ref_id": None, "updated_at": "2026-07-23T00:00:00+00:00",
+}
+
+_R11_TODO_FULL_ROW = {
+    **_R11_TODO_SUMMARY_ROW,
+    "description": "full description text",
+    "blocking_reason": None,
+    "execution_result": None,
+    "created_by": "tester",
+    "created_at": "2026-07-23T00:00:00+00:00",
+    "started_at": None,
+    "resolved_at": None,
+    "due_at": None,
+    "anchor_project_id": None,
+    "anchor_file_path": None,
+    "anchor_plan_uuid": None,
+    "anchor_revision_uuid": None,
+    "anchor_step_uuid": None,
+    "anchor_step_path": None,
+    "assigned_to": None,
+    "deleted_at": None,
+}
+
+_R11_BUG_SUMMARY_ROW = {
+    "uuid": "bug-1", "bug_uuid": "bug-1", "title": "b", "kind": "performance",
+    "severity": "major", "status": "reported", "priority_nice": -4,
+    "source_anchor_type": "command", "source_ref_id": None,
+    "updated_at": "2026-07-23T00:00:00+00:00",
+}
+
+_R11_TOOL_SUMMARY_ROW = {
+    "uuid": "tool-1", "name": "my-tool", "server_id": "server-1",
+    "command": "do_thing", "updated_at": "2026-07-23T00:00:00+00:00",
+}
+
+
+def _r11_todo_list_dispatch(*, pre_fix: bool):
+    def _dispatch(params):
+        if pre_fix and "view" in params:
+            return _R11_PRE_FIX_ERROR
+        if params.get("view") == "bogus":
+            return {"success": False, "error": {"code": -32602, "message": "view must be one of ['full', 'summary'], got 'bogus'"}}
+        if params.get("view") == "summary":
+            return _ok({"todos": [_R11_TODO_SUMMARY_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+        return _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+
+    return _dispatch
+
+
+def _r11_client(*, pre_fix: bool) -> "_ScriptedClient":
+    return _ScriptedClient(
+        {
+            "todo_list": _r11_todo_list_dispatch(pre_fix=pre_fix),
+            "bug_list": _ok({"bugs": [_R11_BUG_SUMMARY_ROW], "total": 1, "limit": 5, "offset": 0}),
+            "tool_list": _ok({"tools": [_R11_TOOL_SUMMARY_ROW], "total": 1, "limit": 5, "offset": 0}),
+        }
+    )
+
+
+def test_run_r11_pre_fix_server_skips_entire_group_not_per_command():
+    client = _r11_client(pre_fix=True)
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    assert len(results) == 1
+    assert results[0].name == "R11_list_view_projection"
+    assert results[0].status == ls.STATUS_SKIP
+    assert ls.R11_PRE_FIX_SKIP_REASON in results[0].detail
+    assert not any(r.status == ls.STATUS_FAIL for r in results)
+
+
+def test_run_r11_post_fix_server_passes_every_check():
+    client = _r11_client(pre_fix=False)
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R11_todo_list(view=summary)_row_size"].status == ls.STATUS_PASS
+    assert by_name["R11_todo_list(view=summary)_row_fields"].status == ls.STATUS_PASS
+    assert by_name["R11_bug_list(view=summary)_row_size"].status == ls.STATUS_PASS
+    assert by_name["R11_bug_list(view=summary)_row_fields"].status == ls.STATUS_PASS
+    assert by_name["R11_tool_list(view=summary)_row_size"].status == ls.STATUS_PASS
+    assert by_name["R11_tool_list(view=summary)_row_fields"].status == ls.STATUS_PASS
+    assert by_name["R11_todo_list(view=full)_still_verbose"].status == ls.STATUS_PASS
+    assert by_name["R11_default_view_matches_full"].status == ls.STATUS_PASS
+    assert by_name["R11_invalid_view_rejected"].status == ls.STATUS_PASS
+
+
+def test_run_r11_wrong_summary_shape_fails_not_skips():
+    """A row missing an expected summary field (e.g. a partial/incorrect
+    deploy) is a FAIL, not silently accepted."""
+    client = _r11_client(pre_fix=False)
+    broken_row = dict(_R11_TODO_SUMMARY_ROW)
+    del broken_row["kind"]
+    client._responses["todo_list"] = _sequence(
+        _ok({"todos": [broken_row], "total": 1, "limit": 5, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        {"success": False, "error": {"code": -32602, "message": "view must be one of ['full', 'summary'], got 'bogus'"}},
+    )
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R11_todo_list(view=summary)_row_fields"].status == ls.STATUS_FAIL
+
+
+def test_run_r11_oversized_row_fails() -> None:
+    """A summary row that blows past the documented byte ceiling is a FAIL."""
+    client = _r11_client(pre_fix=False)
+    oversized_row = {**_R11_TODO_SUMMARY_ROW, "title": "x" * 1000}
+    client._responses["todo_list"] = _sequence(
+        _ok({"todos": [oversized_row], "total": 1, "limit": 5, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        {"success": False, "error": {"code": -32602, "message": "view must be one of ['full', 'summary'], got 'bogus'"}},
+    )
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R11_todo_list(view=summary)_row_size"].status == ls.STATUS_FAIL
+
+
+def test_run_r11_invalid_view_not_rejected_fails() -> None:
+    """If a malformed view value is silently accepted (no rejection), that
+    is a FAIL: the invalid-input guard regressed."""
+    client = _r11_client(pre_fix=False)
+    client._responses["todo_list"] = _sequence(
+        _ok({"todos": [_R11_TODO_SUMMARY_ROW], "total": 1, "limit": 5, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+        _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),  # bogus view wrongly accepted
+    )
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R11_invalid_view_rejected"].status == ls.STATUS_FAIL
+
+
+def test_run_r11_is_wired_into_run_pipeline():
+    """run_r11_list_view_projection must actually be called from
+    run_pipeline, not merely defined (dead-code guard, matching R10's own)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r11_list_view_projection(client)" in source
