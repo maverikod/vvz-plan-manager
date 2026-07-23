@@ -2632,15 +2632,36 @@ async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]
         # its TS child T-001) forces a genuine, deliberate coverage.gs
         # finding -- the exact GS-declared-but-not-child-covered gap the
         # reworded message describes -- so its wording can be inspected.
+        # C-002 must exist in the plan's concept table BEFORE it can be
+        # set on a step's own concepts (CONCEPT_NOT_FOUND otherwise, live
+        # pipeline regression on 0.1.63 against this block's first draft
+        # -- mirrors the C-001 concept_add above exactly; no context_common
+        # recompile is needed, concept_add does not touch context blocks).
         ok, res = await call(
-            client, "step_update",
-            {"plan": plan_uuid, "step_id": g_id, "concepts": ["C-001", "C-002"], "cascade_uuid": cascade_uuid},
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-002",
+                "name": "LiveSmokeR8UncoveredConcept", "definition": "R8 scratch concept for todo d8849951's deliberately-uncovered GS concept.",
+            },
         )
-        if not ok or not isinstance(res, dict) or res.get("concepts") != ["C-001", "C-002"]:
-            results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_FAIL, str(res)))
+        if not ok:
+            results.append(CheckResult("4", "R8_concept_add(C-002)", STATUS_FAIL, str(res)))
+            results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_FAIL, "skipped: concept_add(C-002) failed"))
+            ok = False
         else:
-            results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_PASS))
+            results.append(CheckResult("4", "R8_concept_add(C-002)", STATUS_PASS))
 
+            ok, res = await call(
+                client, "step_update",
+                {"plan": plan_uuid, "step_id": g_id, "concepts": ["C-001", "C-002"], "cascade_uuid": cascade_uuid},
+            )
+            if not ok or not isinstance(res, dict) or res.get("concepts") != ["C-001", "C-002"]:
+                results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_FAIL, str(res)))
+                ok = False
+            else:
+                results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_PASS))
+
+        if ok:
             ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full"})
             if not ok and _looks_like_unknown_param(str(res), "view"):
                 ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})

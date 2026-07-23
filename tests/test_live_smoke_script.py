@@ -2011,7 +2011,17 @@ def _r8_success_responses(
             _ok({"uuid": "t-uuid", "step_id": "T-001"}),
         ),
         "cascade_begin": _ok({"cascade_uuid": "cascade-1"}),
-        "concept_add": _ok({"uuid": "concept-1", "concept_id": "C-001"}),
+        # Two DISTINCT concept_add calls (C-001 for the base repro, C-002
+        # for the todo d8849951 extension's deliberately-uncovered
+        # concept) -- a _sequence (not a single _ok) so a recipe that
+        # skips the second concept_add (live pipeline regression on
+        # 0.1.63: CONCEPT_NOT_FOUND setting C-002 on a step before it
+        # existed in the plan) is caught by "sequence exhausted" instead
+        # of silently reusing the C-001 response for both calls.
+        "concept_add": _sequence(
+            _ok({"uuid": "concept-1", "concept_id": "C-001"}),
+            _ok({"uuid": "concept-2", "concept_id": "C-002"}),
+        ),
         "step_update": _sequence(
             _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
             _ok({"uuid": "t-uuid", "concepts": ["C-001"]}),
@@ -2177,6 +2187,29 @@ def test_run_r8_step_update_sequence_matches_gs_then_ts_child():
     assert [c["step_id"] for c in step_update_calls] == ["G-001", "T-001", "G-001"]
     assert [c["concepts"] for c in step_update_calls] == [["C-001"], ["C-001"], ["C-001", "C-002"]]
     assert all(c["cascade_uuid"] == "cascade-1" for c in step_update_calls)
+
+
+def test_run_r8_concept_add_covers_both_concepts_before_their_step_updates():
+    """Live pipeline regression (0.1.63): the todo d8849951 extension's
+    second step_update set C-002 on G-001 before C-002 existed in the
+    plan's concept table (CONCEPT_NOT_FOUND) because the recipe skipped a
+    second concept_add call. Pin that concept_add is called exactly twice
+    -- once per concept -- and that each concept_add lands BEFORE the
+    step_update that first references that concept_id."""
+    client = _r8_client(concept_missing=False)
+
+    asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    concept_add_calls = [params for name, params in client.calls if name == "concept_add"]
+    assert [c["concept_id"] for c in concept_add_calls] == ["C-001", "C-002"]
+
+    names_in_order = [name for name, _ in client.calls]
+    first_concept_add_idx = names_in_order.index("concept_add")
+    second_concept_add_idx = names_in_order.index("concept_add", first_concept_add_idx + 1)
+    step_update_indices = [i for i, n in enumerate(names_in_order) if n == "step_update"]
+    # The THIRD step_update (index 2) is the one referencing C-002 for
+    # the first time; it must come after the second concept_add.
+    assert second_concept_add_idx < step_update_indices[2]
 
 
 def test_run_r8_mid_sequence_failure_still_aborts_cascade_and_cleans_up():
