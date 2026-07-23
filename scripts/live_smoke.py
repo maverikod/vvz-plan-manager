@@ -759,6 +759,22 @@ def summarize_dispatch_fallbacks(dispatch_log: list[dict[str, Any]]) -> Optional
     return f"commands recovered via direct-path fallback (consider adding to KNOWN_BUILTIN_COMMANDS): {names}"
 
 
+def _looks_like_unknown_param(diagnostic_text: str, param_name: str) -> bool:
+    """True iff a command-call failure looks like a schema rejection of
+    `param_name` as an unrecognized property (additionalProperties=False on
+    a server predating the parameter's introduction), rather than any other
+    validation or domain error naming that string incidentally.
+
+    Same narrow-match idiom as R11's inline pre-fix probe
+    (run_r11_list_view_projection): requires `param_name` to appear AND
+    one of a small set of "schema rejected an unknown key" phrasings.
+    """
+    lowered = diagnostic_text.lower()
+    return param_name in diagnostic_text and (
+        "additional" in lowered or "unexpected" in lowered or "not allowed" in lowered
+    )
+
+
 def _looks_like_unresolved_command(name: str, diagnostic_text: str) -> bool:
     """True iff a queued-path failure looks like "Command '<name>' not found".
 
@@ -2526,7 +2542,14 @@ async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]
             )
         )
 
-        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})
+        # Todo 3c762bfe made view="summary" (no gate_report_json) the
+        # cascade_preview DEFAULT; view="full" is the explicit opt-in this
+        # bug's own check needs. A server predating that change rejects
+        # "view" as an unknown property -- fall back to the plain call,
+        # whose (only) shape on such a server IS the full one.
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full"})
+        if not ok and _looks_like_unknown_param(str(res), "view"):
+            ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict) or "gate_report_json" not in res:
             results.append(CheckResult("4", "R8_cascade_preview", STATUS_FAIL, str(res)))
             return results
@@ -2991,6 +3014,164 @@ async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
     return results
 
 
+R12_PRE_FIX_SKIP_REASON = (
+    "server predates the response-size/cascade-tip batch (todos 3c762bfe "
+    "cascade_preview pagination, 4265fa4e srt_snapshot_list compact "
+    "default, eb2dcccb block_get pagination, 1fb0fbfc srt_snapshot_create "
+    "cascade-tip selector): cascade_preview's view=summary param was "
+    "rejected as an unrecognized property -- redeploy pending"
+)
+
+R12_EMBEDDING_SKIP_REASON = (
+    "srt_snapshot_create's embedding dependency is unavailable in this "
+    "environment (EMBEDDINGS_UNAVAILABLE) -- todo 1fb0fbfc's cascade-tip "
+    "selector is exercised at the unit level (tests/"
+    "test_todo_1fb0fbfc_srt_snapshot_create_cascade_tip.py); skipped here "
+    "rather than failing the pipeline on an environmental dependency"
+)
+
+
+async def run_r12_response_size_and_cascade_tip_batch(client: Any) -> list[CheckResult]:
+    """Todos 3c762bfe / 4265fa4e / eb2dcccb / 1fb0fbfc: one live-reported
+    batch of response-size defects (doc-store plan authoring hit the MCP
+    Proxy caller output budget on cascade_preview's change_set,
+    srt_snapshot_list's embedded tree/vectors, and block_get's entry list)
+    plus one behavioral defect (srt_snapshot_create recorded the base
+    committed revision instead of an open cascade's working tip).
+
+    Recipe (throwaway ``live-smoke-`` prefixed plan, hard-deleted in a
+    top-level try/finally, mirroring run_r8_gs_coverage_live_cascade_read):
+    plan_create -> context_common(plan,level3) [common block for block_get]
+    -> step_create G -> cascade_begin -> concept_add (distinct working tip)
+    -> cascade_preview (default=summary, then view=full+category filter)
+    -> block_get (pagination envelope) -> srt_snapshot_create by
+    cascade_uuid (embedding-gated) -> srt_snapshot_list (compact default,
+    newest-first) -> cascade_abort.
+
+    Availability-gated exactly like R6/R8/R10/R11: cascade_preview's
+    view=summary param is the version probe (rejected as an unrecognized
+    property on a pre-fix server -> the whole group SKIPs naming this
+    batch, rather than failing against a not-yet-deployed fix).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r12-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R12_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        # Version probe: view=summary is brand-new on cascade_preview: a
+        # server predating todo 3c762bfe rejects it outright
+        # (additionalProperties=False), regardless of cascade state.
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "summary"})
+        if not ok and _looks_like_unknown_param(str(res), "view"):
+            results.append(CheckResult("4", "R12_response_size_and_cascade_tip_batch", STATUS_SKIP, R12_PRE_FIX_SKIP_REASON))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        block_id = res.get("common_block_id") if ok and isinstance(res, dict) else None
+        if not ok or not block_id:
+            results.append(CheckResult("4", "R12_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R12_context_common(plan,level3)", STATUS_PASS, f"block_id={block_id}"))
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R12_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R12_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+        results.append(CheckResult("4", "R12_cascade_begin", STATUS_PASS, f"cascade_uuid={cascade_uuid}"))
+
+        # A distinct working tip: adding a concept in-cascade moves the ref
+        # ahead of the cascade's base_revision_uuid.
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001",
+                "name": "LiveSmokeR12Concept", "definition": "R12 scratch concept for the response-size/cascade-tip batch.",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R12_concept_add", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R12_concept_add", STATUS_PASS))
+
+        # --- Unit 1 (todo 3c762bfe): cascade_preview default=summary, view=full, category filter ---
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})
+        summary_shape_ok = (
+            ok and isinstance(res, dict) and "summary" in res
+            and "entries" not in res and "change_set" not in res and "gate_report_json" not in res
+        )
+        results.append(CheckResult("4", "R12_cascade_preview(default=summary)", STATUS_PASS if summary_shape_ok else STATUS_FAIL, "" if summary_shape_ok else str(res)))
+
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full"})
+        full_shape_ok = (
+            ok and isinstance(res, dict)
+            and {"entries", "total", "limit", "offset", "gate_report_json", "summary"} <= set(res)
+        )
+        results.append(CheckResult("4", "R12_cascade_preview(view=full)", STATUS_PASS if full_shape_ok else STATUS_FAIL, "" if full_shape_ok else str(res)))
+        if full_shape_ok:
+            added_present = any(e.get("category") == "added" for e in res["entries"])
+            results.append(CheckResult("4", "R12_cascade_preview(view=full)_has_added_entry", STATUS_PASS if added_present else STATUS_FAIL, "" if added_present else str(res["entries"])))
+
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full", "category": "added"})
+        category_filtered_ok = ok and isinstance(res, dict) and all(e.get("category") == "added" for e in res.get("entries", []))
+        results.append(CheckResult("4", "R12_cascade_preview(category=added)", STATUS_PASS if category_filtered_ok else STATUS_FAIL, "" if category_filtered_ok else str(res)))
+
+        # --- Unit 3 (todo eb2dcccb): block_get pagination envelope ---
+        ok, res = await call(client, "block_get", {"plan": plan_uuid, "block_id": block_id, "limit": 5, "offset": 0})
+        block_page_ok = (
+            ok and isinstance(res, dict)
+            and {"blocks", "content", "total", "limit", "offset"} <= set(res)
+            and len(res["blocks"]) <= 5
+        )
+        results.append(CheckResult("4", "R12_block_get(paginated)", STATUS_PASS if block_page_ok else STATUS_FAIL, "" if block_page_ok else str(res)))
+
+        # --- Unit 4 (todo 1fb0fbfc): srt_snapshot_create cascade-tip selector ---
+        ok, res = await call(
+            client, "srt_snapshot_create",
+            {
+                "plan": plan_uuid, "algorithm_version": "live-smoke-r12", "summarizer_version": "live-smoke-r12",
+                "embedding_model": "live-smoke-r12", "cascade_uuid": cascade_uuid,
+            },
+        )
+        if not ok and ("EMBEDDINGS_UNAVAILABLE" in str(res) or "embedding" in str(res).lower()):
+            results.append(CheckResult("4", "R12_srt_snapshot_create(cascade_uuid)", STATUS_SKIP, R12_EMBEDDING_SKIP_REASON))
+        elif not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R12_srt_snapshot_create(cascade_uuid)", STATUS_FAIL, str(res)))
+        else:
+            tip_ok = (
+                res.get("snapshot_mode") == "cascade_tip"
+                and res.get("cascade_uuid") == cascade_uuid
+                and res.get("revision_uuid")
+            )
+            results.append(CheckResult("4", "R12_srt_snapshot_create(cascade_uuid)_tip_semantics", STATUS_PASS if tip_ok else STATUS_FAIL, "" if tip_ok else str(res)))
+
+            snapshot_uuid = res.get("uuid")
+            ok, res = await call(client, "srt_snapshot_list", {"plan": plan_uuid, "limit": 5})
+            list_ok = (
+                ok and isinstance(res, dict) and isinstance(res.get("snapshots"), list)
+                and any(row.get("uuid") == snapshot_uuid for row in res["snapshots"])
+                and all("tree_content" not in row for row in res["snapshots"])
+            )
+            results.append(CheckResult("4", "R12_srt_snapshot_list(compact_default_finds_snapshot)", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+    finally:
+        if cascade_uuid is not None:
+            await call(client, "cascade_abort", {"plan": plan_uuid})
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -3073,6 +3254,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r9_plan_completion_lock(client, catalog_names)
     results += await run_r10_branch_scope_hierarchical_selectors(client)
     results += await run_r11_list_view_projection(client)
+    results += await run_r12_response_size_and_cascade_tip_batch(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

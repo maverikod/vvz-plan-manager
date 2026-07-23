@@ -2595,3 +2595,200 @@ def test_run_r11_is_wired_into_run_pipeline():
 
     source = inspect.getsource(ls.run_pipeline)
     assert "run_r11_list_view_projection(client)" in source
+
+
+# --------------------------------------------------------------------------
+# R12 (todos 3c762bfe/4265fa4e/eb2dcccb/1fb0fbfc): the response-size/
+# cascade-tip batch. Exercised purely against a _ScriptedClient, no real
+# network -- mirrors run_r8's throwaway-plan try/finally recipe shape.
+# --------------------------------------------------------------------------
+
+
+_R12_UNKNOWN_VIEW_ERROR = {
+    "success": False,
+    "error": {"code": -32602, "message": "Additional properties are not allowed ('view' was unexpected)"},
+}
+
+
+def _r12_success_responses(*, embedding_available: bool = True) -> dict[str, Any]:
+    responses: dict[str, Any] = {
+        "plan_create": _ok({"uuid": "r12-plan"}),
+        "cascade_preview": _sequence(
+            _ok({"gate_green": True, "summary": {"added": 0, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # version probe
+            _ok({"gate_green": True, "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # default (summary)
+            _ok({
+                "gate_green": True,
+                "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0},
+                "entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}],
+                "total": 1, "limit": 50, "offset": 0, "gate_report_json": "{}",
+            }),  # view=full
+            _ok({"entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}], "total": 1, "limit": 50, "offset": 0}),  # category=added
+        ),
+        "context_common": _ok({"common_block_id": "block-1"}),
+        "step_create": _ok({"uuid": "g-uuid", "step_id": "G-001"}),
+        "cascade_begin": _ok({"cascade_uuid": "cascade-1"}),
+        "concept_add": _ok({"uuid": "concept-1", "concept_id": "C-001"}),
+        "block_get": _ok({
+            "blocks": [{"type": "hrs_fragment"}] * 5, "content": [{"type": "hrs_fragment"}] * 5,
+            "total": 10, "limit": 5, "offset": 0,
+        }),
+        "cascade_abort": _ok({"aborted": True}),
+        "plan_delete": _ok({"deleted": True}),
+    }
+    if embedding_available:
+        responses["srt_snapshot_create"] = _ok({
+            "uuid": "snap-1", "plan_uuid": "r12-plan", "revision_uuid": "tip-rev",
+            "tree_hash": "hash1", "cascade_uuid": "cascade-1", "snapshot_mode": "cascade_tip",
+        })
+        responses["srt_snapshot_list"] = _ok({
+            "snapshots": [{"uuid": "snap-1", "plan_uuid": "r12-plan", "revision_uuid": "tip-rev", "tree_hash": "hash1"}],
+            "total": 1, "limit": 5, "offset": 0,
+        })
+    else:
+        responses["srt_snapshot_create"] = {
+            "success": False,
+            "error": {"code": -32000, "message": "embedding unavailable", "data": {"domain_code": "EMBEDDINGS_UNAVAILABLE"}},
+        }
+    return responses
+
+
+def _r12_client(*, pre_fix: bool = False, embedding_available: bool = True) -> "_ScriptedClient":
+    if pre_fix:
+        return _ScriptedClient({
+            "plan_create": _ok({"uuid": "r12-plan"}),
+            "cascade_preview": _R12_UNKNOWN_VIEW_ERROR,
+            "plan_delete": _ok({"deleted": True}),
+        })
+    return _ScriptedClient(_r12_success_responses(embedding_available=embedding_available))
+
+
+def test_run_r12_pre_fix_server_skips_entire_group_not_per_command():
+    client = _r12_client(pre_fix=True)
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    assert len(results) == 1
+    assert results[0].name == "R12_response_size_and_cascade_tip_batch"
+    assert results[0].status == ls.STATUS_SKIP
+    assert ls.R12_PRE_FIX_SKIP_REASON in results[0].detail
+    names = [name for name, _ in client.calls]
+    assert names[-1] == "plan_delete"  # cleanup still ran (plan_uuid was set before the probe)
+
+
+def test_run_r12_post_fix_server_passes_every_check():
+    client = _r12_client()
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R12_cascade_preview(default=summary)"].status == ls.STATUS_PASS
+    assert by_name["R12_cascade_preview(view=full)"].status == ls.STATUS_PASS
+    assert by_name["R12_cascade_preview(view=full)_has_added_entry"].status == ls.STATUS_PASS
+    assert by_name["R12_cascade_preview(category=added)"].status == ls.STATUS_PASS
+    assert by_name["R12_block_get(paginated)"].status == ls.STATUS_PASS
+    assert by_name["R12_srt_snapshot_create(cascade_uuid)_tip_semantics"].status == ls.STATUS_PASS
+    assert by_name["R12_srt_snapshot_list(compact_default_finds_snapshot)"].status == ls.STATUS_PASS
+
+    names = [name for name, _ in client.calls]
+    assert names[0] == "plan_create"
+    assert "cascade_abort" in names
+    assert names[-1] == "plan_delete"
+
+
+def test_run_r12_default_view_never_includes_entries_or_gate_report_json():
+    """The core of todo 3c762bfe: the compact default must never leak the
+    raw unbounded fields, regardless of what view=full later returns."""
+    client = _r12_client()
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R12_cascade_preview(default=summary)"].status == ls.STATUS_PASS
+
+
+def test_run_r12_embedding_unavailable_skips_only_the_srt_subcheck():
+    """An environmental EMBEDDINGS_UNAVAILABLE must SKIP only the
+    srt_snapshot_create sub-check, never the whole group nor the
+    independent cascade_preview/block_get checks."""
+    client = _r12_client(embedding_available=False)
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    by_name = {r.name: r for r in results}
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert by_name["R12_srt_snapshot_create(cascade_uuid)"].status == ls.STATUS_SKIP
+    assert ls.R12_EMBEDDING_SKIP_REASON in by_name["R12_srt_snapshot_create(cascade_uuid)"].detail
+    assert "R12_srt_snapshot_list(compact_default_finds_snapshot)" not in by_name
+    assert by_name["R12_cascade_preview(default=summary)"].status == ls.STATUS_PASS
+    assert by_name["R12_block_get(paginated)"].status == ls.STATUS_PASS
+
+
+def test_run_r12_cascade_tip_not_committed_head_asserts_snapshot_mode():
+    """The observed 1fb0fbfc defect, guarded: a response claiming
+    committed_head (or a mismatched cascade_uuid) when cascade_uuid was
+    explicitly supplied must FAIL, not PASS."""
+    client = _r12_client()
+    client._responses["srt_snapshot_create"] = _ok({
+        "uuid": "snap-1", "plan_uuid": "r12-plan", "revision_uuid": "base-rev",
+        "tree_hash": "hash1", "cascade_uuid": None, "snapshot_mode": "committed_head",
+    })
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R12_srt_snapshot_create(cascade_uuid)_tip_semantics"].status == ls.STATUS_FAIL
+
+
+def test_run_r12_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient({"plan_create": {"success": False, "error": {"code": -32000, "message": "boom"}}})
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    assert len(results) == 1
+    assert results[0].status == ls.STATUS_FAIL
+    assert results[0].name == "R12_plan_create"
+
+
+def test_run_r12_cleanup_runs_even_when_a_mid_recipe_check_fails():
+    client = _r12_client()
+    client._responses["block_get"] = {"success": False, "error": {"code": -32000, "message": "boom"}}
+
+    asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    names = [name for name, _ in client.calls]
+    assert "cascade_abort" in names
+    assert names[-1] == "plan_delete"
+
+
+def test_run_r12_is_wired_into_run_pipeline():
+    """run_r12_response_size_and_cascade_tip_batch must actually be called
+    from run_pipeline, not merely defined (dead-code guard, matching R10/
+    R11's own)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r12_response_size_and_cascade_tip_batch(client)" in source
+
+
+def test_looks_like_unknown_param_matches_schema_rejection_not_domain_error():
+    """The shared probe helper (used by R12's version gate and R8's
+    cascade_preview view=full fallback) must distinguish a genuine unknown-
+    property schema rejection from an ordinary domain error that happens to
+    mention the same param name."""
+    assert ls._looks_like_unknown_param(
+        "Additional properties are not allowed ('view' was unexpected)", "view"
+    )
+    assert not ls._looks_like_unknown_param("plan p has no open cascade", "view")
+    assert not ls._looks_like_unknown_param("view must be one of ['full', 'summary'], got 'bogus'", "view")
+
+
+def test_r8_cascade_preview_call_requests_view_full_with_pre_fix_fallback():
+    """R8's cascade_preview call must request view=full explicitly (its own
+    check depends on gate_report_json, which the new compact default no
+    longer includes) and fall back to a plain call on a pre-fix server."""
+    import inspect
+
+    source = inspect.getsource(ls.run_r8_gs_coverage_live_cascade_read)
+    assert '"view": "full"' in source
+    assert "_looks_like_unknown_param" in source
