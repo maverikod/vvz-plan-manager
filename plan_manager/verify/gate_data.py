@@ -6,8 +6,8 @@ from dataclasses import dataclass
 import psycopg
 
 from plan_manager.domain.step import Step
-from plan_manager.views.branch import Branch
-from plan_manager.views.dependency_graph import parent_path
+from plan_manager.views.branch import BranchScope
+from plan_manager.views.dependency_graph import impact_set, parent_path
 
 
 @dataclass
@@ -99,14 +99,30 @@ def load_tree(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> GateTree:
     )
 
 
-def scope_steps(tree: GateTree, branch: Branch | None) -> list[Step]:
-    """Return all checked steps for plan scope or exactly the branch path."""
+def scope_steps(tree: GateTree, branch: BranchScope | None) -> list[Step]:
+    """Return all checked steps for plan scope or one hierarchical branch
+    scope (bug e197b94a): depth "gs" checks the whole GS subtree (the GS
+    plus every TS and AS descendant), depth "ts" checks the TS subtree
+    (the GS, that TS, and every AS descendant of it), and depth "as"
+    checks exactly the three-step atomic branch path (unchanged from the
+    pre-fix single-triple behavior). A branch with zero AS descendants at
+    depth "gs" or "ts" is valid input: the descendant list is simply
+    shorter, never an error.
+    """
     if branch is None:
         return sorted(
             tree.steps.values(),
             key=lambda step: (step.level, _safe_artifact_path(tree.steps, step)),
         )
-    return [branch.gs, branch.ts, branch.atomic]
+    if branch.depth == "as":
+        assert branch.ts is not None and branch.atomic is not None
+        return [branch.gs, branch.ts, branch.atomic]
+    if branch.depth == "ts":
+        assert branch.ts is not None
+        descendants = [tree.steps[node_uuid] for node_uuid in impact_set(tree.steps, branch.ts.uuid)]
+        return [branch.gs, branch.ts, *descendants]
+    descendants = [tree.steps[node_uuid] for node_uuid in impact_set(tree.steps, branch.gs.uuid)]
+    return [branch.gs, *descendants]
 
 
 def _safe_artifact_path(nodes: dict[uuid.UUID, Step], step: Step) -> str:

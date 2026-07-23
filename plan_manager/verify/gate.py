@@ -37,7 +37,7 @@ from plan_manager.verify.gate_structure import (
     check_parse_target_file,
 )
 from plan_manager.verify.verdict import Verdict, current_head_revision
-from plan_manager.views.branch import Branch
+from plan_manager.views.branch import BranchScope
 from plan_manager.views.coverage import (
     concept_coverage,
     gs_coverage,
@@ -195,10 +195,20 @@ def check_coverage_relations(
 def run_gate(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,
-    branch: Branch | None = None,
+    branch: BranchScope | None = None,
     fail_fast: bool = False,
 ) -> tuple[Report, Verdict]:
-    """Run the mechanical gate (C-012) over ``plan_uuid``."""
+    """Run the mechanical gate (C-012) over ``plan_uuid``.
+
+    When ``branch`` is a BranchScope (bug e197b94a), the checked scope
+    is hierarchical: depth "gs" runs over the whole GS subtree, depth
+    "ts" over one TS subtree, and depth "as" over exactly one atomic
+    branch (the pre-fix behavior). ``coverage.gs`` is always evaluated
+    for ``branch.gs.step_id`` regardless of depth: it is a GS-keyed
+    concept-coverage check, unaffected by how far the caller narrowed
+    the selectors. The verdict's scope label names the deepest selector
+    the caller supplied (gs, gs/ts, or gs/ts/as).
+    """
     tree = load_tree(conn, plan_uuid)
     steps = scope_steps(tree, branch)
     run_check_ids: list[str] = []
@@ -255,9 +265,16 @@ def run_gate(
             break
     findings_sorted = sorted(findings, key=lambda f: (f.artifact_path, f.check_id))
     report = build_report(run_check_ids, findings_sorted)
-    scope_label = (
-        "plan" if branch is None else artifact_path_of(tree.steps, branch.atomic)
-    )
+    if branch is None:
+        scope_label = "plan"
+    elif branch.depth == "as":
+        assert branch.atomic is not None
+        scope_label = artifact_path_of(tree.steps, branch.atomic)
+    elif branch.depth == "ts":
+        assert branch.ts is not None
+        scope_label = artifact_path_of(tree.steps, branch.ts)
+    else:
+        scope_label = artifact_path_of(tree.steps, branch.gs)
     verdict = Verdict(
         kind="gate",
         scope=scope_label,

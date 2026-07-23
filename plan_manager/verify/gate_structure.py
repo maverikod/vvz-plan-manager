@@ -8,7 +8,7 @@ from plan_manager.domain.concept import CONCEPT_ID_PATTERN
 from plan_manager.domain.step import SLUG_PATTERN, STEP_ID_PATTERNS, Step, validate_ts_inputs_outputs
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
-from plan_manager.views.branch import Branch
+from plan_manager.views.branch import BranchScope
 from plan_manager.views.dependency_graph import build_edges
 from plan_manager.views.same_file_order import same_file_order_conflicts
 
@@ -273,7 +273,7 @@ def check_dependencies_same_file_order(tree: GateTree, steps: list[Step]) -> lis
     return findings
 
 def check_parse_sanity_counts(
-    tree: GateTree, steps: list[Step], branch: Branch | None
+    tree: GateTree, steps: list[Step], branch: BranchScope | None
 ) -> list[Finding]:
     """Make parser regressions fail loudly through expected non-zero counts."""
     findings: list[Finding] = []

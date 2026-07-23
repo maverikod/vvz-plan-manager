@@ -13,7 +13,7 @@ from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.finding import render_text, render_json
 from plan_manager.verify.gate import run_gate
-from plan_manager.views.branch import resolve_branch
+from plan_manager.views.branch import resolve_branch_scope
 
 
 class PlanValidateCommand(Command):
@@ -47,19 +47,38 @@ class PlanValidateCommand(Command):
                     "type": "string",
                     "enum": ["plan", "branch"],
                     "default": "plan",
-                    "description": "Validation scope: the whole plan or one branch named by its three step ids.",
+                    "description": (
+                        "Validation scope: the whole plan, or one hierarchical branch "
+                        "selected by gs_step_id alone (whole GS subtree), gs_step_id + "
+                        "ts_step_id (that TS subtree), or all three (one atomic branch)."
+                    ),
                 },
                 "gs_step_id": {
                     "type": "string",
-                    "description": "Global step id (e.g. G-005) of the branch. Required when scope is 'branch'.",
+                    "description": (
+                        "Global step id (e.g. G-005) of the branch. Required (and "
+                        "non-empty) whenever scope is 'branch' -- selects that GS's "
+                        "whole subtree unless narrowed by ts_step_id/as_step_id below. "
+                        "Must be absent when scope is 'plan'."
+                    ),
                 },
                 "ts_step_id": {
                     "type": "string",
-                    "description": "Tactical step id (e.g. T-009) of the branch. Required when scope is 'branch'.",
+                    "description": (
+                        "Tactical step id (e.g. T-009): optional narrowing of the "
+                        "gs_step_id subtree to one TS subtree. Requires gs_step_id. "
+                        "Required whenever as_step_id is given (skipping this level is "
+                        "rejected). Must be absent when scope is 'plan'."
+                    ),
                 },
                 "as_step_id": {
                     "type": "string",
-                    "description": "Atomic step id (e.g. A-101) of the branch. Required when scope is 'branch'.",
+                    "description": (
+                        "Atomic step id (e.g. A-101): optional narrowing to exactly "
+                        "one atomic branch. Requires both gs_step_id and ts_step_id "
+                        "(supplying it without ts_step_id is a rejected skipped-level "
+                        "selector). Must be absent when scope is 'plan'."
+                    ),
                 },
                 "fail_fast": {
                     "type": "boolean",
@@ -89,11 +108,14 @@ class PlanValidateCommand(Command):
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and normalize the parameters for this command.
 
-        Calls the platform validator first, then enforces the scope
-        selector semantics that the JSON schema cannot express: when scope
-        is 'branch', gs_step_id, ts_step_id, and as_step_id must all be
-        present and non-empty; when scope is 'plan', all three must be
-        absent.
+        Calls the platform validator first, then enforces the hierarchical
+        branch-selector semantics the JSON schema cannot express (bug
+        e197b94a): when scope is 'branch', gs_step_id must be present and
+        non-empty (it alone selects the whole GS subtree); ts_step_id is
+        then optional (present narrows to that TS subtree); as_step_id is
+        only valid when ts_step_id is also present (skipping the TS level
+        is rejected deterministically). When scope is 'plan', all three
+        must be absent.
 
         :param params: Raw parameter dict as received from the platform.
         :type params: Dict[str, Any]
@@ -109,10 +131,16 @@ class PlanValidateCommand(Command):
         ts_step_id = params.get("ts_step_id")
         as_step_id = params.get("as_step_id")
         if scope == "branch":
-            if not gs_step_id or not ts_step_id or not as_step_id:
+            if not gs_step_id:
                 raise InvalidParamsError(
-                    "gs_step_id, ts_step_id, and as_step_id are all required "
-                    "and must be non-empty when scope is 'branch'"
+                    "gs_step_id is required and must be non-empty when scope is "
+                    "'branch' (it selects the whole GS subtree unless narrowed by "
+                    "ts_step_id/as_step_id)"
+                )
+            if as_step_id and not ts_step_id:
+                raise InvalidParamsError(
+                    "as_step_id requires ts_step_id when scope is 'branch' "
+                    "(skipping the TS level is not allowed)"
                 )
         elif scope == "plan":
             if gs_step_id or ts_step_id or as_step_id:
@@ -133,11 +161,12 @@ class PlanValidateCommand(Command):
         :type kwargs: Any
         :returns: A SuccessResult with data {green, scope, revision_uuid,
             format, report} on success; an ErrorResult with code
-            STEP_NOT_FOUND when scope is 'branch' and the branch cannot be
-            resolved; otherwise an ErrorResult produced by map_exception
-            for any exception raised while resolving the plan or running
-            the gate (in particular PLAN_NOT_FOUND when the plan does not
-            resolve).
+            STEP_NOT_FOUND when scope is 'branch' and the branch scope
+            cannot be resolved (missing step, or a ts_step_id/as_step_id
+            that does not belong to its addressed parent); otherwise an
+            ErrorResult produced by map_exception for any exception raised
+            while resolving the plan or running the gate (in particular
+            PLAN_NOT_FOUND when the plan does not resolve).
         :rtype: SuccessResult | ErrorResult
         """
         plan = kwargs["plan"]
@@ -153,7 +182,7 @@ class PlanValidateCommand(Command):
                 branch = None
                 if scope == "branch":
                     try:
-                        branch = resolve_branch(
+                        branch = resolve_branch_scope(
                             conn, p.uuid, gs_step_id, ts_step_id, as_step_id
                         )
                     except ValueError as exc:

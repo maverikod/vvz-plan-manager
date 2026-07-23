@@ -45,7 +45,15 @@ def isolated_registry(monkeypatch):
 
 
 def test_branch_scope_missing_step_ids_is_typed_invalid_params(isolated_registry) -> None:
-    """scope='branch' without gs/ts/as_step_id must map to a clean -32602, not -32603."""
+    """scope='branch' without gs/ts/as_step_id must map to a clean -32602, not -32603.
+
+    Message text updated for bug e197b94a (2026-07-23): scope='branch' now
+    only unconditionally requires gs_step_id (it alone selects the whole GS
+    subtree; ts_step_id/as_step_id are optional hierarchical narrowings) --
+    see test_bug_e197b94a_branch_scope_selectors.py for the full selector
+    contract. This test's own concern (a clean typed -32602, never a raw
+    -32603 with the message buried in details.original_error) is unchanged.
+    """
     result = asyncio.run(PlanValidateCommand.run(plan="some-plan", scope="branch"))
     payload = result.to_dict()
 
@@ -53,7 +61,7 @@ def test_branch_scope_missing_step_ids_is_typed_invalid_params(isolated_registry
     error = payload["error"]
     assert error["code"] == InvalidParamsError().code == -32602
     assert "Unexpected error" not in error["message"]
-    assert "gs_step_id, ts_step_id, and as_step_id are all required" in error["message"]
+    assert "gs_step_id is required" in error["message"]
     # The bug's symptom: the original ValueError text demoted to a details blob
     # instead of being the actual typed error message.
     assert "original_error" not in payload["error"].get("data", {})

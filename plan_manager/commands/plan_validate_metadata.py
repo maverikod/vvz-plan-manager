@@ -28,14 +28,20 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "detailed_description": (
             "Runs the mechanical gate (fixed check order: parse, identity, "
             "uniqueness, references, coverage) as a pure read over one plan "
-            "or one branch of that plan. The gate is deterministic and "
-            "byte-identical for the same tree state; it never mutates plan "
-            "data and never stores its report. The result binds to the "
-            "exact revision that was measured. fail_fast stops the run only "
-            "at check-group boundaries, never mid-group, so a single "
-            "group's findings are always reported together. format selects "
-            "between a PASS/FAIL text report and a machine-checkable JSON "
-            "form; both are rendered from the same underlying report object."
+            "or one hierarchical branch scope of that plan. A branch scope "
+            "is named by precedence: gs_step_id alone checks the whole GS "
+            "subtree; gs_step_id + ts_step_id narrows to one TS subtree; "
+            "adding as_step_id narrows to one atomic branch. Every depth "
+            "validates over the descendants that actually exist -- a GS or "
+            "TS with zero AS descendants is valid input, not an error. The "
+            "gate is deterministic and byte-identical for the same tree "
+            "state; it never mutates plan data and never stores its report. "
+            "The result binds to the exact revision that was measured. "
+            "fail_fast stops the run only at check-group boundaries, never "
+            "mid-group, so a single group's findings are always reported "
+            "together. format selects between a PASS/FAIL text report and "
+            "a machine-checkable JSON form; both are rendered from the same "
+            "underlying report object."
         ),
         "parameters": {
             "plan": {
@@ -44,24 +50,43 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "required": True,
             },
             "scope": {
-                "description": "Validation scope: the whole plan or one branch named by its three step ids.",
+                "description": (
+                    "Validation scope: the whole plan, or one hierarchical branch "
+                    "selected by gs_step_id alone (whole GS subtree), gs_step_id + "
+                    "ts_step_id (that TS subtree), or all three (one atomic branch)."
+                ),
                 "type": "string",
                 "required": False,
                 "default": "plan",
                 "enum": ["plan", "branch"],
             },
             "gs_step_id": {
-                "description": "Global step id (e.g. G-005) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                "description": (
+                    "Global step id (e.g. G-005) of the branch. Required and "
+                    "non-empty when scope is 'branch' -- selects that GS's whole "
+                    "subtree unless narrowed by ts_step_id/as_step_id below. Must be "
+                    "absent when scope is 'plan'."
+                ),
                 "type": "string",
                 "required": False,
             },
             "ts_step_id": {
-                "description": "Tactical step id (e.g. T-009) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                "description": (
+                    "Tactical step id (e.g. T-009): optional narrowing of the "
+                    "gs_step_id subtree to one TS subtree. Required whenever "
+                    "as_step_id is given (skipping this level is rejected "
+                    "deterministically). Must be absent when scope is 'plan'."
+                ),
                 "type": "string",
                 "required": False,
             },
             "as_step_id": {
-                "description": "Atomic step id (e.g. A-101) of the branch. Required and non-empty when scope is 'branch'; must be absent when scope is 'plan'.",
+                "description": (
+                    "Atomic step id (e.g. A-101): optional narrowing to exactly one "
+                    "atomic branch. Requires ts_step_id to also be given (as_step_id "
+                    "without ts_step_id is a rejected skipped-level selector). Must "
+                    "be absent when scope is 'plan'."
+                ),
                 "type": "string",
                 "required": False,
             },
@@ -111,7 +136,28 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "explanation": "Runs the mechanical gate over the whole plan and returns the JSON report bound to the current revision.",
             },
             {
-                "description": "Validate one branch with a text report, stopping at the first failing check group.",
+                "description": "Validate a whole GS subtree with gs_step_id alone, e.g. a GS with TS children but no AS descendants yet.",
+                "command": {
+                    "plan": "plan_manager",
+                    "scope": "branch",
+                    "gs_step_id": "G-007",
+                    "format": "json",
+                },
+                "explanation": "Checks G-007 and every TS/AS descendant that currently exists under it; zero AS descendants is valid input, not an error.",
+            },
+            {
+                "description": "Validate one TS subtree with gs_step_id + ts_step_id.",
+                "command": {
+                    "plan": "plan_manager",
+                    "scope": "branch",
+                    "gs_step_id": "G-007",
+                    "ts_step_id": "T-002",
+                    "format": "json",
+                },
+                "explanation": "Checks G-007, T-002, and every AS descendant of T-002 that currently exists.",
+            },
+            {
+                "description": "Validate one atomic branch with a text report, stopping at the first failing check group.",
                 "command": {
                     "plan": "plan_manager",
                     "scope": "branch",
@@ -121,7 +167,7 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "fail_fast": True,
                     "format": "text",
                 },
-                "explanation": "Runs the mechanical gate over one branch only, halting at the first failing check-group boundary, and returns a PASS/FAIL text report.",
+                "explanation": "Runs the mechanical gate over exactly that one atomic branch, halting at the first failing check-group boundary, and returns a PASS/FAIL text report.",
             },
         ],
         "error_cases": {
@@ -131,15 +177,15 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "solution": "Verify the plan identifier against the plan catalog and retry.",
             },
             "STEP_NOT_FOUND": {
-                "description": "scope is 'branch' but one of gs_step_id, ts_step_id, as_step_id does not resolve within the plan.",
-                "message": "Step not found: {step_id}",
-                "solution": "Verify the three branch step ids against the plan tree and retry.",
+                "description": "scope is 'branch' and gs_step_id, ts_step_id, or as_step_id does not resolve within the plan, or a given ts_step_id/as_step_id does not belong to its addressed parent.",
+                "message": "Step not found / step does not belong to addressed parent (message names the offending step_id).",
+                "solution": "Verify the supplied step ids and their parentage against the plan tree and retry.",
             },
         },
         "best_practices": [
-            "Run plan_validate before plan_score: scoring refuses any scope that has not passed the gate in the same tree state.",
+            "Run plan_validate before plan_score: scoring refuses any scope that has not passed the gate in the same tree state (plan_score's branch scope remains the full gs_step_id+ts_step_id+as_step_id atomic triple; only plan_validate's scope='branch' supports the gs-only/gs+ts narrowings).",
             "Use format='text' for human review and format='json' when the result feeds another automated step.",
-            "Use scope='branch' with fail_fast=True for fast iteration while fixing a single branch.",
+            "Use scope='branch' with gs_step_id alone to check a whole GS subtree in progress (including one with TS children but no AS descendants yet), narrow with ts_step_id for one TS subtree, and add as_step_id with fail_fast=True for fast iteration on a single atomic branch.",
             "This command is read-only: it never mutates or stores anything, so it is always safe to call.",
             "Record the returned revision_uuid alongside the report; it identifies the exact tree state that was measured.",
             "This command runs on the queue: the plan_validate call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
