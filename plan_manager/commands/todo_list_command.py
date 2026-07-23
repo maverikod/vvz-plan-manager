@@ -19,6 +19,12 @@ from plan_manager.commands.runtime_filtering import (
     parse_filters,
     parse_pagination,
 )
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES, TodoKind, TodoStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -59,6 +65,7 @@ class TodoListCommand(Command):
         properties = {
             **filter_schema_properties(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_schema_properties(),
+            **view_schema_properties(),
         }
         return {
             "type": "object",
@@ -72,11 +79,12 @@ class TodoListCommand(Command):
         params = {
             **filter_metadata_params(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return todo_metadata(
             cls,
             params,
-            {"success": {"description": "A page of TodoItem payloads plus total (the full match count before pagination), limit, and offset."}},
+            {"success": {"description": "A page of TodoItem payloads (or, with view=summary, compact projections) plus total (the full match count before pagination), limit, and offset."}},
             [{"description": "List active TODO items owned by an owner.", "command": {"active_only": True, "owner": "agent-1", "limit": 20}}],
             best_practices=[
                 "active_only restricts results to statuses open, in_progress, blocked, excluding resolved/closed/cancelled — combine with owner or assignee to build a personal work queue.",
@@ -85,6 +93,7 @@ class TodoListCommand(Command):
                 "The project filter matches transitively: a TODO whose anchor_project_id equals the filter value matches directly, and a TODO with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "The model filter parameter is accepted in the schema but is not currently applied to the result set — passing it has no filtering effect.",
                 "total reflects the filtered count before pagination is applied, not the page size — use it, together with limit and offset, to detect additional pages.",
+                "view=summary returns a compact per-row projection (uuid, todo_uuid, title, status, kind, priority_nice, primary_anchor_type, anchor_ref_id, updated_at) instead of the full TodoItem record; use it for listing/triage and follow up with todo_get for a single item's full detail.",
             ],
         )
 
@@ -107,9 +116,11 @@ class TodoListCommand(Command):
         unanchored_only: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 raw_params: dict[str, Any] = {
                     "project": project, "file": file,
@@ -152,7 +163,7 @@ class TodoListCommand(Command):
                     include_deleted=False,
                 )
                 return SuccessResult(data={
-                    "todos": [r.to_payload() for r in records],
+                    "todos": project_entities(records, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

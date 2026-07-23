@@ -42,6 +42,21 @@ class TodoItem(DataclassEntity):
     ENTITY_TYPE = "todo"
     ENTITY_ID_FIELD = "todo_uuid"
     TABLE_NAME = "todo_item"
+    # Compact view=summary projection (bug 8a13977d): identifier, title, the
+    # kind/status/priority triad, primary anchor type+ref, and updated_at --
+    # dropping description/blocking_reason/execution_result and the unused
+    # anchor slots, which are what make the full row expensive (~2.7 KB avg).
+    SUMMARY_FIELDS = (
+        "uuid",
+        "todo_uuid",
+        "title",
+        "status",
+        "kind",
+        "priority_nice",
+        "primary_anchor_type",
+        "anchor_ref_id",
+        "updated_at",
+    )
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "todo_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose
