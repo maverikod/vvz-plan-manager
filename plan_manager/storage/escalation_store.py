@@ -7,6 +7,7 @@ import psycopg
 from plan_manager.domain.escalation import Escalation, ESCALATION_STATUSES, validate_escalation_status
 from plan_manager.domain.primary_anchor import PrimaryAnchor, validate_anchor, anchor_to_columns, anchor_from_columns
 from plan_manager.domain.runtime_validation import RuntimeValidationError
+from plan_manager.storage.escalation_routing_store import ROUTING_INSERT_COLUMNS, routing_insert_params, routing_from_row
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
@@ -23,6 +24,7 @@ def _row_to_record(row: dict[str, Any]) -> Escalation:
         "anchor_ref_id": row["anchor_ref_id"],
     }
     anchor = anchor_from_columns(anchor_columns)
+    routing = routing_from_row(row)
 
     # Convert datetime fields to isoformat strings if they are datetime objects
     created_at_str = row["created_at"].isoformat() if isinstance(row["created_at"], datetime) else row["created_at"]
@@ -55,11 +57,15 @@ def _row_to_record(row: dict[str, Any]) -> Escalation:
         created_at=created_at_str,
         updated_at=updated_at_str,
         deleted_at=deleted_at_str,
+        **routing,
     )
 
 
 def create_escalation(conn: psycopg.Connection, *, anchor: PrimaryAnchor, reason: str, created_by: str,
-                      from_level: str | None = None, to_level: str | None = None) -> Escalation:
+                      from_level: str | None = None, to_level: str | None = None,
+                      addressee_level: str | None = None, addressee_role: str | None = None,
+                      forwarded_from_uuid: uuid.UUID | None = None, chain_root_uuid: uuid.UUID | None = None,
+                      sweep_priority: int | None = None, blocks_subtree: bool = False) -> Escalation:
     """Create a new escalation record."""
     # Validate anchor
     validate_anchor(conn, anchor)
@@ -85,12 +91,16 @@ def create_escalation(conn: psycopg.Connection, *, anchor: PrimaryAnchor, reason
         uuid, primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
         anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
         reason, from_level, to_level, status, resolution, resolved_by, resolved_at,
-        created_by, created_at, updated_at, deleted_at
+        created_by, created_at, updated_at, deleted_at,
+        addressee_level, addressee_role, forwarded_from_uuid, chain_root_uuid,
+        sweep_priority, blocks_subtree
     ) VALUES (
         %s, %s, %s, %s, %s,
         %s, %s, %s, %s,
         %s, %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s
+        %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s
     )
     """
 
@@ -115,6 +125,13 @@ def create_escalation(conn: psycopg.Connection, *, anchor: PrimaryAnchor, reason
         created_at,
         updated_at,
         deleted_at,
+    ) + routing_insert_params(
+        addressee_level=addressee_level,
+        addressee_role=addressee_role,
+        forwarded_from_uuid=forwarded_from_uuid,
+        chain_root_uuid=chain_root_uuid,
+        sweep_priority=sweep_priority,
+        blocks_subtree=blocks_subtree,
     )
 
     conn.execute(sql, params)
@@ -151,6 +168,12 @@ def create_escalation(conn: psycopg.Connection, *, anchor: PrimaryAnchor, reason
         created_at=created_at.isoformat(),
         updated_at=updated_at.isoformat(),
         deleted_at=deleted_at,
+        addressee_level=addressee_level,
+        addressee_role=addressee_role,
+        forwarded_from_uuid=forwarded_from_uuid,
+        chain_root_uuid=chain_root_uuid,
+        sweep_priority=sweep_priority,
+        blocks_subtree=blocks_subtree,
     )
 
 
@@ -215,6 +238,8 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
         "anchor_ref_id": row[8],
     }
     anchor = anchor_from_columns(anchor_columns)
+    # row[20:26] are the six routing columns, in ROUTING_INSERT_COLUMNS order
+    routing = routing_from_row(dict(zip(ROUTING_INSERT_COLUMNS, row[20:26])))
 
     return Escalation(
         escalation_uuid=escalation_uuid,
@@ -237,6 +262,7 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
         created_at=row[17].isoformat() if isinstance(row[17], datetime) else row[17],
         updated_at=now.isoformat(),
         deleted_at=None,
+        **routing,
     )
 
 
@@ -271,6 +297,12 @@ def get_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID) -> Esca
         "created_at": row[17],
         "updated_at": row[18],
         "deleted_at": row[19],
+        "addressee_level": row[20],
+        "addressee_role": row[21],
+        "forwarded_from_uuid": row[22],
+        "chain_root_uuid": row[23],
+        "sweep_priority": row[24],
+        "blocks_subtree": row[25],
     }
 
     return _row_to_record(row_dict)
@@ -352,6 +384,12 @@ def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
             "created_at": row[17],
             "updated_at": row[18],
             "deleted_at": row[19],
+            "addressee_level": row[20],
+            "addressee_role": row[21],
+            "forwarded_from_uuid": row[22],
+            "chain_root_uuid": row[23],
+            "sweep_priority": row[24],
+            "blocks_subtree": row[25],
         }
         escalations.append(_row_to_record(row_dict))
 
