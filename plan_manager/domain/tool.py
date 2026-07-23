@@ -21,6 +21,8 @@ class Tool(DataclassEntity):
     ENTITY_TYPE = "tool"
     ENTITY_ID_FIELD = "tool_uuid"
     TABLE_NAME = "tool"
+    # Compact view=summary projection (bug 8a13977d): drops pinned_options and description.
+    SUMMARY_FIELDS = ("uuid", "name", "server_id", "command", "updated_at")
 
     tool_uuid: uuid.UUID
     name: str

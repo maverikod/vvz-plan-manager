@@ -16,6 +16,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.commands.tool_command_metadata import tool_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.tool_store import list_tools
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 
 class ToolListCommand(Command):
@@ -36,6 +42,7 @@ class ToolListCommand(Command):
                 "name": {"description": "Optional exact tool name to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted tools. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -48,8 +55,9 @@ class ToolListCommand(Command):
             "include_deleted": {"description": "Include soft-deleted tools. Defaults to false.", "type": "boolean", "required": False},
         }
         parameters.update(pagination_metadata_params())
+        parameters.update(view_metadata_params())
         return_value = {
-            "description": "An object with a tools key holding a page of Tool records, plus total/limit/offset.",
+            "description": "An object with a tools key holding a page of Tool records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
         }
         examples = [
@@ -60,6 +68,7 @@ class ToolListCommand(Command):
             "include_deleted=true surfaces soft-deleted tools for audit review; the default false hides them.",
             "Results are ordered by created_at ascending.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (uuid, name, server_id, command, updated_at) instead of the full Tool record (drops pinned_options and description); use tool_get for a single tool's full detail.",
         ]
         return tool_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -69,16 +78,18 @@ class ToolListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 tools = list_tools(conn, name=name, include_deleted=include_deleted)
                 total = len(tools)
                 page = tools[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "tools": [tool.to_payload() for tool in page],
+                    "tools": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

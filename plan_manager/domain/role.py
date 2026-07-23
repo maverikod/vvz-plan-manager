@@ -21,6 +21,8 @@ class Role(DataclassEntity):
     ENTITY_TYPE = "role"
     ENTITY_ID_FIELD = "role_uuid"
     TABLE_NAME = "role"
+    # Compact view=summary projection (bug 8a13977d): drops description.
+    SUMMARY_FIELDS = ("uuid", "name", "updated_at")
 
     role_uuid: uuid.UUID
     name: str

@@ -34,6 +34,8 @@ class Provider(DataclassEntity):
     ENTITY_TYPE = "provider"
     ENTITY_ID_FIELD = "provider_uuid"
     TABLE_NAME = "provider"
+    # Compact view=summary projection (bug 8a13977d): drops billing_notes and quota_notes.
+    SUMMARY_FIELDS = ("uuid", "name", "type", "status", "updated_at")
 
     provider_uuid: uuid.UUID
     name: str

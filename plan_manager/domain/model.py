@@ -31,6 +31,8 @@ class Model(DataclassEntity):
     ENTITY_TYPE = "model"
     ENTITY_ID_FIELD = "model_uuid"
     TABLE_NAME = "model"
+    # Compact view=summary projection (bug 8a13977d): drops context_window, cost_class, availability.
+    SUMMARY_FIELDS = ("uuid", "name", "provider_uuid", "level", "execution_mode", "updated_at")
 
     model_uuid: uuid.UUID
     name: str

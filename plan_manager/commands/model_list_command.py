@@ -17,6 +17,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_store import list_models
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 
 class ModelListCommand(Command):
@@ -39,6 +45,7 @@ class ModelListCommand(Command):
                 "execution_mode": {"description": "Optional exact execution mode to filter by: interactive or batch.", "type": "string", "enum": ["interactive", "batch"]},
                 "include_deleted": {"description": "Include soft-deleted models. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -53,8 +60,9 @@ class ModelListCommand(Command):
             "include_deleted": {"description": "Include soft-deleted models. Defaults to false.", "type": "boolean", "required": False},
         }
         parameters.update(pagination_metadata_params())
+        parameters.update(view_metadata_params())
         return_value = {
-            "description": "An object with a models key holding a page of Model records, plus total/limit/offset.",
+            "description": "An object with a models key holding a page of Model records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
         }
         examples = [
@@ -65,6 +73,7 @@ class ModelListCommand(Command):
             "include_deleted=true surfaces soft-deleted models for audit review; the default false hides them.",
             "Results are ordered by created_at ascending.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (uuid, name, provider_uuid, level, execution_mode, updated_at) instead of the full Model record (drops context_window, cost_class, availability); use model_get for full detail.",
         ]
         return model_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -76,9 +85,11 @@ class ModelListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 parsed_provider_uuid = validate_uuid(provider_uuid) if provider_uuid is not None else None
@@ -92,7 +103,7 @@ class ModelListCommand(Command):
                 total = len(models)
                 page = models[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "models": [model.to_payload() for model in page],
+                    "models": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

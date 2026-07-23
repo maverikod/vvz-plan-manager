@@ -31,6 +31,9 @@ class InvocationProfile(DataclassEntity):
     ENTITY_TYPE = "invocation_profile"
     ENTITY_ID_FIELD = "profile_uuid"
     TABLE_NAME = "invocation_profile"
+    # Compact view=summary projection (bug 8a13977d): drops the tuning fields
+    # (temperature, top_p, retry_policy, rate_hint, response_schema, etc.).
+    SUMMARY_FIELDS = ("uuid", "scope", "role", "plan_uuid", "step_path", "active", "updated_at")
 
     profile_uuid: uuid.UUID
     scope: str

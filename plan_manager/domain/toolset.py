@@ -20,6 +20,8 @@ class Toolset(DataclassEntity):
     ENTITY_TYPE = "toolset"
     ENTITY_ID_FIELD = "toolset_uuid"
     TABLE_NAME = "toolset"
+    # Compact view=summary projection (bug 8a13977d): drops description.
+    SUMMARY_FIELDS = ("uuid", "name", "updated_at")
 
     toolset_uuid: uuid.UUID
     name: str

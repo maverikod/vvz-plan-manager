@@ -16,6 +16,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.commands.toolset_command_metadata import toolset_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.toolset_store import list_toolsets
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 
 class ToolsetListCommand(Command):
@@ -36,6 +42,7 @@ class ToolsetListCommand(Command):
                 "name": {"description": "Optional exact toolset name to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted toolsets. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -48,8 +55,9 @@ class ToolsetListCommand(Command):
             "include_deleted": {"description": "Include soft-deleted toolsets. Defaults to false.", "type": "boolean", "required": False},
         }
         parameters.update(pagination_metadata_params())
+        parameters.update(view_metadata_params())
         return_value = {
-            "description": "An object with a toolsets key holding a page of Toolset records, plus total/limit/offset.",
+            "description": "An object with a toolsets key holding a page of Toolset records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
         }
         examples = [
@@ -61,6 +69,7 @@ class ToolsetListCommand(Command):
             "Results are ordered by created_at ascending.",
             "Compare offset+limit against total to detect additional pages.",
             "This command lists toolsets only; use toolset_get plus the member commands to inspect one toolset's tool membership.",
+            "view=summary returns a compact per-row projection (uuid, name, updated_at) instead of the full Toolset record (drops description); use toolset_get for full detail.",
         ]
         return toolset_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -70,16 +79,18 @@ class ToolsetListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 pagination = parse_pagination({"limit": limit, "offset": offset})
                 toolsets = list_toolsets(conn, name=name, include_deleted=include_deleted)
                 total = len(toolsets)
                 page = toolsets[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "toolsets": [toolset.to_payload() for toolset in page],
+                    "toolsets": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

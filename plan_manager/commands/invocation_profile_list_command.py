@@ -17,6 +17,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import list_invocation_profiles
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 class InvocationProfileListCommand(Command):
     name: ClassVar[str] = "invocation_profile_list"
@@ -38,6 +44,7 @@ class InvocationProfileListCommand(Command):
                 "role": {"description": "Optional RuntimeRole value to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted invocation profiles. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -51,8 +58,9 @@ class InvocationProfileListCommand(Command):
         parameters["role"] = {"description": "Optional RuntimeRole value to filter by.", "type": "string", "required": False}
         parameters["include_deleted"] = {"description": "Include soft-deleted invocation profiles. Defaults to false.", "type": "boolean", "required": False}
         parameters.update(pagination_metadata_params())
+        parameters.update(view_metadata_params())
         return_value = {
-            "description": "An object with a profiles key holding a page of InvocationProfile records, plus total/limit/offset.",
+            "description": "An object with a profiles key holding a page of InvocationProfile records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
         }
         examples = [
@@ -64,6 +72,7 @@ class InvocationProfileListCommand(Command):
             "include_deleted=true surfaces soft-deleted profiles for audit review; the default false hides them.",
             "Results are ordered by created_at, not inheritance specificity; a future resolve command will find the winning profile for a target the same way model_binding_resolve does for bindings.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (uuid, scope, role, plan_uuid, step_path, active, updated_at) instead of the full InvocationProfile record (drops the tuning fields: temperature, top_p, retry_policy, rate_hint, response_schema, etc.); use invocation_profile_get for full detail.",
         ]
         return invocation_profile_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -75,9 +84,11 @@ class InvocationProfileListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_uuid = validate_uuid(plan) if plan is not None else None
                 pagination = parse_pagination({"limit": limit, "offset": offset})
@@ -91,7 +102,7 @@ class InvocationProfileListCommand(Command):
                 total = len(profiles)
                 page = profiles[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "profiles": [profile.to_payload() for profile in page],
+                    "profiles": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

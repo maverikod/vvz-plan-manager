@@ -43,6 +43,9 @@ class ModelBinding(DataclassEntity):
     ENTITY_TYPE = "model_binding"
     ENTITY_ID_FIELD = "binding_uuid"
     TABLE_NAME = "model_binding"
+    # Compact view=summary projection (bug 8a13977d): drops fallback_provider/
+    # fallback_model, max_retries, timeout, context_budget.
+    SUMMARY_FIELDS = ("uuid", "scope", "role", "plan_uuid", "provider", "model", "active", "updated_at")
 
     binding_uuid: uuid.UUID
     scope: str
