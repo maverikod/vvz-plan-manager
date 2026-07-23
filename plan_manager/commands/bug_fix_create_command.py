@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_derived_status_store import recompute_bug_status
@@ -96,6 +97,7 @@ class BugFixCreateCommand(Command):
                 bug_record = get_bug(conn, bug_uuid)
                 if bug_record is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug}")
+                refuse_if_bug_plan_completed(conn, bug_record)
                 source_project_uuid = uuid.UUID(source_project_id) if source_project_id is not None else None
                 record = create_bug_fix(
                     conn,
