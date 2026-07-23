@@ -72,7 +72,10 @@ Tier 3: CRUD lifecycles on THROWAWAY entities, all named/titled with the
     lifecycle ends at close, not a hard delete).
 Tier 4: the three named bug regressions (R1/R2/R3) from the task, each its
     own dedicated throwaway plan where relevant, cleaned up in its own
-    try/finally.
+    try/finally. Later additions to this same tier: R4/R5/R6 (bug ad529347/
+    26fa21a5, 761ee3dd, 5ebe3ce5) and R7 (CR-5a's tool/toolset/role/provider/
+    model/invocation_profile/resolve agent-config command surface, marker-
+    gated SKIP on a pre-CR-5a server exactly like R4-R6's pre-fix SKIPs).
 
 Zero-trust note: every result is read back from the live server's own
 response, never assumed from a prior call's request payload.
@@ -363,6 +366,19 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         "project_view",
         "todo_list",
         "bug_list",
+        # R7 (CR-5a agent-config surface): the 36 tool/role/provider/model/
+        # toolset/invocation_profile/resolve commands this change request
+        # adds, exercised end-to-end by run_r7_agent_config_lifecycle below.
+        "tool_create", "tool_get", "tool_list", "tool_update", "tool_delete",
+        "role_create", "role_get", "role_list", "role_update", "role_delete",
+        "provider_create", "provider_get", "provider_list", "provider_set_status",
+        "provider_update", "provider_delete",
+        "model_create", "model_get", "model_list", "model_update", "model_delete",
+        "toolset_create", "toolset_get", "toolset_list", "toolset_update", "toolset_delete",
+        "toolset_member_add", "toolset_member_remove",
+        "invocation_profile_create", "invocation_profile_get", "invocation_profile_list",
+        "invocation_profile_update", "invocation_profile_delete", "invocation_profile_resolve",
+        "role_model_resolve", "step_assignment_resolve",
     }
 )
 
@@ -1914,6 +1930,428 @@ async def run_r6_write_intent_negation(client: Any) -> list[CheckResult]:
     return results
 
 
+R7_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the CR-5a agent-config command surface (tool/role/provider/model/"
+    "toolset/invocation_profile/resolve commands not yet present in the live help catalog) "
+    "-- redeploy pending"
+)
+
+# The 36 commands this change request adds (tool C-001, toolset C-002, role
+# C-003, provider C-004, model C-005, step_assignment C-007 resolve-only,
+# invocation_profile C-008): presence of ALL of them in the live help catalog
+# is this pipeline's proxy for "this server has CR-5a deployed" -- see
+# run_r7_agent_config_lifecycle's docstring.
+R7_REQUIRED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "tool_create", "tool_get", "tool_list", "tool_update", "tool_delete",
+        "role_create", "role_get", "role_list", "role_update", "role_delete",
+        "provider_create", "provider_get", "provider_list", "provider_set_status",
+        "provider_update", "provider_delete",
+        "model_create", "model_get", "model_list", "model_update", "model_delete",
+        "toolset_create", "toolset_get", "toolset_list", "toolset_update", "toolset_delete",
+        "toolset_member_add", "toolset_member_remove",
+        "invocation_profile_create", "invocation_profile_get", "invocation_profile_list",
+        "invocation_profile_update", "invocation_profile_delete", "invocation_profile_resolve",
+        "role_model_resolve", "step_assignment_resolve",
+    }
+)
+
+
+async def run_r7_agent_config_lifecycle(client: Any, catalog_names: frozenset[str]) -> list[CheckResult]:
+    """CR-5a agent-config surface (C-001 tool, C-002 toolset, C-003 role,
+    C-004 provider, C-005 model, C-007 step assignment resolve-only, C-008
+    invocation profile): a representative live CRUD-plus-resolve cycle over
+    the 36 commands this change request adds -- every one of them fell into
+    classify_catalog's GENERIC_SKIP_REASON before this function existed (see
+    tests/test_live_smoke_script.py::
+    test_classify_catalog_no_generic_reason_among_shipped_commands, the
+    guard this fixup satisfies together with TIER4_HANDLED's R7 additions
+    above).
+
+    Marker-gated on R7_REQUIRED_COMMANDS <= catalog_names, exactly like
+    run_r4_ts_inputs_outputs_schema/run_r5_step_id_selector_docs/
+    run_r6_write_intent_negation's pre-fix SKIP convention: this pipeline
+    runs against whatever server is currently deployed, and a pre-CR-5a
+    server (the entire command surface absent from the live help catalog,
+    not merely a changed behavior on an existing command) is an expected,
+    reportable state (redeploy pending), not a pipeline defect -- ONE
+    aggregate SKIP is reported rather than 36 individual ones, since on a
+    pre-CR-5a server none of these commands can be attempted at all without
+    the dispatch layer's "Command not found" routing looking like a
+    (misleading) transport FAIL rather than a clean, expected SKIP.
+
+    Recipe (throwaway, ``live-smoke-`` prefixed, every created entity torn
+    down in a single top-level try/finally regardless of where the sequence
+    stops -- entities already deleted along the natural flow below have
+    their tracking variable reset to None so the finally block never
+    double-deletes them):
+
+      1. A dedicated throwaway plan supplies the plan-coordinate every
+         resolve command below requires.
+      2. tool_create -> tool_get -> tool_list -> tool_update.
+      3. toolset_create -> toolset_get -> toolset_list -> toolset_update ->
+         toolset_member_add(toolset, tool) -- the tool is attached WHILE
+         still live.
+      4. tool_delete: deliberately SOFT. The tool is still referenced by the
+         live toolset membership just created; hard mode is gated by the
+         universal deletion rule's inbound-reference integrity check, while
+         soft delete carries no such gate.
+      5. toolset_member_remove (detach) -> toolset_delete(hard) -- safe now
+         that the membership has been removed.
+      6. role_create -> role_get -> role_list -> role_update ->
+         role_delete(hard) -- a Role (C-003) row is a distinct stored entity
+         from the RuntimeRole enum string the resolve commands key on
+         (role="as_author" below); nothing downstream references this row.
+      7. provider_create(status=active) -> provider_set_status(suspended) ->
+         provider_get -> provider_list -> provider_update(status back to
+         active, plus a general field) -- the provider must be active again
+         before the role_model_resolve probe in step 9, since its candidate
+         list is built from list_providers(status="active") only.
+      8. model_create(provider_uuid=<the provider>, level=<a live-smoke
+         unique level string>) -> model_get -> model_list ->
+         model_update(a non-level field, so the unique level survives
+         intact for step 9).
+      9. role_model_resolve(plan=<throwaway plan>, role="as_author",
+         step_required_level=<the unique level>) -- guaranteed to succeed
+         regardless of any real production model-binding/role-default
+         configuration already live on this shared server: role_model_
+         resolve checks an explicit binding FIRST (if one already applies
+         live, source="explicit_binding" wins) and otherwise falls through
+         to the step-level-requirement path, where our own uniquely-leveled
+         model is the only possible match -- either way this is a genuine,
+         non-flaky success. Only the result SHAPE is asserted (source/
+         chosen_provider/chosen_model keys present), never which path won,
+         so this check can never flake off real production bindings.
+     10. model_delete(hard) -- before provider_delete, else provider_delete
+         would be DELETE_BLOCKED by the still-live model.provider_uuid
+         reference.
+     11. provider_delete(hard).
+     12. invocation_profile_create(scope="system", role="as_author", ...) ->
+         invocation_profile_get -> invocation_profile_list ->
+         invocation_profile_update -> invocation_profile_resolve(plan=
+         <throwaway plan>, role="as_author"). scope="system" is the
+         simplest valid scope (no companion fields at all); role="as_author"
+         narrows this profile's blast radius on the shared live server to
+         only targets requesting that one role (profile_applies still
+         returns True unconditionally once scope="system" is reached, but
+         only after the role filter already passed). Like step 9, only
+         result shape (source_scope present) is asserted, not which
+         candidate wins, for the same non-flakiness reason.
+     13. invocation_profile_delete(hard).
+     14. step_assignment_resolve(plan=<throwaway plan>, role="as_author") --
+         asserted as the CLEAN NO_APPLICABLE_ASSIGNMENT domain-error path.
+         Unlike role_model_resolve/invocation_profile_resolve, this is NOT
+         merely likely to be empty: no step_assignment_create (or any other
+         step_assignment write) command exists anywhere in this server's
+         surface -- C-007 ships resolve-only in CR-5a -- so the
+         step_assignment table structurally cannot hold a row on any server
+         running this code, live production data notwithstanding. This is
+         the "assert the precise domain-error path" case the task
+         instructions call for when a successful path is not constructible.
+     15. The throwaway plan is hard-deleted.
+    """
+    if not R7_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R7_REQUIRED_COMMANDS - catalog_names)
+        return [
+            CheckResult(
+                "4", "R7_agent_config_lifecycle", STATUS_SKIP,
+                f"{R7_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        ]
+
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    tool_uuid: Optional[str] = None
+    toolset_uuid: Optional[str] = None
+    membership_uuid: Optional[str] = None
+    role_uuid: Optional[str] = None
+    provider_uuid: Optional[str] = None
+    model_uuid: Optional[str] = None
+    profile_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r7-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        # --- tool CRUD (create/get/list/update; delete happens after the
+        # toolset membership below, deliberately soft -- see docstring). ---
+        tool_name = unique_suffix("tool")
+        ok, res = await call(
+            client, "tool_create",
+            {
+                "name": tool_name, "server_id": "live-smoke-server", "command": "noop",
+                "pinned_options": {}, "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_tool_create", STATUS_FAIL, str(res)))
+            return results
+        tool_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_tool_create", STATUS_PASS, f"uuid={tool_uuid}"))
+
+        ok, res = await call(client, "tool_get", {"tool_uuid": tool_uuid})
+        results.append(CheckResult("4", "R7_tool_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "tool_list", {"name": tool_name, "limit": 5})
+        list_ok = ok and isinstance(res, dict) and "tools" in res
+        results.append(CheckResult("4", "R7_tool_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "tool_update",
+            {"tool_uuid": tool_uuid, "changed_by": "live-smoke", "description": "updated by live_smoke.py R7"},
+        )
+        results.append(CheckResult("4", "R7_tool_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        # --- toolset CRUD + membership (tool attached while still live). ---
+        toolset_name = unique_suffix("toolset")
+        ok, res = await call(client, "toolset_create", {"name": toolset_name, "created_by": "live-smoke"})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_toolset_create", STATUS_FAIL, str(res)))
+            return results
+        toolset_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_toolset_create", STATUS_PASS, f"uuid={toolset_uuid}"))
+
+        ok, res = await call(client, "toolset_get", {"toolset_uuid": toolset_uuid})
+        results.append(CheckResult("4", "R7_toolset_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "toolset_list", {"name": toolset_name, "limit": 5})
+        list_ok = ok and isinstance(res, dict) and "toolsets" in res
+        results.append(CheckResult("4", "R7_toolset_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "toolset_update",
+            {"toolset_uuid": toolset_uuid, "changed_by": "live-smoke", "description": "updated by live_smoke.py R7"},
+        )
+        results.append(CheckResult("4", "R7_toolset_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(
+            client, "toolset_member_add",
+            {"toolset_uuid": toolset_uuid, "tool_uuid": tool_uuid, "position": 0, "created_by": "live-smoke"},
+        )
+        membership_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+        results.append(
+            CheckResult(
+                "4", "R7_toolset_member_add", STATUS_PASS if (ok and membership_uuid) else STATUS_FAIL,
+                "" if ok else str(res),
+            )
+        )
+
+        # --- tool_delete: deliberately SOFT (see docstring point 4). ---
+        ok, res = await call(client, "tool_delete", {"tool_uuid": tool_uuid, "changed_by": "live-smoke"})
+        soft_ok = ok and isinstance(res, dict) and res.get("mode") == "soft"
+        results.append(CheckResult("4", "R7_tool_delete_soft", STATUS_PASS if soft_ok else STATUS_FAIL, "" if soft_ok else str(res)))
+        if ok:
+            tool_uuid = None  # naturally deleted; the finally block must not double-delete
+
+        if membership_uuid:
+            ok, res = await call(client, "toolset_member_remove", {"membership_uuid": membership_uuid, "changed_by": "live-smoke"})
+            results.append(CheckResult("4", "R7_toolset_member_remove", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+            if ok:
+                membership_uuid = None
+
+        ok, res = await call(client, "toolset_delete", {"toolset_uuid": toolset_uuid, "changed_by": "live-smoke", "hard": True})
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"
+        results.append(CheckResult("4", "R7_toolset_delete_hard", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res)))
+        if ok:
+            toolset_uuid = None
+
+        # --- role CRUD ---
+        role_name = unique_suffix("role")
+        ok, res = await call(client, "role_create", {"name": role_name, "created_by": "live-smoke"})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_role_create", STATUS_FAIL, str(res)))
+            return results
+        role_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_role_create", STATUS_PASS, f"uuid={role_uuid}"))
+
+        ok, res = await call(client, "role_get", {"role_uuid": role_uuid})
+        results.append(CheckResult("4", "R7_role_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "role_list", {"limit": 5})
+        list_ok = ok and isinstance(res, dict) and "roles" in res
+        results.append(CheckResult("4", "R7_role_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "role_update",
+            {"role_uuid": role_uuid, "changed_by": "live-smoke", "description": "updated by live_smoke.py R7"},
+        )
+        results.append(CheckResult("4", "R7_role_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "role_delete", {"role_uuid": role_uuid, "changed_by": "live-smoke", "hard": True})
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"
+        results.append(CheckResult("4", "R7_role_delete_hard", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res)))
+        if ok:
+            role_uuid = None
+
+        # --- provider CRUD (status flipped suspended -> active so the
+        # role_model_resolve probe below sees an active provider). ---
+        provider_name = unique_suffix("provider")
+        ok, res = await call(
+            client, "provider_create",
+            {"name": provider_name, "type": "cloud_api", "rented_hardware": False, "status": "active", "created_by": "live-smoke"},
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_provider_create", STATUS_FAIL, str(res)))
+            return results
+        provider_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_provider_create", STATUS_PASS, f"uuid={provider_uuid}"))
+
+        ok, res = await call(
+            client, "provider_set_status",
+            {"provider_uuid": provider_uuid, "status": "suspended", "changed_by": "live-smoke"},
+        )
+        status_ok = ok and isinstance(res, dict) and res.get("status") == "suspended"
+        results.append(CheckResult("4", "R7_provider_set_status", STATUS_PASS if status_ok else STATUS_FAIL, "" if status_ok else str(res)))
+
+        ok, res = await call(client, "provider_get", {"provider_uuid": provider_uuid})
+        results.append(CheckResult("4", "R7_provider_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "provider_list", {"type": "cloud_api", "limit": 5})
+        list_ok = ok and isinstance(res, dict) and "providers" in res
+        results.append(CheckResult("4", "R7_provider_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "provider_update",
+            {"provider_uuid": provider_uuid, "changed_by": "live-smoke", "status": "active", "billing_notes": "live-smoke R7"},
+        )
+        update_ok = ok and isinstance(res, dict) and res.get("status") == "active"
+        results.append(CheckResult("4", "R7_provider_update", STATUS_PASS if update_ok else STATUS_FAIL, "" if update_ok else str(res)))
+
+        # --- model CRUD (unique level -- guarantees a deterministic
+        # role_model_resolve candidate below regardless of production data). ---
+        model_level = unique_suffix("level")
+        model_name = unique_suffix("model")
+        ok, res = await call(
+            client, "model_create",
+            {
+                "name": model_name, "provider_uuid": provider_uuid, "level": model_level,
+                "execution_mode": "interactive", "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_model_create", STATUS_FAIL, str(res)))
+            return results
+        model_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_model_create", STATUS_PASS, f"uuid={model_uuid}"))
+
+        ok, res = await call(client, "model_get", {"model_uuid": model_uuid})
+        results.append(CheckResult("4", "R7_model_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "model_list", {"provider_uuid": provider_uuid, "limit": 5})
+        list_ok = ok and isinstance(res, dict) and "models" in res
+        results.append(CheckResult("4", "R7_model_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "model_update",
+            {"model_uuid": model_uuid, "changed_by": "live-smoke", "cost_class": "live-smoke-cost-class"},
+        )
+        results.append(CheckResult("4", "R7_model_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        # --- role_model_resolve: guaranteed non-flaky success (see docstring point 9). ---
+        ok, res = await call(
+            client, "role_model_resolve",
+            {"plan": plan_uuid, "role": "as_author", "step_required_level": model_level},
+        )
+        resolve_shape_ok = ok and isinstance(res, dict) and {"source", "chosen_provider", "chosen_model"} <= res.keys()
+        results.append(
+            CheckResult(
+                "4", "R7_role_model_resolve", STATUS_PASS if resolve_shape_ok else STATUS_FAIL,
+                "" if resolve_shape_ok else f"ok={ok} res={res!r}",
+            )
+        )
+
+        ok, res = await call(client, "model_delete", {"model_uuid": model_uuid, "changed_by": "live-smoke", "hard": True})
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"
+        results.append(CheckResult("4", "R7_model_delete_hard", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res)))
+        if ok:
+            model_uuid = None
+
+        ok, res = await call(client, "provider_delete", {"provider_uuid": provider_uuid, "changed_by": "live-smoke", "hard": True})
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"
+        results.append(CheckResult("4", "R7_provider_delete_hard", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res)))
+        if ok:
+            provider_uuid = None
+
+        # --- invocation_profile CRUD + resolve (see docstring point 12). ---
+        ok, res = await call(
+            client, "invocation_profile_create",
+            {"scope": "system", "role": "as_author", "created_by": "live-smoke", "temperature": 0.3},
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R7_invocation_profile_create", STATUS_FAIL, str(res)))
+            return results
+        profile_uuid = res["uuid"]
+        results.append(CheckResult("4", "R7_invocation_profile_create", STATUS_PASS, f"uuid={profile_uuid}"))
+
+        ok, res = await call(client, "invocation_profile_get", {"profile_uuid": profile_uuid})
+        results.append(CheckResult("4", "R7_invocation_profile_get", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "invocation_profile_list", {"scope": "system", "limit": 5})
+        list_ok = ok and isinstance(res, dict) and "profiles" in res
+        results.append(CheckResult("4", "R7_invocation_profile_list", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+
+        ok, res = await call(
+            client, "invocation_profile_update",
+            {"profile_uuid": profile_uuid, "changed_by": "live-smoke", "temperature": 0.5},
+        )
+        results.append(CheckResult("4", "R7_invocation_profile_update", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+
+        ok, res = await call(client, "invocation_profile_resolve", {"plan": plan_uuid, "role": "as_author"})
+        resolve_shape_ok = ok and isinstance(res, dict) and "source_scope" in res
+        results.append(
+            CheckResult(
+                "4", "R7_invocation_profile_resolve", STATUS_PASS if resolve_shape_ok else STATUS_FAIL,
+                "" if resolve_shape_ok else f"ok={ok} res={res!r}",
+            )
+        )
+
+        ok, res = await call(
+            client, "invocation_profile_delete",
+            {"profile_uuid": profile_uuid, "changed_by": "live-smoke", "hard": True},
+        )
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"
+        results.append(
+            CheckResult("4", "R7_invocation_profile_delete_hard", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res))
+        )
+        if ok:
+            profile_uuid = None
+
+        # --- step_assignment_resolve: the clean NO_APPLICABLE_ASSIGNMENT
+        # path (see docstring point 14 -- deterministic, not merely likely). ---
+        ok, res = await call(client, "step_assignment_resolve", {"plan": plan_uuid, "role": "as_author"})
+        clean_error = (not ok) and "NO_APPLICABLE_ASSIGNMENT" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R7_step_assignment_resolve_no_applicable", STATUS_PASS if clean_error else STATUS_FAIL,
+                "" if clean_error else f"ok={ok} res={res!r}",
+            )
+        )
+    finally:
+        # Best-effort cleanup of anything the sequence above did not already
+        # naturally delete (e.g. an early return on a mid-sequence failure).
+        # Ordering matters: memberships before their toolset, model before
+        # its provider (DELETE_BLOCKED otherwise).
+        if membership_uuid is not None:
+            await call(client, "toolset_member_remove", {"membership_uuid": membership_uuid, "changed_by": "live-smoke"})
+        if tool_uuid is not None:
+            await call(client, "tool_delete", {"tool_uuid": tool_uuid, "changed_by": "live-smoke"})
+        if toolset_uuid is not None:
+            await call(client, "toolset_delete", {"toolset_uuid": toolset_uuid, "changed_by": "live-smoke", "hard": True})
+        if role_uuid is not None:
+            await call(client, "role_delete", {"role_uuid": role_uuid, "changed_by": "live-smoke", "hard": True})
+        if model_uuid is not None:
+            await call(client, "model_delete", {"model_uuid": model_uuid, "changed_by": "live-smoke", "hard": True})
+        if provider_uuid is not None:
+            await call(client, "provider_delete", {"provider_uuid": provider_uuid, "changed_by": "live-smoke", "hard": True})
+        if profile_uuid is not None:
+            await call(client, "invocation_profile_delete", {"profile_uuid": profile_uuid, "changed_by": "live-smoke", "hard": True})
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -1991,6 +2429,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r4_ts_inputs_outputs_schema(client)
     results += await run_r5_step_id_selector_docs(client)
     results += await run_r6_write_intent_negation(client)
+    results += await run_r7_agent_config_lifecycle(client, catalog_names)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
