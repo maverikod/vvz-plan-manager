@@ -75,6 +75,40 @@ def resolve_entity_identity(conn: psycopg.Connection, entity_id: uuid.UUID) -> d
     }
 
 
+def resolve_entity_identities_batch(
+    conn: psycopg.Connection, ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Resolve many entity UUIDs to their registered table/entity_type in one query.
+
+    Unlike resolve_entity_identity, this never raises: ids with no
+    entity_identity row are simply absent from the returned mapping. Used by
+    callers (e.g. cascade_preview's detail projection, todo 3c762bfe) that
+    classify a bounded batch of entity_uuids without one round trip per id.
+
+    Parameters:
+        conn: psycopg.Connection
+            An open psycopg 3 connection.
+        ids: list[uuid.UUID]
+            The entity UUIDs to resolve. An empty list short-circuits to an
+            empty dict without issuing a query.
+
+    Returns:
+        dict[uuid.UUID, dict[str, Any]]
+            Mapping from each resolvable id to its
+            {"id", "table_name", "entity_type", "created_at"} dict.
+    """
+    if not ids:
+        return {}
+    rows = conn.execute(
+        "SELECT id, table_name, entity_type, created_at FROM entity_identity WHERE id = ANY(%s)",
+        (list(ids),),
+    ).fetchall()
+    return {
+        row[0]: {"id": row[0], "table_name": row[1], "entity_type": row[2], "created_at": row[3]}
+        for row in rows
+    }
+
+
 def resolve_scoped_name(
     conn: psycopg.Connection,
     table: str,
