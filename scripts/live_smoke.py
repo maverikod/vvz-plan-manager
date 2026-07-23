@@ -2735,6 +2735,155 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
     return results
 
 
+R10_PRE_FIX_SKIP_REASON = (
+    "server still enforces the pre-fix plan_validate branch-scope contract "
+    "(bug e197b94a: gs_step_id, ts_step_id, and as_step_id all wrongly "
+    "required) -- redeploy pending"
+)
+
+
+async def run_r10_branch_scope_hierarchical_selectors(client: Any) -> list[CheckResult]:
+    """Bug e197b94a: plan_validate scope='branch' wrongly runtime-required
+    gs_step_id, ts_step_id, AND as_step_id all non-empty, while the
+    generated schema/help already marked ts/as as optional -- making
+    GS-only and GS+TS branch validation impossible and any branch with
+    zero AS descendants (real case: doc-store G-007, four TS children,
+    zero AS) mechanically unverifiable.
+
+    Fixed contract (hierarchical selectors with precedence): gs_step_id
+    alone selects the whole GS subtree; gs_step_id + ts_step_id narrows to
+    one TS subtree; adding as_step_id narrows to one atomic branch.
+    as_step_id without ts_step_id (a skipped level) is rejected
+    deterministically. Validation runs over whatever descendants actually
+    exist -- a TS with zero AS children is valid input, not an error.
+
+    Availability-gated exactly like R6/R8 (a behavioral gate, not a
+    catalog/doc marker: this bug changed an EXISTING command's runtime
+    contract, so no help-catalog membership check can detect the fix).
+    The GS-only call is itself the version probe: if the live server still
+    carries the pre-fix contract, that call fails with the old "gs_step_id,
+    ts_step_id, and as_step_id are all required" -32602, and every check in
+    this group is SKIPped (never FAILed) naming bug e197b94a, rather than
+    failing the pipeline against a not-yet-deployed fix.
+
+    Recipe (throwaway, ``live-smoke-`` prefixed plan, hard-deleted in a
+    top-level try/finally; context_common recompiled immediately before
+    EVERY step_create, exactly like R2/R8/R9 -- a stored common block goes
+    stale the instant an earlier sibling's step_create bumps the plan's
+    head revision): plan_create -> context_common(plan,level3) ->
+    step_create G (level 3) -> context_common(G,level4) -> step_create
+    T-001 (level 4, parent=G) -> context_common(G,level4) -> step_create
+    T-002 (level 4, parent=G, deliberately left with ZERO AS children --
+    the doc-store G-007 shape) -> plan_validate(scope=branch, gs_step_id=G
+    only) -> plan_validate(scope=branch, gs_step_id=G, ts_step_id=T-002,
+    the zero-AS TS) -> plan_validate(scope=branch, gs_step_id=G,
+    as_step_id=<bogus>, no ts_step_id) asserted to be REJECTED with the
+    documented skipped-level message -- that rejection IS the pass
+    condition, not a probe failure. The queued plan_validate call is
+    unwrapped transparently by this script's call() (queue_semantics),
+    exactly like R6's plan_validate use.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r10-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R10_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R10_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R10_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R10_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
+
+        t_ids: dict[str, str] = {}
+        for slug in ("t-001", "t-002"):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+            if not ok:
+                results.append(CheckResult("4", f"R10_context_common(G,level4,before {slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": slug, "parent_step_id": g_id})
+            tid = _extract_step_id(res) if ok else None
+            if not ok or tid is None:
+                results.append(CheckResult("4", f"R10_step_create({slug})", STATUS_FAIL, str(res)))
+                return results
+            t_ids[slug] = tid
+        results.append(
+            CheckResult(
+                "4", "R10_step_create(T-001/T-002)", STATUS_PASS,
+                f"{t_ids} -- T-002 deliberately left with zero AS children",
+            )
+        )
+
+        # The GS-only call is itself the version probe (behavioral gate,
+        # mirrors R6/R8): a pre-fix server rejects this before any
+        # mechanical check ever runs.
+        ok, res = await call(
+            client, "plan_validate",
+            {"plan": plan_uuid, "scope": "branch", "gs_step_id": g_id, "format": "json"},
+        )
+        pre_fix_detected = (not ok) and (
+            "gs_step_id, ts_step_id, and as_step_id are all required" in str(res)
+        )
+        if pre_fix_detected:
+            results.append(
+                CheckResult(
+                    "4", "R10_branch_scope_hierarchical_selectors", STATUS_SKIP,
+                    R10_PRE_FIX_SKIP_REASON,
+                )
+            )
+            return results
+
+        gs_only_ok = ok and isinstance(res, dict) and "report" in res and "green" in res
+        results.append(
+            CheckResult(
+                "4", "R10_plan_validate(gs_only)", STATUS_PASS if gs_only_ok else STATUS_FAIL,
+                "" if gs_only_ok else str(res),
+            )
+        )
+
+        # GS+TS narrows to the TS subtree -- T-002 has zero AS descendants,
+        # exactly the reported doc-store G-007 shape; this must succeed,
+        # never be rejected as unverifiable.
+        ok, res = await call(
+            client, "plan_validate",
+            {"plan": plan_uuid, "scope": "branch", "gs_step_id": g_id, "ts_step_id": t_ids["t-002"], "format": "json"},
+        )
+        gs_ts_zero_as_ok = ok and isinstance(res, dict) and "report" in res and "green" in res
+        results.append(
+            CheckResult(
+                "4", "R10_plan_validate(gs_plus_ts_zero_as)", STATUS_PASS if gs_ts_zero_as_ok else STATUS_FAIL,
+                "" if gs_ts_zero_as_ok else str(res),
+            )
+        )
+
+        # Skipped level (as_step_id without ts_step_id) MUST be rejected --
+        # that rejection, with the documented message, IS the pass
+        # condition here, not a probe failure.
+        ok, res = await call(
+            client, "plan_validate",
+            {"plan": plan_uuid, "scope": "branch", "gs_step_id": g_id, "as_step_id": "A-999", "format": "json"},
+        )
+        skipped_level_ok = (not ok) and "as_step_id requires ts_step_id" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R10_plan_validate(skipped_level_rejected)", STATUS_PASS if skipped_level_ok else STATUS_FAIL,
+                "" if skipped_level_ok else str(res),
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -2815,6 +2964,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r7_agent_config_lifecycle(client, catalog_names)
     results += await run_r8_gs_coverage_live_cascade_read(client)
     results += await run_r9_plan_completion_lock(client, catalog_names)
+    results += await run_r10_branch_scope_hierarchical_selectors(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

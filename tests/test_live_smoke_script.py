@@ -2243,3 +2243,179 @@ def test_run_r9_required_commands_land_in_tier4_handled_not_skipped():
     skipped_names = {name for name, _ in result.skipped}
     assert skipped_names.isdisjoint(ls.R9_REQUIRED_COMMANDS)
     assert ls.R9_REQUIRED_COMMANDS <= set(result.tier4_handled)
+
+
+# --------------------------------------------------------------------------
+# R10 (bug e197b94a, functional, major): plan_validate scope='branch' wrongly
+# runtime-required gs_step_id, ts_step_id, AND as_step_id all non-empty,
+# making GS-only and GS+TS branch validation impossible and any branch with
+# zero AS descendants mechanically unverifiable. Behavioral gate (like
+# R6/R8, NOT catalog-gated like R7/R9): this bug changed an EXISTING
+# command's runtime contract rather than adding new commands, so there is no
+# help-catalog membership marker to gate on -- the GS-only call itself is
+# the version probe. Exercised purely against a _ScriptedClient, no real
+# network. No TIER4_HANDLED addition is needed: plan_validate was already
+# classified (R6 already exercises it) before this bug and this fix adds no
+# new command names to the live catalog.
+# --------------------------------------------------------------------------
+
+_R10_PRE_FIX_ERROR = {
+    "success": False,
+    "error": {
+        "code": -32602,
+        "message": (
+            "gs_step_id, ts_step_id, and as_step_id are all required and "
+            "must be non-empty when scope is 'branch'"
+        ),
+    },
+}
+
+_R10_SKIPPED_LEVEL_ERROR = {
+    "success": False,
+    "error": {
+        "code": -32602,
+        "message": "as_step_id requires ts_step_id when scope is 'branch' (skipping the TS level is not allowed)",
+    },
+}
+
+
+def _r10_step_create_sequence():
+    """Stateful step_create outcome: G-001 (level 3), then T-001/T-002
+    (level 4) keyed off the requested slug -- T-002 is deliberately never
+    given an AS child anywhere in this recipe."""
+    calls: list[dict] = []
+
+    def _step_create(params):
+        calls.append(dict(params))
+        if params["level"] == 3:
+            return _ok({"uuid": "g-uuid", "step_id": "G-001"})
+        return _ok({"uuid": f"{params['slug']}-uuid", "step_id": "T-001" if params["slug"] == "t-001" else "T-002"})
+
+    return calls, _step_create
+
+
+def _r10_plan_validate_dispatch(*, pre_fix: bool):
+    """Stateful plan_validate outcome keyed off which selectors the call
+    supplies: a pre-fix server rejects every scope='branch' call the same
+    way regardless of which selectors were given; a post-fix server accepts
+    gs-only and gs+ts, and rejects only the skipped-level combination
+    (as_step_id without ts_step_id) -- that rejection is the correct,
+    documented behavior, not a probe failure."""
+
+    def _dispatch(params):
+        if pre_fix:
+            return _R10_PRE_FIX_ERROR
+        if params.get("as_step_id") is not None and params.get("ts_step_id") is None:
+            return _R10_SKIPPED_LEVEL_ERROR
+        return _ok({"green": True, "scope": "branch", "revision_uuid": "rev-1", "format": "json", "report": "{}"})
+
+    return _dispatch
+
+
+def _r10_client(*, pre_fix: bool) -> "_ScriptedClient":
+    _calls, step_create = _r10_step_create_sequence()
+    return _ScriptedClient(
+        {
+            "plan_create": _ok({"uuid": "r10-plan"}),
+            "context_common": _ok({}),
+            "step_create": step_create,
+            "plan_validate": _r10_plan_validate_dispatch(pre_fix=pre_fix),
+            "plan_delete": _ok({"deleted": True}),
+        }
+    )
+
+
+def test_run_r10_pre_fix_server_skips_entire_group_not_per_command():
+    """A server still enforcing the pre-fix contract: the GS-only call
+    itself (the version probe) fails with the old all-three-required
+    -32602, so the whole group reports one SKIP naming bug e197b94a --
+    never a per-check FAIL against a not-yet-deployed fix."""
+    client = _r10_client(pre_fix=True)
+
+    results = asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    assert len(results) >= 1
+    skip_results = [r for r in results if r.name == "R10_branch_scope_hierarchical_selectors"]
+    assert len(skip_results) == 1
+    assert skip_results[0].status == ls.STATUS_SKIP
+    assert ls.R10_PRE_FIX_SKIP_REASON in skip_results[0].detail
+    assert not any(r.status == ls.STATUS_FAIL for r in results)
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+
+
+def test_run_r10_post_fix_server_passes_every_check():
+    client = _r10_client(pre_fix=False)
+
+    results = asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R10_plan_validate(gs_only)"].status == ls.STATUS_PASS
+    assert by_name["R10_plan_validate(gs_plus_ts_zero_as)"].status == ls.STATUS_PASS
+    assert by_name["R10_plan_validate(skipped_level_rejected)"].status == ls.STATUS_PASS
+
+
+def test_run_r10_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient({"plan_create": RuntimeError("boom")})
+
+    results = asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    plan_create_result = next(r for r in results if r.name == "R10_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail
+
+
+def test_run_r10_recipe_creates_two_tactical_children_under_one_global_step():
+    client = _r10_client(pre_fix=False)
+
+    asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    step_create_calls = [params for name, params in client.calls if name == "step_create"]
+    levels = [c["level"] for c in step_create_calls]
+    assert levels == [3, 4, 4]
+    slugs = [c["slug"] for c in step_create_calls if c["level"] == 4]
+    assert slugs == ["t-001", "t-002"]
+    assert all(c["parent_step_id"] == "G-001" for c in step_create_calls if c["level"] == 4)
+
+    # context_common recompiled before the level-3 create AND before each
+    # of the two level-4 creates (R2/R8/R9 convention).
+    context_common_calls = [c for name, c in client.calls if name == "context_common"]
+    assert len(context_common_calls) == 3
+
+
+def test_run_r10_gs_plus_ts_targets_the_zero_as_tactical_step():
+    client = _r10_client(pre_fix=False)
+
+    asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    validate_calls = [params for name, params in client.calls if name == "plan_validate"]
+    assert validate_calls[0]["gs_step_id"] == "G-001"
+    assert "ts_step_id" not in validate_calls[0]
+    assert "as_step_id" not in validate_calls[0]
+    assert validate_calls[1]["gs_step_id"] == "G-001"
+    assert validate_calls[1]["ts_step_id"] == "T-002"
+    assert "as_step_id" not in validate_calls[1]
+
+
+def test_run_r10_skipped_level_call_omits_ts_step_id():
+    client = _r10_client(pre_fix=False)
+
+    asyncio.run(ls.run_r10_branch_scope_hierarchical_selectors(client))
+
+    validate_calls = [params for name, params in client.calls if name == "plan_validate"]
+    skipped_call = validate_calls[2]
+    assert skipped_call["gs_step_id"] == "G-001"
+    assert skipped_call["as_step_id"] == "A-999"
+    assert "ts_step_id" not in skipped_call
+
+
+def test_run_r10_is_wired_into_run_pipeline():
+    """run_r10_branch_scope_hierarchical_selectors must actually be called
+    from run_pipeline, not merely defined (dead-code guard, matching the
+    same concern every other R-group carries implicitly by being present
+    in run_pipeline's source)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r10_branch_scope_hierarchical_selectors(client)" in source
