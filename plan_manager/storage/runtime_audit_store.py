@@ -24,6 +24,8 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "restore",
         "plan_unfreeze",
         "subtree_unfreeze",
+        "plan_completed_set",
+        "plan_comment_set",
     }
 )
 

@@ -255,6 +255,7 @@ def crud_matrix() -> dict[str, Any]:
 _COMMAND_CATEGORIES: dict[str, list[str]] = {
     "plan_core": [
         "plan_create", "plan_list", "plan_status", "plan_delete",
+        "plan_completed_set", "plan_comment_set",
         "plan_export", "plan_snapshot", "plan_import", "plan_validate", "plan_score",
     ],
     "project_binding": [
