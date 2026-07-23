@@ -15,6 +15,28 @@ commands (plan_completed_set, plan_comment_set) call resolve_plan directly,
 unguarded, and stay reachable at all times; reads are never blocked either
 way.
 
+SWEEP FOLLOW-UP (2026-07-23, same delivery cycle, user order "продолжай до
+полного исправления"): a THIRD class of command was found during the
+re-sweep -- one that addresses its mutation target by the entity's OWN
+uuid (a todo, comment, escalation, execution attempt, model binding, bug,
+bug fix, bug impact, bug fix propagation, or a runtime/todo link's
+endpoint) rather than deriving it from a `plan` parameter or a primary
+anchor. Some of these commands had NO `plan` parameter at all
+(todo_update/resolve/close/delete/link_*, execution_attempt_report,
+model_binding_update/remove, comment_delete, runtime_link_*); others DID
+take a `plan` parameter that resolve_plan_guarded dutifully checked, yet
+never cross-validated it against the entity actually being mutated (bug_
+confirm/close/reject/reopen/triage/mark_duplicate/update, bug_impact_add/
+update, bug_fix_create/update/verify, bug_propagation_*, comment_resolve/
+supersede, escalation_resolve, bug_reanchor, todo_reanchor,
+todo_promote_to_cascade_request) -- a caller could pass an unrelated,
+non-completed `plan` while the entity's TRUE owning plan was in fact
+completed, silently bypassing the lock. plan_manager.commands.
+plan_completion_guard is the third shared seam: one function per entity
+family, each deriving the TRUE owning plan_uuid and calling the SAME
+domain.plan.refuse_if_completed used by the other two seams -- no
+scattered copies of the completion-check SQL.
+
 This module is pure unit tests (monkeypatched db_connection / fake
 psycopg-shaped connections), matching this repo's established style (see
 tests/test_plan_deletion.py, tests/test_plan_unfreeze.py,
@@ -35,20 +57,36 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands import (
     bug_confirm_command,
     cascade_begin_command,
+    comment_delete_command,
     plan_comment_set_command,
     plan_completed_set_command,
+    plan_completion_guard,
     plan_delete_command,
+    runtime_link_remove_command,
     step_create_command,
     step_set_status_command,
     step_update_command,
     todo_create_command,
+    todo_update_command,
 )
 from plan_manager.commands.errors import DomainCommandError
 from plan_manager.commands.plan_comment_set_command import PlanCommentSetCommand
 from plan_manager.commands.plan_completed_set_command import PlanCompletedSetCommand
+from plan_manager.commands.plan_completion_guard import (
+    refuse_if_bug_fix_plan_completed,
+    refuse_if_bug_fix_propagation_plan_completed,
+    refuse_if_bug_impact_plan_completed,
+    refuse_if_bug_plan_completed,
+    refuse_if_comment_plan_completed,
+    refuse_if_escalation_plan_completed,
+    refuse_if_execution_attempt_plan_completed,
+    refuse_if_link_endpoint_plan_completed,
+    refuse_if_model_binding_plan_completed,
+    refuse_if_todo_plan_completed,
+)
 from plan_manager.commands.resolve import resolve_plan_guarded
 from plan_manager.commands import resolve as resolve_module
-from plan_manager.domain.plan import Plan, set_plan_comment, set_plan_completed
+from plan_manager.domain.plan import Plan, PlanCompletedError, set_plan_comment, set_plan_completed
 from plan_manager.domain.primary_anchor import PrimaryAnchor, validate_anchor
 
 
@@ -474,3 +512,255 @@ def test_other_plan_unaffected_by_a_different_plans_completed_flag(monkeypatch) 
     result = resolve_plan_guarded(object(), "other-plan")
     assert result.uuid == OTHER_PLAN_UUID
     assert result.completed is False
+
+
+# --------------------------------------------------------------------------
+# THE THIRD SEAM: plan_manager.commands.plan_completion_guard (sweep
+# follow-up, 2026-07-23). Every refuse_if_*_plan_completed function derives
+# its entity's TRUE owning plan_uuid and delegates to the ONE shared
+# domain.plan.refuse_if_completed -- exercised here directly with a fake
+# connection that answers ONLY the "SELECT completed FROM plan" query.
+# --------------------------------------------------------------------------
+
+
+class _PlanCompletionFakeConn:
+    """Answers ONLY 'SELECT completed FROM plan WHERE uuid = %s', per a
+    caller-supplied {plan_uuid: completed} map; a plan_uuid absent from the
+    map answers as if the plan row does not exist (fetchone() -> None,
+    treated as "not completed" by refuse_if_completed)."""
+
+    def __init__(self, completed_by_plan: dict) -> None:
+        self._completed_by_plan = completed_by_plan
+        self.queries: list[tuple] = []
+
+    def execute(self, sql: str, params: tuple = ()):
+        self.queries.append((sql, params))
+        if "SELECT completed FROM plan" not in sql:
+            raise AssertionError(f"unexpected query in this fake: {sql!r}")
+
+        class _Cur:
+            def __init__(self_inner, row):
+                self_inner._row = row
+
+            def fetchone(self_inner):
+                return self_inner._row
+
+        plan_uuid = params[0]
+        if plan_uuid in self._completed_by_plan:
+            return _Cur((self._completed_by_plan[plan_uuid],))
+        return _Cur(None)
+
+
+class _Entity:
+    """Generic attribute bag standing in for any domain dataclass; the
+    refuse_if_*_plan_completed functions only ever read specific named
+    attributes off their argument."""
+
+    def __init__(self, **fields) -> None:
+        for key, value in fields.items():
+            setattr(self, key, value)
+
+
+@pytest.mark.parametrize(
+    "make_check",
+    [
+        lambda plan_uuid: (refuse_if_bug_plan_completed, _Entity(source_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_todo_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_comment_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_escalation_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_execution_attempt_plan_completed, _Entity(plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_model_binding_plan_completed, _Entity(plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_bug_impact_plan_completed, _Entity(target_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_bug_fix_propagation_plan_completed, _Entity(linked_plan_uuid=plan_uuid)),
+    ],
+)
+def test_entity_family_refuses_when_plan_bound_and_completed(make_check) -> None:
+    plan_uuid = uuid.uuid4()
+    check_fn, entity = make_check(plan_uuid)
+    conn = _PlanCompletionFakeConn({plan_uuid: True})
+    with pytest.raises(PlanCompletedError):
+        check_fn(conn, entity)
+
+
+@pytest.mark.parametrize(
+    "make_check",
+    [
+        lambda plan_uuid: (refuse_if_bug_plan_completed, _Entity(source_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_todo_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_comment_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_escalation_plan_completed, _Entity(anchor_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_execution_attempt_plan_completed, _Entity(plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_model_binding_plan_completed, _Entity(plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_bug_impact_plan_completed, _Entity(target_plan_uuid=plan_uuid)),
+        lambda plan_uuid: (refuse_if_bug_fix_propagation_plan_completed, _Entity(linked_plan_uuid=plan_uuid)),
+    ],
+)
+def test_entity_family_admits_when_plan_bound_and_not_completed(make_check) -> None:
+    plan_uuid = uuid.uuid4()
+    check_fn, entity = make_check(plan_uuid)
+    conn = _PlanCompletionFakeConn({plan_uuid: False})
+    check_fn(conn, entity)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "make_check",
+    [
+        lambda: (refuse_if_bug_plan_completed, _Entity(source_plan_uuid=None)),
+        lambda: (refuse_if_todo_plan_completed, _Entity(anchor_plan_uuid=None)),
+        lambda: (refuse_if_comment_plan_completed, _Entity(anchor_plan_uuid=None)),
+        lambda: (refuse_if_escalation_plan_completed, _Entity(anchor_plan_uuid=None)),
+        lambda: (refuse_if_model_binding_plan_completed, _Entity(plan_uuid=None)),
+        lambda: (refuse_if_bug_impact_plan_completed, _Entity(target_plan_uuid=None)),
+        lambda: (refuse_if_bug_fix_propagation_plan_completed, _Entity(linked_plan_uuid=None)),
+    ],
+)
+def test_entity_family_admits_when_not_plan_bound(make_check) -> None:
+    """A TODO anchored none/project/file, a comment/escalation anchored to
+    something other than a plan/step, a system/role-scoped model binding, a
+    non-plan bug impact target, or a propagation with no linked plan -- in
+    every case the entity has no owning plan at all, so the check is a
+    no-op regardless of any plan's completion state."""
+    check_fn, entity = make_check()
+    conn = _PlanCompletionFakeConn({})  # no plan_uuid ever looked up
+    check_fn(conn, entity)  # must not raise
+    assert conn.queries == [], "not-plan-bound must short-circuit before any query"
+
+
+def test_bug_fix_refuses_via_two_hop_parent_bug_derivation(monkeypatch) -> None:
+    plan_uuid = uuid.uuid4()
+    bug_fix = _Entity(bug_uuid=uuid.uuid4())
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, bug_uuid: _Entity(source_plan_uuid=plan_uuid))
+    conn = _PlanCompletionFakeConn({plan_uuid: True})
+    with pytest.raises(PlanCompletedError):
+        refuse_if_bug_fix_plan_completed(conn, bug_fix)
+
+
+def test_bug_fix_admits_via_two_hop_parent_bug_derivation_when_not_completed(monkeypatch) -> None:
+    plan_uuid = uuid.uuid4()
+    bug_fix = _Entity(bug_uuid=uuid.uuid4())
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, bug_uuid: _Entity(source_plan_uuid=plan_uuid))
+    conn = _PlanCompletionFakeConn({plan_uuid: False})
+    refuse_if_bug_fix_plan_completed(conn, bug_fix)  # must not raise
+
+
+def test_bug_fix_admits_when_parent_bug_not_found(monkeypatch) -> None:
+    bug_fix = _Entity(bug_uuid=uuid.uuid4())
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, bug_uuid: None)
+    conn = _PlanCompletionFakeConn({})
+    refuse_if_bug_fix_plan_completed(conn, bug_fix)  # must not raise
+
+
+def test_link_endpoint_refuses_for_bug_endpoint(monkeypatch) -> None:
+    plan_uuid = uuid.uuid4()
+    bug_uuid = uuid.uuid4()
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, u: _Entity(source_plan_uuid=plan_uuid) if u == bug_uuid else None)
+    conn = _PlanCompletionFakeConn({plan_uuid: True})
+    with pytest.raises(PlanCompletedError):
+        refuse_if_link_endpoint_plan_completed(conn, "bug", bug_uuid)
+
+
+def test_link_endpoint_refuses_for_todo_endpoint(monkeypatch) -> None:
+    plan_uuid = uuid.uuid4()
+    todo_uuid = uuid.uuid4()
+    monkeypatch.setattr(plan_completion_guard, "get_todo", lambda conn, u: _Entity(anchor_plan_uuid=plan_uuid) if u == todo_uuid else None)
+    conn = _PlanCompletionFakeConn({plan_uuid: True})
+    with pytest.raises(PlanCompletedError):
+        refuse_if_link_endpoint_plan_completed(conn, "todo", todo_uuid)
+
+
+def test_link_endpoint_admits_when_endpoint_not_found(monkeypatch) -> None:
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, u: None)
+    conn = _PlanCompletionFakeConn({})
+    refuse_if_link_endpoint_plan_completed(conn, "bug", uuid.uuid4())  # must not raise
+
+
+# --------------------------------------------------------------------------
+# Command-level integration: proves the wiring reaches the shared seam, and
+# specifically that a caller can no longer bypass the lock by passing an
+# unrelated, non-completed `plan` while the entity's TRUE owning plan is
+# completed (the exact gap the sweep found).
+# --------------------------------------------------------------------------
+
+
+def test_bug_confirm_refuses_via_true_owning_plan_even_with_a_different_passed_plan(monkeypatch) -> None:
+    """The caller passes a DIFFERENT, non-completed plan as `plan`; the bug's
+    OWN source_plan_uuid is completed. Before this fix, resolve_plan_guarded
+    alone would have admitted this call (it only checked the passed plan)."""
+    bug_plan_uuid = uuid.uuid4()
+    monkeypatch.setattr(resolve_module, "resolve_plan", lambda conn, plan: _plan(completed=False))  # the PASSED plan: not completed
+    monkeypatch.setattr(
+        bug_confirm_command, "get_bug",
+        lambda conn, bug_uuid: _Entity(status="reported", source_plan_uuid=bug_plan_uuid),
+    )
+
+    class _Conn:
+        def execute(self, sql, params=()):
+            class _Cur:
+                def fetchone(self_inner):
+                    return (True,) if "SELECT completed FROM plan" in sql else None
+
+            return _Cur()
+
+    monkeypatch.setattr(bug_confirm_command, "db_connection", lambda: _fake_db_ctx(_Conn()))
+
+    cmd = bug_confirm_command.BugConfirmCommand()
+    result = _run(cmd.execute(plan="a-different-plan", bug_id=str(uuid.uuid4()), changed_by="tester"))
+
+    assert isinstance(result, ErrorResult), getattr(result, "data", None)
+    assert result.details.get("domain_code") == "PLAN_COMPLETED"
+
+
+@contextmanager
+def _fake_db_ctx(conn):
+    yield conn
+
+
+def test_todo_update_admits_an_unanchored_todo_regardless_of_any_plan(monkeypatch) -> None:
+    monkeypatch.setattr(
+        todo_update_command, "get_todo",
+        lambda conn, todo_uuid: _Entity(anchor_plan_uuid=None, status="open"),
+    )
+
+    # refuse_if_todo_plan_completed short-circuits on anchor_plan_uuid=None
+    # before ever touching conn, so a conn that would blow up on any real
+    # query proves the no-op path was taken.
+    class _ExplodingConn:
+        def execute(self, sql, params=()):
+            raise AssertionError(f"must not query for an unanchored todo: {sql!r}")
+
+    monkeypatch.setattr(todo_update_command, "db_connection", lambda: _fake_db_ctx(_ExplodingConn()))
+    monkeypatch.setattr(
+        todo_update_command, "update_todo",
+        lambda conn, todo_uuid, **kwargs: _Entity(to_payload=lambda: {"uuid": str(todo_uuid)}),
+    )
+
+    cmd = todo_update_command.TodoUpdateCommand()
+    result = _run(cmd.execute(todo=str(uuid.uuid4()), changed_by="tester", priority_nice=-5))
+
+    assert isinstance(result, SuccessResult), getattr(result, "message", result)
+
+
+def test_runtime_link_remove_refuses_when_either_endpoint_plan_completed(monkeypatch) -> None:
+    plan_uuid = uuid.uuid4()
+    link = _Entity(
+        from_entity_type="bug", from_entity_uuid=uuid.uuid4(),
+        to_entity_type="todo", to_entity_uuid=uuid.uuid4(),
+    )
+    monkeypatch.setattr(runtime_link_remove_command, "get_runtime_link", lambda conn, link_uuid: link)
+    monkeypatch.setattr(plan_completion_guard, "get_bug", lambda conn, u: _Entity(source_plan_uuid=None))
+    monkeypatch.setattr(plan_completion_guard, "get_todo", lambda conn, u: _Entity(anchor_plan_uuid=plan_uuid))
+
+    class _Conn:
+        def execute(self, sql, params=()):
+            class _Cur:
+                def fetchone(self_inner):
+                    return (True,) if "SELECT completed FROM plan" in sql else None
+            return _Cur()
+
+    monkeypatch.setattr(runtime_link_remove_command, "db_connection", lambda: _fake_db_ctx(_Conn()))
+
+    cmd = runtime_link_remove_command.RuntimeLinkRemoveCommand()
+    result = _run(cmd.execute(link=str(uuid.uuid4()), changed_by="tester"))
+
+    assert isinstance(result, ErrorResult), getattr(result, "data", None)
+    assert result.details.get("domain_code") == "PLAN_COMPLETED"
