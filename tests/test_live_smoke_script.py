@@ -2091,6 +2091,15 @@ def test_r8_report_flags_gs_missing_handles_malformed_report_gracefully():
 # --------------------------------------------------------------------------
 
 
+_PLAN_COMPLETED_ERROR = {
+    "success": False,
+    "error": {
+        "code": -32000, "message": "plan r9-plan is marked completed",
+        "data": {"domain_code": "PLAN_COMPLETED"},
+    },
+}
+
+
 def _r9_success_responses() -> dict[str, Any]:
     """A fully-successful scripted response table for every command
     run_r9_plan_completion_lock invokes on a post-fix server, in the exact
@@ -2098,21 +2107,20 @@ def _r9_success_responses() -> dict[str, Any]:
     return {
         "plan_create": _ok({"uuid": "r9-plan"}),
         "plan_comment_set": _ok({"plan_uuid": "r9-plan", "comment": "live-smoke R9 scratch plan for bug c3950b83.", "audit_uuid": "audit-comment-1"}),
+        "todo_create": _ok({"uuid": "r9-todo"}),
+        "comment_add": _ok({"uuid": "r9-comment"}),
         "plan_completed_set": _sequence(
             _ok({"plan_uuid": "r9-plan", "completed": True, "audit_uuid": "audit-lock-1"}),
             _ok({"plan_uuid": "r9-plan", "completed": False, "audit_uuid": "audit-unlock-1"}),
         ),
         "step_create": _sequence(
-            {
-                "success": False,
-                "error": {
-                    "code": -32000, "message": "plan r9-plan is marked completed",
-                    "data": {"domain_code": "PLAN_COMPLETED"},
-                },
-            },
+            _PLAN_COMPLETED_ERROR,
             _ok({"uuid": "step-unlocked", "step_id": "G-001"}),
         ),
         "step_tree": _ok({"tree": [], "total": 0, "limit": 50, "offset": 0}),
+        "todo_update": _PLAN_COMPLETED_ERROR,
+        "comment_delete": _sequence(_PLAN_COMPLETED_ERROR, _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "r9-comment"})),
+        "todo_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "r9-todo"}),
         "plan_delete": _ok({"deleted": True}),
     }
 
@@ -2158,16 +2166,25 @@ def test_run_r9_full_success_every_check_passes():
     assert names == [
         "plan_create",
         "plan_comment_set",
+        "todo_create",
+        "comment_add",
         "plan_completed_set",
         "step_create",
         "step_tree",
+        "todo_update",
+        "comment_delete",
         "plan_completed_set",
         "step_create",
+        "comment_delete",
+        "todo_delete",
         "plan_delete",
     ]
     # cleanup must not re-issue plan_completed_set once the body already
     # unlocked the plan itself.
     assert names.count("plan_completed_set") == 2
+    # the third-seam entity is refused once (while locked) then cleaned up
+    # (hard-deleted) once the plan is unlocked again.
+    assert names.count("comment_delete") == 2
 
 
 def test_run_r9_mutation_not_actually_refused_fails():
@@ -2214,10 +2231,11 @@ def test_run_r9_cleanup_unsets_flag_before_delete_when_bodys_own_unlock_fails():
     assert by_name["R9_plan_completed_set(false)"].status == ls.STATUS_FAIL
     names = [name for name, _ in client.calls]
     # three plan_completed_set calls total: lock, the body's own failed
-    # unlock attempt, and cleanup's successful unlock immediately before
-    # plan_delete.
+    # unlock attempt, and cleanup's successful unlock -- which must land
+    # BEFORE the entity cleanup deletes and plan_delete, all three of which
+    # are refused with PLAN_COMPLETED while the flag is still set.
     assert names.count("plan_completed_set") == 3
-    assert names[-2:] == ["plan_completed_set", "plan_delete"]
+    assert names[-4:] == ["plan_completed_set", "comment_delete", "todo_delete", "plan_delete"]
 
 
 def test_run_r9_required_commands_land_in_tier4_handled_not_skipped():

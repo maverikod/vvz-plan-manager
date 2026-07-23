@@ -2583,11 +2583,18 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
     Recipe (throwaway, ``live-smoke-`` prefixed plan, hard-deleted in a
     top-level try/finally -- the flag is unset in that finally BEFORE the
     delete attempt, since plan_delete itself is refused while completed is
-    true): plan_create -> plan_comment_set (attach a note) ->
-    plan_completed_set(true) -> a representative mutating command
-    (step_create) asserted to refuse with PLAN_COMPLETED -> a representative
-    read (step_tree) asserted to still succeed -> plan_completed_set(false)
-    -> the same mutating command (step_create) asserted to succeed again.
+    true): plan_create -> plan_comment_set (attach a note) -> todo_create
+    and comment_add, BOTH anchored to the plan (anchor_type=plan) while it
+    is still unlocked -> plan_completed_set(true) -> a representative
+    plan-parameter mutating command (step_create) asserted to refuse with
+    PLAN_COMPLETED -> a representative read (step_tree) asserted to still
+    succeed -> the THIRD seam (plan_manager.commands.plan_completion_guard):
+    todo_update and comment_delete, each addressing its target by the
+    entity's OWN uuid with NO `plan` parameter at all, asserted to ALSO
+    refuse with PLAN_COMPLETED (derived from the entity's own anchor) ->
+    plan_completed_set(false) -> the original mutation (step_create)
+    asserted to succeed again. Cleanup hard-deletes the todo and comment
+    before the plan itself.
     """
     results: list[CheckResult] = []
     if not R9_REQUIRED_COMMANDS <= catalog_names:
@@ -2601,6 +2608,8 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
         return results
 
     plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
     completed_set = False
     try:
         ok, res = await call(client, "plan_create", {"name": unique_suffix("r9-plan")})
@@ -2619,6 +2628,36 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
         if not comment_ok:
             return results
 
+        # Entity-uuid-addressed targets for the third seam, created while
+        # the plan is still unlocked (todo_create/comment_add anchor
+        # validation would themselves refuse a plan/step anchor targeting
+        # an already-completed plan).
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": "R9 plan-anchored scratch todo", "description": "bug c3950b83 third-seam check.",
+                "kind": "task", "priority_nice": 0, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        todo_created_ok = ok and isinstance(res, dict) and res.get("uuid")
+        results.append(CheckResult("4", "R9_todo_create(plan_anchored)", STATUS_PASS if todo_created_ok else STATUS_FAIL, "" if todo_created_ok else str(res)))
+        if todo_created_ok:
+            todo_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+                "kind": "observation", "visibility": "execution_context", "author": "live-smoke",
+                "body": "R9 plan-anchored scratch comment.", "created_by": "live-smoke",
+            },
+        )
+        comment_created_ok = ok and isinstance(res, dict) and res.get("uuid")
+        results.append(CheckResult("4", "R9_comment_add(plan_anchored)", STATUS_PASS if comment_created_ok else STATUS_FAIL, "" if comment_created_ok else str(res)))
+        if comment_created_ok:
+            comment_uuid = res["uuid"]
+
         ok, res = await call(
             client, "plan_completed_set",
             {"plan": plan_uuid, "completed": True, "changed_by": "live-smoke"},
@@ -2629,8 +2668,8 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
             return results
         completed_set = True
 
-        # A representative mutating command must refuse with PLAN_COMPLETED
-        # while the lock is set.
+        # A representative `plan`-parameter mutating command must refuse
+        # with PLAN_COMPLETED while the lock is set.
         ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-locked"})
         refused_ok = (not ok) and "PLAN_COMPLETED" in str(res)
         results.append(
@@ -2645,6 +2684,28 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
         read_ok = ok and isinstance(res, dict) and "tree" in res
         results.append(CheckResult("4", "R9_read_still_allowed_while_completed", STATUS_PASS if read_ok else STATUS_FAIL, "" if read_ok else str(res)))
 
+        # THIRD SEAM: entity-uuid-addressed commands with NO `plan`
+        # parameter at all must ALSO refuse, via plan_completion_guard
+        # deriving the owning plan from the entity's own anchor.
+        if todo_uuid is not None:
+            ok, res = await call(client, "todo_update", {"todo": todo_uuid, "changed_by": "live-smoke", "priority_nice": -1})
+            todo_refused_ok = (not ok) and "PLAN_COMPLETED" in str(res)
+            results.append(
+                CheckResult(
+                    "4", "R9_todo_update_refused_while_completed", STATUS_PASS if todo_refused_ok else STATUS_FAIL,
+                    "" if todo_refused_ok else str(res),
+                )
+            )
+        if comment_uuid is not None:
+            ok, res = await call(client, "comment_delete", {"comment": comment_uuid, "changed_by": "live-smoke"})
+            comment_refused_ok = (not ok) and "PLAN_COMPLETED" in str(res)
+            results.append(
+                CheckResult(
+                    "4", "R9_comment_delete_refused_while_completed", STATUS_PASS if comment_refused_ok else STATUS_FAIL,
+                    "" if comment_refused_ok else str(res),
+                )
+            )
+
         ok, res = await call(
             client, "plan_completed_set",
             {"plan": plan_uuid, "completed": False, "changed_by": "live-smoke"},
@@ -2658,11 +2719,18 @@ async def run_r9_plan_completion_lock(client: Any, catalog_names: frozenset[str]
         ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-unlocked"})
         results.append(CheckResult("4", "R9_mutation_admitted_after_unlock", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     finally:
+        if plan_uuid is not None and completed_set:
+            # Cleanup must unset the flag FIRST -- while set, plan_delete
+            # AND the entity-uuid-addressed comment_delete/todo_delete below
+            # are all refused with PLAN_COMPLETED (the third seam derives
+            # their owning plan from their own anchor, independent of any
+            # `plan` parameter).
+            await call(client, "plan_completed_set", {"plan": plan_uuid, "completed": False, "changed_by": "live-smoke-cleanup"})
+        if comment_uuid is not None:
+            await call(client, "comment_delete", {"comment": comment_uuid, "changed_by": "live-smoke-cleanup", "hard": True})
+        if todo_uuid is not None:
+            await call(client, "todo_delete", {"todo": todo_uuid, "changed_by": "live-smoke-cleanup", "hard": True})
         if plan_uuid is not None:
-            if completed_set:
-                # cleanup must unset the flag first -- while set, plan_delete
-                # is itself refused with PLAN_COMPLETED.
-                await call(client, "plan_completed_set", {"plan": plan_uuid, "completed": False, "changed_by": "live-smoke-cleanup"})
             await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
     return results
 
