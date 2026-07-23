@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.todo_command_metadata import todo_metadata
 from plan_manager.domain.entity import EntityReferencedError
 from plan_manager.domain.todo import TodoItem
@@ -74,6 +75,7 @@ class TodoDeleteCommand(Command):
                         "blocked": bool(references),
                         "references": references,
                     })
+                refuse_if_todo_plan_completed(conn, record)
                 if references:
                     raise EntityReferencedError("todo", todo_uuid, references)
                 if hard:

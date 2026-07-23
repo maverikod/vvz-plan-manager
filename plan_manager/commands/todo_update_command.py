@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception, DomainCommandError
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.domain.todo_status_transitions import guard_todo_transition
 from plan_manager.runtime.context import db_connection
@@ -87,10 +88,11 @@ class TodoUpdateCommand(Command):
         try:
             with db_connection() as conn:
                 todo_uuid = uuid.UUID(todo)
+                existing = get_todo(conn, todo_uuid)
+                if existing is None:
+                    raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
+                refuse_if_todo_plan_completed(conn, existing)
                 if status is not None:
-                    existing = get_todo(conn, todo_uuid)
-                    if existing is None:
-                        raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
                     guard_todo_transition(existing.status, status)
                     transition_todo_status(conn, todo_uuid, changed_by=changed_by, new_status=status)
                 record = update_todo(

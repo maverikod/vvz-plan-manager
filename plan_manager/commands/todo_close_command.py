@@ -8,10 +8,11 @@ from typing import Any, ClassVar
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import map_exception
+from plan_manager.commands.errors import map_exception, DomainCommandError
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.todo_store import close_todo, update_todo
+from plan_manager.storage.todo_store import close_todo, update_todo, get_todo
 
 
 class TodoCloseCommand(Command):
@@ -70,6 +71,10 @@ class TodoCloseCommand(Command):
         try:
             with db_connection() as conn:
                 todo_uuid = uuid.UUID(todo)
+                existing = get_todo(conn, todo_uuid)
+                if existing is None:
+                    raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
+                refuse_if_todo_plan_completed(conn, existing)
                 if execution_result is not None:
                     update_todo(conn, todo_uuid, changed_by=changed_by, execution_result=execution_result)
                 record = close_todo(conn, todo_uuid, changed_by=changed_by)

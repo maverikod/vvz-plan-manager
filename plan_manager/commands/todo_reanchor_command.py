@@ -10,11 +10,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.reanchor_command_metadata import REANCHOR_BEST_PRACTICES, REANCHOR_ERROR_CASES
 from plan_manager.commands.todo_command_metadata import todo_metadata
 from plan_manager.domain.primary_anchor import PrimaryAnchor
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.todo_reanchor_store import reanchor_todo
+from plan_manager.storage.todo_store import get_todo
 
 
 class TodoReanchorCommand(Command):
@@ -87,6 +89,13 @@ class TodoReanchorCommand(Command):
             )
             with db_connection() as conn:
                 todo_uuid = uuid.UUID(todo)
+                # The CURRENT anchor's plan (bug c3950b83), before the move;
+                # reanchor_todo's own validate_anchor call separately covers
+                # the NEW anchor's plan when new_anchor_type is plan/step. A
+                # missing todo is left to reanchor_todo's own TODO_NOT_FOUND.
+                current = get_todo(conn, todo_uuid)
+                if current is not None:
+                    refuse_if_todo_plan_completed(conn, current)
                 if confirmation.confirmed:
                     new_anchor = PrimaryAnchor(
                         anchor_type=new_anchor_type,

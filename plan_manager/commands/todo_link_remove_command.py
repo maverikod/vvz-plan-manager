@@ -9,9 +9,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_link_store import get_todo_link, remove_todo_link
+from plan_manager.storage.todo_store import get_todo
 
 
 class TodoLinkRemoveCommand(Command):
@@ -66,6 +68,15 @@ class TodoLinkRemoveCommand(Command):
                 existing = get_todo_link(conn, link_uuid)
                 if existing is None:
                     raise DomainCommandError("TODO_LINK_NOT_FOUND", f"todo link not found: {link}")
+                # Both endpoints (bug c3950b83): a missing endpoint todo is
+                # a separate, pre-existing dangling-reference concern this
+                # guard does not police.
+                from_record = get_todo(conn, existing.from_todo_uuid)
+                if from_record is not None:
+                    refuse_if_todo_plan_completed(conn, from_record)
+                to_record = get_todo(conn, existing.to_todo_uuid)
+                if to_record is not None:
+                    refuse_if_todo_plan_completed(conn, to_record)
                 record = remove_todo_link(conn, link_uuid, changed_by=changed_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:

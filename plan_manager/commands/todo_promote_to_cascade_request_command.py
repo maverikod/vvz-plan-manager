@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
@@ -86,6 +87,7 @@ class TodoPromoteToCascadeRequestCommand(Command):
                 existing = get_todo(conn, todo_uuid)
                 if existing is None:
                     raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
+                refuse_if_todo_plan_completed(conn, existing)
                 revision_uuid = uuid.UUID(revision) if revision is not None else None
                 record = create_cascade_request(
                     conn,

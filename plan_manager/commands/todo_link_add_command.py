@@ -9,9 +9,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
 from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_link_store import create_todo_link
+from plan_manager.storage.todo_store import get_todo
 
 
 # NOTE: create_todo_link's guards route through plan_manager.domain.runtime_integrity's
@@ -95,10 +97,21 @@ class TodoLinkAddCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
+                from_todo_uuid = uuid.UUID(from_todo)
+                to_todo_uuid = uuid.UUID(to_todo)
+                # Each endpoint's own plan-completion lock, if it has one
+                # (bug c3950b83); a missing todo is left to create_todo_link's
+                # own existence guard below rather than pre-empted here.
+                from_record = get_todo(conn, from_todo_uuid)
+                if from_record is not None:
+                    refuse_if_todo_plan_completed(conn, from_record)
+                to_record = get_todo(conn, to_todo_uuid)
+                if to_record is not None:
+                    refuse_if_todo_plan_completed(conn, to_record)
                 record = create_todo_link(
                     conn,
-                    from_todo_uuid=uuid.UUID(from_todo),
-                    to_todo_uuid=uuid.UUID(to_todo),
+                    from_todo_uuid=from_todo_uuid,
+                    to_todo_uuid=to_todo_uuid,
                     link_type=link_type,
                     created_by=created_by,
                 )
