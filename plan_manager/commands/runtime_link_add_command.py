@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_link_endpoint_plan_completed
 from plan_manager.commands.runtime_link_command_metadata import runtime_link_metadata
 from plan_manager.domain.runtime_link import RUNTIME_LINK_ENTITY_TYPES, RUNTIME_LINK_TYPES
 from plan_manager.domain.runtime_validation import RuntimeValidationError
@@ -186,12 +187,19 @@ class RuntimeLinkAddCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
+                from_uuid = uuid.UUID(from_entity_uuid)
+                to_uuid = uuid.UUID(to_entity_uuid)
+                # Either endpoint's own plan-completion lock (bug c3950b83);
+                # a missing endpoint is left to create_runtime_link's own
+                # existence guard below rather than pre-empted here.
+                refuse_if_link_endpoint_plan_completed(conn, from_entity_type, from_uuid)
+                refuse_if_link_endpoint_plan_completed(conn, to_entity_type, to_uuid)
                 record = create_runtime_link(
                     conn,
                     from_entity_type=from_entity_type,
-                    from_entity_uuid=uuid.UUID(from_entity_uuid),
+                    from_entity_uuid=from_uuid,
                     to_entity_type=to_entity_type,
-                    to_entity_uuid=uuid.UUID(to_entity_uuid),
+                    to_entity_uuid=to_uuid,
                     link_type=link_type,
                     created_by=created_by,
                 )

@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_link_endpoint_plan_completed
 from plan_manager.commands.runtime_link_command_metadata import runtime_link_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_link_store import get_runtime_link, remove_runtime_link
@@ -83,6 +84,8 @@ class RuntimeLinkRemoveCommand(Command):
                     raise DomainCommandError("RUNTIME_LINK_NOT_FOUND", f"runtime link not found: {link}")
                 if dry_run:
                     return SuccessResult(data={**existing.to_payload(), "dry_run": True})
+                refuse_if_link_endpoint_plan_completed(conn, existing.from_entity_type, existing.from_entity_uuid)
+                refuse_if_link_endpoint_plan_completed(conn, existing.to_entity_type, existing.to_entity_uuid)
                 record = remove_runtime_link(conn, link_uuid, changed_by=changed_by)
                 return SuccessResult(data=record.to_payload())
         except Exception as exc:
