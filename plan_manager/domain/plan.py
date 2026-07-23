@@ -24,6 +24,12 @@ class PlanNotFoundError(ValueError):
     """Raised when no Plan row exists for a given uuid."""
 
 
+class PlanCompletedError(ValueError):
+    """Raised when a mutating command is refused because its target plan is
+    marked completed (bug c3950b83: plan-level completion lock). Mapped to
+    the PLAN_COMPLETED domain code at the commands layer."""
+
+
 @dataclass
 class Plan(DataclassEntity):
     """Domain representation of the Plan aggregate (C-001).
@@ -45,6 +51,15 @@ class Plan(DataclassEntity):
             soft-deleted plan is hidden from the default plan catalog but
             otherwise behaves normally and stays resolvable by uuid or
             name.
+        completed: Plan-level completion lock (bug c3950b83). Defaults to
+            False. When True, every mutating command that resolves its
+            `plan` parameter to this plan via resolve_plan_guarded refuses
+            with PLAN_COMPLETED; only plan_completed_set and
+            plan_comment_set stay reachable. Always directly settable via
+            plan_completed_set regardless of freeze or completion state.
+        comment: Free-form note attached to the plan, or None. Always
+            directly settable via plan_comment_set regardless of freeze or
+            completion state.
     """
 
     ENTITY_TYPE = "plan"
@@ -69,6 +84,8 @@ class Plan(DataclassEntity):
     project_ids: list[str]
     primary_project_id: str | None
     deleted_at: datetime | None = None
+    completed: bool = False
+    comment: str | None = None
 
 
 def create_plan(
@@ -105,8 +122,8 @@ def create_plan(
     plan_uuid = uuid.uuid4()
     conn.execute(
         "INSERT INTO plan (uuid, name, status, context_budget, "
-        "head_revision_uuid, project_ids, primary_project_id) "
-        "VALUES (%s, %s, 'draft', %s, NULL, %s, NULL)",
+        "head_revision_uuid, project_ids, primary_project_id, completed, comment) "
+        "VALUES (%s, %s, 'draft', %s, NULL, %s, NULL, false, NULL)",
         (plan_uuid, name, context_budget, []),
     )
     return Plan(
@@ -117,6 +134,8 @@ def create_plan(
         head_revision_uuid=None,
         project_ids=[],
         primary_project_id=None,
+        completed=False,
+        comment=None,
     )
 
 
@@ -135,7 +154,7 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
     """
     cur = conn.execute(
         "SELECT uuid, name, status, context_budget, head_revision_uuid, "
-        "project_ids, primary_project_id, deleted_at "
+        "project_ids, primary_project_id, deleted_at, completed, comment "
         "FROM plan WHERE uuid = %s",
         (plan_uuid,),
     )
@@ -151,6 +170,8 @@ def get_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Plan:
         project_ids=list(row[5]) if row[5] else [],
         primary_project_id=row[6],
         deleted_at=row[7],
+        completed=row[8],
+        comment=row[9],
     )
 
 
@@ -169,7 +190,7 @@ def list_plans(conn: psycopg.Connection, show_deleted: bool = False) -> list[Pla
     """
     sql = (
         "SELECT uuid, name, status, context_budget, head_revision_uuid, "
-        "project_ids, primary_project_id, deleted_at "
+        "project_ids, primary_project_id, deleted_at, completed, comment "
         "FROM plan"
     )
     if not show_deleted:
@@ -186,6 +207,8 @@ def list_plans(conn: psycopg.Connection, show_deleted: bool = False) -> list[Pla
             project_ids=list(row[5]) if row[5] else [],
             primary_project_id=row[6],
             deleted_at=row[7],
+            completed=row[8],
+            comment=row[9],
         )
         for row in cur.fetchall()
     ]
@@ -284,3 +307,46 @@ def hard_delete_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
         None.
     """
     conn.execute("DELETE FROM plan WHERE uuid = %s", (plan_uuid,))
+
+
+def set_plan_completed(conn: psycopg.Connection, plan_uuid: uuid.UUID, completed: bool) -> None:
+    """Set or unset a Plan's completion lock (bug c3950b83).
+
+    Always allowed regardless of the plan's freeze state or current
+    completed value (idempotent no-op when unchanged). Callers are
+    responsible for recording the runtime audit entry; this function only
+    updates the stored column.
+
+    Args:
+        conn: Open psycopg 3 database connection to use for the update.
+        plan_uuid: Primary identity of the plan to update.
+        completed: The new completion-lock value.
+
+    Returns:
+        None.
+    """
+    conn.execute(
+        "UPDATE plan SET completed = %s WHERE uuid = %s",
+        (completed, plan_uuid),
+    )
+
+
+def set_plan_comment(conn: psycopg.Connection, plan_uuid: uuid.UUID, comment: str | None) -> None:
+    """Set, replace, or clear a Plan's free-form comment.
+
+    Always allowed regardless of the plan's freeze state or completion
+    lock. Callers are responsible for recording the runtime audit entry;
+    this function only updates the stored column.
+
+    Args:
+        conn: Open psycopg 3 database connection to use for the update.
+        plan_uuid: Primary identity of the plan to update.
+        comment: The new comment text, or None to clear it.
+
+    Returns:
+        None.
+    """
+    conn.execute(
+        "UPDATE plan SET comment = %s WHERE uuid = %s",
+        (comment, plan_uuid),
+    )
