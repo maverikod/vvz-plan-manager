@@ -3,6 +3,7 @@
 from typing import Any
 
 from plan_manager.commands.runtime_filtering import pagination_metadata_params
+from plan_manager.commands.list_projection import view_metadata_params
 
 def get_plan_list_metadata(cls: Any) -> dict:
     """Return the full metadata dictionary for PlanListCommand.
@@ -50,6 +51,7 @@ def get_plan_list_metadata(cls: Any) -> dict:
                 "examples": [False, True],
             },
             **pagination_metadata_params(),
+            **view_metadata_params(),
         },
         "return_value": {
             "success": {
@@ -131,5 +133,6 @@ def get_plan_list_metadata(cls: Any) -> dict:
             "Read each row's primary_project_id and project_ids to see which analysis projects a plan is bound to.",
             "Use show_deleted=true to audit or recover soft-deleted plans; a row with deleted=true was removed from the default catalog by plan_delete.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (uuid, name, status, primary_project_id, deleted) instead of the full row (drops context_budget, has_head, project_ids, project_count, completed, comment); use plan_status for a single plan's full detail.",
         ],
     }

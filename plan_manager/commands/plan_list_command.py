@@ -14,6 +14,13 @@ from plan_manager.commands.runtime_filtering import (
 )
 from plan_manager.domain.plan import list_plans
 from plan_manager.runtime.context import db_connection
+from plan_manager.commands.list_projection import parse_view, project_row, view_schema_properties
+
+# Compact view=summary projection (bug 8a13977d). plan_list already hand-builds a
+# fairly small row (no to_payload() call here), so this trims the bulkier/derived
+# fields (context_budget, has_head, project_ids, project_count, comment) down to
+# the plan's core identity.
+PLAN_LIST_SUMMARY_FIELDS = ("uuid", "name", "status", "primary_project_id", "deleted")
 
 class PlanListCommand(Command):
     """Return a paginated page of the catalog of all plans, read-only."""
@@ -52,6 +59,7 @@ class PlanListCommand(Command):
                     "default": False,
                 },
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -110,28 +118,30 @@ class PlanListCommand(Command):
         show_deleted = kwargs.get("show_deleted", False)
         try:
             pagination = parse_pagination({"limit": kwargs.get("limit"), "offset": kwargs.get("offset")})
+            view = parse_view(kwargs.get("view"))
             with db_connection() as conn:
                 plans = list_plans(conn, show_deleted=show_deleted)
                 total = len(plans)
                 page = plans[pagination.offset : pagination.offset + pagination.limit]
+                rows = [
+                    {
+                        "uuid": str(pl.uuid),
+                        "name": pl.name,
+                        "status": pl.status,
+                        "context_budget": pl.context_budget,
+                        "has_head": pl.head_revision_uuid is not None,
+                        "project_ids": list(pl.project_ids),
+                        "project_count": len(pl.project_ids),
+                        "primary_project_id": pl.primary_project_id,
+                        "deleted": pl.deleted_at is not None,
+                        "completed": pl.completed,
+                        "comment": pl.comment,
+                    }
+                    for pl in page
+                ]
                 return SuccessResult(
                     data={
-                        "plans": [
-                            {
-                                "uuid": str(pl.uuid),
-                                "name": pl.name,
-                                "status": pl.status,
-                                "context_budget": pl.context_budget,
-                                "has_head": pl.head_revision_uuid is not None,
-                                "project_ids": list(pl.project_ids),
-                                "project_count": len(pl.project_ids),
-                                "primary_project_id": pl.primary_project_id,
-                                "deleted": pl.deleted_at is not None,
-                                "completed": pl.completed,
-                                "comment": pl.comment,
-                            }
-                            for pl in page
-                        ],
+                        "plans": [project_row(row, view, PLAN_LIST_SUMMARY_FIELDS) for row in rows],
                         "total": total,
                         "limit": pagination.limit,
                         "offset": pagination.offset,
