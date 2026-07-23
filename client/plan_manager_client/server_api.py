@@ -16,6 +16,8 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "plan_list",
         "plan_status",
         "plan_delete",
+        "plan_completed_set",
+        "plan_comment_set",
         "plan_project_attach",
         "plan_project_detach",
         "plan_project_list",
@@ -219,6 +221,8 @@ MUTATING_COMMAND_NAMES: frozenset[str] = frozenset(
     (
         "plan_create",
         "plan_delete",
+        "plan_completed_set",
+        "plan_comment_set",
         "plan_project_attach",
         "plan_project_detach",
         "plan_project_set_primary",

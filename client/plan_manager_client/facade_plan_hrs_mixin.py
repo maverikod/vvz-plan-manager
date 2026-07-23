@@ -34,6 +34,14 @@ class PlanHrsCommandsMixin:
         """Delete a plan: soft by default (hidden from the catalog, reversible), or permanently with hard=true."""
         return await self._call("plan_delete", params)
 
+    async def plan_completed_set(self, **params: Any) -> Any:
+        """Set or unset a plan's completion lock; always reachable regardless of freeze state or the current flag value."""
+        return await self._call("plan_completed_set", params)
+
+    async def plan_comment_set(self, **params: Any) -> Any:
+        """Set, replace, or clear a plan's free-form comment; always reachable regardless of freeze state or the completion lock."""
+        return await self._call("plan_comment_set", params)
+
     async def plan_project_attach(self, **params: Any) -> Any:
         """Attach an analysis-server project UUID to a plan."""
         return await self._call("plan_project_attach", params)
