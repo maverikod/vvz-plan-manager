@@ -329,6 +329,22 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     ],
     "observability": ["command_timing_stats"],
     "verification": ["step_prompt_verify"],
+    "tool": ["tool_create", "tool_get", "tool_update", "tool_list", "tool_delete"],
+    "toolset": [
+        "toolset_create", "toolset_get", "toolset_update", "toolset_list", "toolset_delete",
+        "toolset_member_add", "toolset_member_remove",
+    ],
+    "role": ["role_create", "role_get", "role_update", "role_list", "role_delete"],
+    "provider": [
+        "provider_create", "provider_get", "provider_update", "provider_list",
+        "provider_delete", "provider_set_status",
+    ],
+    "model": ["model_create", "model_get", "model_update", "model_list", "model_delete"],
+    "invocation_profile": [
+        "invocation_profile_create", "invocation_profile_get", "invocation_profile_update",
+        "invocation_profile_list", "invocation_profile_delete", "invocation_profile_resolve",
+    ],
+    "agent_resolve": ["role_model_resolve", "step_assignment_resolve"],
 }
 
 # The queue-bound commands (use_queue=True); consumed by queue_polling_guide().
