@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plan-manager-client"
-version = "0.1.61"
+version = "0.1.62"
 description = "First-class client library for the plan_manager JSON-RPC API: full command-surface facade plus export delivery module boundary."
 requires-python = ">=3.12"
 dependencies = [
