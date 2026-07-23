@@ -17,6 +17,12 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.escalation_store import list_escalations
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 _STATUS_ENUM = sorted(ESCALATION_STATUSES)
 
@@ -44,6 +50,7 @@ class EscalationListCommand(Command):
                 "anchor_ref_id": {"type": "string", "description": "UUID of the anchor_ref_id to filter escalations by."},
                 "include_deleted": {"type": "boolean", "description": "When true, include soft-deleted escalations.", "default": False},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -62,11 +69,12 @@ class EscalationListCommand(Command):
             "anchor_ref_id": {"description": "UUID of the anchor_ref_id to filter escalations by.", "type": "string", "required": False},
             "include_deleted": {"description": "When true, include soft-deleted escalations.", "type": "boolean", "required": False, "default": False},
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return review_escalation_metadata(
             cls,
             params,
-            {"success": {"description": "A page of escalation payloads plus total/limit/offset."}},
+            {"success": {"description": "A page of escalation payloads (or, with view=summary, compact projections) plus total/limit/offset."}},
             [{
                 "description": "List open escalations for a plan.",
                 "command": {"plan": "plan_manager", "status": "open"},
@@ -79,6 +87,7 @@ class EscalationListCommand(Command):
                 "anchor_ref_id filters by the escalation's anchor_ref_id column, not by escalation_uuid.",
                 "Set include_deleted=True to also see soft-deleted escalations; the default excludes them.",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
+                "view=summary returns a compact per-row projection (uuid, primary_anchor_type, anchor_ref_id, status, addressee_level, addressee_role, updated_at) instead of the full Escalation record (drops reason and resolution); use escalation_get for a single escalation's full detail.",
             ],
         )
 
@@ -91,9 +100,11 @@ class EscalationListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params = {"status": status, "project": project, "limit": limit, "offset": offset}
@@ -117,7 +128,7 @@ class EscalationListCommand(Command):
                 total = len(escalations)
                 page = escalations[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "escalations": [e.to_payload() for e in page],
+                    "escalations": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

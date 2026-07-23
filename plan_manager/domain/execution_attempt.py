@@ -29,6 +29,11 @@ class ExecutionAttempt(DataclassEntity):
     ENTITY_TYPE = "execution_attempt"
     ENTITY_ID_FIELD = "attempt_uuid"
     TABLE_NAME = "execution_attempt"
+    # Compact view=summary projection (bug 8a13977d): drops result_summary,
+    # command_test_results, resource_accounting, transcript_ref, and error detail.
+    SUMMARY_FIELDS = (
+        "uuid", "plan_uuid", "step_uuid", "status", "used_provider", "used_model", "updated_at",
+    )
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "attempt_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose

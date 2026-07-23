@@ -23,6 +23,12 @@ from plan_manager.domain.runtime_comment import COMMENT_KINDS, CommentKind
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_comment_store import list_comments_page
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 FILTER_FIELDS: list[str] = [
     "project", "file", "anchor_plan", "revision", "step", "status", "kind", "owner",
@@ -63,6 +69,7 @@ class CommentListCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier (name or UUID), optional. When supplied, scopes the listing: only comments whose anchor_plan_uuid equals the resolved plan are returned; comments anchored to other plans or with no plan anchor (anchor_plan_uuid NULL) are excluded (direct anchor equality, no transitive matching). When omitted, no plan scoping is applied. The project filter (below) is independent and IS transitive via plan.project_ids."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -79,11 +86,12 @@ class CommentListCommand(Command):
             },
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return comment_metadata(
             cls,
             params,
-            {"success": {"description": "comments: list of filtered, paginated RuntimeComment payloads. total: count of matching comments before pagination. limit, offset: the effective pagination applied."}},
+            {"success": {"description": "comments: list of filtered, paginated RuntimeComment payloads (or, with view=summary, compact projections). total: count of matching comments before pagination. limit, offset: the effective pagination applied."}},
             [{"description": "List unresolved comments for a step.", "command": {"plan": "plan_manager", "step": "5a1e9b0a-2222-4444-8888-abcdefabcdef", "status": "unresolved", "limit": 50, "offset": 0}}],
             best_practices=[
                 "The optional plan parameter scopes the listing by direct anchor: only comments with anchor_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via anchor_ref_id or other anchor fields). Omit it to list across all plans.",
@@ -93,6 +101,7 @@ class CommentListCommand(Command):
                 "The plan scope, anchor_plan, step, project, file, revision, kind, owner, status, active_only, and created_after/before are all pushed down to SQL WHERE clauses -- none is applied by post-fetch, in-memory filtering. anchor_plan is redundant unless it differs from plan (which yields an empty page).",
                 "The project filter matches transitively: a comment whose anchor_project_id equals the filter value matches directly, and a comment with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "total is the filtered, pre-pagination count — page by advancing offset past total, there is no cursor.",
+                "view=summary returns a compact per-row projection (uuid, primary_anchor_type, anchor_ref_id, kind, resolved, updated_at) instead of the full RuntimeComment record (drops body, the comment text itself); use comment_get for a single comment's full detail.",
             ],
         )
 
@@ -112,9 +121,11 @@ class CommentListCommand(Command):
         active_only: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params: dict[str, Any] = {
@@ -156,7 +167,7 @@ class CommentListCommand(Command):
                     include_deleted=False,
                 )
                 return SuccessResult(data={
-                    "comments": [r.to_payload() for r in records],
+                    "comments": project_entities(records, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

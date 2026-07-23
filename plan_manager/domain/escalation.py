@@ -24,6 +24,11 @@ class Escalation(DataclassEntity):
     ENTITY_TYPE = "escalation"
     ENTITY_ID_FIELD = "escalation_uuid"
     TABLE_NAME = "escalation"
+    # Compact view=summary projection (bug 8a13977d): drops reason and resolution.
+    SUMMARY_FIELDS = (
+        "uuid", "primary_anchor_type", "anchor_ref_id", "status",
+        "addressee_level", "addressee_role", "updated_at",
+    )
 
     escalation_uuid: uuid.UUID
     primary_anchor_type: str

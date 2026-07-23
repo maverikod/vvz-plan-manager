@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Type
 
 from plan_manager.commands.runtime_filtering import pagination_metadata_params
+from plan_manager.commands.list_projection import view_metadata_params
 
 def get_para_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
     """Build the extended metadata dictionary for para_list.
@@ -31,10 +32,11 @@ def get_para_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "required": True,
             },
             **pagination_metadata_params(),
+            **view_metadata_params(),
         },
         "return_value": {
             "success": {
-                "description": "A page of the plan's HRS paragraphs in position order, plus total/limit/offset.",
+                "description": "A page of the plan's HRS paragraphs (or, with view=summary, compact projections) in position order, plus total/limit/offset.",
                 "data": {
                     "paragraphs": "List of paragraph objects, each with label (string or null), binding (boolean), position (integer), and text (string).",
                     "total": "Count of the full paragraph set before pagination.",
@@ -81,5 +83,6 @@ def get_para_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Call para_list after para_label_assign to confirm every binding paragraph now carries a label.",
             "This command is read-only and safe to call at any time without cascade coordination.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (label, binding, position) instead of the full paragraph (drops text, the paragraph body itself -- often multi-sentence and the dominant contributor to row size); use para_get with a label for a single paragraph's full text.",
         ],
     }

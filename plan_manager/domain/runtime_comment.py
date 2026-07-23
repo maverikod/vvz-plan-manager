@@ -63,6 +63,8 @@ class RuntimeComment(DataclassEntity):
     ENTITY_TYPE = "comment"
     ENTITY_ID_FIELD = "comment_uuid"
     TABLE_NAME = "runtime_comment"
+    # Compact view=summary projection (bug 8a13977d): drops body (the comment text itself).
+    SUMMARY_FIELDS = ("uuid", "primary_anchor_type", "anchor_ref_id", "kind", "resolved", "updated_at")
 
     comment_uuid: uuid.UUID
     primary_anchor_type: str

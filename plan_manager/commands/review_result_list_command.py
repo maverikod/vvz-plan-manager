@@ -21,6 +21,12 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.review_result_store import list_review_results
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 class ReviewResultListCommand(Command):
     name: ClassVar[str] = "review_result_list"
@@ -76,6 +82,7 @@ class ReviewResultListCommand(Command):
                     "description": "Include soft-deleted review results in the listing. Defaults to false.",
                 },
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -119,11 +126,12 @@ class ReviewResultListCommand(Command):
             },
             "include_deleted": {"description": "Include soft-deleted review results in the listing. Defaults to false.", "type": "boolean", "required": False},
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return review_escalation_metadata(
             cls,
             params,
-            {"success": {"description": "A page of review result payloads matching the requested reviewed-attempt/status scope, ordered oldest first, plus total/limit/offset."}},
+            {"success": {"description": "A page of review result payloads (or, with view=summary, compact projections) matching the requested reviewed-attempt/status scope, ordered oldest first, plus total/limit/offset."}},
             [{
                 "description": "List all accepted review results for a given execution attempt.",
                 "command": {
@@ -141,6 +149,7 @@ class ReviewResultListCommand(Command):
                 "Results are ordered oldest first (created_at ASC); reverse client-side for a newest-first view.",
                 "Filter by status escalated or needs_owner_decision to find review results still awaiting an owner decision.",
                 "Compare offset+limit against total to detect additional pages.",
+                "view=summary returns a compact per-row projection (uuid, object_type, reviewed_attempt_uuid, reviewer, status, updated_at) instead of the full record (drops findings, evidence, verification_commands); use review_result_get for a single result's full detail.",
             ],
         )
 
@@ -153,9 +162,11 @@ class ReviewResultListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 if status is not None and status not in REVIEW_STATUSES:
@@ -179,7 +190,7 @@ class ReviewResultListCommand(Command):
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "review_results": [r.to_payload() for r in page],
+                    "review_results": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

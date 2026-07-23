@@ -19,6 +19,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.execution_attempt import ATTEMPT_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import list_execution_attempts
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 class ExecutionAttemptListCommand(Command):
     name: ClassVar[str] = "execution_attempt_list"
@@ -79,6 +85,7 @@ class ExecutionAttemptListCommand(Command):
                     "required": False,
                 },
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -88,9 +95,10 @@ class ExecutionAttemptListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = dict(cls.get_schema()["properties"])
         params.update(pagination_metadata_params())
+        params.update(view_metadata_params())
         return_value = {
             "success": {
-                "description": "A page of the matching execution attempt records, with all UUID fields rendered as strings, plus total/limit/offset.",
+                "description": "A page of the matching execution attempt records (or, with view=summary, compact projections), with all UUID fields rendered as strings, plus total/limit/offset.",
                 "data": {
                     "execution_attempts": "The requested page of execution attempt payloads.",
                     "total": "Count of the full matching set before pagination.",
@@ -116,6 +124,7 @@ class ExecutionAttemptListCommand(Command):
             "status, so this filter reflects whatever status was most recently reported, not a "
             "state-machine-validated progression.",
             "Compare offset+limit against total to detect additional pages.",
+            "view=summary returns a compact per-row projection (uuid, plan_uuid, step_uuid, status, used_provider, used_model, updated_at) instead of the full record (drops result_summary, command_test_results, resource_accounting, transcript_ref); use execution_attempt_get for a single attempt's full detail.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
 
@@ -128,9 +137,11 @@ class ExecutionAttemptListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_uuid = None
                 if plan is not None:
@@ -153,7 +164,7 @@ class ExecutionAttemptListCommand(Command):
                 total = len(attempts)
                 page = attempts[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "execution_attempts": [a.to_payload() for a in page],
+                    "execution_attempts": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

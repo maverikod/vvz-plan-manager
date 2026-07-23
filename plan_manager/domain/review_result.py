@@ -38,6 +38,9 @@ class ReviewResult(DataclassEntity):
         # ENTITY_ID_FIELD name. A source_column of "review_uuid" here is a KeyError (bug e52daeab).
         ReferenceCheck("runtime_audit_log", "linked_review_id", "uuid"),
     )
+    # Compact view=summary projection (bug 8a13977d): drops findings, evidence,
+    # and verification_commands.
+    SUMMARY_FIELDS = ("uuid", "object_type", "reviewed_attempt_uuid", "reviewer", "status", "updated_at")
 
     review_uuid: uuid.UUID
     object_type: str

@@ -20,6 +20,9 @@ class SrtSnapshotRecord(DataclassEntity):
     ENTITY_ID_FIELD = "snapshot_uuid"
     TABLE_NAME = "srt_snapshot"
     SOFT_DELETE_COLUMN = None
+    # Compact view=summary projection (bug 8a13977d): drops tree_content, the
+    # whole semantic tree, which dominates this record's size.
+    SUMMARY_FIELDS = ("uuid", "plan_uuid", "revision_uuid", "tree_hash", "created_at")
 
     snapshot_uuid: uuid.UUID
     plan_uuid: uuid.UUID

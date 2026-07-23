@@ -17,6 +17,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.commands.srt_command_metadata import BASE_PARAMETERS, srt_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.srt_snapshot_store import list_srt_snapshots
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 class SrtSnapshotListCommand(Command):
     name: ClassVar[str] = "srt_snapshot_list"
@@ -35,6 +41,7 @@ class SrtSnapshotListCommand(Command):
             "properties": {
                 "plan": {"type": "string", "description": "Plan identifier."},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": ["plan"],
             "additionalProperties": False,
@@ -42,11 +49,11 @@ class SrtSnapshotListCommand(Command):
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        params = {**BASE_PARAMETERS, **pagination_metadata_params()}
+        params = {**BASE_PARAMETERS, **pagination_metadata_params(), **view_metadata_params()}
         return srt_metadata(
             cls,
             params,
-            {"success": {"description": "A page of SemanticTreeSnapshot payloads for the plan, ordered oldest first, plus total/limit/offset."}},
+            {"success": {"description": "A page of SemanticTreeSnapshot payloads (or, with view=summary, compact projections) for the plan, ordered oldest first, plus total/limit/offset."}},
             [{"description": "List snapshot history for a plan.", "command": {"plan": "plan_manager"}}],
             error_cases={
                 "INVALID_PAGINATION": {
@@ -57,6 +64,7 @@ class SrtSnapshotListCommand(Command):
             },
             extra_best_practices=[
                 "Compare offset+limit against total to detect additional pages.",
+                "view=summary returns a compact per-row projection (uuid, plan_uuid, revision_uuid, tree_hash, created_at) instead of the full record (drops tree_content, the whole semantic tree, which dominates row size); there is no srt_snapshot_get command, so full detail means re-calling this command with view=full (the default).",
             ],
         )
 
@@ -65,9 +73,11 @@ class SrtSnapshotListCommand(Command):
         plan: str,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 pagination = parse_pagination({"limit": limit, "offset": offset})
@@ -75,7 +85,7 @@ class SrtSnapshotListCommand(Command):
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "snapshots": [r.to_payload() for r in page],
+                    "snapshots": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,
