@@ -11,6 +11,7 @@ from typing import Any
 from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
 
 from plan_manager_client.dispatch import _CommandDispatchMixin
+from plan_manager_client.facade_agent_config_mixin import AgentConfigCommandsMixin
 from plan_manager_client.facade_bug_project_mixin import BugProjectCommandsMixin
 from plan_manager_client.facade_context_gate_mixin import ContextGateCommandsMixin
 from plan_manager_client.facade_plan_hrs_mixin import PlanHrsCommandsMixin
@@ -25,6 +26,7 @@ class PlanManagerClient(
     ContextGateCommandsMixin,
     RuntimeCommandsMixin,
     BugProjectCommandsMixin,
+    AgentConfigCommandsMixin,
 ):
     """Full command-surface facade for the plan_manager JSON-RPC API.
 
@@ -37,7 +39,7 @@ class PlanManagerClient(
     this class is exactly one public async method per plan_manager command,
     contributed by the internal _call dispatch coroutine (queued-command
     auto-polling per queue_get_job_status semantics) from _CommandDispatchMixin
-    and the five command-family mixins, together covering every name in
+    and the six command-family mixins, together covering every name in
     plan_manager_client.server_api.COMMAND_NAMES. Construct directly with the
     JsonRpcClient constructor arguments, or via
     PlanManagerClient(**config.to_jsonrpc_kwargs()) using a
