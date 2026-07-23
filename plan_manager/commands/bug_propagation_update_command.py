@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_fix_propagation_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
 from plan_manager.domain.bug_fix_propagation_status_transitions import guard_propagation_transition
@@ -98,6 +99,7 @@ class BugPropagationUpdateCommand(Command):
                 existing = get_bug_fix_propagation(conn, propagation_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_PROPAGATION_NOT_FOUND", f"bug propagation not found: {propagation_id}")
+                refuse_if_bug_fix_propagation_plan_completed(conn, existing)
                 if status is not None:
                     guard_propagation_transition(existing.status, status)
                 record = update_bug_fix_propagation(

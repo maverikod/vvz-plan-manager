@@ -9,11 +9,16 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.plan_completion_guard import (
+    refuse_if_bug_fix_plan_completed,
+    refuse_if_bug_fix_propagation_plan_completed,
+)
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
 from plan_manager.domain.primary_anchor import PrimaryAnchor
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations, update_bug_fix_propagation
+from plan_manager.storage.bug_fix_store import get_bug_fix
 from plan_manager.storage.todo_store import create_todo
 
 
@@ -74,9 +79,13 @@ class BugPropagationGenerateTodosCommand(Command):
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 bug_fix_uuid = uuid.UUID(bug_fix_id)
+                fix_record = get_bug_fix(conn, bug_fix_uuid)
+                if fix_record is not None:
+                    refuse_if_bug_fix_plan_completed(conn, fix_record)
                 pending = list_bug_fix_propagations(conn, bug_fix_uuid=bug_fix_uuid, status="pending")
                 generated: list[dict[str, Any]] = []
                 for propagation in pending:
+                    refuse_if_bug_fix_propagation_plan_completed(conn, propagation)
                     anchor = PrimaryAnchor(anchor_type="bug_fix", ref_id=propagation.bug_fix_uuid)
                     todo = create_todo(
                         conn,

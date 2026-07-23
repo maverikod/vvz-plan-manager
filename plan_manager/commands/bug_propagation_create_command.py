@@ -9,6 +9,7 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_fix_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
@@ -100,6 +101,7 @@ class BugPropagationCreateCommand(Command):
                 fix_record = get_bug_fix(conn, bug_fix_uuid_val)
                 if fix_record is None:
                     raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {bug_fix_id}")
+                refuse_if_bug_fix_plan_completed(conn, fix_record)
                 if get_bug_impact(conn, impact_uuid_val) is None:
                     raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_id}")
                 record = create_bug_fix_propagation(
