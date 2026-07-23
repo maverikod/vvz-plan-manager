@@ -2423,6 +2423,49 @@ def _r8_report_flags_gs_missing(report_json: Any, artifact_path: str, concept_id
     return False
 
 
+R8_D8849951_PRE_FIX_SKIP_REASON = (
+    "server predates todo d8849951's coverage.gs wording fix: the finding "
+    "still ends in the bare '... missing' wording that read as \"missing "
+    "from the GS row\" (bugs 3de7a081/a8c43201) instead of \"not covered by "
+    "any child (TS) step\" -- redeploy pending"
+)
+
+R8_D8849951_IDENTITY_SKIP_REASON = (
+    "server predates todo d8849951's plan_validate state-identity fields: "
+    "tip_revision_uuid/cascade_uuid are absent from the response -- "
+    "redeploy pending"
+)
+
+
+def _r8_gs_finding_message(report_json: Any, artifact_path: str, concept_id: str) -> Optional[str]:
+    """Return the message text of the coverage.gs finding on
+    ``artifact_path`` for ``concept_id`` within a cascade_preview/
+    plan_validate JSON report string, or None if no such finding exists.
+
+    Sibling of ``_r8_report_flags_gs_missing`` (same lookup, but returns
+    the message text itself instead of a boolean) so a caller can inspect
+    the exact wording -- used by todo d8849951's reworded-message check.
+    """
+    if not isinstance(report_json, str):
+        return None
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return None
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if not isinstance(check, dict) or check.get("check_id") != "coverage.gs":
+            continue
+        for finding in check.get("findings", []) or []:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("artifact_path") != artifact_path:
+                continue
+            message = str(finding.get("message", ""))
+            if f"{concept_id!r}" in message:
+                return message
+    return None
+
+
 async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]:
     """Bug 3de7a081 (wrong_output, blocker, reported against the doc-store
     plan's open cascade cc468aa3): sequential in-cascade step_update calls
@@ -2462,6 +2505,24 @@ async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]
     (not FAIL) naming the bug, rather than failing the pipeline outright
     on a server this investigation did not anticipate; the correct,
     already-observed behavior asserts PASS.
+
+    Todo d8849951 extension: the ambiguous "concept 'X' missing" wording
+    that read as "missing from the GS row" itself (rather than "not yet
+    covered by a TS child") caused two rejected false-blocker reports
+    (3de7a081, then a8c43201) against a gate that was working as
+    designed. After the base repro above proves no finding exists once
+    both levels carry the concept, this same throwaway plan/cascade adds
+    a SECOND concept to G-001 only (never to T-001), forcing a genuine,
+    deliberate coverage.gs finding, and inspects its message: PASS if it
+    carries the new "not covered by any child (TS) step" wording, SKIP
+    (naming this todo) if it still ends in the bare pre-fix "... missing"
+    wording. The same open cascade also exercises plan_validate's
+    tip_revision_uuid/cascade_uuid response fields (bug a8c43201's
+    follow-up: plan_validate previously exposed only the committed-head
+    revision_uuid label, unlike cascade_preview's base+tip) -- SKIP
+    (naming this todo) if those fields are absent from the response,
+    otherwise PASS iff they match the open cascade's own
+    cascade_uuid/tip_revision_uuid as cascade_preview reports them.
     """
     results: list[CheckResult] = []
     plan_uuid: Optional[str] = None
@@ -2565,6 +2626,76 @@ async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]
             )
         else:
             results.append(CheckResult("4", "R8_coverage_gs_reads_live_cascade_state", STATUS_PASS))
+
+        # --- Todo d8849951: reworded coverage.gs wording + plan_validate
+        # state identity. Adding a second concept to G-001 ONLY (not to
+        # its TS child T-001) forces a genuine, deliberate coverage.gs
+        # finding -- the exact GS-declared-but-not-child-covered gap the
+        # reworded message describes -- so its wording can be inspected.
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": g_id, "concepts": ["C-001", "C-002"], "cascade_uuid": cascade_uuid},
+        )
+        if not ok or not isinstance(res, dict) or res.get("concepts") != ["C-001", "C-002"]:
+            results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_FAIL, str(res)))
+        else:
+            results.append(CheckResult("4", "R8_step_update(G,add_uncovered_concept)", STATUS_PASS))
+
+            ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full"})
+            if not ok and _looks_like_unknown_param(str(res), "view"):
+                ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})
+            if not ok or not isinstance(res, dict) or "gate_report_json" not in res:
+                results.append(CheckResult("4", "R8_cascade_preview(after_uncovered_concept)", STATUS_FAIL, str(res)))
+            else:
+                results.append(CheckResult("4", "R8_cascade_preview(after_uncovered_concept)", STATUS_PASS))
+                preview_tip = res.get("tip_revision_uuid")
+                preview_cascade_uuid = res.get("cascade_uuid")
+
+                message = _r8_gs_finding_message(res.get("gate_report_json"), g_id, "C-002")
+                if message is None:
+                    results.append(
+                        CheckResult(
+                            "4", "R8_coverage_gs_new_wording", STATUS_FAIL,
+                            "no coverage.gs finding for C-002 -- expected an uncovered concept",
+                        )
+                    )
+                elif "not covered by any child (TS) step" in message:
+                    results.append(CheckResult("4", "R8_coverage_gs_new_wording", STATUS_PASS, message))
+                elif message.endswith("missing"):
+                    results.append(
+                        CheckResult("4", "R8_coverage_gs_new_wording", STATUS_SKIP, R8_D8849951_PRE_FIX_SKIP_REASON)
+                    )
+                else:
+                    results.append(CheckResult("4", "R8_coverage_gs_new_wording", STATUS_FAIL, message))
+
+                # plan_validate's tip_revision_uuid/cascade_uuid must match
+                # the same open cascade's state cascade_preview just
+                # reported -- both read the same live tip (bug a8c43201's
+                # follow-up: remove the base/tip presentation asymmetry).
+                ok, res = await call(client, "plan_validate", {"plan": plan_uuid, "scope": "plan"})
+                if not ok or not isinstance(res, dict):
+                    results.append(CheckResult("4", "R8_plan_validate(open_cascade_identity)", STATUS_FAIL, str(res)))
+                elif "tip_revision_uuid" not in res or "cascade_uuid" not in res:
+                    results.append(
+                        CheckResult(
+                            "4", "R8_plan_validate(open_cascade_identity)", STATUS_SKIP,
+                            R8_D8849951_IDENTITY_SKIP_REASON,
+                        )
+                    )
+                else:
+                    identity_ok = (
+                        res.get("tip_revision_uuid") == preview_tip
+                        and res.get("cascade_uuid") == preview_cascade_uuid
+                        and res.get("cascade_uuid") == cascade_uuid
+                        and res.get("tip_revision_uuid") is not None
+                    )
+                    results.append(
+                        CheckResult(
+                            "4", "R8_plan_validate(open_cascade_identity)",
+                            STATUS_PASS if identity_ok else STATUS_FAIL,
+                            "" if identity_ok else str(res),
+                        )
+                    )
     finally:
         if cascade_uuid is not None:
             await call(client, "cascade_abort", {"plan": plan_uuid})

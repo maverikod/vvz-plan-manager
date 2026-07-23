@@ -1948,11 +1948,61 @@ def _r8_gate_report(*, concept_missing: bool) -> str:
     )
 
 
-def _r8_success_responses(*, concept_missing: bool) -> dict[str, Any]:
+def _r8_uncovered_concept_report(*, wording: str = "new") -> str:
+    """Build a cascade_preview-shaped gate_report_json string carrying a
+    coverage.gs finding on G-001 for concept C-002 (the todo d8849951
+    extension's deliberately-uncovered second concept), in either the new
+    ("not covered by any child (TS) step") or the old pre-fix bare
+    ("missing") wording."""
+    message = (
+        "concept 'C-002' not covered by any child (TS) step"
+        if wording == "new"
+        else "concept 'C-002' missing"
+    )
+    return json.dumps(
+        {
+            "checks": [
+                {
+                    "check_id": "coverage.gs",
+                    "findings": [
+                        {
+                            "check_id": "coverage.gs",
+                            "severity": "error",
+                            "artifact_path": "G-001",
+                            "message": message,
+                        }
+                    ],
+                    "passed": False,
+                }
+            ],
+            "green": False,
+        }
+    )
+
+
+def _r8_success_responses(
+    *,
+    concept_missing: bool,
+    uncovered_wording: str = "new",
+    plan_validate_identity: bool = True,
+) -> dict[str, Any]:
     """The full scripted response table run_r8_gs_coverage_live_cascade_read
-    invokes on the recipe's happy path, parameterized on whether the
-    resulting gate_report_json still flags the concept missing."""
+    invokes on the recipe's happy path, parameterized on:
+    - whether the FIRST (base repro) gate_report_json still flags the
+      C-001 concept missing (``concept_missing``, pre-existing parameter);
+    - the wording of the SECOND (todo d8849951 extension) coverage.gs
+      finding for the deliberately-uncovered C-002 concept ("new" or
+      "old", the pre-fix bare "... missing" wording);
+    - whether plan_validate's response carries tip_revision_uuid/
+      cascade_uuid at all (``plan_validate_identity=False`` mimics a
+      pre-fix server missing those fields).
+    """
     report = _r8_gate_report(concept_missing=concept_missing)
+    uncovered_report = _r8_uncovered_concept_report(wording=uncovered_wording)
+    plan_validate_data: dict[str, Any] = {"green": True, "scope": "plan", "revision_uuid": "rev-1", "format": "json", "report": "{}"}
+    if plan_validate_identity:
+        plan_validate_data["tip_revision_uuid"] = "tip-2"
+        plan_validate_data["cascade_uuid"] = "cascade-1"
     return {
         "plan_create": _ok({"uuid": "r8-plan"}),
         "context_common": _ok({}),
@@ -1965,16 +2015,40 @@ def _r8_success_responses(*, concept_missing: bool) -> dict[str, Any]:
         "step_update": _sequence(
             _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
             _ok({"uuid": "t-uuid", "concepts": ["C-001"]}),
+            _ok({"uuid": "g-uuid", "concepts": ["C-001", "C-002"]}),
         ),
         "step_get": _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
-        "cascade_preview": _ok({"gate_green": not concept_missing, "gate_report_json": report}),
+        "cascade_preview": _sequence(
+            _ok({"gate_green": not concept_missing, "gate_report_json": report}),
+            _ok(
+                {
+                    "cascade_uuid": "cascade-1",
+                    "base_revision_uuid": "base-1",
+                    "tip_revision_uuid": "tip-2",
+                    "gate_green": False,
+                    "gate_report_json": uncovered_report,
+                }
+            ),
+        ),
+        "plan_validate": _ok(plan_validate_data),
         "cascade_abort": _ok({"aborted": True}),
         "plan_delete": _ok({"deleted": True}),
     }
 
 
-def _r8_client(*, concept_missing: bool) -> "_ScriptedClient":
-    return _ScriptedClient(_r8_success_responses(concept_missing=concept_missing))
+def _r8_client(
+    *,
+    concept_missing: bool,
+    uncovered_wording: str = "new",
+    plan_validate_identity: bool = True,
+) -> "_ScriptedClient":
+    return _ScriptedClient(
+        _r8_success_responses(
+            concept_missing=concept_missing,
+            uncovered_wording=uncovered_wording,
+            plan_validate_identity=plan_validate_identity,
+        )
+    )
 
 
 def test_run_r8_correct_live_read_passes_every_check():
@@ -1990,6 +2064,9 @@ def test_run_r8_correct_live_read_passes_every_check():
     by_name = {r.name: r for r in results}
     assert by_name["R8_coverage_gs_reads_live_cascade_state"].status == ls.STATUS_PASS
     assert by_name["R8_step_get_reads_back_persisted_concepts"].status == ls.STATUS_PASS
+    # Todo d8849951 extension: new coverage.gs wording + plan_validate identity.
+    assert by_name["R8_coverage_gs_new_wording"].status == ls.STATUS_PASS
+    assert by_name["R8_plan_validate(open_cascade_identity)"].status == ls.STATUS_PASS
     assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
     assert any(name == "cascade_abort" for name, _ in client.calls)
 
@@ -2009,6 +2086,76 @@ def test_run_r8_pre_fix_server_skips_not_fails():
     assert client.calls[-1][0] == "plan_delete"
 
 
+def test_run_r8_new_wording_check_skips_on_pre_fix_bare_missing_wording():
+    """Todo d8849951: if the deployed server's coverage.gs finding for the
+    deliberately-uncovered C-002 concept still ends in the bare pre-fix
+    "... missing" wording, R8 reports SKIP naming this todo, never FAIL."""
+    client = _r8_client(concept_missing=False, uncovered_wording="old")
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_coverage_gs_new_wording"].status == ls.STATUS_SKIP
+    assert ls.R8_D8849951_PRE_FIX_SKIP_REASON in by_name["R8_coverage_gs_new_wording"].detail
+    assert client.calls[-1][0] == "plan_delete"
+
+
+def test_run_r8_new_wording_check_fails_when_no_finding_at_all():
+    """A coverage.gs report carrying no finding whatsoever for the
+    deliberately-uncovered C-002 concept is a genuine FAIL, not a SKIP --
+    that concept must always be flagged (the whole point of the recipe)."""
+    responses = _r8_success_responses(concept_missing=False)
+    responses["cascade_preview"] = _sequence(
+        _ok({"gate_green": True, "gate_report_json": _r8_gate_report(concept_missing=False)}),
+        _ok(
+            {
+                "cascade_uuid": "cascade-1",
+                "base_revision_uuid": "base-1",
+                "tip_revision_uuid": "tip-2",
+                "gate_green": True,
+                "gate_report_json": json.dumps({"checks": [], "green": True}),
+            }
+        ),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_coverage_gs_new_wording"].status == ls.STATUS_FAIL
+    assert "no coverage.gs finding for C-002" in by_name["R8_coverage_gs_new_wording"].detail
+
+
+def test_run_r8_plan_validate_identity_skips_when_fields_absent():
+    """Todo d8849951: a plan_validate response lacking tip_revision_uuid/
+    cascade_uuid entirely (pre-fix shape) SKIPs naming this todo, never
+    FAILs."""
+    client = _r8_client(concept_missing=False, plan_validate_identity=False)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_plan_validate(open_cascade_identity)"].status == ls.STATUS_SKIP
+    assert ls.R8_D8849951_IDENTITY_SKIP_REASON in by_name["R8_plan_validate(open_cascade_identity)"].detail
+
+
+def test_run_r8_plan_validate_identity_fails_on_mismatched_tip():
+    """plan_validate's tip_revision_uuid/cascade_uuid must match the SAME
+    open cascade's state cascade_preview just reported; a mismatch is a
+    genuine FAIL (not a SKIP -- both fields ARE present, just wrong)."""
+    responses = _r8_success_responses(concept_missing=False)
+    responses["plan_validate"] = _ok(
+        {"green": True, "scope": "plan", "revision_uuid": "rev-1", "format": "json", "report": "{}",
+         "tip_revision_uuid": "some-other-tip", "cascade_uuid": "cascade-1"}
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_plan_validate(open_cascade_identity)"].status == ls.STATUS_FAIL
+
+
 def test_run_r8_transport_failure_on_plan_create_fails_not_skips():
     client = _ScriptedClient({"plan_create": RuntimeError("boom")})
 
@@ -2026,8 +2173,9 @@ def test_run_r8_step_update_sequence_matches_gs_then_ts_child():
     asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
 
     step_update_calls = [params for name, params in client.calls if name == "step_update"]
-    assert [c["step_id"] for c in step_update_calls] == ["G-001", "T-001"]
-    assert all(c["concepts"] == ["C-001"] for c in step_update_calls)
+    # Third call (todo d8849951 extension) adds C-002 to G-001 ONLY.
+    assert [c["step_id"] for c in step_update_calls] == ["G-001", "T-001", "G-001"]
+    assert [c["concepts"] for c in step_update_calls] == [["C-001"], ["C-001"], ["C-001", "C-002"]]
     assert all(c["cascade_uuid"] == "cascade-1" for c in step_update_calls)
 
 
