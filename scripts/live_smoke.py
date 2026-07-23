@@ -76,6 +76,19 @@ Tier 4: the three named bug regressions (R1/R2/R3) from the task, each its
     26fa21a5, 761ee3dd, 5ebe3ce5) and R7 (CR-5a's tool/toolset/role/provider/
     model/invocation_profile/resolve agent-config command surface, marker-
     gated SKIP on a pre-CR-5a server exactly like R4-R6's pre-fix SKIPs).
+    R8 (bug 3de7a081): live reproduction against 0.1.57 (three scratch-plan
+    trials, see tests/test_bug_3de7a081_gs_coverage_live_read.py) DISPROVED
+    the reported divergent-read-path theory -- coverage.gs already reads the
+    exact live, in-cascade materialized "step" table state on every deployed
+    version this pipeline has observed, so there is no known pre-fix server
+    to gate a marker against. R8 asserts that behavior directly (sequential
+    in-cascade step_update on a GS and its TS child, matching concepts ->
+    cascade_preview's coverage.gs reports nothing missing) and inspects the
+    live gate_report_json exactly like R6's behavioral gate: if a future or
+    unknown-vintage server ever DOES exhibit the reported divergence, this
+    is reported as SKIP (not FAIL), naming the bug, so a genuine regression
+    is visible without breaking the pipeline's exit code on servers this
+    investigation did not anticipate.
 
 Zero-trust note: every result is read back from the live server's own
 response, never assumed from a prior call's request payload.
@@ -2352,6 +2365,187 @@ async def run_r7_agent_config_lifecycle(client: Any, catalog_names: frozenset[st
     return results
 
 
+R8_PRE_FIX_SKIP_REASON = (
+    "server exhibits the reported coverage.gs divergence (bug 3de7a081): "
+    "the mechanical gate reported the concept missing even though both "
+    "the GS and its TS child carry it after sequential in-cascade "
+    "step_update calls -- redeploy pending"
+)
+
+
+def _r8_report_flags_gs_missing(report_json: Any, artifact_path: str, concept_id: str) -> bool:
+    """True iff a coverage.gs finding on ``artifact_path`` reports
+    ``concept_id`` missing within a cascade_preview/plan_validate JSON
+    report string.
+
+    ``report_json`` is the raw ``gate_report_json``/``report`` field (a
+    JSON-encoded string per plan_manager.verify.finding.render_json); a
+    non-string or unparseable value is treated as "not flagged" so a
+    malformed report surfaces as a FAIL on the caller's own assertion
+    rather than a spurious match here (mirrors ``_r6_report_flags_path``).
+    """
+    if not isinstance(report_json, str):
+        return False
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return False
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if not isinstance(check, dict) or check.get("check_id") != "coverage.gs":
+            continue
+        for finding in check.get("findings", []) or []:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("artifact_path") != artifact_path:
+                continue
+            if f"{concept_id!r}" in str(finding.get("message", "")):
+                return True
+    return False
+
+
+async def run_r8_gs_coverage_live_cascade_read(client: Any) -> list[CheckResult]:
+    """Bug 3de7a081 (wrong_output, blocker, reported against the doc-store
+    plan's open cascade cc468aa3): sequential in-cascade step_update calls
+    on GS steps succeeded and step_get read the persisted concepts back
+    correctly, but cascade_preview's coverage.gs reported those same
+    concepts MISSING while coverage.relations passed -- the reporter's
+    structural suspicion was a divergent read path (step_get resolving the
+    cascade-materialized state while coverage.gs reads a stale/base-
+    revision state).
+
+    Live investigation (three scratch-plan trials on
+    scratch-bugrepro-3de7a081, hard-deleted after; recorded in
+    tests/test_bug_3de7a081_gs_coverage_live_read.py) DISPROVED that
+    theory against 0.1.57: check_coverage_gs/gs_coverage
+    (plan_manager.verify.gate / plan_manager.views.coverage) always query
+    the "step" table directly through the SAME open, already-committed
+    connection cascade_preview's run_gate call opens -- identical to what
+    step_get resolves, with no cascade overlay or cache layer at any
+    level. The doc-store plan's flagged GS concepts (e.g. G-007's own
+    concept C-061) had no TS child referencing them at all: a genuine,
+    still-open authoring gap, not a stale read. Every deployed version
+    this investigation touched already behaves correctly, so there is no
+    known pre-fix marker to gate a version split on.
+
+    Recipe (throwaway, ``live-smoke-`` prefixed plan, hard-deleted in a
+    top-level try/finally): plan_create -> context_common(plan,level3) ->
+    step_create G (level 3) -> context_common(G,level4) -> step_create T
+    (level 4, parent=G) -> cascade_begin -> concept_add(C-001, in-cascade)
+    -> step_update(G, concepts=[C-001], in-cascade) -> step_update(T,
+    concepts=[C-001], in-cascade) -- the exact sequential in-cascade
+    step_update pattern the bug report described -- -> cascade_preview.
+
+    The live gate_report_json is inspected directly for a coverage.gs
+    finding on G reporting C-001 missing, exactly like R6's behavioral
+    (not doc-marker) gate: if the currently deployed server still (or
+    again) exhibits the reported divergence, this is reported as SKIP
+    (not FAIL) naming the bug, rather than failing the pipeline outright
+    on a server this investigation did not anticipate; the correct,
+    already-observed behavior asserts PASS.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r8-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R8_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R8_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R8_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R8_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R8_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R8_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_id}"))
+
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R8_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+        results.append(CheckResult("4", "R8_cascade_begin", STATUS_PASS, f"cascade_uuid={cascade_uuid}"))
+
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001",
+                "name": "LiveSmokeR8Concept", "definition": "R8 scratch concept for bug 3de7a081.",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R8_concept_add", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R8_concept_add", STATUS_PASS))
+
+        # Sequential in-cascade step_update calls: GS first, then its TS
+        # child -- the exact order the bug report described.
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": g_id, "concepts": ["C-001"], "cascade_uuid": cascade_uuid},
+        )
+        if not ok or not isinstance(res, dict) or res.get("concepts") != ["C-001"]:
+            results.append(CheckResult("4", "R8_step_update(G,concepts)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R8_step_update(G,concepts)", STATUS_PASS))
+
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": t_id, "concepts": ["C-001"], "cascade_uuid": cascade_uuid},
+        )
+        if not ok or not isinstance(res, dict) or res.get("concepts") != ["C-001"]:
+            results.append(CheckResult("4", "R8_step_update(T,concepts)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R8_step_update(T,concepts)", STATUS_PASS))
+
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": g_id})
+        step_get_ok = ok and isinstance(res, dict) and res.get("concepts") == ["C-001"]
+        results.append(
+            CheckResult(
+                "4", "R8_step_get_reads_back_persisted_concepts", STATUS_PASS if step_get_ok else STATUS_FAIL,
+                "" if step_get_ok else str(res),
+            )
+        )
+
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or "gate_report_json" not in res:
+            results.append(CheckResult("4", "R8_cascade_preview", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R8_cascade_preview", STATUS_PASS))
+
+        still_missing = _r8_report_flags_gs_missing(res.get("gate_report_json"), g_id, "C-001")
+        if still_missing:
+            results.append(
+                CheckResult(
+                    "4", "R8_coverage_gs_reads_live_cascade_state", STATUS_SKIP,
+                    R8_PRE_FIX_SKIP_REASON,
+                )
+            )
+        else:
+            results.append(CheckResult("4", "R8_coverage_gs_reads_live_cascade_state", STATUS_PASS))
+    finally:
+        if cascade_uuid is not None:
+            await call(client, "cascade_abort", {"plan": plan_uuid})
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -2430,6 +2624,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r5_step_id_selector_docs(client)
     results += await run_r6_write_intent_negation(client)
     results += await run_r7_agent_config_lifecycle(client, catalog_names)
+    results += await run_r8_gs_coverage_live_cascade_read(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

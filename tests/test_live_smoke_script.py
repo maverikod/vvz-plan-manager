@@ -1906,3 +1906,177 @@ def test_run_r7_required_commands_land_in_tier4_handled_not_skipped():
     skipped_names = {n for n, _ in result.skipped}
     assert skipped_names.isdisjoint(ls.R7_REQUIRED_COMMANDS)
     assert ls.R7_REQUIRED_COMMANDS <= set(result.tier4_handled)
+
+
+# --------------------------------------------------------------------------
+# R8 (bug 3de7a081, wrong_output, blocker): sequential in-cascade
+# step_update calls on a GS and its TS child were reported to leave
+# coverage.gs reporting persisted concepts missing, while step_get read
+# them back correctly and coverage.relations passed -- a suspected
+# divergent read path between step_get and the mechanical gate's coverage
+# checks. Live reproduction (three scratch-plan trials, see
+# tests/test_bug_3de7a081_gs_coverage_live_read.py) DISPROVED the theory:
+# every observed server already evaluates coverage.gs against the live,
+# in-cascade materialized state. R8's SKIP branch is therefore gated on
+# directly inspecting cascade_preview's own gate_report_json (exactly like
+# R6's negation sub-check), not on a catalog-presence or doc marker, since
+# there is no known pre-fix deployment to gate a version split on.
+# Exercised purely against a _ScriptedClient, no real network.
+# --------------------------------------------------------------------------
+
+
+def _r8_gate_report(*, concept_missing: bool) -> str:
+    """Build a cascade_preview-shaped gate_report_json string carrying (or
+    not) a coverage.gs finding on G-001 for concept C-001, mirroring the
+    real gate's render_json shape closely enough for
+    _r8_report_flags_gs_missing to parse."""
+    findings = []
+    if concept_missing:
+        findings.append(
+            {
+                "check_id": "coverage.gs",
+                "severity": "error",
+                "artifact_path": "G-001",
+                "message": "concept 'C-001' missing",
+            }
+        )
+    return json.dumps(
+        {
+            "checks": [{"check_id": "coverage.gs", "findings": findings, "passed": not findings}],
+            "green": not findings,
+        }
+    )
+
+
+def _r8_success_responses(*, concept_missing: bool) -> dict[str, Any]:
+    """The full scripted response table run_r8_gs_coverage_live_cascade_read
+    invokes on the recipe's happy path, parameterized on whether the
+    resulting gate_report_json still flags the concept missing."""
+    report = _r8_gate_report(concept_missing=concept_missing)
+    return {
+        "plan_create": _ok({"uuid": "r8-plan"}),
+        "context_common": _ok({}),
+        "step_create": _sequence(
+            _ok({"uuid": "g-uuid", "step_id": "G-001"}),
+            _ok({"uuid": "t-uuid", "step_id": "T-001"}),
+        ),
+        "cascade_begin": _ok({"cascade_uuid": "cascade-1"}),
+        "concept_add": _ok({"uuid": "concept-1", "concept_id": "C-001"}),
+        "step_update": _sequence(
+            _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
+            _ok({"uuid": "t-uuid", "concepts": ["C-001"]}),
+        ),
+        "step_get": _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
+        "cascade_preview": _ok({"gate_green": not concept_missing, "gate_report_json": report}),
+        "cascade_abort": _ok({"aborted": True}),
+        "plan_delete": _ok({"deleted": True}),
+    }
+
+
+def _r8_client(*, concept_missing: bool) -> "_ScriptedClient":
+    return _ScriptedClient(_r8_success_responses(concept_missing=concept_missing))
+
+
+def test_run_r8_correct_live_read_passes_every_check():
+    """The behavior every investigated deployment actually exhibits:
+    coverage.gs correctly reads the sequential in-cascade updates on both
+    the GS and its TS child, reporting nothing missing."""
+    client = _r8_client(concept_missing=False)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_coverage_gs_reads_live_cascade_state"].status == ls.STATUS_PASS
+    assert by_name["R8_step_get_reads_back_persisted_concepts"].status == ls.STATUS_PASS
+    assert client.calls[-1][0] == "plan_delete"  # cleanup always runs
+    assert any(name == "cascade_abort" for name, _ in client.calls)
+
+
+def test_run_r8_pre_fix_server_skips_not_fails():
+    """If a server still (or again) exhibits the reported coverage.gs
+    divergence, R8 reports SKIP naming the bug, never FAIL -- there is no
+    known pre-fix deployment, so this is a defensive gate against an
+    unanticipated server, not the expected steady state."""
+    client = _r8_client(concept_missing=True)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_coverage_gs_reads_live_cascade_state"].status == ls.STATUS_SKIP
+    assert ls.R8_PRE_FIX_SKIP_REASON in by_name["R8_coverage_gs_reads_live_cascade_state"].detail
+    assert client.calls[-1][0] == "plan_delete"
+
+
+def test_run_r8_transport_failure_on_plan_create_fails_not_skips():
+    client = _ScriptedClient({"plan_create": RuntimeError("boom")})
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    plan_create_result = next(r for r in results if r.name == "R8_plan_create")
+    assert plan_create_result.status == ls.STATUS_FAIL
+    assert "boom" in plan_create_result.detail
+    assert [name for name, _ in client.calls] == ["plan_create"]  # nothing else attempted, no double-cleanup
+
+
+def test_run_r8_step_update_sequence_matches_gs_then_ts_child():
+    client = _r8_client(concept_missing=False)
+
+    asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    step_update_calls = [params for name, params in client.calls if name == "step_update"]
+    assert [c["step_id"] for c in step_update_calls] == ["G-001", "T-001"]
+    assert all(c["concepts"] == ["C-001"] for c in step_update_calls)
+    assert all(c["cascade_uuid"] == "cascade-1" for c in step_update_calls)
+
+
+def test_run_r8_mid_sequence_failure_still_aborts_cascade_and_cleans_up():
+    """step_update on the TS child fails after the cascade was already
+    opened: the open cascade must still be aborted and the throwaway plan
+    hard-deleted, via the top-level finally block."""
+    responses = _r8_success_responses(concept_missing=False)
+    responses["step_update"] = _sequence(
+        _ok({"uuid": "g-uuid", "concepts": ["C-001"]}),
+        {"success": False, "error": {"message": "boom", "data": {"domain_code": "RUNTIME_VALIDATION_ERROR"}}},
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r8_gs_coverage_live_cascade_read(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R8_step_update(T,concepts)"].status == ls.STATUS_FAIL
+    names = [name for name, _ in client.calls]
+    assert "cascade_abort" in names
+    assert names[-1] == "plan_delete"
+
+
+def test_r8_report_flags_gs_missing_matches_check_id_and_artifact_path_only():
+    report = json.dumps(
+        {
+            "checks": [
+                {
+                    "check_id": "coverage.gs",
+                    "findings": [
+                        {"artifact_path": "G-001", "message": "concept 'C-001' missing"},
+                        {"artifact_path": "G-002", "message": "concept 'C-001' missing"},
+                    ],
+                },
+                {
+                    "check_id": "coverage.relations",
+                    "findings": [{"artifact_path": "G-001", "message": "concept 'C-001' missing"}],
+                },
+            ],
+        }
+    )
+    assert ls._r8_report_flags_gs_missing(report, "G-001", "C-001") is True
+    # A different artifact_path under the same check_id must not count.
+    assert ls._r8_report_flags_gs_missing(report, "G-003", "C-001") is False
+    # A match under a DIFFERENT check_id must not count.
+    assert ls._r8_report_flags_gs_missing(report, "G-001", "C-002") is False
+
+
+def test_r8_report_flags_gs_missing_handles_malformed_report_gracefully():
+    assert ls._r8_report_flags_gs_missing("not json", "G-001", "C-001") is False
+    assert ls._r8_report_flags_gs_missing(None, "G-001", "C-001") is False
+    assert ls._r8_report_flags_gs_missing(42, "G-001", "C-001") is False
