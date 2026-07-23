@@ -68,6 +68,11 @@ class RuntimeAuditRecord(DataclassEntity):
     )
     SOFT_DELETE_COLUMN: ClassVar[str | None] = None
     UPDATED_AT_COLUMN: ClassVar[str | None] = None
+    # Compact view=summary projection (bug 8a13977d): drops change_reason and
+    # changed_fields (the mutation diff payload, which dominates row size).
+    SUMMARY_FIELDS: ClassVar[tuple[str, ...]] = (
+        "uuid", "entity_type", "entity_id", "action", "changed_by", "created_at",
+    )
 
     audit_uuid: uuid.UUID
     plan_uuid: uuid.UUID | None

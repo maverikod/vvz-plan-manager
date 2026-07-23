@@ -18,6 +18,12 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_audit_store import ALLOWED_ACTIONS, count_runtime_audit, list_runtime_audit
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 AUDIT_LIST_FILTER_FIELDS = ["actor", "action", "entity_type", "entity_id", "plan", "created_after", "created_before"]
 
@@ -43,6 +49,7 @@ class AuditListCommand(Command):
             "properties": {
                 **filter_schema_properties(AUDIT_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -63,7 +70,7 @@ class AuditListCommand(Command):
         return runtime_metadata(
             cls,
             params,
-            {"type": "object", "description": "The uniform items/total/limit/offset envelope: items holds a page of audit-record payloads ordered newest-first, total is the matching count independent of paging."},
+            {"type": "object", "description": "The uniform items/total/limit/offset envelope: items holds a page of audit-record payloads (or, with view=summary, compact projections) ordered newest-first, total is the matching count independent of paging."},
             [
                 {"description": "List audit records for one plan, newest first.", "command": {"plan": "5a06b927-b084-46e6-8f9f-4275ad3434c2"}},
                 {"description": "List audit records for a specific actor and action.", "command": {"actor": "orchestrator", "action": "update"}},
@@ -73,6 +80,7 @@ class AuditListCommand(Command):
                 "Records are returned newest-first; compare offset+limit against total to detect additional pages.",
                 "entity_id and plan must be well-formed UUID strings when supplied.",
                 "The runtime audit log is append-only and read-only through this command; there is no corresponding write command.",
+                "view=summary returns a compact per-row projection (uuid, entity_type, entity_id, action, changed_by, created_at) instead of the full record (drops change_reason and changed_fields, the diff payload that dominates row size); there is no audit_get command, so full detail means re-calling audit_list with view=full (the default) and a narrower filter.",
             ],
         )
 
@@ -87,9 +95,11 @@ class AuditListCommand(Command):
         created_before: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             raw_params = {
                 "actor": actor,
                 "action": action,
@@ -131,7 +141,7 @@ class AuditListCommand(Command):
                     created_before=filters.get("created_before"),
                 )
                 return SuccessResult(data={
-                    "items": [record.to_payload() for record in records],
+                    "items": project_entities(records, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,
