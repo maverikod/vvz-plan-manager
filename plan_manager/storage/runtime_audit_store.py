@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 import psycopg
 from psycopg.types.json import Jsonb
 
+from plan_manager.domain.actor_identity import validate_actor_identity
 from plan_manager.domain.entity import DataclassEntity
 
 
@@ -166,6 +167,7 @@ def record_runtime_change(
     """
     if action not in ALLOWED_ACTIONS:
         raise ValueError(f"invalid action: {action}")
+    changed_by = validate_actor_identity(changed_by)
 
     audit_uuid = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
