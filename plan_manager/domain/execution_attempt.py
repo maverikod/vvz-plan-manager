@@ -61,6 +61,13 @@ class ExecutionAttempt(DataclassEntity):
     changed_files: list[Any] | None
     command_test_results: dict[str, Any] | None
     resource_accounting: dict[str, Any] | None
+    acct_tokens_in: int | None
+    acct_tokens_out: int | None
+    acct_provider: str | None
+    acct_model: str | None
+    acct_wall_ms: int | None
+    acct_cost_estimate: float | None
+    transcript_ref: str | None
     error: str | None
     escalation_reason: str | None
     parent_attempt_uuid: uuid.UUID | None
@@ -72,7 +79,9 @@ class ExecutionAttempt(DataclassEntity):
     def to_payload(self) -> dict[str, Any]:
         """Render this record as a JSON-safe dict: uuid fields become str or None,
         jsonb-backed fields (changed_files, command_test_results, resource_accounting)
-        pass through unchanged, and timestamp fields are already ISO strings."""
+        pass through unchanged, the typed accounting columns and transcript_ref pass
+        through unchanged (already JSON-safe scalars), and timestamp fields are already
+        ISO strings."""
         return {
             "uuid": str(self.attempt_uuid),
             "attempt_uuid": str(self.attempt_uuid),
@@ -97,6 +106,13 @@ class ExecutionAttempt(DataclassEntity):
             "changed_files": self.changed_files,
             "command_test_results": self.command_test_results,
             "resource_accounting": self.resource_accounting,
+            "acct_tokens_in": self.acct_tokens_in,
+            "acct_tokens_out": self.acct_tokens_out,
+            "acct_provider": self.acct_provider,
+            "acct_model": self.acct_model,
+            "acct_wall_ms": self.acct_wall_ms,
+            "acct_cost_estimate": self.acct_cost_estimate,
+            "transcript_ref": self.transcript_ref,
             "error": self.error,
             "escalation_reason": self.escalation_reason,
             "parent_attempt_uuid": str(self.parent_attempt_uuid) if self.parent_attempt_uuid is not None else None,
@@ -105,6 +121,89 @@ class ExecutionAttempt(DataclassEntity):
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at,
         }
+
+
+RESOURCE_ACCOUNTING_KEYS: frozenset[str] = frozenset(
+    {"tokens_in", "tokens_out", "provider", "model", "wall_ms", "cost_estimate"}
+)
+
+
+@dataclass(frozen=True)
+class ResourceAccounting:
+    """Typed execution-accounting value object (C-013): validated token counts, provider,
+    model, wall-clock milliseconds, and an optional cost estimate for one execution attempt."""
+    tokens_in: int
+    tokens_out: int
+    provider: str
+    model: str
+    wall_ms: int
+    cost_estimate: float | None
+
+
+def validate_resource_accounting(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate a candidate execution-accounting dict against the typed ResourceAccounting
+    schema (C-013).
+
+    Parameters:
+        value: Candidate dict; must have exactly the six keys tokens_in, tokens_out,
+            provider, model, wall_ms, cost_estimate.
+
+    Returns:
+        The validated dict, unchanged.
+
+    Raises:
+        RuntimeValidationError: If value is not a dict; if its keys are not exactly
+            {tokens_in, tokens_out, provider, model, wall_ms, cost_estimate}; if
+            tokens_in, tokens_out, or wall_ms is not a non-negative int; if provider
+            or model is not a non-empty str; or if cost_estimate is neither None nor
+            a real number (int or float, not bool).
+    """
+    if not isinstance(value, dict):
+        raise RuntimeValidationError(f"resource_accounting must be a dict, got {type(value).__name__}")
+    actual_keys = set(value.keys())
+    if actual_keys != RESOURCE_ACCOUNTING_KEYS:
+        missing = RESOURCE_ACCOUNTING_KEYS - actual_keys
+        unknown = actual_keys - RESOURCE_ACCOUNTING_KEYS
+        raise RuntimeValidationError(
+            f"resource_accounting must have exactly the keys {sorted(RESOURCE_ACCOUNTING_KEYS)}; "
+            f"missing={sorted(missing)} unknown={sorted(unknown)}"
+        )
+    for int_key in ("tokens_in", "tokens_out", "wall_ms"):
+        candidate = value[int_key]
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate < 0:
+            raise RuntimeValidationError(
+                f"resource_accounting.{int_key} must be a non-negative int, got {candidate!r}"
+            )
+    for str_key in ("provider", "model"):
+        candidate = value[str_key]
+        if not isinstance(candidate, str) or candidate == "":
+            raise RuntimeValidationError(
+                f"resource_accounting.{str_key} must be a non-empty str, got {candidate!r}"
+            )
+    cost_estimate = value["cost_estimate"]
+    if cost_estimate is not None:
+        if isinstance(cost_estimate, bool) or not isinstance(cost_estimate, (int, float)):
+            raise RuntimeValidationError(
+                f"resource_accounting.cost_estimate must be None or a real number, got {cost_estimate!r}"
+            )
+    return value
+
+
+def validate_transcript_ref(value: str) -> str:
+    """Validate a candidate transcript reference (C-013 dialogue-chain id).
+
+    Parameters:
+        value: Candidate transcript reference string.
+
+    Returns:
+        The validated value, unchanged.
+
+    Raises:
+        RuntimeValidationError: If value is not a non-empty str.
+    """
+    if not isinstance(value, str) or value == "":
+        raise RuntimeValidationError(f"transcript_ref must be a non-empty str, got {value!r}")
+    return value
 
 
 def validate_attempt_status(value: str) -> str:
