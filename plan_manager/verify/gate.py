@@ -87,6 +87,62 @@ CHECK_IDS: dict[str, list[str]] = {
     ],
 }
 
+# One-line semantic gloss per gate check, for embedding in command metadata/
+# help (todo d8849951) so a caller can interpret gate_report_json findings
+# without reading these check functions' docstrings. Every gloss states the
+# comparison direction explicitly (which side is "required" and which side
+# is "covering") to avoid the "missing" misreading that caused bugs 3de7a081
+# and a8c43201: the gate always evaluates the plan's LIVE, current state
+# (including any open cascade's working tip) -- never a stale or persisted
+# snapshot. Scope is the coverage.* family plus the references.* family
+# (the two families a caller is most likely to need explained to interpret
+# a finding; the remaining checks' messages are self-explanatory).
+GATE_CHECK_SEMANTICS: dict[str, str] = {
+    "coverage.concepts": (
+        "Every concept in the plan's concept table (MRS) must be declared "
+        "on at least one GS step's own concepts; flags a concept not "
+        "covered by any GS step, or a GS-declared concept with no matching "
+        "row in the concept table ('extra')."
+    ),
+    "coverage.gs": (
+        "Every concept a GS step declares on itself must be covered by the "
+        "union of its own level-4 (TS) children's concepts; flags a "
+        "GS-declared concept not covered by any child (TS) step's own "
+        "decomposition -- NOT a statement that the concept is missing from "
+        "the GS row itself (it is still there; it just is not yet covered "
+        "by a TS child)."
+    ),
+    "coverage.labels": (
+        "Every binding HRS paragraph label must be claimed by at least one "
+        "GS step's source_labels; flags an HRS label not covered by any GS "
+        "step, or a GS-claimed label with no matching binding HRS "
+        "paragraph ('extra')."
+    ),
+    "coverage.relations": (
+        "Every relation row in the plan's relation table (MRS) must be "
+        "implemented by at least one GS step's own relations field; flags "
+        "a relation not covered by any GS step, or a GS-declared relation "
+        "with no matching row in the relation table ('extra')."
+    ),
+    "references.depends_on": (
+        "Every step's depends_on entries must resolve to a sibling step_id "
+        "(same level, same parent) that exists in the full plan tree."
+    ),
+    "references.concepts": (
+        "Every step's own concepts entries must resolve to a concept_id "
+        "defined in the plan's concept table (MRS)."
+    ),
+    "references.relations": (
+        "Every relation row in the plan's relation table (MRS) must have "
+        "both from_concept/to_concept resolve to a defined plan concept "
+        "and a type that is one of the supported relation types."
+    ),
+    "references.source_labels": (
+        "Every source_labels entry a step declares must resolve to a "
+        "binding HRS paragraph label defined in the plan."
+    ),
+}
+
 
 def check_coverage_concepts(
     conn: psycopg.Connection, plan_uuid: uuid.UUID
@@ -100,7 +156,7 @@ def check_coverage_concepts(
                 check_id="coverage.concepts",
                 severity="error",
                 artifact_path="plan",
-                message=f"concept {concept_id!r} missing",
+                message=f"concept {concept_id!r} not covered by any GS step",
             )
         )
     for concept_id in report.extra:
@@ -132,7 +188,7 @@ def check_coverage_gs(
                     check_id="coverage.gs",
                     severity="error",
                     artifact_path=step_id,
-                    message=f"concept {concept_id!r} missing",
+                    message=f"concept {concept_id!r} not covered by any child (TS) step",
                 )
             )
     return findings
@@ -150,7 +206,7 @@ def check_coverage_labels(
                 check_id="coverage.labels",
                 severity="error",
                 artifact_path="plan",
-                message=f"label {label!r} missing",
+                message=f"label {label!r} not covered by any GS step",
             )
         )
     for label in report.extra:
@@ -177,7 +233,7 @@ def check_coverage_relations(
                 check_id="coverage.relations",
                 severity="error",
                 artifact_path="plan",
-                message=f"relation {relation!r} missing",
+                message=f"relation {relation!r} not covered by any GS step",
             )
         )
     for relation in report.extra:
