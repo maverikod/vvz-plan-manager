@@ -131,6 +131,13 @@ def test_execution_attempt_to_payload_has_uniform_uuid_key() -> None:
         changed_files=None,
         command_test_results=None,
         resource_accounting=None,
+        acct_tokens_in=None,
+        acct_tokens_out=None,
+        acct_provider=None,
+        acct_model=None,
+        acct_wall_ms=None,
+        acct_cost_estimate=None,
+        transcript_ref=None,
         error=None,
         escalation_reason=None,
         parent_attempt_uuid=None,
@@ -142,6 +149,13 @@ def test_execution_attempt_to_payload_has_uniform_uuid_key() -> None:
     payload = record.to_payload()
     assert payload["uuid"] == str(attempt_uuid)
     assert payload["attempt_uuid"] == str(attempt_uuid)
+    assert payload["acct_tokens_in"] is None
+    assert payload["acct_tokens_out"] is None
+    assert payload["acct_provider"] is None
+    assert payload["acct_model"] is None
+    assert payload["acct_wall_ms"] is None
+    assert payload["acct_cost_estimate"] is None
+    assert payload["transcript_ref"] is None
 
 
 def test_review_result_to_payload_has_uniform_uuid_key() -> None:
@@ -190,10 +204,22 @@ def test_escalation_to_payload_has_uniform_uuid_key() -> None:
         created_at=NOW,
         updated_at=NOW,
         deleted_at=None,
+        addressee_level=None,
+        addressee_role=None,
+        forwarded_from_uuid=None,
+        chain_root_uuid=None,
+        sweep_priority=None,
+        blocks_subtree=False,
     )
     payload = record.to_payload()
     assert payload["uuid"] == str(escalation_uuid)
     assert payload["escalation_uuid"] == str(escalation_uuid)
+    assert payload["addressee_level"] is None
+    assert payload["addressee_role"] is None
+    assert payload["forwarded_from_uuid"] is None
+    assert payload["chain_root_uuid"] is None
+    assert payload["sweep_priority"] is None
+    assert payload["blocks_subtree"] is False
 
 
 # --- regression guard: modules that already carried "uuid" before this fix ----------------
