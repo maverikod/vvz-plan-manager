@@ -43,7 +43,7 @@ class ContextGateCommandsMixin:
         return await self._call("context_bundle", params)
 
     async def block_get(self, **params: Any) -> Any:
-        """Return one stored context block by UUID."""
+        """Return one stored context block by UUID, its 'blocks'/'content' entries paginated (bounded default 50, max 200 per page; small blocks return unchanged in one call)."""
         return await self._call("block_get", params)
 
     async def block_list(self, **params: Any) -> Any:
