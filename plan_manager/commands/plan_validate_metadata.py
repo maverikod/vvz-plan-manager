@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Type
 
+from plan_manager.verify.gate import GATE_CHECK_SEMANTICS
+
 
 def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
     """Return the extended documentation metadata for PlanValidateCommand.
@@ -43,6 +45,7 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "a machine-checkable JSON form; both are rendered from the same "
             "underlying report object."
         ),
+        "gate_check_semantics": dict(GATE_CHECK_SEMANTICS),
         "parameters": {
             "plan": {
                 "description": "Plan identifier (UUID or unique plan name) to validate.",
@@ -110,14 +113,50 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "data": {
                     "green": "Boolean: whether the report has zero findings across all checks.",
                     "scope": "The verdict scope that was measured: 'plan' or 'branch'.",
-                    "revision_uuid": "String UUID of the exact revision the report was computed for, or null.",
+                    "revision_uuid": (
+                        "String UUID of the plan's last COMMITTED head "
+                        "revision (plan.head_revision_uuid), or null. This "
+                        "is a metadata LABEL of what is officially "
+                        "committed -- it does NOT identify which rows the "
+                        "checks scanned: the gate always evaluates the "
+                        "plan's live, current data (including any open "
+                        "cascade's working tip), never a revision-pinned "
+                        "snapshot. When the plan has an open cascade, "
+                        "compare against tip_revision_uuid/cascade_uuid "
+                        "below (both null when there is no open cascade) "
+                        "to see the state identity that was actually "
+                        "scanned."
+                    ),
+                    "tip_revision_uuid": (
+                        "String UUID of the open cascade's current working "
+                        "tip (same value cascade_preview reports as "
+                        "tip_revision_uuid), or null when the plan has no "
+                        "open cascade. This is the state the gate actually "
+                        "evaluated whenever it is non-null."
+                    ),
+                    "cascade_uuid": (
+                        "String UUID of the plan's open cascade, or null "
+                        "when the plan has no open cascade."
+                    ),
                     "format": "The output format actually used: 'text' or 'json'.",
-                    "report": "The rendered report body as a string, in the requested format.",
+                    "report": (
+                        "The rendered report body as a string, in the "
+                        "requested format. See the top-level "
+                        "'gate_check_semantics' metadata field for a "
+                        "one-line gloss of what each check_id actually "
+                        "means before interpreting a finding -- in "
+                        "particular, coverage.gs findings name a concept "
+                        "declared on the GS itself that is not yet covered "
+                        "by a TS child, not a concept absent from the GS "
+                        "row."
+                    ),
                 },
                 "example": {
                     "green": True,
                     "scope": "plan",
                     "revision_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "tip_revision_uuid": None,
+                    "cascade_uuid": None,
                     "format": "json",
                     "report": "{\"checks\": [], \"green\": true}",
                 },
@@ -187,7 +226,7 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Use format='text' for human review and format='json' when the result feeds another automated step.",
             "Use scope='branch' with gs_step_id alone to check a whole GS subtree in progress (including one with TS children but no AS descendants yet), narrow with ts_step_id for one TS subtree, and add as_step_id with fail_fast=True for fast iteration on a single atomic branch.",
             "This command is read-only: it never mutates or stores anything, so it is always safe to call.",
-            "Record the returned revision_uuid alongside the report; it identifies the exact tree state that was measured.",
+            "revision_uuid is a committed-head LABEL, not a statement of which rows were scanned (the gate always reads live data). When the plan has an open cascade, record tip_revision_uuid/cascade_uuid instead to identify the exact state that was measured; both are null when there is no open cascade.",
             "This command runs on the queue: the plan_validate call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
         ],
     }

@@ -7,10 +7,12 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
+from plan_manager.cascade.record import get_open_cascade
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.plan_validate_metadata import get_plan_validate_metadata
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.runtime.context import db_connection
+from plan_manager.storage.version_store import get_ref
 from plan_manager.verify.finding import render_text, render_json
 from plan_manager.verify.gate import run_gate
 from plan_manager.views.branch import resolve_branch_scope
@@ -160,13 +162,18 @@ class PlanValidateCommand(Command):
             'json', default 'json').
         :type kwargs: Any
         :returns: A SuccessResult with data {green, scope, revision_uuid,
-            format, report} on success; an ErrorResult with code
-            STEP_NOT_FOUND when scope is 'branch' and the branch scope
-            cannot be resolved (missing step, or a ts_step_id/as_step_id
-            that does not belong to its addressed parent); otherwise an
-            ErrorResult produced by map_exception for any exception raised
-            while resolving the plan or running the gate (in particular
-            PLAN_NOT_FOUND when the plan does not resolve).
+            tip_revision_uuid, cascade_uuid, format, report} on success
+            (tip_revision_uuid/cascade_uuid are populated when the plan has
+            an open cascade, null otherwise -- revision_uuid always names
+            the last COMMITTED head, a label, not the scanned data: the
+            gate always evaluates live state, per bugs 3de7a081/a8c43201);
+            an ErrorResult with code STEP_NOT_FOUND when scope is 'branch'
+            and the branch scope cannot be resolved (missing step, or a
+            ts_step_id/as_step_id that does not belong to its addressed
+            parent); otherwise an ErrorResult produced by map_exception for
+            any exception raised while resolving the plan or running the
+            gate (in particular PLAN_NOT_FOUND when the plan does not
+            resolve).
         :rtype: SuccessResult | ErrorResult
         """
         plan = kwargs["plan"]
@@ -195,12 +202,23 @@ class PlanValidateCommand(Command):
                     if output_format == "text"
                     else render_json(report)
                 )
+                open_cascade = get_open_cascade(conn, p.uuid)
+                if open_cascade is None:
+                    tip_revision_uuid = None
+                    cascade_uuid = None
+                else:
+                    cascade_uuid = str(open_cascade.uuid)
+                    tip_revision_uuid = str(
+                        get_ref(conn, p.uuid, open_cascade.name)
+                    )
                 data = {
                     "green": report.green,
                     "scope": verdict.scope,
                     "revision_uuid": (
                         str(verdict.revision_uuid) if verdict.revision_uuid else None
                     ),
+                    "tip_revision_uuid": tip_revision_uuid,
+                    "cascade_uuid": cascade_uuid,
                     "format": output_format,
                     "report": rendered,
                 }

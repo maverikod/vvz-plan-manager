@@ -6,6 +6,7 @@ from plan_manager.commands.cascade_preview_projection import (
     view_metadata_params,
 )
 from plan_manager.commands.runtime_filtering import filter_metadata_params, pagination_metadata_params
+from plan_manager.verify.gate import GATE_CHECK_SEMANTICS
 
 
 def get_cascade_preview_metadata(cls: type) -> dict:
@@ -46,6 +47,7 @@ def get_cascade_preview_metadata(cls: type) -> dict:
             "and gate verdict; the gate verdict returned here gates whether "
             "cascade_commit will accept the cascade."
         ),
+        "gate_check_semantics": dict(GATE_CHECK_SEMANTICS),
         "parameters": {
             "plan": {
                 "description": "Plan UUID or unique plan name.",
@@ -102,7 +104,12 @@ def get_cascade_preview_metadata(cls: type) -> dict:
                     "total": "view=full only: count of entries matching the current filters (pre-pagination).",
                     "limit": "view=full only: the page size actually applied.",
                     "offset": "view=full only: the offset actually applied.",
-                    "gate_report_json": "view=full only: JSON string of the full mechanical gate report.",
+                    "gate_report_json": (
+                        "view=full only: JSON string of the full mechanical "
+                        "gate report. See the top-level 'gate_check_semantics' "
+                        "metadata field for a one-line gloss of what each "
+                        "check_id actually means before interpreting a finding."
+                    ),
                 },
                 "example": {
                     "cascade_uuid": "6f1c2e2a-1111-4a2b-9c3d-4e5f6a7b8c9d",
