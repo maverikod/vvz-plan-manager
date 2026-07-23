@@ -25,6 +25,12 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import list_bug_impacts
 from plan_manager.storage.bug_report_store import get_bug
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 _LIST_FILTER_FIELDS = ["status", "impact_type", "unresolved_impacts", "created_after", "created_before", "project"]
 _RESOLVED_IMPACT_STATUSES = frozenset({"resolved", "verified", "unaffected", "skipped"})
@@ -62,6 +68,7 @@ class BugImpactListCommand(Command):
         }
         properties.update(filter_schema_properties(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         properties.update(pagination_schema_properties())
+        properties.update(view_schema_properties())
         return {
             "type": "object",
             "properties": properties,
@@ -88,10 +95,11 @@ class BugImpactListCommand(Command):
         }
         params.update(filter_metadata_params(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         params.update(pagination_metadata_params())
+        params.update(view_metadata_params())
         return bug_impact_metadata(
             cls,
             params,
-            {"success": {"description": "A page of BugImpact payloads for the bug, plus pagination metadata."}},
+            {"success": {"description": "A page of BugImpact payloads (or, with view=summary, compact projections) for the bug, plus pagination metadata."}},
             [{
                 "description": "List unresolved impacts of a bug.",
                 "command": {
@@ -116,6 +124,7 @@ class BugImpactListCommand(Command):
                 "Combine created_after and created_before to scope impacts to a time window.",
                 "Use limit and offset to page through large impact sets instead of fetching all at once.",
                 "Filter by a specific status to inspect one lifecycle stage instead of unresolved_impacts.",
+                "view=summary returns a compact per-row projection (uuid, bug_uuid, target_type, target_ref_id, impact_type, status, updated_at) instead of the full BugImpact record (drops reason, resolution_evidence, discovery_method); there is no bug_impact_get command, so full detail means re-calling bug_impact_list with view=full (the default).",
             ],
         )
 
@@ -131,9 +140,11 @@ class BugImpactListCommand(Command):
         project: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = validate_uuid(bug_id)
@@ -185,7 +196,7 @@ class BugImpactListCommand(Command):
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "bug_impacts": [r.to_payload() for r in page],
+                    "bug_impacts": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

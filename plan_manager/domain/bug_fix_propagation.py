@@ -45,6 +45,8 @@ class BugFixPropagation(DataclassEntity):
     ENTITY_TYPE = "bug_fix_propagation"
     ENTITY_ID_FIELD = "propagation_uuid"
     TABLE_NAME = "bug_fix_propagation"
+    # Compact view=summary projection (bug 8a13977d): drops evidence and verification_result.
+    SUMMARY_FIELDS = ("uuid", "bug_fix_uuid", "impact_uuid", "target_type", "action", "status", "updated_at")
 
     propagation_uuid: uuid.UUID
     bug_fix_uuid: uuid.UUID

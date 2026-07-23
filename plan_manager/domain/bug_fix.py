@@ -45,6 +45,9 @@ class BugFix(DataclassEntity):
     ENTITY_TYPE = "bug_fix"
     ENTITY_ID_FIELD = "fix_uuid"
     TABLE_NAME = "bug_fix"
+    # Compact view=summary projection (bug 8a13977d): drops implementation_notes,
+    # changed_files, tests, expected/actual_result, and revert_info.
+    SUMMARY_FIELDS = ("uuid", "bug_uuid", "status", "fix_type", "summary", "author", "updated_at")
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "fix_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose

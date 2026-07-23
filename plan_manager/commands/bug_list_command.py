@@ -10,6 +10,7 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, filter_sche
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import parse_filters, parse_pagination
+from plan_manager.commands.list_projection import parse_view, project_entities, view_schema_properties
 from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES, BugKind, BugSeverity, BugStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -55,6 +56,7 @@ class BugListCommand(Command):
                 },
                 **filter_schema_properties(BUG_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -75,9 +77,10 @@ class BugListCommand(Command):
         return bug_metadata(
             cls,
             params,
-            {"type": "array", "description": "A page of BugReport payloads plus total/limit/offset."},
+            {"type": "array", "description": "A page of BugReport payloads (or, with view=summary, compact projections) plus total/limit/offset."},
             [{"description": "List open bugs owned by alice.", "command": {"plan": "my-plan", "owner": "alice", "active_only": True}}],
             best_practices=[
+                "view=summary returns a compact per-row projection (uuid, bug_uuid, title, kind, severity, status, priority_nice, source_anchor_type, source_ref_id, updated_at) instead of the full BugReport record (drops short/detailed_description, expected/actual_behavior, reproduction, evidence, environment); use bug_get for a single bug's full detail.",
                 "The optional plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields). Omit it to list across all plans.",
                 "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Set active_only=True to exclude closed, rejected, and duplicate bugs.",
@@ -107,9 +110,11 @@ class BugListCommand(Command):
         unanchored_only: bool | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params = {
@@ -161,6 +166,6 @@ class BugListCommand(Command):
                     offset=pagination.offset,
                     include_deleted=False,
                 )
-                return SuccessResult(data={"bugs": [b.to_payload() for b in bugs], "total": total, "limit": pagination.limit, "offset": pagination.offset})
+                return SuccessResult(data={"bugs": project_entities(bugs, view_value), "total": total, "limit": pagination.limit, "offset": pagination.offset})
         except Exception as exc:
             return map_exception(exc)

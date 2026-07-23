@@ -21,6 +21,12 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_propagation_store import list_bug_fix_propagations
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 # Ordered vocabulary published in the schema/metadata so the values are
 # discoverable directly, not only via an INVALID_FILTER error. This command
@@ -71,6 +77,7 @@ class BugPropagationListCommand(Command):
                 },
                 "include_deleted": {"type": "boolean", "description": "Include soft-deleted propagation records. Defaults to false."},
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -107,11 +114,12 @@ class BugPropagationListCommand(Command):
             },
             "include_deleted": {"description": "Include soft-deleted propagation records. Defaults to false.", "type": "boolean", "required": False},
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return bug_propagation_metadata(
             cls,
             params,
-            {"success": {"description": "A page of bug fix propagation record payloads, ordered oldest first, with every UUID field rendered as a string, plus total/limit/offset."}},
+            {"success": {"description": "A page of bug fix propagation record payloads (or, with view=summary, compact projections), ordered oldest first, with every UUID field rendered as a string, plus total/limit/offset."}},
             [{"description": "List propagations for a bug fix.", "command": {"plan": "plan_manager", "bug_fix_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}}],
             best_practices=[
                 "The optional plan parameter scopes the listing by the parent bug's anchor (propagation -> bug_fix -> bug_report.source_plan_uuid); NULL and foreign plan anchors are excluded. linked_plan_uuid (the propagation target) is never used for this scope. Omit it to list across all plans.",
@@ -123,6 +131,7 @@ class BugPropagationListCommand(Command):
                 "Use status to isolate propagations that are still pending or blocked.",
                 "Set include_deleted=true only when auditing soft-deleted propagation history.",
                 "Compare offset+limit against total to detect additional pages.",
+                "view=summary returns a compact per-row projection (uuid, bug_fix_uuid, impact_uuid, target_type, action, status, updated_at) instead of the full record (drops evidence and verification_result); there is no bug_propagation_get command, so full detail means re-calling this command with view=full (the default).",
             ],
         )
 
@@ -136,9 +145,11 @@ class BugPropagationListCommand(Command):
         include_deleted: bool = False,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 if status is not None and status not in PROPAGATION_STATUSES:
@@ -164,7 +175,7 @@ class BugPropagationListCommand(Command):
                 total = len(records)
                 page = records[pagination.offset : pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "propagations": [r.to_payload() for r in page],
+                    "propagations": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,

@@ -58,6 +58,21 @@ class BugReport(DataclassEntity):
     ENTITY_TYPE = "bug"
     ENTITY_ID_FIELD = "bug_uuid"
     TABLE_NAME = "bug_report"
+    # Compact view=summary projection (bug 8a13977d): drops short/detailed_description,
+    # expected/actual_behavior, reproduction, evidence, and environment -- the
+    # free-text fields that dominate a bug row's size.
+    SUMMARY_FIELDS = (
+        "uuid",
+        "bug_uuid",
+        "title",
+        "kind",
+        "severity",
+        "status",
+        "priority_nice",
+        "source_anchor_type",
+        "source_ref_id",
+        "updated_at",
+    )
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "bug_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose

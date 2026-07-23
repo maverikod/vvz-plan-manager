@@ -41,6 +41,9 @@ class BugImpact(DataclassEntity):
         # ENTITY_ID_FIELD name. A source_column of "impact_uuid" here is a KeyError (bug e52daeab).
         ReferenceCheck("bug_fix_propagation", "impact_uuid", "uuid", live_column="deleted_at"),
     )
+    # Compact view=summary projection (bug 8a13977d): drops reason,
+    # resolution_evidence, and discovery_method.
+    SUMMARY_FIELDS = ("uuid", "bug_uuid", "target_type", "target_ref_id", "impact_type", "status", "updated_at")
 
     impact_uuid: uuid.UUID
     bug_uuid: uuid.UUID

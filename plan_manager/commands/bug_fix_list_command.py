@@ -25,6 +25,12 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_fix_store import list_bug_fixes
 from plan_manager.storage.bug_report_store import get_bug
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
+from plan_manager.commands.list_projection import (
+    parse_view,
+    project_entities,
+    view_metadata_params,
+    view_schema_properties,
+)
 
 
 FILTER_FIELDS = ["status", "unverified_fixes", "created_after", "created_before", "project"]
@@ -64,6 +70,7 @@ class BugFixListCommand(Command):
                 "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL)."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
+                **view_schema_properties(),
             },
             "required": ["bug"],
             "additionalProperties": False,
@@ -87,11 +94,12 @@ class BugFixListCommand(Command):
             "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL).", "type": "string", "required": True},
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
+            **view_metadata_params(),
         }
         return bug_fix_metadata(
             cls,
             params,
-            {"success": {"description": "A page of BugFix (C-024) payloads for the bug, plus total/limit/offset."}},
+            {"success": {"description": "A page of BugFix (C-024) payloads (or, with view=summary, compact projections) for the bug, plus total/limit/offset."}},
             [{"description": "List unverified fix attempts for a bug.", "command": {"plan": "plan_manager", "bug": "11111111-1111-1111-1111-111111111111", "unverified_fixes": True}}],
             error_cases={
                 "BUG_NOT_FOUND": {
@@ -107,6 +115,7 @@ class BugFixListCommand(Command):
                 "The project filter matches transitively: a fix whose source_project_id equals the filter value matches directly, and a fix with source_project_id NULL still matches when the owning bug's source_plan_uuid is bound to that project (plan.project_ids).",
                 "Set unverified_fixes=true to see only fix attempts not yet verified.",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
+                "view=summary returns a compact per-row projection (uuid, bug_uuid, status, fix_type, summary, author, updated_at) instead of the full BugFix record (drops implementation_notes, changed_files, tests, expected/actual_result, revert_info); there is no bug_fix_get command, so full detail means re-calling bug_fix_list with view=full (the default) and a narrowing filter.",
             ],
         )
 
@@ -121,9 +130,11 @@ class BugFixListCommand(Command):
         project: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        view: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            view_value = parse_view(view)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = uuid.UUID(bug)
@@ -171,7 +182,7 @@ class BugFixListCommand(Command):
                 total = len(records)
                 page = records[pagination.offset:pagination.offset + pagination.limit]
                 return SuccessResult(data={
-                    "bug_fixes": [r.to_payload() for r in page],
+                    "bug_fixes": project_entities(page, view_value),
                     "total": total,
                     "limit": pagination.limit,
                     "offset": pagination.offset,
