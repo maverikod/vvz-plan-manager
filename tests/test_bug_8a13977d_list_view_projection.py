@@ -516,16 +516,44 @@ def test_touched_command_metadata_documents_view_parameter(module_name: str, cla
     assert parameters["view"]["enum"] == ["full", "summary"], command.name
 
 
+# srt_snapshot_list is deliberately EXCLUDED from the default=full pin below:
+# todo 4265fa4e (paginate/project srt_snapshot_list) mandates a compact
+# metadata-only DEFAULT for this one command specifically -- a caller listing
+# snapshots got ~246K tokens of embedded tree_content/vectors truncated
+# mid-response, and the spec's required contract is explicit ("make the list
+# response compact by default"), overriding this CR's general default=full
+# convention for every OTHER touched command. See
+# test_srt_snapshot_list_schema_view_defaults_to_summary below.
+_DEFAULT_FULL_COMMAND_MODULES = [
+    (module_name, class_name)
+    for module_name, class_name in _TOUCHED_LIST_COMMAND_MODULES
+    if class_name != "SrtSnapshotListCommand"
+]
+
+
 @pytest.mark.parametrize(
-    "module_name,class_name", _TOUCHED_LIST_COMMAND_MODULES, ids=[c for _, c in _TOUCHED_LIST_COMMAND_MODULES]
+    "module_name,class_name", _DEFAULT_FULL_COMMAND_MODULES, ids=[c for _, c in _DEFAULT_FULL_COMMAND_MODULES]
 )
 def test_touched_command_schema_view_defaults_to_full(module_name: str, class_name: str) -> None:
     """Pins the default-view decision: every touched command keeps view=full
     as the default (opt-in summary), for backward compatibility with existing
     callers (client facade, live_smoke recipes, internal command chains).
+    srt_snapshot_list is the sole deliberate exception (todo 4265fa4e); see
+    test_srt_snapshot_list_schema_view_defaults_to_summary.
     """
     import importlib
 
     command = getattr(importlib.import_module(module_name), class_name)
     properties = command.get_schema()["properties"]
     assert properties["view"].get("default", "full") == "full", command.name
+
+
+def test_srt_snapshot_list_schema_view_defaults_to_summary() -> None:
+    """Todo 4265fa4e: srt_snapshot_list's compact-by-default deviation from
+    the rest of the touched list family, pinned explicitly so a future
+    change here is a deliberate decision, not a silent regression either way.
+    """
+    from plan_manager.commands.srt_snapshot_list_command import SrtSnapshotListCommand
+
+    properties = SrtSnapshotListCommand.get_schema()["properties"]
+    assert properties["view"]["default"] == "summary"

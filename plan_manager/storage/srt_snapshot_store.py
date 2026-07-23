@@ -20,9 +20,21 @@ class SrtSnapshotRecord(DataclassEntity):
     ENTITY_ID_FIELD = "snapshot_uuid"
     TABLE_NAME = "srt_snapshot"
     SOFT_DELETE_COLUMN = None
-    # Compact view=summary projection (bug 8a13977d): drops tree_content, the
-    # whole semantic tree, which dominates this record's size.
-    SUMMARY_FIELDS = ("uuid", "plan_uuid", "revision_uuid", "tree_hash", "created_at")
+    # Compact view=summary projection (bug 8a13977d; fields widened by todo
+    # 4265fa4e to the full metadata set the caller's contract requires):
+    # drops tree_content, the whole semantic tree (own_vector/child vectors
+    # included), which dominates this record's size, while keeping every
+    # other metadata field.
+    SUMMARY_FIELDS = (
+        "uuid",
+        "plan_uuid",
+        "revision_uuid",
+        "algorithm_version",
+        "summarizer_version",
+        "embedding_model",
+        "tree_hash",
+        "created_at",
+    )
 
     snapshot_uuid: uuid.UUID
     plan_uuid: uuid.UUID
@@ -120,10 +132,16 @@ def insert_srt_snapshot(
 
 
 def list_srt_snapshots(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[SrtSnapshotRecord]:
+    """Return every retained SRT snapshot of `plan_uuid`, newest first.
+
+    Ordered by created_at DESC with uuid DESC as a stable tie-breaker (todo
+    4265fa4e), so pages requested via srt_snapshot_list's limit/offset are
+    deterministic even when two snapshots share a created_at timestamp.
+    """
     rows = conn.execute(
         "SELECT uuid, plan_uuid, revision_uuid, algorithm_version, summarizer_version, "
         "embedding_model, tree_hash, tree_content, created_at FROM srt_snapshot "
-        "WHERE plan_uuid = %s ORDER BY created_at ASC",
+        "WHERE plan_uuid = %s ORDER BY created_at DESC, uuid DESC",
         (plan_uuid,),
     ).fetchall()
     return [_row_to_record(row) for row in rows]

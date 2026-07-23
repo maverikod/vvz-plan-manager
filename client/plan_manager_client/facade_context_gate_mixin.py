@@ -71,7 +71,7 @@ class ContextGateCommandsMixin:
         return await self._call("cascade_begin", params)
 
     async def cascade_preview(self, **params: Any) -> Any:
-        """Report the accumulated change set, needs_review blast radius, and mechanical gate verdict of a plan's open cascade."""
+        """Report a plan's open cascade: gate verdict plus compact summary counts by default (view="summary"); pass view="full" (with optional limit/offset/category/check_id/entity_type/step/status) for the paginated change-set/needs_review/gate-findings detail page."""
         return await self._call("cascade_preview", params)
 
     async def cascade_commit(self, **params: Any) -> Any:
@@ -91,7 +91,7 @@ class ContextGateCommandsMixin:
         return await self._call("srt_snapshot_create", params)
 
     async def srt_snapshot_list(self, **params: Any) -> Any:
-        """List a paginated page of the retained history of semantic tree snapshots for a plan (read-only)."""
+        """List a paginated page of the retained history of semantic tree snapshots for a plan, newest first, metadata only by default (view="summary"); pass view="full" for the complete record including tree_content (read-only)."""
         return await self._call("srt_snapshot_list", params)
 
     async def srt_diff(self, **params: Any) -> Any:
