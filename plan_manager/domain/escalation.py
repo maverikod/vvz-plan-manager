@@ -16,6 +16,8 @@ class EscalationStatus(str, Enum):
 
 ESCALATION_STATUSES: frozenset[str] = frozenset(s.value for s in EscalationStatus)
 
+ADDRESSEE_LEVELS: frozenset[str] = frozenset({"tactical", "global", "plan", "user"})
+
 
 @dataclass(frozen=True)
 class Escalation(DataclassEntity):
@@ -43,6 +45,12 @@ class Escalation(DataclassEntity):
     created_at: str
     updated_at: str
     deleted_at: str | None
+    addressee_level: str | None
+    addressee_role: str | None
+    forwarded_from_uuid: uuid.UUID | None
+    chain_root_uuid: uuid.UUID | None
+    sweep_priority: int | None
+    blocks_subtree: bool
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -67,6 +75,12 @@ class Escalation(DataclassEntity):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at,
+            "addressee_level": self.addressee_level,
+            "addressee_role": self.addressee_role,
+            "forwarded_from_uuid": str(self.forwarded_from_uuid) if self.forwarded_from_uuid else None,
+            "chain_root_uuid": str(self.chain_root_uuid) if self.chain_root_uuid else None,
+            "sweep_priority": self.sweep_priority,
+            "blocks_subtree": self.blocks_subtree,
         }
 
 
@@ -74,3 +88,19 @@ def validate_escalation_status(value: str) -> str:
     if value in ESCALATION_STATUSES:
         return value
     raise RuntimeValidationError(f"invalid escalation status: {value!r}")
+
+
+def validate_sweep_priority(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise RuntimeValidationError(f"sweep_priority must be an int or None, got {type(value).__name__}")
+    return value
+
+
+def validate_addressee_level(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value not in ADDRESSEE_LEVELS:
+        raise RuntimeValidationError(f"invalid addressee_level: {value!r}")
+    return value
