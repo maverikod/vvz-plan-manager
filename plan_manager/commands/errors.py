@@ -11,6 +11,7 @@ from plan_manager.domain.bug_status_transitions import BugStatusTransitionError
 from plan_manager.domain.entity import EntityReferencedError
 from plan_manager.domain.todo_status_transitions import TodoStatusTransitionError
 from plan_manager.domain.model_binding import InvalidBindingScopeError, InvalidRuntimeRoleError
+from plan_manager.domain.plan import PlanCompletedError
 from plan_manager.domain.primary_anchor import InvalidAnchorError
 from plan_manager.domain.runtime_integrity import DuplicateLinkError, LinkCycleError
 from plan_manager.domain.runtime_validation import (
@@ -113,6 +114,7 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "PROFILE_RESOLUTION_FAILED",
     "INVALID_PROFILE_SCOPE",
     "INVALID_EXECUTION_MODE",
+    "PLAN_COMPLETED",
 })
 
 
@@ -158,6 +160,8 @@ def map_exception(exc: Exception) -> ErrorResult:
         return domain_error("DUPLICATE_ID", str(exc), {})
     if isinstance(exc, FrozenTruthMutationError):
         return domain_error("FROZEN_TRUTH_WRITE", str(exc), {})
+    if isinstance(exc, PlanCompletedError):
+        return domain_error("PLAN_COMPLETED", str(exc), {})
     if isinstance(exc, EntityReferencedError):
         return domain_error("DELETE_BLOCKED", str(exc), {"references": exc.references})
     # Most-specific RuntimeValidationError subclasses must be checked before the generic
