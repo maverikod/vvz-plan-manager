@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
 from plan_manager.domain.bug_closure_discipline import ImpactState, PropagationState, guard_close
 from plan_manager.domain.bug_status_transitions import guard_bug_transition
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
@@ -79,6 +80,7 @@ class BugCloseCommand(Command):
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                refuse_if_bug_plan_completed(conn, existing)
                 # Structural terminal-status guard first: a closed/rejected/duplicate bug can
                 # only be left via bug_reopen, and re-closing an already-closed bug is refused
                 # before the (heavier) BugClosureDiscipline evaluation below.

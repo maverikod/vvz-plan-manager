@@ -10,12 +10,14 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
 from plan_manager.commands.reanchor_command_metadata import REANCHOR_BEST_PRACTICES, REANCHOR_ERROR_CASES
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.bug_source import BugSource
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.bug_reanchor_store import reanchor_bug_source
+from plan_manager.storage.bug_report_store import get_bug
 
 
 class BugReanchorCommand(Command):
@@ -95,6 +97,14 @@ class BugReanchorCommand(Command):
             with db_connection() as conn:
                 resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
+                # The CURRENT source anchor's plan (bug c3950b83), before the
+                # move; reanchor_bug_source's own validate_bug_source call
+                # (delegating to validate_anchor) separately covers the NEW
+                # source's plan when new_source_type is plan/step. A missing
+                # bug is left to reanchor_bug_source's own not-found guard.
+                current_bug = get_bug(conn, bug_uuid)
+                if current_bug is not None:
+                    refuse_if_bug_plan_completed(conn, current_bug)
                 if confirmation.confirmed:
                     new_source = BugSource(
                         source_type=new_source_type,

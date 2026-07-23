@@ -10,6 +10,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
 from plan_manager.domain.bug_status_transitions import guard_bug_transition
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -69,6 +70,7 @@ class BugTriageCommand(Command):
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:
                     raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
+                refuse_if_bug_plan_completed(conn, existing)
                 guard_bug_transition("bug_triage", existing.status)
                 updated = set_bug_status(conn, bug_uuid, changed_by=changed_by, status="triaged")
                 return SuccessResult(data=updated.to_payload())
