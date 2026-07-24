@@ -3,6 +3,7 @@
 from plan_manager.commands.cascade_preview_projection import (
     CATEGORY_VALUES,
     category_metadata_params,
+    gate_findings_pagination_metadata_params,
     view_metadata_params,
 )
 from plan_manager.commands.runtime_filtering import filter_metadata_params, pagination_metadata_params
@@ -39,7 +40,14 @@ def get_cascade_preview_metadata(cls: type) -> dict:
             "returns a bounded, filterable, paginated 'entries' page: the "
             "change set, the needs_review blast radius, and the flattened "
             "mechanical gate findings unified into one deterministically "
-            "ordered collection, each entry tagged by its 'category'. This "
+            "ordered collection, each entry tagged by its 'category', plus "
+            "'gate_report_json' -- itself bounded by its own "
+            "gate_findings_limit/gate_findings_offset page window over the "
+            "flattened findings list across every check (todo b6ed4b0b): "
+            "each check keeps its own 'finding_count' (its real, unbounded "
+            "total) even when its findings fall outside the current page "
+            "window, and 'gate_findings_total' reports the report-wide "
+            "true total. This "
             "command is read-only: it never mutates the cascade record, the "
             "plan, or any other database state. There is no dry_run or undo "
             "concept for a read-only command. Verify: run cascade_preview "
@@ -56,6 +64,7 @@ def get_cascade_preview_metadata(cls: type) -> dict:
             },
             **view_metadata_params(),
             **pagination_metadata_params(),
+            **gate_findings_pagination_metadata_params(),
             **category_metadata_params(),
             **filter_metadata_params(["entity_type", "step", "status"]),
         },
@@ -66,9 +75,15 @@ def get_cascade_preview_metadata(cls: type) -> dict:
                     "tip_revision_uuid, gate_green, and a 'summary' dict of "
                     "5 fixed counts. view=full: the same fields plus "
                     "'entries' (the current bounded/filtered page), 'total' "
-                    "(the filtered match count), 'limit', 'offset', and "
-                    "'gate_report_json' (the full mechanical gate report, "
-                    "unchanged shape, for callers already parsing it)."
+                    "(the filtered match count), 'limit', 'offset', "
+                    "'gate_report_json' (the mechanical gate report, same "
+                    "per-check shape as before plus a new 'finding_count' "
+                    "per check, its findings list bounded to the "
+                    "gate_findings_limit/gate_findings_offset page window "
+                    "-- todo b6ed4b0b), 'gate_findings_total' (the true, "
+                    "unbounded findings count across every check), "
+                    "'gate_findings_limit', and 'gate_findings_offset' "
+                    "(the page window actually applied)."
                 ),
                 "data": {
                     "cascade_uuid": "UUID of the open cascade.",
@@ -105,11 +120,26 @@ def get_cascade_preview_metadata(cls: type) -> dict:
                     "limit": "view=full only: the page size actually applied.",
                     "offset": "view=full only: the offset actually applied.",
                     "gate_report_json": (
-                        "view=full only: JSON string of the full mechanical "
-                        "gate report. See the top-level 'gate_check_semantics' "
-                        "metadata field for a one-line gloss of what each "
-                        "check_id actually means before interpreting a finding."
+                        "view=full only: JSON string of the mechanical gate "
+                        "report, same {green, checks: [{check_id, passed, "
+                        "findings}]} shape as before, plus a new "
+                        "'finding_count' per check (that check's real, "
+                        "unbounded total); each check's 'findings' list is "
+                        "bounded to the gate_findings_limit/gate_findings_offset "
+                        "page window over the flattened findings list across "
+                        "every check (todo b6ed4b0b) -- a caller wanting every "
+                        "finding pages through via gate_findings_offset. See "
+                        "the top-level 'gate_check_semantics' metadata field "
+                        "for a one-line gloss of what each check_id actually "
+                        "means before interpreting a finding."
                     ),
+                    "gate_findings_total": (
+                        "view=full only: the true, unbounded count of "
+                        "findings across every check in gate_report_json, "
+                        "independent of gate_findings_limit/gate_findings_offset."
+                    ),
+                    "gate_findings_limit": "view=full only: the gate_report_json findings page size actually applied.",
+                    "gate_findings_offset": "view=full only: the gate_report_json findings offset actually applied.",
                 },
                 "example": {
                     "cascade_uuid": "6f1c2e2a-1111-4a2b-9c3d-4e5f6a7b8c9d",
@@ -175,9 +205,15 @@ def get_cascade_preview_metadata(cls: type) -> dict:
                 "solution": "Retry with view in {full, summary} and category one of " + ", ".join(CATEGORY_VALUES) + ".",
             },
             "INVALID_PAGINATION": {
-                "description": "limit or offset is out of range or not an integer.",
+                "description": (
+                    "limit/offset or gate_findings_limit/gate_findings_offset "
+                    "is out of range or not an integer."
+                ),
                 "message": "limit must be between 1 and 200, got {limit}",
-                "solution": "Retry with limit in [1, 200] and offset >= 0.",
+                "solution": (
+                    "Retry with limit and gate_findings_limit each in "
+                    "[1, 200], and offset and gate_findings_offset each >= 0."
+                ),
             },
         },
         "best_practices": [
@@ -189,6 +225,10 @@ def get_cascade_preview_metadata(cls: type) -> dict:
             "check_id) to page through mechanical gate findings instead of "
             "parsing gate_report_json for large cascades.",
             "Compare offset+limit against total to detect additional pages.",
+            "Compare gate_findings_offset+gate_findings_limit against "
+            "gate_findings_total to page through every gate_report_json "
+            "finding; each check's own 'finding_count' shows its real "
+            "total even when its findings are outside the current window.",
             "cascade_preview is safe to call repeatedly; it never mutates "
             "state.",
         ],

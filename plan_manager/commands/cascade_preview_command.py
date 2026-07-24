@@ -13,7 +13,11 @@ from plan_manager.commands.cascade_preview_projection import (
     category_metadata_params,
     category_schema_properties,
     filter_entries,
+    gate_findings_pagination_metadata_params,
+    gate_findings_pagination_schema_properties,
+    paginate_gate_report_json,
     parse_category,
+    parse_gate_findings_pagination,
     summarize,
 )
 from plan_manager.commands.list_projection import VIEW_SUMMARY, parse_view
@@ -41,11 +45,13 @@ class CascadePreviewCommand(Command):
     """Read-only report of the open cascade's change set and gate verdict."""
 
     name = "cascade_preview"
-    version = "1.1.0"
+    version = "1.2.0"
     descr = (
         "Report compact summary counts (added/removed/changed/needs_review/"
         "gate_findings) of a plan's open cascade by default; view=full adds "
-        "the paginated, filterable detail entries."
+        "the paginated, filterable detail entries plus a gate_report_json "
+        "whose findings are themselves paginated (gate_findings_limit/"
+        "gate_findings_offset)."
     )
     category = "cascade"
     author = "Vasiliy Zdanovskiy"
@@ -71,6 +77,7 @@ class CascadePreviewCommand(Command):
                 },
                 **view_schema_properties(),
                 **pagination_schema_properties(),
+                **gate_findings_pagination_schema_properties(),
                 **category_schema_properties(),
                 **filter_schema_properties(_GENERIC_DETAIL_FILTER_FIELDS),
             },
@@ -105,6 +112,8 @@ class CascadePreviewCommand(Command):
         view: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        gate_findings_limit: int | None = None,
+        gate_findings_offset: int | None = None,
         category: str | None = None,
         check_id: str | None = None,
         entity_type: str | None = None,
@@ -120,6 +129,13 @@ class CascadePreviewCommand(Command):
                 for counts plus the paginated/filtered "entries" list.
             limit: Maximum entries per page when view=full (default 50, max 200).
             offset: Entries to skip before the returned page when view=full.
+            gate_findings_limit: Maximum gate_report_json findings per page
+                when view=full, applied to the flattened findings list
+                across every check (default 50, max 200; paged
+                independently of limit/offset). Todo b6ed4b0b.
+            gate_findings_offset: Flattened gate_report_json findings to
+                skip before the returned page window when view=full
+                (default 0). Todo b6ed4b0b.
             category: Restrict entries to one of added/removed/changed/
                 needs_review/gate_finding.
             check_id: Restrict gate_finding entries to one mechanical-gate check_id.
@@ -132,9 +148,14 @@ class CascadePreviewCommand(Command):
             A SuccessResult wrapping {cascade_uuid, base_revision_uuid,
             tip_revision_uuid, gate_green, summary} (view=summary, the
             default), plus {entries, total, limit, offset,
-            gate_report_json} when view=full; an ErrorResult with code
-            CASCADE_REQUIRED when the plan has no open cascade; or an
-            ErrorResult produced by map_exception on other failures.
+            gate_report_json, gate_findings_total, gate_findings_limit,
+            gate_findings_offset} when view=full -- gate_report_json
+            itself bounded to its own gate_findings_limit/offset page
+            window over the flattened findings list, each check carrying
+            a "finding_count" of its real, unbounded total (todo
+            b6ed4b0b); an ErrorResult with code CASCADE_REQUIRED when the
+            plan has no open cascade; or an ErrorResult produced by
+            map_exception on other failures.
         """
         try:
             view_value = parse_view(view, default=VIEW_SUMMARY)
@@ -142,6 +163,9 @@ class CascadePreviewCommand(Command):
             raw_params = {"entity_type": entity_type, "step": step, "status": status, "limit": limit, "offset": offset}
             filters = parse_filters(raw_params, _GENERIC_DETAIL_FILTER_FIELDS)
             pagination = parse_pagination(raw_params)
+            gate_pagination = parse_gate_findings_pagination(
+                {"gate_findings_limit": gate_findings_limit, "gate_findings_offset": gate_findings_offset}
+            )
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 if get_open_cascade(conn, p.uuid) is None:
@@ -170,7 +194,13 @@ class CascadePreviewCommand(Command):
                     response["total"] = len(matched)
                     response["limit"] = pagination.limit
                     response["offset"] = pagination.offset
-                    response["gate_report_json"] = data["gate_report_json"]
+                    bounded_gate_report_json, gate_findings_total = paginate_gate_report_json(
+                        data["gate_report_json"], gate_pagination.limit, gate_pagination.offset
+                    )
+                    response["gate_report_json"] = bounded_gate_report_json
+                    response["gate_findings_total"] = gate_findings_total
+                    response["gate_findings_limit"] = gate_pagination.limit
+                    response["gate_findings_offset"] = gate_pagination.offset
                 return SuccessResult(data=response)
         except Exception as exc:
             return map_exception(exc)

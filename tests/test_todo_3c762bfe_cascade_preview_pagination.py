@@ -283,7 +283,14 @@ def test_view_full_returns_paginated_entries_and_gate_report_json(monkeypatch):
     assert data["limit"] == 50
     assert data["offset"] == 0
     assert len(data["entries"]) == 3
-    assert data["gate_report_json"] == '{"green": false}'
+    # gate_report_json is now bounded (todo b6ed4b0b): the raw fixture has no
+    # "checks" key, so it parses/re-renders as an empty checks list plus the
+    # new gate_findings_total/limit/offset fields (see the dedicated
+    # test_todo_b6ed4b0b_* module for pagination-window behavior).
+    assert data["gate_report_json"] == '{"checks":[],"green":false}'
+    assert data["gate_findings_total"] == 0
+    assert data["gate_findings_limit"] == 50
+    assert data["gate_findings_offset"] == 0
     assert data["summary"] == {"added": 1, "removed": 0, "changed": 0, "needs_review": 1, "gate_findings": 1}
 
 
