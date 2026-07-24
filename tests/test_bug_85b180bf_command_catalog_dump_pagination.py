@@ -275,6 +275,58 @@ def test_invalid_pagination_limit_above_max_surfaces_invalid_pagination_domain_c
     assert payload["error"]["data"]["domain_code"] == "INVALID_PAGINATION"
 
 
+# --- full dispatch-path regression: R24_limit_zero_invalid_pagination ---
+#
+# Every test above this point calls execute() directly (see `_run`), which
+# bypasses validate_params() entirely. The REAL server dispatch path is
+# mcp_proxy_adapter.commands.base.Command.run() -> validate_params() ->
+# execute(): validate_params() runs a JSON-schema check
+# (Command._validate_schema_value) BEFORE execute() is ever entered. Before
+# this fix, the shared runtime_filtering.PAGINATION_FIELDS declared
+# "minimum": 1 / "maximum": 200 on `limit` and "minimum": 0 on `offset`, so
+# an explicit out-of-range value (limit=0, offset=-1) was rejected by
+# validate_params() with a generic adapter ValidationError ("must be >= 1,
+# got 0") -- execute() and parse_pagination()'s domain-level
+# INVALID_PAGINATION were never reached at all. This is exactly what
+# scripts/live_smoke.py's R24_limit_zero_invalid_pagination caught against
+# the real deployed server (0.1.65): the string "INVALID_PAGINATION" never
+# appeared in the error response. The tests below exercise validate_params()
+# then execute() in sequence (the same two steps Command.run() performs;
+# the registry-lookup step in between is orthogonal to this bug and is not
+# needed to reproduce or prove it) and prove the domain code now surfaces
+# correctly end-to-end.
+
+
+def test_dispatch_path_limit_zero_surfaces_invalid_pagination_domain_code(monkeypatch):
+    """R24 regression: limit=0 must reach parse_pagination() -- and thus
+    INVALID_PAGINATION -- through the full validate_params() -> execute()
+    path, not be shadowed by a JSON-schema "minimum" bound."""
+    _patch_catalog(monkeypatch, 5)
+    command = CommandCatalogDumpCommand()
+
+    validated = command.validate_params({"limit": 0})  # must NOT raise post-fix
+    result = asyncio.run(command.execute(**validated))
+    payload = result.to_dict()
+
+    assert payload["success"] is False
+    assert payload["error"]["data"]["domain_code"] == "INVALID_PAGINATION"
+
+
+def test_dispatch_path_negative_offset_surfaces_invalid_pagination_domain_code(monkeypatch):
+    """Symmetry with limit=0 above: offset=-1 must reach parse_pagination()
+    through the full dispatch path too, not be shadowed by a JSON-schema
+    "minimum": 0 bound on `offset`."""
+    _patch_catalog(monkeypatch, 5)
+    command = CommandCatalogDumpCommand()
+
+    validated = command.validate_params({"offset": -1})  # must NOT raise post-fix
+    result = asyncio.run(command.execute(**validated))
+    payload = result.to_dict()
+
+    assert payload["success"] is False
+    assert payload["error"]["data"]["domain_code"] == "INVALID_PAGINATION"
+
+
 def test_ordering_is_deterministic_across_two_consecutive_calls(monkeypatch):
     """todo 9c409a47: page boundaries must be stable across repeated calls --
     the catalog is re-fetched (and, per this fix, freshly re-sorted) on every
@@ -300,7 +352,11 @@ def test_schema_offset_matches_canonical_pagination_contract_limit_documents_tru
     canonical shared property exactly (its semantics/default are unchanged),
     but `limit`'s description is deliberately overridden to truthfully
     document the smaller, command-specific default (10, not the general
-    50) -- type/minimum/maximum still match the canonical contract."""
+    50) -- type still matches the canonical contract. Neither the canonical
+    fragment nor this command's own copy declares "minimum"/"maximum" (see
+    runtime_filtering.PAGINATION_FIELDS' note, bug
+    R24_limit_zero_invalid_pagination): range enforcement is
+    parse_pagination()'s sole responsibility, never the JSON-schema layer."""
     from plan_manager.commands.runtime_filtering import pagination_schema_properties
 
     properties = CommandCatalogDumpCommand.get_schema()["properties"]
@@ -310,8 +366,8 @@ def test_schema_offset_matches_canonical_pagination_contract_limit_documents_tru
 
     limit_property = properties["limit"]
     assert limit_property["type"] == canonical["limit"]["type"]
-    assert limit_property["minimum"] == canonical["limit"]["minimum"]
-    assert limit_property["maximum"] == canonical["limit"]["maximum"]
+    assert "minimum" not in limit_property
+    assert "maximum" not in limit_property
     assert limit_property != canonical["limit"], "limit description must diverge to document the true default"
     assert str(_DEFAULT_CATALOG_LIMIT) in limit_property["description"]
 

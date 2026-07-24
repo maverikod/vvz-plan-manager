@@ -108,12 +108,30 @@ FILTER_FIELDS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
 }
 
 PAGINATION_FIELDS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    # NOTE (bug R24_limit_zero_invalid_pagination, 2026-07-24): the `limit`/
+    # `offset` JSON-schema fragments deliberately carry NO "minimum"/
+    # "maximum" bounds. Every command's dispatch path is
+    # mcp_proxy_adapter.commands.base.Command.run() -> validate_params() ->
+    # execute(); validate_params() runs a shallow JSON-schema check
+    # (Command._validate_schema_value) BEFORE execute() is ever entered.
+    # If this schema fragment declared numeric bounds, an out-of-range
+    # explicit value (e.g. limit=0, offset=-1) would be rejected there with
+    # a generic adapter ValidationError ("must be >= 1, got 0") -- shadowing
+    # parse_pagination() below and its documented, stable INVALID_PAGINATION
+    # domain code (see parse_pagination's own docstring: "parse_pagination
+    # is the sole validator" -- a claim that numeric schema bounds would
+    # silently violate for every command built on this shared fragment, not
+    # just one). "type": "integer" is kept: type mismatches are consistently
+    # rejected at both layers, so no behavior changes there. Range
+    # enforcement -- limit in [1, MAX_LIMIT], offset >= 0 -- is the sole
+    # responsibility of parse_pagination(), reached for every request now
+    # that this schema no longer intercepts it first.
     "limit": (
-        {"type": "integer", "description": "Maximum number of results to return (default 50, max 200).", "minimum": 1, "maximum": 200},
+        {"type": "integer", "description": "Maximum number of results to return (default 50, max 200)."},
         {"description": "Maximum number of results to return (default 50, max 200).", "type": "integer", "required": False},
     ),
     "offset": (
-        {"type": "integer", "description": "Number of results to skip before returning results (default 0).", "minimum": 0},
+        {"type": "integer", "description": "Number of results to skip before returning results (default 0)."},
         {"description": "Number of results to skip before returning results (default 0).", "type": "integer", "required": False},
     ),
 }

@@ -46,7 +46,15 @@ def test_files_report_schema_and_metadata_are_help_ready() -> None:
     assert schema["required"] == ["plan"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["scope"]["default"] == "whole_plan"
-    assert schema["properties"]["limit"]["maximum"] == 200
+    # `limit`'s JSON-schema fragment deliberately declares no "maximum" (see
+    # runtime_filtering.PAGINATION_FIELDS' note, bug
+    # R24_limit_zero_invalid_pagination): a schema-level bound would shadow
+    # parse_pagination()'s own domain-level INVALID_PAGINATION check at the
+    # adapter's validate_params() layer, before execute() ever runs. 200 is
+    # still the real, enforced ceiling -- just at the domain layer.
+    assert "maximum" not in schema["properties"]["limit"]
+    from plan_manager.commands.runtime_filtering import MAX_LIMIT
+    assert MAX_LIMIT == 200
     assert payload["ai_metadata"]["parameters"]["scope"]["required"] is False
     assert payload["ai_metadata"]["error_cases"]["INVALID_SCOPE"]
     assert "FilesWriterReport" in payload["ai_metadata"]["detailed_description"]
