@@ -1,4 +1,21 @@
-"""Command: compile one common block and per-child specific deltas."""
+"""Command: compile one common block and per-child specific deltas.
+
+Bug 03956ccf: the compiled 'common' block (and each child's own delta block)
+can grow to hundreds of entries when the parent scope is plan-wide (node
+"plan" with no explicit shared_concepts pulls in every MRS concept), and the
+uncapped 'content'/'blocks' list of such a block was returned in full,
+exceeding agent response limits. Fixed the same way as block_get's own
+per-block pagination (todo eb2dcccb): a single uniform limit/offset pair
+(shared plan_manager.commands.runtime_filtering contract, bounded default 50,
+max 200) is applied to the 'common' block's entry list and to every
+'children[i]' entry's own entry list; each paginated block payload carries
+'total'/'limit'/'offset' alongside the existing 'blocks'/'content' keys. A
+bundle whose common and child blocks are all within the default page size
+(the common case) is byte-compatible beyond these additive keys. A caller
+that needs entries past the first page continues with
+block_get(block_id, limit, offset) using the block_id already present in the
+payload -- no semantic content changes, only the transport shape.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +27,12 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.context_block_metadata import BASE_PARAMETERS, context_metadata
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.commands.runtime_filtering import (
+    Pagination,
+    pagination_metadata_params,
+    pagination_schema_properties,
+    parse_pagination,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.views.context_blocks import (
     ContextRevision,
@@ -18,6 +41,27 @@ from plan_manager.views.context_blocks import (
     specific_delta,
     store_context_block,
 )
+
+
+def _paginate_block_payload(payload: dict[str, Any], pagination: Pagination) -> dict[str, Any]:
+    """Return `payload` with its 'blocks'/'content' entry list bounded to one page.
+
+    Mirrors block_get's per-block pagination contract exactly: the full entry
+    list stays stored (this only bounds what is returned), 'total' is the
+    unbounded entry count, and 'limit'/'offset' echo the applied page so a
+    caller can detect and fetch further pages (via block_get, keyed by this
+    payload's 'block_id').
+    """
+    entries = payload["content"]
+    total = len(entries)
+    page = entries[pagination.offset : pagination.offset + pagination.limit]
+    paginated = dict(payload)
+    paginated["blocks"] = list(page)
+    paginated["content"] = list(page)
+    paginated["total"] = total
+    paginated["limit"] = pagination.limit
+    paginated["offset"] = pagination.offset
+    return paginated
 
 
 class ContextBundleCommand(Command):
@@ -42,6 +86,7 @@ class ContextBundleCommand(Command):
                 "shared_concepts": {"type": "array", "items": {"type": "string"}, "description": "Optional shared concept scope."},
                 "revision": {"type": "string", "description": "Optional current head revision UUID."},
                 "cascade_uuid": {"type": "string", "description": "Optional open cascade UUID."},
+                **pagination_schema_properties(),
             },
             "required": ["plan", "node", "child_level", "children"],
             "additionalProperties": False,
@@ -55,12 +100,43 @@ class ContextBundleCommand(Command):
             "child_level": {"description": "Level of children being authored: 3, 4, or 5.", "type": "integer", "required": True},
             "children": {"description": "Children array; each item has ref and concepts.", "type": "array", "required": True},
             "shared_concepts": {"description": "Optional common scope.", "type": "array", "required": False},
+            **pagination_metadata_params(),
         }
         return context_metadata(
             cls,
             params,
-            {"success": {"description": "Bundle payload containing the stored common block and ordered child delta blocks."}},
+            {
+                "success": {
+                    "description": (
+                        "Bundle payload containing the stored common block and ordered "
+                        "child delta blocks. The 'common' block and each 'children[i]' "
+                        "entry carry only the current page of their own 'blocks'/'content' "
+                        "entry list (bounded default 50, max 200 per page; the same "
+                        "limit/offset pair applies to both), plus 'total'/'limit'/'offset' "
+                        "describing that page. A block whose entry count is within the "
+                        "default page size returns every entry in one call, unchanged from "
+                        "before this parameter existed. Fetch further pages of a specific "
+                        "block with block_get(block_id, limit, offset), using that block's "
+                        "'block_id' ('common_block_id' for the common block)."
+                    )
+                }
+            },
             [{"description": "Compile common and specific context for tactical children.", "command": {"plan": "plan_manager", "node": "G-002", "child_level": 4, "children": [{"ref": "session-core", "concepts": ["C-010"]}]}}],
+            error_cases={
+                "INVALID_PAGINATION": {
+                    "description": "limit or offset is out of range or not an integer.",
+                    "message": "limit must be between 1 and 200, got {limit}",
+                    "solution": "Retry with limit in [1, 200] and offset >= 0.",
+                },
+            },
+            extra_best_practices=[
+                "A context_bundle response bounds each block's entry list to one page; "
+                "compare offset+limit against total to detect further pages of the "
+                "common block or of any child, then continue with block_get.",
+                "A common block's entry count is typically small; only a plan-wide "
+                "common scope (node 'plan' with no explicit shared_concepts) grows "
+                "large enough to need a second page.",
+            ],
         )
 
     async def execute(
@@ -72,9 +148,12 @@ class ContextBundleCommand(Command):
         shared_concepts: list[str] | None = None,
         revision: str | None = None,
         cascade_uuid: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            pagination = parse_pagination({"limit": limit, "offset": offset})
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
                 context_revision = resolve_context_revision(conn, p, revision, cascade_uuid)
@@ -95,10 +174,10 @@ class ContextBundleCommand(Command):
                         delta,
                         common.block_id,
                     )
-                    payload = record.to_payload()
+                    payload = _paginate_block_payload(record.to_payload(), pagination)
                     payload["ref"] = child.get("ref")
                     child_payloads.append(payload)
-                common_payload = common.to_payload()
+                common_payload = _paginate_block_payload(common.to_payload(), pagination)
                 common_payload["common_block_id"] = common_payload["block_id"]
                 return SuccessResult(data={"common": common_payload, "children": child_payloads})
         except Exception as exc:
