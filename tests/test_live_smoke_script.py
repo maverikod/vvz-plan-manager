@@ -934,8 +934,9 @@ def test_run_tier3_bug_create_runs_full_fix_verify_close_chain_in_order():
             "bug_close": _ok({"uuid": "bug-1", "status": "closed"}),
         }
     )
-    results, bug_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
+    results, bug_uuid, fix_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
     assert bug_uuid == "bug-1"
+    assert fix_uuid == "fix-1"
     order = [name for name, _ in client.calls]
     assert order == ["bug_create", "bug_confirm", "bug_fix_create", "bug_fix_verify", "bug_close"]
     fix_verify_params = client.calls[3][1]
@@ -953,8 +954,9 @@ def test_run_tier3_bug_create_skips_verify_when_fix_create_fails():
             "bug_close": _ok({"uuid": "bug-1", "status": "closed"}),
         }
     )
-    results, bug_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
+    results, bug_uuid, fix_uuid = asyncio.run(ls.run_tier3_bug_create(client, "plan-1"))
     assert bug_uuid == "bug-1"
+    assert fix_uuid is None
     order = [name for name, _ in client.calls]
     assert "bug_fix_verify" not in order
     assert order == ["bug_create", "bug_confirm", "bug_fix_create", "bug_close"]
@@ -3012,6 +3014,7 @@ def _r13_success_responses() -> dict:
             "todo_total": 1, "todo_limit": 50, "todo_offset": 0,
             "bug_total": 1, "bug_limit": 50, "bug_offset": 0,
         }),
+        "bug_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "r13-bug-1"}),
         "plan_delete": _ok({"deleted": True}),
     }
 

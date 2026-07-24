@@ -363,6 +363,10 @@ TIER3_HANDLED: frozenset[str] = frozenset(
         "bug_fix_create",
         "bug_fix_verify",
         "bug_close",
+        # todo 9b09c9b0 (full bug-family CRUD delete surface): run_tier3_bug_create's
+        # caller hard-deletes the fix then the bug in the Tier-3 cleanup phase.
+        "bug_fix_delete",
+        "bug_delete",
     }
 )
 TIER4_HANDLED: frozenset[str] = frozenset(
@@ -396,6 +400,11 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         # setter commands, exercised end-to-end by
         # run_r9_plan_completion_lock below.
         "plan_completed_set", "plan_comment_set",
+        # todo 9b09c9b0 (full bug-family CRUD delete surface): exercised
+        # end-to-end (dry_run -> hard -> bug_list absence) by
+        # run_r19_bug_delete_full_crud_lifecycle, and also used for cleanup
+        # by R13/R16/R17's finally blocks.
+        "bug_delete",
     }
 )
 
@@ -476,10 +485,12 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "bug_impact_add": "records a bug impact beyond this pass's scope",
     "bug_impact_update": "requires an existing impact_uuid from bug_impact_add",
     "bug_impact_discover": "runs CA-backed impact discovery; not exercised in this pass",
+    "bug_impact_delete": "requires an existing impact_uuid from bug_impact_add, which this pass never creates; not exercised in this pass",
     "bug_fix_update": "arbitrary bug-fix field mutation; not exercised beyond the create/verify/close lifecycle",
     "bug_propagation_create": "records a fix propagation beyond this pass's scope",
     "bug_propagation_update": "requires an existing propagation_id from bug_propagation_create",
     "bug_propagation_generate_todos": "requires an existing bug_fix_id from bug_fix_create",
+    "bug_fix_propagation_delete": "requires an existing propagation_id from bug_propagation_create, which this pass never creates; not exercised in this pass",
     "project_dependency_add": "mutates the shared project-dependency graph; not safe to exercise against live config",
     "project_dependency_update": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_confirm": "requires an existing dependency_uuid from project_dependency_add",
@@ -1185,7 +1196,7 @@ async def run_tier3_todo_cleanup(client: Any, todo_uuid: Optional[str]) -> list[
     return results
 
 
-async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckResult], Optional[str]]:
+async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckResult], Optional[str], Optional[str]]:
     """bug_create -> bug_confirm -> bug_fix_create -> bug_fix_verify(passed=True)
     -> bug_close, the FULL documented closure path.
 
@@ -1196,10 +1207,13 @@ async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckR
     bug_close_command.py derives that as ``any(fix.status == "verified" and
     bool(fix.passed) for fix in fixes)`` -- so at least one bug_fix must
     reach status "verified" via bug_fix_verify(passed=True) before close is
-    legal. No bug_delete command exists on this server's surface, so the
-    lifecycle intentionally ends at close (see KNOWN_SKIP_REASONS note in
-    the module docstring); the caller hard-deletes this bug's dedicated
-    plan afterward.
+    legal. bug_delete (and bug_fix_delete for its child fix) now exist on
+    the command surface (todo 9b09c9b0); this function returns both
+    identifiers, and the caller performs the explicit hard-delete cleanup
+    (bug_fix_delete before bug_delete -- the fix's live bug_uuid reference
+    would otherwise block the bug's own hard delete) IN ADDITION TO
+    hard-deleting this bug's dedicated plan, since source_plan_uuid carries
+    no FK/cascade of its own (plan hard delete never touched this row).
     """
     results: list[CheckResult] = []
     title = unique_suffix("bug")
@@ -1214,7 +1228,7 @@ async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckR
     )
     if not ok or not isinstance(res, dict) or not res.get("uuid"):
         results.append(CheckResult("3", "bug_create", STATUS_FAIL, str(res)))
-        return results, None
+        return results, None, None
     bug_uuid = res["uuid"]
     results.append(CheckResult("3", "bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
 
@@ -1243,7 +1257,7 @@ async def run_tier3_bug_create(client: Any, plan_uuid: str) -> tuple[list[CheckR
 
     ok, res = await call(client, "bug_close", {"plan": plan_uuid, "bug_id": bug_uuid, "closed_by": "live-smoke"})
     results.append(CheckResult("3", "bug_close", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-    return results, bug_uuid
+    return results, bug_uuid, fix_uuid
 
 
 # ---- Tier 4: named bug regressions -----------------------------------------
@@ -3444,6 +3458,7 @@ async def run_r13_bug_list_project_view_bounded(client: Any, project_id: str) ->
         results.append(CheckResult("4", "R13_plan_create", STATUS_FAIL, str(plan_res)))
         return results
     plan_uuid = plan_res["uuid"]
+    bug_uuid: Optional[str] = None
     try:
         big_body = "lorem ipsum dolor sit amet " * 300  # ~8.1 KB, mirrors the live-reported spill
         title = unique_suffix("r13-bug")
@@ -3497,6 +3512,12 @@ async def run_r13_bug_list_project_view_bounded(client: Any, project_id: str) ->
             leaked_todo = [t for t in todo_rows if any(f in t for f in ("description", "blocking_reason", "execution_result"))]
             results.append(CheckResult("4", "R13_45f0c128_project_view_todos_no_body", STATUS_PASS if not leaked_todo else STATUS_FAIL, "" if not leaked_todo else f"{len(leaked_todo)} todo row(s) leaked a body field"))
     finally:
+        # bug_delete (todo 9b09c9b0) now exists: hard-delete the scratch bug
+        # itself before the plan -- source_plan_uuid carries no FK/cascade,
+        # so plan_delete(hard) alone leaves this row orphaned.
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R13_bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
         ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
         results.append(CheckResult("4", "R13_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     return results
@@ -3874,6 +3895,7 @@ async def run_r16_bug_update_append_history(client: Any) -> list[CheckResult]:
     """
     results: list[CheckResult] = []
     plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
     try:
         ok, res = await call(client, "plan_create", {"name": unique_suffix("r16-plan")})
         if not ok or not isinstance(res, dict) or not res.get("uuid"):
@@ -3949,6 +3971,12 @@ async def run_r16_bug_update_append_history(client: Any) -> list[CheckResult]:
             )
         )
     finally:
+        # bug_delete (todo 9b09c9b0) now exists: hard-delete the scratch bug
+        # itself before the plan -- source_plan_uuid carries no FK/cascade,
+        # so plan_delete(hard) alone leaves this row orphaned.
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R16_bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
         if plan_uuid is not None:
             ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
             results.append(CheckResult("4", "R16_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
@@ -3973,9 +4001,10 @@ async def run_r17_bug_optional_plan_project_anchor(client: Any, project_id: str)
     Recipe: create a project-anchored bug (source_type=project,
     source_project_id=<--project>) WITHOUT ever supplying `plan`, then
     bug_update it (also without `plan`), asserting both succeed. No plan
-    is ever created here, so there is nothing to hard-delete in a
-    finally -- per the established convention in this pipeline (see R13's
-    docstring), a scratch bug row is never independently deleted anyway.
+    is ever created here; bug_delete (todo 9b09c9b0) now exists, so the
+    scratch bug itself is hard-deleted in a top-level finally instead of
+    being left dangling (the historical convention -- see R13's docstring
+    -- predates that command).
 
     Pre-fix detection: `plan` is REQUIRED at the schema level on a
     not-yet-deployed server, so the bug_create call fails with a "missing
@@ -3984,36 +4013,42 @@ async def run_r17_bug_optional_plan_project_anchor(client: Any, project_id: str)
     rather than failing the pipeline against a not-yet-deployed fix.
     """
     results: list[CheckResult] = []
-    ok, res = await call(
-        client, "bug_create",
-        {
-            "title": unique_suffix("r17-bug"), "short_description": "R17 project-anchored scratch bug (no plan)",
-            "detailed_description": "R17: created without a plan parameter.", "kind": "functional",
-            "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
-            "source_type": "project", "source_project_id": project_id,
-        },
-    )
-    if not ok:
-        pre_fix = _looks_like_missing_required_param(str(res), "plan")
-        results.append(
-            CheckResult(
-                "4", "R17_bug_create_without_plan", STATUS_SKIP if pre_fix else STATUS_FAIL,
-                R17_PRE_FIX_SKIP_REASON if pre_fix else str(res),
-            )
+    bug_uuid: Optional[str] = None
+    try:
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r17-bug"), "short_description": "R17 project-anchored scratch bug (no plan)",
+                "detailed_description": "R17: created without a plan parameter.", "kind": "functional",
+                "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": project_id,
+            },
         )
-        return results
-    bug_ok = isinstance(res, dict) and bool(res.get("uuid"))
-    results.append(CheckResult("4", "R17_bug_create_without_plan", STATUS_PASS if bug_ok else STATUS_FAIL, "" if bug_ok else str(res)))
-    if not bug_ok:
-        return results
-    bug_uuid = res["uuid"]
+        if not ok:
+            pre_fix = _looks_like_missing_required_param(str(res), "plan")
+            results.append(
+                CheckResult(
+                    "4", "R17_bug_create_without_plan", STATUS_SKIP if pre_fix else STATUS_FAIL,
+                    R17_PRE_FIX_SKIP_REASON if pre_fix else str(res),
+                )
+            )
+            return results
+        bug_ok = isinstance(res, dict) and bool(res.get("uuid"))
+        results.append(CheckResult("4", "R17_bug_create_without_plan", STATUS_PASS if bug_ok else STATUS_FAIL, "" if bug_ok else str(res)))
+        if not bug_ok:
+            return results
+        bug_uuid = res["uuid"]
 
-    ok, res = await call(
-        client, "bug_update",
-        {"bug_id": bug_uuid, "changed_by": "live-smoke", "severity": "minor"},
-    )
-    update_ok = ok and isinstance(res, dict) and res.get("severity") == "minor"
-    results.append(CheckResult("4", "R17_bug_update_without_plan", STATUS_PASS if update_ok else STATUS_FAIL, "" if update_ok else str(res)))
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "severity": "minor"},
+        )
+        update_ok = ok and isinstance(res, dict) and res.get("severity") == "minor"
+        results.append(CheckResult("4", "R17_bug_update_without_plan", STATUS_PASS if update_ok else STATUS_FAIL, "" if update_ok else str(res)))
+    finally:
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R17_bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     return results
 
 
@@ -4198,6 +4233,76 @@ async def run_r18_context_bundle_child_block_identity(client: Any) -> list[Check
     return results
 
 
+async def run_r19_bug_delete_full_crud_lifecycle(client: Any) -> list[CheckResult]:
+    """Todo 9b09c9b0: full CRUD for the bug family -- exercises the new
+    bug_delete command end to end (soft/hard/dry_run mirror bug_delete's
+    sibling todo_delete/comment_delete/tool_delete): plan_create ->
+    bug_create(source_type=plan) -> bug_delete(dry_run=true), asserting the
+    preview shape {dry_run, would_delete, mode, blocked, references} reports
+    an unblocked soft-mode preview -> bug_delete(hard=true), asserting the
+    hard-delete result {dry_run, mode, deleted_uuid} -> bug_list(plan),
+    asserting the bug is no longer present (physically gone, not merely
+    hidden by the deleted_at filter a soft delete would apply).
+
+    Self-contained top-level try/finally: the dedicated plan is always
+    hard-deleted afterward, whether or not the bug itself was already
+    removed by the check's own bug_delete(hard=true) call.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r19-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R19_9b09c9b0_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": unique_suffix("r19-bug"),
+                "short_description": "R19 full-CRUD scratch bug", "detailed_description": "R19: bug_delete lifecycle probe.",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke",
+                "created_by": "live-smoke", "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R19_9b09c9b0_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R19_9b09c9b0_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "dry_run": True})
+        dry_run_ok = (
+            ok and isinstance(res, dict)
+            and res.get("dry_run") is True
+            and res.get("would_delete") == bug_uuid
+            and res.get("mode") == "soft"
+            and res.get("blocked") is False
+            and res.get("references") == {}
+        )
+        results.append(CheckResult("4", "R19_9b09c9b0_bug_delete(dry_run)", STATUS_PASS if dry_run_ok else STATUS_FAIL, "" if dry_run_ok else str(res)))
+        if not dry_run_ok:
+            return results
+
+        ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+        hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == bug_uuid
+        results.append(CheckResult("4", "R19_9b09c9b0_bug_delete(hard)", STATUS_PASS if hard_ok else STATUS_FAIL, "" if hard_ok else str(res)))
+        if not hard_ok:
+            return results
+
+        ok, res = await call(client, "bug_list", {"plan": plan_uuid})
+        gone_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list) and not any(
+            isinstance(b, dict) and b.get("uuid") == bug_uuid for b in res["bugs"]
+        )
+        results.append(CheckResult("4", "R19_9b09c9b0_bug_gone_from_bug_list", STATUS_PASS if gone_ok else STATUS_FAIL, "" if gone_ok else str(res)))
+    finally:
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R19_9b09c9b0_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -4248,9 +4353,11 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     ok, bug_plan_res = await call(client, "plan_create", {"name": bug_plan_name})
     bug_create_results: list[CheckResult] = []
     bug_plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
+    bug_fix_uuid: Optional[str] = None
     if ok and isinstance(bug_plan_res, dict) and bug_plan_res.get("uuid"):
         bug_plan_uuid = bug_plan_res["uuid"]
-        bug_create_results, bug_uuid = await run_tier3_bug_create(client, bug_plan_uuid)
+        bug_create_results, bug_uuid, bug_fix_uuid = await run_tier3_bug_create(client, bug_plan_uuid)
         if bug_uuid is not None:
             entities["bug"] = bug_uuid
     else:
@@ -4268,6 +4375,18 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     # --- Tier 3 CLEANUP phase: now it is safe to tear everything down.
     results += await run_tier3_plan_step_cleanup(client, plan_uuid, plan_name)
     results += await run_tier3_todo_cleanup(client, todo_uuid)
+    # bug_delete (todo 9b09c9b0) now exists: hard-delete the child fix, then
+    # the bug itself, BEFORE the plan -- bug_report.source_plan_uuid carries
+    # no FK/cascade of its own, so the plan hard delete below never touched
+    # this row; leaving it out would leak an orphaned bug_report (and
+    # bug_fix) row on every smoke run. A live bug_fix.bug_uuid reference
+    # would otherwise block the bug's own hard delete, hence fix-then-bug.
+    if bug_fix_uuid is not None:
+        ok, res = await call(client, "bug_fix_delete", {"bug_fix": bug_fix_uuid, "changed_by": "live-smoke", "hard": True})
+        results.append(CheckResult("3", "bug_fix_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    if bug_uuid is not None:
+        ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+        results.append(CheckResult("3", "bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     if bug_plan_uuid is not None:
         ok, res = await call(client, "plan_delete", {"plan": bug_plan_uuid, "hard": True})
         results.append(CheckResult("3", "bug_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
@@ -4290,6 +4409,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r16_bug_update_append_history(client)
     results += await run_r17_bug_optional_plan_project_anchor(client, args.project)
     results += await run_r18_context_bundle_child_block_identity(client)
+    results += await run_r19_bug_delete_full_crud_lifecycle(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
