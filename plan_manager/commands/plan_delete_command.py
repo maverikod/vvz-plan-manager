@@ -1,8 +1,6 @@
 """Command: plan_delete — soft-delete or permanently delete a plan."""
 
-import os
 import shutil
-from pathlib import Path
 from typing import ClassVar
 
 from plan_manager.commands.base_command import Command
@@ -18,6 +16,7 @@ from plan_manager.domain.plan import (
     hard_delete_plan,
     soft_delete_plan,
 )
+from plan_manager.exchange.export_paths import resolve_export_subdirectory
 from plan_manager.runtime.context import app_config, db_connection
 
 
@@ -27,7 +26,10 @@ def _remove_export_layout(export_root: str, plan_name: str) -> bool:
     This is a pure, defense-in-depth helper: it refuses to act on any
     ``plan_name`` that could traverse outside ``export_root`` and only ever
     removes a directory that resolves to a direct child of the resolved
-    export root.
+    export root. The boundary check itself is delegated to the shared
+    resolver (plan_manager.exchange.export_paths.resolve_export_subdirectory)
+    so the rule is defined once; only the is_dir()/rmtree removal behavior
+    stays local to this command.
 
     Args:
         export_root: Configured export root directory (as configured, not
@@ -43,17 +45,8 @@ def _remove_export_layout(export_root: str, plan_name: str) -> bool:
             exist (nothing to remove — not an error), or the candidate is
             not strictly a direct child of the resolved export root.
     """
-    if not plan_name or plan_name in (".", ".."):
-        return False
-    if "/" in plan_name or os.sep in plan_name or "\\" in plan_name:
-        return False
-    if os.altsep and os.altsep in plan_name:
-        return False
-
-    root = Path(export_root).resolve()
-    candidate = (Path(export_root) / plan_name).resolve()
-
-    if candidate.parent != root:
+    candidate = resolve_export_subdirectory(export_root, plan_name)
+    if candidate is None:
         return False
 
     if not candidate.is_dir():

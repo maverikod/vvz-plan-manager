@@ -10,6 +10,7 @@ name, since the archiver imports it rather than restating it.
 """
 from __future__ import annotations
 
+import os
 import tarfile
 from pathlib import Path
 
@@ -21,7 +22,10 @@ from plan_manager.exchange.archiver import (
     ExportArchiveTreeMissingError,
     create_export_archive,
 )
-from plan_manager.exchange.export_paths import resolve_export_subdirectory
+from plan_manager.exchange.export_paths import (
+    resolve_export_subdirectory,
+    resolve_export_subfile,
+)
 
 
 def _build_export_tree(export_root: Path) -> dict[str, bytes]:
@@ -112,3 +116,106 @@ def test_shared_resolver_resolves_a_name_with_no_directory_on_disk(tmp_path: Pat
     assert resolve_export_subdirectory(str(tmp_path), "never-exported") == (
         tmp_path / "never-exported"
     ).resolve()
+
+
+def test_shared_resolver_refuses_altsep_when_defined(monkeypatch, tmp_path: Path) -> None:
+    """A name containing os.altsep is refused whenever the platform defines one.
+
+    POSIX leaves os.altsep unset, so this exercises the branch by simulating a
+    platform that defines it (e.g. Windows, where altsep is '/').
+    """
+    monkeypatch.setattr(os, "altsep", "@", raising=False)
+    assert resolve_export_subdirectory(str(tmp_path), "weird@name") is None
+
+
+# --- resolve_export_subfile (todo 1ae3af41: consolidated from export_read_command's
+# former _resolve_export_file, which now delegates here) -----------------------------
+
+
+def test_subfile_resolver_resolves_inside_plan_dir(tmp_path: Path) -> None:
+    (tmp_path / "my-plan").mkdir()
+    (tmp_path / "my-plan" / "hrs.md").write_text("x", encoding="utf-8")
+    resolved = resolve_export_subfile(str(tmp_path), "my-plan", "hrs.md")
+    assert resolved == (tmp_path / "my-plan" / "hrs.md").resolve()
+
+
+def test_subfile_resolver_allows_subdirectory(tmp_path: Path) -> None:
+    (tmp_path / "my-plan" / "mrs").mkdir(parents=True)
+    resolved = resolve_export_subfile(str(tmp_path), "my-plan", "mrs/concepts.yaml")
+    assert resolved == (tmp_path / "my-plan" / "mrs" / "concepts.yaml").resolve()
+
+
+def test_subfile_resolver_refuses_traversal(tmp_path: Path) -> None:
+    (tmp_path / "my-plan").mkdir()
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    assert resolve_export_subfile(str(tmp_path), "my-plan", "../secret.txt") is None
+
+
+def test_subfile_resolver_refuses_symlink_escape(tmp_path: Path) -> None:
+    (tmp_path / "my-plan").mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("nope", encoding="utf-8")
+    link = tmp_path / "my-plan" / "link.txt"
+    link.symlink_to(outside)
+    assert resolve_export_subfile(str(tmp_path), "my-plan", "link.txt") is None
+
+
+def test_subfile_resolver_refuses_bad_plan_segment(tmp_path: Path) -> None:
+    assert resolve_export_subfile(str(tmp_path), "a/b", "f.txt") is None
+    assert resolve_export_subfile(str(tmp_path), "..", "f.txt") is None
+
+
+def test_subfile_resolver_refuses_empty_or_non_string_file(tmp_path: Path) -> None:
+    (tmp_path / "my-plan").mkdir()
+    assert resolve_export_subfile(str(tmp_path), "my-plan", "") is None
+
+
+# --- resolve_export_subdirectory reused as the single-segment filename check
+# (todo 1ae3af41: consolidated from export_upload_save_command's former
+# string-only _is_safe_filename) ------------------------------------------------------
+
+
+def test_single_segment_variant_accepts_a_plain_filename(tmp_path: Path) -> None:
+    export_root = tmp_path / "export_root"
+    export_root.mkdir()
+    assert resolve_export_subdirectory(str(export_root), "result.bin") == (
+        export_root / "result.bin"
+    ).resolve()
+
+
+def test_single_segment_variant_rejects_traversal_filenames(tmp_path: Path) -> None:
+    export_root = tmp_path / "export_root"
+    export_root.mkdir()
+    assert resolve_export_subdirectory(str(export_root), "..") is None
+    assert resolve_export_subdirectory(str(export_root), "../evil.bin") is None
+    assert resolve_export_subdirectory(str(export_root), "sub/evil.bin") is None
+
+
+def test_single_segment_variant_rejects_dot_filename(tmp_path: Path) -> None:
+    """Security tightening (todo 1ae3af41): the old string-only _is_safe_filename
+    admitted '.' as a "safe" bare filename (no '/', no '\\', no '..' substring); the
+    shared resolver rejects it outright, since '.' is not a real path segment."""
+    export_root = tmp_path / "export_root"
+    export_root.mkdir()
+    assert resolve_export_subdirectory(str(export_root), ".") is None
+
+
+def test_single_segment_variant_rejects_symlink_escape_for_a_filename(tmp_path: Path) -> None:
+    """Security tightening (todo 1ae3af41): a filename that is itself a pre-existing
+    symlink escaping export_root was admitted by the old string-only check (it never
+    touched the filesystem) and is now rejected, since the shared resolver follows
+    symlinks before comparing against the resolved export_root."""
+    export_root = tmp_path / "export_root"
+    export_root.mkdir()
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"secret")
+    evil = export_root / "evil.bin"
+    evil.symlink_to(outside)
+    assert resolve_export_subdirectory(str(export_root), "evil.bin") is None
+
+
+def test_single_segment_variant_refuses_altsep_when_defined(monkeypatch, tmp_path: Path) -> None:
+    export_root = tmp_path / "export_root"
+    export_root.mkdir()
+    monkeypatch.setattr(os, "altsep", "@", raising=False)
+    assert resolve_export_subdirectory(str(export_root), "weird@name.bin") is None

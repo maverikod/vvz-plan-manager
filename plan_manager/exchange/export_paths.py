@@ -49,3 +49,41 @@ def resolve_export_subdirectory(export_root: str, name: str) -> Path | None:
     if candidate.parent != root:
         return None
     return candidate
+
+
+def resolve_export_subfile(export_root: str, plan_name: str, file: str) -> Path | None:
+    """Resolve `<export_root>/<plan_name>/<file>` for reading, or None if unsafe.
+
+    Composes `resolve_export_subdirectory` (which settles the `plan_name`
+    boundary — single safe segment, direct child of the resolved export
+    root) with a parents-containment check for `file`, which unlike a plan
+    name may itself contain subdirectories. The fully resolved candidate
+    (symlinks followed) must be the plan directory itself or a descendant of
+    it; any attempt to escape the plan directory — via '..' segments or a
+    symlink planted inside the tree — is rejected.
+
+    Args:
+        export_root: Configured export root directory (as configured, not
+            necessarily already resolved or existing).
+        plan_name: The owning plan's catalog name; must resolve as a single
+            safe segment directly under export_root (see
+            resolve_export_subdirectory).
+        file: Plan-relative file path to resolve under the plan directory;
+            may contain subdirectories.
+
+    Returns:
+        Path | None: The resolved absolute Path when it is safely inside
+            `<export_root>/<plan_name>/`, regardless of whether the file
+            currently exists on disk. None when plan_name is rejected by
+            resolve_export_subdirectory, file is empty/not a string, or the
+            resolved candidate escapes the plan directory.
+    """
+    plan_root = resolve_export_subdirectory(export_root, plan_name)
+    if plan_root is None:
+        return None
+    if not file or not isinstance(file, str):
+        return None
+    candidate = (plan_root / file).resolve()
+    if candidate != plan_root and plan_root not in candidate.parents:
+        return None
+    return candidate

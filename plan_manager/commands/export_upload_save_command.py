@@ -24,11 +24,25 @@ from plan_manager.commands.export_upload_save_metadata import (
     get_export_upload_save_metadata,
 )
 from plan_manager.commands.errors import map_exception
+from plan_manager.exchange.export_paths import resolve_export_subdirectory
 from plan_manager.runtime.context import app_config
 
 
-def _is_safe_filename(filename: str) -> bool:
-    return bool(filename) and "/" not in filename and "\\" not in filename and ".." not in filename
+def _is_safe_filename(export_root: str, filename: str) -> bool:
+    """Return True when `filename` is a safe single segment inside `export_root`.
+
+    Reuses the shared boundary resolver (resolve_export_subdirectory):
+    although that helper's name says "subdirectory", it never checks
+    is_dir() — it only judges whether a name is a single safe segment whose
+    fully resolved candidate (symlinks followed) is a direct child of the
+    resolved export_root, which is exactly the rule a promoted upload's bare
+    filename must satisfy too. This is a strict superset of the previous
+    string-only check: it additionally follows symlinks (a filename that is
+    itself a pre-existing symlink escaping export_root is now rejected) and
+    honors os.altsep, where the old check tested only '/' and '\\' plus a
+    substring scan for '..'.
+    """
+    return resolve_export_subdirectory(export_root, filename) is not None
 
 
 class ExportUploadSaveCommand(Command):
@@ -82,7 +96,8 @@ class ExportUploadSaveCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            if not _is_safe_filename(filename):
+            export_root_str = app_config().export_root
+            if not _is_safe_filename(export_root_str, filename):
                 return ErrorResult(
                     message="filename must be a bare file name without path separators",
                     code=-32602,
@@ -96,7 +111,7 @@ class ExportUploadSaveCommand(Command):
             except TransferError as exc:
                 return transfer_domain_error_result(exc)
 
-            export_root = Path(app_config().export_root)
+            export_root = Path(export_root_str)
             export_root.mkdir(parents=True, exist_ok=True)
             destination = export_root / filename
             temp_destination = export_root / f".{filename}.tmp.{os.getpid()}"

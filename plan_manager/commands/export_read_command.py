@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -21,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.export_read_metadata import get_export_read_metadata
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.exchange.export_paths import resolve_export_subfile
 from plan_manager.runtime.context import app_config, db_connection
 
 
@@ -31,10 +31,13 @@ _MAX_CHUNK_BYTES: int = 262144
 def _resolve_export_file(export_root: str, plan_name: str, file: str) -> Path | None:
     """Safely resolve ``<export_root>/<plan_name>/<file>`` for reading.
 
-    Defense-in-depth path resolver mirroring plan_delete's _remove_export_layout: the plan name
-    must be a single safe path segment, the file must be a non-empty relative path, and the fully
-    resolved candidate (symlinks followed) must stay strictly inside the resolved plan export
-    directory. Any attempt to escape the plan directory returns None.
+    Thin wrapper over the shared resolver
+    (plan_manager.exchange.export_paths.resolve_export_subfile), which composes the
+    canonical plan-name boundary check with the sub-file containment check: the plan
+    name must be a single safe path segment, the file must be a non-empty relative
+    path, and the fully resolved candidate (symlinks followed) must stay strictly
+    inside the resolved plan export directory. Any attempt to escape the plan
+    directory returns None.
 
     Args:
         export_root: Configured export root directory (as configured; not necessarily resolved).
@@ -44,24 +47,7 @@ def _resolve_export_file(export_root: str, plan_name: str, file: str) -> Path | 
     Returns:
         The resolved Path when it is safely inside ``<export_root>/<plan_name>/``; otherwise None.
     """
-    if not plan_name or plan_name in (".", ".."):
-        return None
-    if "/" in plan_name or os.sep in plan_name or "\\" in plan_name:
-        return None
-    if os.altsep and os.altsep in plan_name:
-        return None
-    if not file or not isinstance(file, str):
-        return None
-
-    root = Path(export_root).resolve()
-    plan_root = (Path(export_root) / plan_name).resolve()
-    if plan_root.parent != root:
-        return None
-
-    candidate = (plan_root / file).resolve()
-    if candidate != plan_root and plan_root not in candidate.parents:
-        return None
-    return candidate
+    return resolve_export_subfile(export_root, plan_name, file)
 
 
 def _sha256_file(path: Path) -> str:
