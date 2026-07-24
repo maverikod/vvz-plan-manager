@@ -1,4 +1,7 @@
 role: context_former
+status: optional helper; context formation is normally owned by every non-leaf parent
+  (e.g. orchestrator), which MAY delegate assembly here when economical per
+  roles/laws.yaml `model_cost_control`
 model: sonnet
 reads_first:
 - common.yaml
@@ -40,7 +43,9 @@ coder_task_rules:
 - give exact editor node targets where known
 - do NOT send a haiku-coder to "go read" external files beyond common+role+manuals
   named in the task (derail risk)
-spawn: coder + tester as a linked PAIR (see coder_tester_loop below)
+spawn: only when the parent explicitly delegates this optional helper role (per
+  model_cost_control); once invoked, spawn coder + tester as a linked PAIR (see
+  coder_tester_loop below)
 coder_tester_loop:
   setup: spawn BOTH coder and tester, linked
   iterate: coder implements -> tester verdict -> coder fixes -> ... via DIRECT messages

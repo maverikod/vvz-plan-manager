@@ -1,5 +1,5 @@
 # plan_manager — standing LAWS (universal). Referenced from common.yaml spawn protocol;
-# prompts-template: claude-prompts-v1 rev 1.5.0 (2026-07-24)
+# prompts-template: claude-prompts-v1 rev 1.6.0 (2026-07-24)
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
@@ -30,6 +30,22 @@ laws:
     messages, prompt/contract files, inter-agent tasks and reports, bug/todo records,
     logs. A subagent never writes Russian into artifacts; the orchestrator translates
     when reporting to the user.
+  model_cost_control: >-
+    The CHEAPEST model capable of a task does the work, always under the CONTROL of
+    a MORE EXPENSIVE model. The more-expensive parent DECIDES, SUPERVISES, and OWNS
+    the accepted result — full responsibility for accepted work lies with the
+    supervising parent, never the cheap delegate. Pick the cheapest model capable of
+    the task at acceptable hallucination/quality risk; escalate model tier ONLY for
+    judgment, verdict, or verification work (e.g. conscience, independent claim
+    verification). SINGLE AUTHORITATIVE STATEMENT of model-tier selection for this
+    project — CLAUDE.md's spawn paragraph and `orchestrator.yaml` `spawn` cross-
+    reference this law by name instead of restating the principle; they still record
+    the project's concrete tier mapping (haiku/sonnet/opus) as this law's applied
+    result, not a competing rule. GOVERNS the `context_former` resolution: a parent
+    MAY delegate context assembly to the cheaper `context_former` helper when
+    economical, but retains control and ownership of the accepted result exactly as
+    this law requires (see `common.yaml` "a parent owns context formation..."
+    principle and `context_former.yaml` `status`).
   mcp_only: >-
     [unless variables.file_access=local] ALL project file ops (read AND write) via MCP proxy
     (code-analysis-server-vvz / ai-editor-server-vvz / mcp-terminal-vvz). Never local bash/Read/Write/Edit
@@ -71,6 +87,16 @@ laws:
     Never declare tooling broken or file a bug off a single failure - the environment flaps.
     Read help/info, reproduce fresh; only a clean repeatable failure is a bug. Surface
     blockers explicitly; never silently work around them.
+  zero_trust: >-
+    A child (subagent) report is a claim, not evidence. Before accepting it, verify
+    the actual artifact, diff, command result, test output, or live state it claims
+    to have produced — re-check weak branches manually even when the report reads
+    confidently. This is the GENERAL acceptance law for every child report, satisfied
+    by the accepting role's own read-only verification. The specific case of a
+    BLOCKING infra/capability claim (API missing / server down / no singleton)
+    additionally requires independent-different-model verification per
+    `verify_claims_independent_model` below — that law is a SPECIALIZATION of this
+    general rule for spawn-capable roles; apply both, do not conflate them.
   verify_claims_independent_model: >-
     A blocking subagent claim (API missing / server down / no singleton) is not truth.
     Verify read-only with an INDEPENDENT different model before escalating or redirecting
@@ -149,7 +175,7 @@ laws:
     second one.
   template_prompt_reconciliation: >-
     [once per session] Reconcile the project's prompt bundle (prompts/) with its
-    source template: claude - /home/vasilyvz/projects/prompts/claude-prompts-v1.5.0.tar.gz,
+    source template: claude - /home/vasilyvz/projects/prompts/claude-prompts-v1.6.0.tar.gz,
     codex - /home/vasilyvz/projects/prompts/codex-prompts-v1.5.0.tar.gz. The model
     REQUESTS the user's permission to update; only after the user confirms does it
     diff template vs project bundle and update the project prompt (project-specific

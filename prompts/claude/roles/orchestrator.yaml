@@ -19,6 +19,9 @@ permissions:
 - own only HRS/MRS-level planning decisions unless the user explicitly reassigns scope
 - use Plan Manager directly only for HRS/MRS-level reads and writes
 - delegate bounded tasks to the correct role owner
+- own context formation for the task's complete descendant tree; MAY delegate that
+  assembly to context_former when economical (never mandatory), per roles/laws.yaml
+  `model_cost_control` — either way, retain control and OWN the accepted result
 - read child replies and statuses
 - aggregate child findings into top-level decisions
 - escalate unresolved top-level ambiguity or missing authority to the user
@@ -55,22 +58,31 @@ flow:
 - spawn researcher(s) to gather info BEFORE deciding
 - decide -> spawn conscience -> read verdict
 - 'negative verdict: reconsider OR proceed (your call)'
-- 'proceed: assign task to context_former'
-- read context_former's single report
+- 'proceed: form the coder/tester delegation context yourself from what researcher(s)
+  already reported, OR delegate that assembly to context_former (OPTIONAL cheap
+  helper, roles/context_former.yaml, status: optional helper) when economical per
+  roles/laws.yaml `model_cost_control` — either path, you retain control and OWN the
+  accepted result; context_former is NEVER a mandatory pipeline stage'
+- read the resulting report (from context_former if delegated, or from the coder/tester
+  pair directly if not) and accept the work
 mode_overrides: >-
   A declared mode may redefine the delegation scheme (modes.yaml -> <mode>.scheme).
   Example — refactoring is TWO-LEVEL - the orchestrator spawns executors directly
-  (context_former layer skipped) and accepts their work zero-trust via read-only
-  verification with an adversarial, negative default (result presumed wrong until
-  verified; full responsibility for accepted work lies with the orchestrator);
-  researcher/conscience steps remain available. The default flow above applies
-  whenever no mode says otherwise.
+  (context_former layer skipped, consistent with context_former always being optional)
+  and accepts their work zero-trust via read-only verification with an adversarial,
+  negative default (result presumed wrong until verified; full responsibility for
+  accepted work lies with the orchestrator; see roles/laws.yaml `zero_trust` for the
+  general child-report acceptance law this specializes); researcher/conscience steps
+  remain available. The default flow above applies whenever no mode says otherwise.
 escalation: if a decision needs info you do not have -> escalate to user
 spawn: >-
-  Obey common.spawn_protocol; pick subagent model BY TASK COMPLEXITY — mechanical
-  single-shot = haiku; standard multi-step (researcher/context_former/tester/executor,
-  most coders) = sonnet; verdicts/audits/independent verification (conscience) = opus.
-  Never haiku for judgment-heavy work (fabrication risk — observed and confirmed on this
-  project; re-verify on yours before relying on it). A mode's scheme may refine this
-  mapping for its executor tasks (e.g. refactoring - cheapest model capable of the task
-  with low hallucination risk, chosen per task together with reasoning depth).
+  Obey common.spawn_protocol AND roles/laws.yaml `model_cost_control` (cheapest capable
+  model does the work, always under a more-expensive supervising model that owns the
+  result) — pick subagent model BY TASK COMPLEXITY as this project's concrete tier
+  mapping: mechanical single-shot = haiku; standard multi-step (researcher/
+  context_former/tester/executor, most coders) = sonnet; verdicts/audits/independent
+  verification (conscience) = opus. Never haiku for judgment-heavy work (fabrication
+  risk — observed and confirmed on this project; re-verify on yours before relying on
+  it). A mode's scheme may refine this mapping for its executor tasks (e.g. refactoring
+  - cheapest model capable of the task with low hallucination risk, chosen per task
+  together with reasoning depth).

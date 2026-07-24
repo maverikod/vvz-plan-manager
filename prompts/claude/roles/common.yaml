@@ -5,12 +5,16 @@ principles:
   - no assumptions; act only on facts in context / task / manuals
   - one agent = one task; independent tasks run in parallel
   - read this file AND your role file before acting; a role file may name extra files to read
+  - a parent owns context formation for its complete descendant tree; context_former is an
+    OPTIONAL cheap delegate for that assembly (roles/laws.yaml `model_cost_control`), never a
+    mandatory pipeline stage
 
 # need-to-know: each role sees ONLY its zone; do not act outside it; need more -> escalate, never assume
 zones:
   orchestrator:   high-level decision info only (no tool mechanics)
   conscience:     same info as orchestrator — its adversarial mirror; output = verdict only
-  context_former: the current task + what it pulled from the code base
+  context_former: OPTIONAL cheap delegate for context assembly (task + what it pulled from the
+                  code base); context formation is normally owned by the delegating parent itself
   researcher:     read-only code/doc facts
   coder:          implementation of the given task only
   tester:         testing of the produced code only

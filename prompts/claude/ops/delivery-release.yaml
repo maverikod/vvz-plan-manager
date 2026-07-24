@@ -20,7 +20,10 @@ project:
 
 procedure: |
   0. FOR A BUG FIX: reproduce the defect and prove its cause before mutation; implement
-     the localized repair plus a focused regression test; run project checks.
+     the localized repair plus a focused regression test; run the QA gate tools this
+     project actually uses — the pytest unit suite (`python3 -m pytest -q`, per
+     `build.sh`) and the mypy strict typecheck (`mypy.ini`: `strict = True`) on touched
+     paths, per laws.yaml `editor_gate_no_bypass`.
   1. VERSION BUMP: increment the project version by 1 in the root pyproject.toml —
      the single source of truth. VERSION LOCKSTEP IS LAW: client package, server
      package, docker image tag, and .deb version must all equal this version

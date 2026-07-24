@@ -34,7 +34,9 @@ reached via the MCP proxy (see "Plan stores" below).
 mechanics, shipped) + one per role: `orchestrator.yaml`, `researcher.yaml`,
 `context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`, `executor.yaml`.
 Each role sees ONLY its zone (need-to-know): orchestrator = high-level decisions (no tool
-mechanics); conscience = orchestrator's mirror; context_former = task + what it pulled;
+mechanics); conscience = orchestrator's mirror; context_former = OPTIONAL cheap delegate
+for task context + what it pulled (never a mandatory stage — a parent may assemble
+context itself and own it, see `prompts/claude/roles/laws.yaml` `model_cost_control`);
 researcher = read-only facts; coder = implementation; tester = testing; executor =
 runtime execution of frozen atomic steps (plan-manager runtime records + coder/tester
 pair orchestration; never plan truth, never direct file edits). Modes
@@ -48,13 +50,16 @@ begin with:
 > bare file names in those lists under `prompts/claude/`; via Read) — do NOT spawn a
 > subagent to read. Then: `<task>`.
 
-Pick the subagent model **by task complexity**: mechanical single-shot work = haiku;
-standard multi-step work (researcher / context_former / tester / executor and most
-coders) = **sonnet**; verdicts, audits, hardest analysis (conscience, independent
-verification) = **opus**. Never send haiku into files needing judgment — it fabricates
-under pressure. **Where a Phase below fixes a delegation ladder or model binding (the
-two-level maintenance ladder; the staged authoring pipeline), THAT governs over this
-generic default.**
+**Model selection is governed by `prompts/claude/roles/laws.yaml` `model_cost_control`**:
+the cheapest capable model does the work, always under the control of a more-expensive
+model that decides, supervises, and OWNS the accepted result. This project's concrete
+tier mapping, as the applied result of that law — pick the subagent model **by task
+complexity**: mechanical single-shot work = haiku; standard multi-step work
+(researcher / context_former / tester / executor and most coders) = **sonnet**;
+verdicts, audits, hardest analysis (conscience, independent verification) = **opus**.
+Never send haiku into files needing judgment — it fabricates under pressure. **Where a
+Phase below fixes a delegation ladder or model binding (the two-level maintenance
+ladder; the staged authoring pipeline), THAT governs over this generic default.**
 
 @prompts/claude/roles/common.yaml
 @prompts/claude/roles/laws.yaml
