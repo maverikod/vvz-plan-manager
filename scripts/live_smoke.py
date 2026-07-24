@@ -4038,16 +4038,23 @@ async def run_r18_context_bundle_child_block_identity(client: Any) -> list[Check
     explicit child_ref column (migration 0023).
 
     Recipe (mirrors R15 unit 2's/R8's cascade_begin -> concept_add(cascade_
-    scoped) -> ... idiom, since MRS concepts are cascade-only): plan_create
-    -> step_create G (level 3) -> step_create T (level 4, parent=G) ->
+    scoped) -> ... idiom, since MRS concepts are cascade-only, AND R2/R8/
+    R12's context_common-immediately-before-every-step_create idiom, since
+    has_current_common_block requires the stored block's revision_uuid to
+    match the plan's CURRENT head revision exactly): plan_create ->
+    context_common(plan, level3) -> step_create G (level 3) ->
+    context_common(G, level4) -> step_create T (level 4, parent=G) ->
     cascade_begin -> concept_add(C-001/C-002/C-003, cascade-scoped) ->
     context_bundle(node=T, child_level=5, shared_concepts=[C-001..C-003],
     children=[A-001..A-005] each scoped to the SAME three concepts) --
     every child's compiled delta is legitimately empty (fully covered by
     the T common block), so this reproduces the worst-case aliasing the
-    bug report described. Asserts the five returned block_ids are
-    pairwise distinct, then reads each back via block_get and asserts its
-    child_ref/attribution matches the child that requested it.
+    bug report described. context_bundle itself needs no preceding
+    context_common(T, level5) call: unlike step_create it always compiles
+    fresh, and the A-00N children are virtual refs, never real level-5
+    steps. Asserts the five returned block_ids are pairwise distinct, then
+    reads each back via block_get and asserts its child_ref/attribution
+    matches the child that requested it.
 
     Pre-fix detection: aliased (non-distinct) block_ids across the five
     children IS the bug's own symptom -- observing it here is the version
@@ -4063,12 +4070,29 @@ async def run_r18_context_bundle_child_block_identity(client: Any) -> list[Check
             return results
         plan_uuid = res["uuid"]
 
+        # context_common must be (re)compiled for the parent/child_level
+        # immediately before EVERY step_create -- has_current_common_block
+        # (plan_manager/views/context_blocks.py) requires the stored
+        # block's revision_uuid to match the plan's CURRENT head revision
+        # exactly, and step_create bumps that head revision. Same idiom as
+        # R2/R8/R12/R15 unit 2 (run_tier3_plan_step_create's docstring is
+        # the canonical statement of this contract).
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R18_a795ea4d_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+
         ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
         g_id = _extract_step_id(res) if ok else None
         if not ok or g_id is None:
             results.append(CheckResult("4", "R18_a795ea4d_step_create(G)", STATUS_FAIL, str(res)))
             return results
         results.append(CheckResult("4", "R18_a795ea4d_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R18_a795ea4d_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
 
         ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
         t_id = _extract_step_id(res) if ok else None
@@ -4077,6 +4101,12 @@ async def run_r18_context_bundle_child_block_identity(client: Any) -> list[Check
             return results
         results.append(CheckResult("4", "R18_a795ea4d_step_create(T)", STATUS_PASS, f"step_id={t_id}"))
 
+        # No context_common(T, level5) call is needed here: unlike
+        # step_create (gated by has_current_common_block), context_bundle
+        # itself compiles the common/specific blocks fresh on every call
+        # (plan_manager/commands/context_bundle_command.py) -- the A-00N
+        # children below are virtual refs passed straight to context_bundle,
+        # never materialized as real level-5 steps.
         ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
             results.append(CheckResult("4", "R18_a795ea4d_cascade_begin", STATUS_FAIL, str(res)))
