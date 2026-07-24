@@ -200,5 +200,6 @@ def get_plan_unfreeze_metadata(cls: type) -> dict:
             "See the {1e67} roadmap note: subtree freeze/unfreeze already "
             "works via scoped step_transition; plan_unfreeze covers only the "
             "whole-plan full-freeze escape.",
+            "The audit record written by this command is readable via audit_list.",
         ],
     }

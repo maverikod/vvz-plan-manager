@@ -122,5 +122,6 @@ class CommentDeleteCommand(Command):
                 "hard=true irreversibly removes the row; it cannot be undone - always run dry_run=true first.",
                 "Both modes are gated by the universal deletion rule: while a live superseding comment references this one the command refuses with DELETE_BLOCKED and lists every referencing record (uuid + kind); delete the referrers first.",
                 "The deletion is recorded on the runtime audit trail under changed_by; verify the outcome with comment_get, which no longer returns the comment.",
+                "The audit record written by this command is readable via audit_list.",
             ],
         )

@@ -122,5 +122,6 @@ class TodoDeleteCommand(Command):
                 "hard=true irreversibly removes the row and cascade-removes the item's todo_link rows; it cannot be undone - always run dry_run=true first.",
                 "Both modes are gated by the universal deletion rule: while live blocking referrers exist the command refuses with DELETE_BLOCKED and lists every referencing record (uuid + kind); detach or delete referrers first.",
                 "The deletion is recorded on the runtime audit trail under changed_by; verify the outcome with todo_get, which no longer returns the item.",
+                "The audit record written by this command is readable via audit_list.",
             ],
         )

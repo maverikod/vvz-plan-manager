@@ -215,5 +215,6 @@ def get_export_cleanup_metadata(cls: Any) -> dict:
             "include_orphaned=true widens removal to directories with no matching plan row at all; omit it to only ever touch directories of plans that were actually soft-deleted.",
             "An export archive is an ordinary artifact here: it is counted in the preview and removed with its directory. To keep an archive, do not clean up that plan's directory - there is no per-file exemption.",
             "Every invocation, dry or real, is recorded on the runtime audit trail under changed_by; inspect it to reconstruct who purged what and when.",
+            "The audit record written by this command is readable via audit_list.",
         ],
     }
