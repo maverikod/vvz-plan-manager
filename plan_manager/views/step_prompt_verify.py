@@ -25,7 +25,64 @@ from plan_manager.views.step_fingerprint import step_field_hash
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
-_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+
+def _is_closing_fence_line(line: str, opener_run: int) -> bool:
+    """Return True when line is exactly a backtick run >= opener_run.
+
+    Ported from plan_manager.verify.gate_code._is_closing_fence_line
+    (private symbol there; kept as a faithful local copy rather than a
+    cross-package import of an underscore-prefixed helper).
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if any(ch != "`" for ch in stripped):
+        return False
+    return len(stripped) >= opener_run
+
+
+def _scan_fenced_blocks(text: str) -> list[str]:
+    """Return the body text of each terminated fenced code block in text.
+
+    CommonMark-style line-based scan, ported from
+    plan_manager.verify.gate_code._extract_fenced_blocks: a line is an
+    opener when, after stripping leading spaces, it starts with a run of
+    three or more backticks. A subsequent line is the matching closer
+    only when, after stripping surrounding whitespace, it consists
+    solely of a backtick run at least as long as the opener's run; a
+    backtick run that merely appears within a content line (mid-line, or
+    trailed by other text) is never mistaken for a fence boundary. This
+    replaces a naive greedy regex that mis-pairs fences under exactly
+    that condition (bug 2f568497).
+
+    Only blocks that reach a closing fence before end of text are
+    returned, matching the closed-fence-required semantics of the
+    previous regex (which never matched an unterminated fence); an
+    unterminated trailing block at end of text is dropped. The returned
+    body text includes the trailing newline that precedes the closing
+    fence line, matching the previous regex's capture convention.
+    """
+    lines = text.split("\n")
+    blocks: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        leading_stripped = lines[i].lstrip(" ")
+        run = 0
+        while run < len(leading_stripped) and leading_stripped[run] == "`":
+            run += 1
+        if run < 3:
+            i += 1
+            continue
+        body_lines: list[str] = []
+        i += 1
+        while i < n and not _is_closing_fence_line(lines[i], run):
+            body_lines.append(lines[i])
+            i += 1
+        if i < n:
+            blocks.append("\n".join(body_lines) + "\n")
+            i += 1
+    return blocks
 
 
 def resolve_candidate_bytes(
@@ -76,9 +133,12 @@ def extract_fenced_block(text: str, block_index: int) -> str:
 
     Fenced code blocks are delimited by a line starting with three
     backticks (optionally followed by a language tag) and a closing line
-    of three backticks, matched with the regular expression
-    r"```[^\\n]*\\n(.*?)```" in re.DOTALL mode. block_index is 0-based, in
-    the order blocks appear in text.
+    consisting solely of a backtick run at least as long as the
+    opener's, located with a CommonMark-style line-based scan (see
+    ``_scan_fenced_blocks``) rather than a regular expression: a naive
+    greedy regex mis-pairs fences when a block's content contains a run
+    of backticks mid-line (bug 2f568497). block_index is 0-based, in the
+    order blocks appear in text.
 
     Args:
         text: The text to search (a step field's value).
@@ -86,19 +146,19 @@ def extract_fenced_block(text: str, block_index: int) -> str:
 
     Returns:
         The exact text between the opening and closing fence lines of the
-        block_index-th match, unmodified.
+        block_index-th block, unmodified.
 
     Raises:
         ValueError: If text contains fewer than block_index + 1 fenced
             code blocks.
     """
-    matches = _FENCE_RE.findall(text)
-    if block_index >= len(matches):
+    blocks = _scan_fenced_blocks(text)
+    if block_index >= len(blocks):
         raise ValueError(
             f"block_index {block_index} out of range: text contains "
-            f"{len(matches)} fenced code block(s)"
+            f"{len(blocks)} fenced code block(s)"
         )
-    return matches[block_index]
+    return blocks[block_index]
 
 
 def resolve_target_content(

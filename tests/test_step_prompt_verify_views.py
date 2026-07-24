@@ -79,6 +79,31 @@ def test_extract_fenced_block_out_of_range_raises_value_error() -> None:
         extract_fenced_block(_TWO_BLOCK_TEXT, 2)
 
 
+# Regression coverage for the bug 2f568497 class: a naive greedy
+# fence regex mis-pairs fences when a block's content contains a run of
+# backticks mid-line (here, inside a string literal on a content line
+# that is not itself a closing fence line). The correct CommonMark-style
+# line scanner only treats a line as a closer when, after stripping
+# whitespace, the ENTIRE line is a backtick run >= the opener's run.
+_MISPAIRED_FENCE_TEXT = (
+    "intro\n"
+    "```python\n"
+    "example = \"```\"\n"
+    "more code\n"
+    "```\n"
+    "tail"
+)
+
+
+def test_extract_fenced_block_ignores_mid_line_backtick_run() -> None:
+    assert (
+        extract_fenced_block(_MISPAIRED_FENCE_TEXT, 0)
+        == "example = \"```\"\nmore code\n"
+    )
+    with pytest.raises(ValueError):
+        extract_fenced_block(_MISPAIRED_FENCE_TEXT, 1)
+
+
 def test_resolve_target_content_field_selector_matches_step_field_hash() -> None:
     step = _make_step({"description": "the field text"})
     content, digest = resolve_target_content(step, "description", None)
