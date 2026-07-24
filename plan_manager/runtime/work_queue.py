@@ -1,6 +1,9 @@
 """Build the single unified runtime work queue across plans and runtime entities (C-027)."""
 from __future__ import annotations
 
+import dataclasses
+import uuid
+
 import psycopg
 from plan_manager.runtime.work_item import WorkItem, AsReadyItem, ResourceAvailability
 from plan_manager.runtime.work_ordering import order_queue, pause_dependent_as
@@ -23,6 +26,46 @@ FIX_UNFINISHED_STATUSES = frozenset({"proposed", "in_progress", "implemented", "
 PROPAGATION_OPEN_STATUSES = frozenset({"pending", "ready", "in_progress", "blocked", "failed"})
 ATTEMPT_VERIFICATION_STATUSES = frozenset({"needs_review"})
 REVIEW_OPEN_STATUSES = frozenset({"changes_requested", "needs_owner_decision", "escalated"})
+
+
+def _plan_primary_projects(
+    conn: psycopg.Connection, plan_uuids: set[uuid.UUID],
+) -> dict[uuid.UUID, uuid.UUID | None]:
+    """Batch-fetch each plan's primary_project_id (todo f47a2db0 project-filter fallback).
+
+    One query for the full set of distinct plan_uuids referenced by items that carry no
+    direct project reference of their own (bug_fix, propagation, execution_attempt,
+    review, as_ready) -- never N+1. Read-only; never mutates plan truth.
+    """
+    if not plan_uuids:
+        return {}
+    cur = conn.execute(
+        "SELECT uuid, primary_project_id FROM plan WHERE uuid = ANY(%s)",
+        (list(plan_uuids),),
+    )
+    result: dict[uuid.UUID, uuid.UUID | None] = {}
+    for row in cur.fetchall():
+        raw = row[1]
+        result[row[0]] = uuid.UUID(str(raw)) if raw is not None else None
+    return result
+
+
+def _fill_project_uuid_from_plan(conn: psycopg.Connection, items: list[WorkItem]) -> list[WorkItem]:
+    """Fill WorkItem.project_uuid, for items whose own record carried no direct project,
+    from their anchor plan's primary_project_id (todo f47a2db0). Best-effort: an item
+    anchored to no plan, or whose plan has no primary_project_id, keeps project_uuid=None
+    and simply never matches a `project` filter -- honest, not a guess.
+    """
+    missing_plan_uuids = {it.plan_uuid for it in items if it.project_uuid is None and it.plan_uuid is not None}
+    if not missing_plan_uuids:
+        return items
+    plan_projects = _plan_primary_projects(conn, missing_plan_uuids)
+    return [
+        dataclasses.replace(it, project_uuid=plan_projects[it.plan_uuid])
+        if it.project_uuid is None and it.plan_uuid is not None and plan_projects.get(it.plan_uuid) is not None
+        else it
+        for it in items
+    ]
 
 
 def build_unified_queue(
@@ -65,6 +108,10 @@ def build_unified_queue(
     # Step 8: Add escalations (reader filters to open)
     for esc in list_escalations(conn, status="open"):
         items.append(work_item_from_escalation(esc))
+
+    # Step 8.5: Fill project_uuid via the anchor plan's primary_project_id for items
+    # with no direct project reference of their own (todo f47a2db0).
+    items = _fill_project_uuid_from_plan(conn, items)
 
     # Step 9: Flag AS items paused by blockers or high-priority TODOs
     items = pause_dependent_as(items)

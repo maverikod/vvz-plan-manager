@@ -38,6 +38,7 @@ class WorkItem:
     due_at: str | None = None           # ISO timestamp; earliest first; None sorts last
     created_at: str = ""                # ISO timestamp; age ordering (oldest first)
     plan_uuid: uuid.UUID | None = None
+    project_uuid: uuid.UUID | None = None  # todo f47a2db0: direct source project ref, or the anchor plan's primary_project_id fallback (see work_queue._plan_primary_projects); None when neither is derivable
     step_uuid: uuid.UUID | None = None
     step_path: str | None = None
     assigned_provider: str | None = None
@@ -60,6 +61,7 @@ class WorkItem:
             "due_at": self.due_at,
             "created_at": self.created_at,
             "plan_uuid": str(self.plan_uuid) if self.plan_uuid is not None else None,
+            "project_uuid": str(self.project_uuid) if self.project_uuid is not None else None,
             "step_uuid": str(self.step_uuid) if self.step_uuid is not None else None,
             "step_path": self.step_path,
             "assigned_provider": self.assigned_provider,

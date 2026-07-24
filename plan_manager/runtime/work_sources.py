@@ -43,6 +43,7 @@ def work_item_from_todo(todo: TodoItem) -> WorkItem:
         due_at=todo.due_at,
         created_at=todo.created_at,
         plan_uuid=todo.anchor_plan_uuid,
+        project_uuid=todo.anchor_project_id,
         step_uuid=todo.anchor_step_uuid,
         step_path=todo.anchor_step_path,
     )
@@ -61,6 +62,7 @@ def work_item_from_bug_report(bug: BugReport) -> WorkItem:
         bug_severity=bug.severity,
         created_at=bug.created_at,
         plan_uuid=bug.source_plan_uuid,
+        project_uuid=bug.source_project_id,
         step_uuid=bug.source_step_uuid,
         step_path=bug.source_step_path,
     )
@@ -135,6 +137,7 @@ def work_item_from_escalation(esc: Escalation) -> WorkItem:
         requires_runtime=False,
         created_at=esc.created_at,
         plan_uuid=esc.anchor_plan_uuid,
+        project_uuid=esc.anchor_project_id,
         step_uuid=esc.anchor_step_uuid,
         step_path=esc.anchor_step_path,
     )
