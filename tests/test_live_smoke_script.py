@@ -2813,6 +2813,13 @@ def _r12_success_responses(*, embedding_available: bool = True) -> dict[str, Any
                 "total": 1, "limit": 50, "offset": 0, "gate_report_json": "{}",
             }),  # view=full
             _ok({"entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}], "total": 1, "limit": 50, "offset": 0}),  # category=added
+            _ok({
+                "gate_report_json": json.dumps({
+                    "green": True,
+                    "checks": [{"check_id": "coverage.gs", "passed": True, "finding_count": 0, "findings": []}],
+                }),
+                "gate_findings_total": 0, "gate_findings_limit": 1, "gate_findings_offset": 0,
+            }),  # todo b6ed4b0b: view=full, gate_findings_limit=1
         ),
         "context_common": _ok({"common_block_id": "block-1"}),
         "step_create": _ok({"uuid": "g-uuid", "step_id": "G-001"}),
@@ -2876,6 +2883,7 @@ def test_run_r12_post_fix_server_passes_every_check():
     assert by_name["R12_cascade_preview(view=full)"].status == ls.STATUS_PASS
     assert by_name["R12_cascade_preview(view=full)_has_added_entry"].status == ls.STATUS_PASS
     assert by_name["R12_cascade_preview(category=added)"].status == ls.STATUS_PASS
+    assert by_name["R12_b6ed4b0b_gate_findings_pagination"].status == ls.STATUS_PASS
     assert by_name["R12_block_get(paginated)"].status == ls.STATUS_PASS
     assert by_name["R12_srt_snapshot_create(cascade_uuid)_tip_semantics"].status == ls.STATUS_PASS
     assert by_name["R12_srt_snapshot_list(compact_default_finds_snapshot)"].status == ls.STATUS_PASS
@@ -2911,6 +2919,7 @@ def test_run_r12_embedding_unavailable_skips_only_the_srt_subcheck():
     assert ls.R12_EMBEDDING_SKIP_REASON in by_name["R12_srt_snapshot_create(cascade_uuid)"].detail
     assert "R12_srt_snapshot_list(compact_default_finds_snapshot)" not in by_name
     assert by_name["R12_cascade_preview(default=summary)"].status == ls.STATUS_PASS
+    assert by_name["R12_b6ed4b0b_gate_findings_pagination"].status == ls.STATUS_PASS
     assert by_name["R12_block_get(paginated)"].status == ls.STATUS_PASS
 
 
@@ -2928,6 +2937,66 @@ def test_run_r12_cascade_tip_not_committed_head_asserts_snapshot_mode():
 
     by_name = {r.name: r for r in results}
     assert by_name["R12_srt_snapshot_create(cascade_uuid)_tip_semantics"].status == ls.STATUS_FAIL
+
+
+def test_run_r12_gate_findings_pagination_skips_when_total_key_absent():
+    """Todo b6ed4b0b: a server with the base view=full support but
+    predating just the gate_report_json findings-pagination follow-on
+    returns no gate_findings_total key -- that SKIPs only this one
+    sub-check, never the whole R12 group."""
+    client = _r12_client()
+    client._responses["cascade_preview"] = _sequence(
+        _ok({"gate_green": True, "summary": {"added": 0, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # version probe
+        _ok({"gate_green": True, "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # default (summary)
+        _ok({
+            "gate_green": True,
+            "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0},
+            "entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}],
+            "total": 1, "limit": 50, "offset": 0, "gate_report_json": "{}",
+        }),  # view=full
+        _ok({"entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}], "total": 1, "limit": 50, "offset": 0}),  # category=added
+        _ok({"gate_report_json": "{}"}),  # todo b6ed4b0b probe: no gate_findings_total key -> pre-fix
+    )
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R12_b6ed4b0b_gate_findings_pagination"].status == ls.STATUS_SKIP
+    assert ls.R12_B6ED4B0B_SKIP_REASON in by_name["R12_b6ed4b0b_gate_findings_pagination"].detail
+    # Independent checks around it must still pass -- this is a per-sub-check SKIP.
+    assert by_name["R12_cascade_preview(view=full)"].status == ls.STATUS_PASS
+    assert by_name["R12_block_get(paginated)"].status == ls.STATUS_PASS
+
+
+def test_run_r12_gate_findings_pagination_fails_when_window_exceeds_limit():
+    """A gate_findings_limit=1 response whose flattened findings window
+    exceeds 1 across every check must FAIL -- the server did not actually
+    honor the page window."""
+    client = _r12_client()
+    client._responses["cascade_preview"] = _sequence(
+        _ok({"gate_green": True, "summary": {"added": 0, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # version probe
+        _ok({"gate_green": True, "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0}}),  # default (summary)
+        _ok({
+            "gate_green": True,
+            "summary": {"added": 1, "removed": 0, "changed": 0, "needs_review": 0, "gate_findings": 0},
+            "entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}],
+            "total": 1, "limit": 50, "offset": 0, "gate_report_json": "{}",
+        }),  # view=full
+        _ok({"entries": [{"category": "added", "entity_uuid": "concept-1", "entity_type": "concept"}], "total": 1, "limit": 50, "offset": 0}),  # category=added
+        _ok({
+            "gate_report_json": json.dumps({
+                "green": False,
+                "checks": [{"check_id": "coverage.gs", "passed": False, "finding_count": 2, "findings": ["a", "b"]}],
+            }),
+            "gate_findings_total": 2, "gate_findings_limit": 1, "gate_findings_offset": 0,
+        }),  # todo b6ed4b0b: window not honored (2 findings returned for limit=1)
+    )
+
+    results = asyncio.run(ls.run_r12_response_size_and_cascade_tip_batch(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R12_b6ed4b0b_gate_findings_pagination"].status == ls.STATUS_FAIL
 
 
 def test_run_r12_transport_failure_on_plan_create_fails_not_skips():
@@ -3098,3 +3167,110 @@ def test_run_r13_is_called_from_run_pipeline():
 
     source = inspect.getsource(ls.run_pipeline)
     assert "run_r13_bug_list_project_view_bounded(client, args.project)" in source
+
+
+# --------------------------------------------------------------------------
+# R20-R26 (wave W2 regression checks) + the R12 gate-findings-pagination
+# extension: dead-code wiring/structure guards, matching the convention
+# every check from R10 through R13 established (R14-R19 stopped adding
+# dedicated per-check ScriptedClient suites but the wiring-guard convention
+# itself is unbroken -- these assert each new run_r2N coroutine is actually
+# invoked from run_pipeline, not merely defined).
+# --------------------------------------------------------------------------
+
+
+def test_run_r20_is_wired_into_run_pipeline():
+    """run_r20_bug_impact_optional_plan_a5ec9c1a must actually be called
+    from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)" in source
+
+
+def test_run_r21_is_wired_into_run_pipeline():
+    """run_r21_typed_invalid_params_concept_add must actually be called
+    from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r21_typed_invalid_params_concept_add(client)" in source
+
+
+def test_run_r22_is_wired_into_run_pipeline():
+    """run_r22_typed_invalid_params_comment_get must actually be called
+    from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r22_typed_invalid_params_comment_get(client)" in source
+
+
+def test_run_r23_is_wired_into_run_pipeline():
+    """run_r23_typed_invalid_params_review_result_get must actually be
+    called from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r23_typed_invalid_params_review_result_get(client)" in source
+
+
+def test_run_r24_is_wired_into_run_pipeline():
+    """run_r24_command_catalog_dump_pagination must actually be called
+    from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r24_command_catalog_dump_pagination(client)" in source
+
+
+def test_run_r25_is_wired_into_run_pipeline():
+    """run_r25_list_summary_default_drops_free_text must actually be
+    called from run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r25_list_summary_default_drops_free_text(client)" in source
+
+
+def test_run_r26_is_wired_into_run_pipeline():
+    """run_r26_todo_queue_anchor_plan_scoping must actually be called from
+    run_pipeline, not merely defined (dead-code guard)."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r26_todo_queue_anchor_plan_scoping(client)" in source
+
+
+def test_run_r19_through_r26_wired_after_r19_in_source_order():
+    """R20-R26 must be wired in strictly after R19's own call site (fa17408
+    already committed R19; U4's numbering directive says "number the rest
+    sequentially R20+ ... after R19"), preserving tier-4 append order."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    ordered_markers = [
+        "run_r19_bug_delete_full_crud_lifecycle(client)",
+        "run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)",
+        "run_r21_typed_invalid_params_concept_add(client)",
+        "run_r22_typed_invalid_params_comment_get(client)",
+        "run_r23_typed_invalid_params_review_result_get(client)",
+        "run_r24_command_catalog_dump_pagination(client)",
+        "run_r25_list_summary_default_drops_free_text(client)",
+        "run_r26_todo_queue_anchor_plan_scoping(client)",
+    ]
+    positions = [source.index(marker) for marker in ordered_markers]
+    assert positions == sorted(positions)
+
+
+def test_run_r12_gate_findings_pagination_extension_present_in_source():
+    """Todo b6ed4b0b's gate_report_json pagination probe is an EXTENSION of
+    the existing R12 block (not a new top-level tier-4 entry) -- structure
+    guard: the gate_findings_limit/gate_findings_total wiring must live
+    inside run_r12_response_size_and_cascade_tip_batch itself."""
+    import inspect
+
+    source = inspect.getsource(ls.run_r12_response_size_and_cascade_tip_batch)
+    assert "gate_findings_limit" in source
+    assert "gate_findings_total" in source
+    assert "R12_b6ed4b0b_gate_findings_pagination" in source

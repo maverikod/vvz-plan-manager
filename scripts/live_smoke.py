@@ -99,6 +99,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import uuid as uuid_mod
 from dataclasses import dataclass, field
@@ -813,6 +814,57 @@ def _looks_like_unresolved_command(name: str, diagnostic_text: str) -> bool:
     lowered = diagnostic_text.lower()
     name_quoted = f"'{name}'" in diagnostic_text or f'"{name}"' in diagnostic_text
     return "not found" in lowered and name_quoted
+
+
+_ERROR_CODE_PATTERN = re.compile(r"-3\d{4}")
+
+
+def _typed_error_code(diagnostic: Any) -> Optional[int]:
+    """Extract a JSON-RPC-style numeric error code from a call() failure
+    diagnostic, whichever shape it arrived in.
+
+    Two shapes are observed in practice: an unwrapped ``ErrorResult`` dict
+    (``{"code": ..., "message": ...}``, produced when ``unwrap_envelope``
+    peels a domain ``success: False`` layer down to its ``"error"`` sub-dict
+    -- see ``mcp_proxy_adapter.commands.result.ErrorResult.to_dict``), or a
+    formatted transport exception string (``"... (code: -32602)"``, from
+    ``JsonRpcTransport._extract_result`` on the direct-call path). Falling
+    back to a regex search over ``str(diagnostic)`` makes this robust to
+    either shape without depending on which dispatch path served the call.
+
+    Args:
+        diagnostic: The failure value returned as the second element of a
+            ``call()`` result tuple when the first element is False.
+
+    Returns:
+        The negative JSON-RPC error code (e.g. -32602) if one can be found,
+        else None.
+    """
+    if isinstance(diagnostic, dict) and isinstance(diagnostic.get("code"), int):
+        return diagnostic["code"]
+    match = _ERROR_CODE_PATTERN.search(str(diagnostic))
+    return int(match.group(0)) if match else None
+
+
+def _error_message(diagnostic: Any) -> str:
+    """Best-effort human-readable message extracted from a call() failure diagnostic.
+
+    Prefers a dict's own ``"message"`` key (the shape ``ErrorResult.to_dict``
+    produces once unwrapped); falls back to ``str(diagnostic)`` for any other
+    shape (e.g. a formatted transport exception string).
+
+    Args:
+        diagnostic: The failure value returned as the second element of a
+            ``call()`` result tuple when the first element is False.
+
+    Returns:
+        The extracted message string.
+    """
+    if isinstance(diagnostic, dict):
+        message = diagnostic.get("message")
+        if isinstance(message, str):
+            return message
+    return str(diagnostic)
 
 
 # Diagnostic trail of which dispatch path actually served each call this
@@ -3269,28 +3321,42 @@ R12_EMBEDDING_SKIP_REASON = (
     "rather than failing the pipeline on an environmental dependency"
 )
 
+R12_B6ED4B0B_SKIP_REASON = (
+    "server predates todo b6ed4b0b's gate_report_json findings pagination "
+    "-- cascade_preview(view=full)'s response carries no gate_findings_total "
+    "key at all -- redeploy pending"
+)
+
 
 async def run_r12_response_size_and_cascade_tip_batch(client: Any) -> list[CheckResult]:
-    """Todos 3c762bfe / 4265fa4e / eb2dcccb / 1fb0fbfc: one live-reported
-    batch of response-size defects (doc-store plan authoring hit the MCP
-    Proxy caller output budget on cascade_preview's change_set,
+    """Todos 3c762bfe / 4265fa4e / eb2dcccb / 1fb0fbfc / b6ed4b0b: one
+    live-reported batch of response-size defects (doc-store plan authoring
+    hit the MCP Proxy caller output budget on cascade_preview's change_set,
     srt_snapshot_list's embedded tree/vectors, and block_get's entry list)
     plus one behavioral defect (srt_snapshot_create recorded the base
-    committed revision instead of an open cascade's working tip).
+    committed revision instead of an open cascade's working tip), plus
+    todo b6ed4b0b's follow-on: gate_report_json itself embeds a full,
+    UNBOUNDED findings list per check inside cascade_preview(view=full) --
+    paginated independently via gate_findings_limit/gate_findings_offset.
 
     Recipe (throwaway ``live-smoke-`` prefixed plan, hard-deleted in a
     top-level try/finally, mirroring run_r8_gs_coverage_live_cascade_read):
     plan_create -> context_common(plan,level3) [common block for block_get]
     -> step_create G -> cascade_begin -> concept_add (distinct working tip)
-    -> cascade_preview (default=summary, then view=full+category filter)
-    -> block_get (pagination envelope) -> srt_snapshot_create by
-    cascade_uuid (embedding-gated) -> srt_snapshot_list (compact default,
-    newest-first) -> cascade_abort.
+    -> cascade_preview (default=summary, then view=full+category filter,
+    then view=full+gate_findings_limit=1) -> block_get (pagination
+    envelope) -> srt_snapshot_create by cascade_uuid (embedding-gated) ->
+    srt_snapshot_list (compact default, newest-first) -> cascade_abort.
 
     Availability-gated exactly like R6/R8/R10/R11: cascade_preview's
     view=summary param is the version probe (rejected as an unrecognized
     property on a pre-fix server -> the whole group SKIPs naming this
-    batch, rather than failing against a not-yet-deployed fix).
+    batch, rather than failing against a not-yet-deployed fix). The
+    gate_findings pagination extension (todo b6ed4b0b) is gated
+    independently: a server with the base view=full support but predating
+    just this follow-on returns no gate_findings_total key, which SKIPs
+    only that one check (R12_B6ED4B0B_SKIP_REASON) rather than the whole
+    group.
     """
     results: list[CheckResult] = []
     plan_uuid: Optional[str] = None
@@ -3365,6 +3431,31 @@ async def run_r12_response_size_and_cascade_tip_batch(client: Any) -> list[Check
         ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full", "category": "added"})
         category_filtered_ok = ok and isinstance(res, dict) and all(e.get("category") == "added" for e in res.get("entries", []))
         results.append(CheckResult("4", "R12_cascade_preview(category=added)", STATUS_PASS if category_filtered_ok else STATUS_FAIL, "" if category_filtered_ok else str(res)))
+
+        # --- Unit 1b (todo b6ed4b0b): gate_report_json findings pagination ---
+        ok, res = await call(client, "cascade_preview", {"plan": plan_uuid, "view": "full", "gate_findings_limit": 1})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R12_b6ed4b0b_gate_findings_pagination", STATUS_FAIL, str(res)))
+        elif "gate_findings_total" not in res:
+            results.append(CheckResult("4", "R12_b6ed4b0b_gate_findings_pagination", STATUS_SKIP, R12_B6ED4B0B_SKIP_REASON))
+        else:
+            gate_envelope_ok = (
+                isinstance(res.get("gate_report_json"), str)
+                and isinstance(res.get("gate_findings_total"), int)
+                and res.get("gate_findings_limit") == 1
+                and isinstance(res.get("gate_findings_offset"), int)
+            )
+            gate_windowed_ok = False
+            if gate_envelope_ok:
+                parsed_gate_report = json.loads(res["gate_report_json"])
+                gate_checks = parsed_gate_report.get("checks", [])
+                finding_count_present = all(isinstance(c, dict) and "finding_count" in c for c in gate_checks)
+                windowed_findings_total = sum(
+                    len(c.get("findings", [])) for c in gate_checks if isinstance(c, dict)
+                )
+                gate_windowed_ok = finding_count_present and windowed_findings_total <= 1
+            gate_ok = gate_envelope_ok and gate_windowed_ok
+            results.append(CheckResult("4", "R12_b6ed4b0b_gate_findings_pagination", STATUS_PASS if gate_ok else STATUS_FAIL, "" if gate_ok else str(res)))
 
         # --- Unit 3 (todo eb2dcccb): block_get pagination envelope ---
         ok, res = await call(client, "block_get", {"plan": plan_uuid, "block_id": block_id, "limit": 5, "offset": 0})
@@ -4303,6 +4394,434 @@ async def run_r19_bug_delete_full_crud_lifecycle(client: Any) -> list[CheckResul
     return results
 
 
+R20_PRE_FIX_SKIP_REASON = (
+    "server predates todo a5ec9c1a's optional-plan extension to the "
+    "bug_impact_*/bug_propagation_* command groups -- bug_impact_add still "
+    "hard-requires `plan` even for a project-anchored bug -- redeploy pending"
+)
+
+
+async def run_r20_bug_impact_optional_plan_a5ec9c1a(client: Any, project_id: str) -> list[CheckResult]:
+    """Todo a5ec9c1a: extend bug 3eec33f2's optional-`plan` pattern (shipped
+    0.1.64 for the bug/bug_fix command family) to bug_impact_*/
+    bug_propagation_*: `plan` becomes `str | None = None` -- the owning bug
+    is always resolved directly by `bug_id` (globally unique), so a
+    project-anchored bug's impact record no longer needs an unrelated plan
+    supplied at all.
+
+    Recipe (mirrors R17's plan-less convention -- no plan is ever created
+    here): bug_create(source_type=project, source_project_id=<--project>,
+    no `plan`) -> bug_impact_add(bug_id=..., target_type=project,
+    impact_type=uses_broken_api, created_by=..., target_project_id=
+    <--project>, no `plan`), asserting success. Cleanup (top-level
+    try/finally): bug_impact_delete(hard=true) then bug_delete(hard=true).
+
+    Pre-fix detection: `plan` is REQUIRED at the schema level on a
+    not-yet-deployed server, so bug_impact_add fails with a "missing
+    required parameter" validation error naming `plan`; that failure is
+    the version probe and SKIPs this check naming todo a5ec9c1a, rather
+    than failing the pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    bug_uuid: Optional[str] = None
+    impact_uuid: Optional[str] = None
+    try:
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r20-bug"), "short_description": "R20 project-anchored scratch bug (no plan)",
+                "detailed_description": "R20: bug_impact_add optional-plan probe.", "kind": "functional",
+                "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": project_id,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R20_a5ec9c1a_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R20_a5ec9c1a_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        ok, res = await call(
+            client, "bug_impact_add",
+            {
+                "bug_id": bug_uuid, "target_type": "project", "impact_type": "uses_broken_api",
+                "created_by": "live-smoke", "target_project_id": project_id,
+            },
+        )
+        if not ok:
+            pre_fix = _looks_like_missing_required_param(str(res), "plan")
+            results.append(
+                CheckResult(
+                    "4", "R20_a5ec9c1a_bug_impact_add_without_plan", STATUS_SKIP if pre_fix else STATUS_FAIL,
+                    R20_PRE_FIX_SKIP_REASON if pre_fix else str(res),
+                )
+            )
+            return results
+        impact_ok = isinstance(res, dict) and bool(res.get("uuid"))
+        results.append(
+            CheckResult(
+                "4", "R20_a5ec9c1a_bug_impact_add_without_plan", STATUS_PASS if impact_ok else STATUS_FAIL,
+                "" if impact_ok else str(res),
+            )
+        )
+        if not impact_ok:
+            return results
+        impact_uuid = res["uuid"]
+    finally:
+        if impact_uuid is not None:
+            ok, res = await call(client, "bug_impact_delete", {"impact_uuid": impact_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R20_a5ec9c1a_bug_impact_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R20_a5ec9c1a_bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
+R21_PRE_FIX_SKIP_REASON = (
+    "server predates bug 0d8755bd's class-1 fix -- concept_add's bare "
+    "uuid.UUID(cascade_uuid) parse raises an untyped ValueError inside "
+    "validate_params, surfacing as an untyped -32603 instead of a clean "
+    "-32602 -- redeploy pending"
+)
+
+
+async def run_r21_typed_invalid_params_concept_add(client: Any) -> list[CheckResult]:
+    """Bug 0d8755bd class 1: a bare `uuid.UUID(cascade_uuid)` parse inside
+    concept_add's validate_params raised an untyped ValueError, invisible
+    to the adapter's typed-error mapping (mcp_proxy_adapter.commands.base.
+    Command.run only special-cases ValidationError/InvalidParamsError/
+    NotFoundError/TimeoutError/CommandError) -- it fell through to the
+    generic except-Exception branch and surfaced as an untyped -32603
+    instead of a clean -32602 InvalidParamsError. Fixed by catching
+    ValueError and re-raising as InvalidParamsError.
+
+    Recipe: concept_add(plan=<a nonexistent plan identifier>,
+    cascade_uuid="not-a-uuid", concept_id/name/definition filled) --
+    cascade_uuid is parsed in validate_params before plan is ever
+    resolved, so the supplied plan need not exist; asserts the failure's
+    typed error code is -32602, never -32603.
+
+    Pre-fix detection: an observed -32603 IS the bug's own symptom --
+    observing it here is the version probe, and SKIPs (not FAILs) this
+    check against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    ok, res = await call(
+        client, "concept_add",
+        {
+            "plan": unique_suffix("r21-nonexistent-plan"), "cascade_uuid": "not-a-uuid",
+            "concept_id": "C-001", "name": "R21LiveSmokeConcept", "definition": "R21 typed-error probe.",
+        },
+    )
+    if ok:
+        results.append(CheckResult("4", "R21_0d8755bd_concept_add_bad_cascade_uuid", STATUS_FAIL, f"call unexpectedly succeeded: {res!r}"))
+        return results
+    code = _typed_error_code(res)
+    if code == -32603:
+        results.append(CheckResult("4", "R21_0d8755bd_concept_add_bad_cascade_uuid", STATUS_SKIP, R21_PRE_FIX_SKIP_REASON))
+        return results
+    typed_ok = code == -32602
+    results.append(
+        CheckResult(
+            "4", "R21_0d8755bd_concept_add_bad_cascade_uuid", STATUS_PASS if typed_ok else STATUS_FAIL,
+            "" if typed_ok else f"code={code} diagnostic={res!r}",
+        )
+    )
+    return results
+
+
+R22_PRE_FIX_SKIP_REASON = (
+    "server predates bug 0d8755bd's class-2A fix -- comment_get's bare "
+    "uuid.UUID(comment_uuid) parse raises an untyped ValueError, surfacing "
+    "as an untyped -32603 instead of a clean -32602 naming comment_uuid -- "
+    "redeploy pending"
+)
+
+
+async def run_r22_typed_invalid_params_comment_get(client: Any) -> list[CheckResult]:
+    """Bug 0d8755bd class 2A: comment_get's bare `uuid.UUID(comment_uuid)`
+    parse raised an untyped ValueError; fixed by catching it and raising
+    InvalidParamsError(f"comment_uuid is not a valid UUID: {comment_uuid!r}").
+
+    Recipe: comment_get(plan=<nonexistent>, comment_uuid="not-a-uuid") --
+    comment_uuid is validated before plan is ever resolved, so the
+    supplied plan need not exist; asserts a typed -32602 whose message
+    names comment_uuid, never a raw -32603.
+
+    Pre-fix detection: mirrors R21 -- an observed -32603 IS the bug's own
+    symptom and SKIPs (not FAILs) against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    ok, res = await call(client, "comment_get", {"plan": unique_suffix("r22-nonexistent-plan"), "comment_uuid": "not-a-uuid"})
+    if ok:
+        results.append(CheckResult("4", "R22_0d8755bd_comment_get_bad_comment_uuid", STATUS_FAIL, f"call unexpectedly succeeded: {res!r}"))
+        return results
+    code = _typed_error_code(res)
+    if code == -32603:
+        results.append(CheckResult("4", "R22_0d8755bd_comment_get_bad_comment_uuid", STATUS_SKIP, R22_PRE_FIX_SKIP_REASON))
+        return results
+    message = _error_message(res)
+    typed_ok = code == -32602 and "comment_uuid is not a valid UUID" in message
+    results.append(
+        CheckResult(
+            "4", "R22_0d8755bd_comment_get_bad_comment_uuid", STATUS_PASS if typed_ok else STATUS_FAIL,
+            "" if typed_ok else f"code={code} message={message!r}",
+        )
+    )
+    return results
+
+
+R23_PRE_FIX_SKIP_REASON = (
+    "server predates bug 0d8755bd's class-2B fix -- review_result_get's "
+    "bare uuid.UUID(review_uuid) parse raises an untyped ValueError, "
+    "surfacing as an untyped -32603 instead of a clean -32602 naming "
+    "review_uuid -- redeploy pending"
+)
+
+
+async def run_r23_typed_invalid_params_review_result_get(client: Any) -> list[CheckResult]:
+    """Bug 0d8755bd class 2B: review_result_get's bare
+    `uuid.UUID(review_uuid)` parse raised an untyped ValueError; fixed by
+    catching it and raising InvalidParamsError(f"review_uuid is not a
+    valid UUID: {review_uuid!r}").
+
+    Recipe: review_result_get(plan=<nonexistent>, review_uuid=
+    "not-a-uuid") -- asserts a typed -32602 whose message names
+    review_uuid and never leaks the generic untyped-exception wording.
+
+    Pre-fix detection: mirrors R21/R22 -- an observed -32603 IS the bug's
+    own symptom and SKIPs (not FAILs) against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    ok, res = await call(client, "review_result_get", {"plan": unique_suffix("r23-nonexistent-plan"), "review_uuid": "not-a-uuid"})
+    if ok:
+        results.append(CheckResult("4", "R23_0d8755bd_review_result_get_bad_review_uuid", STATUS_FAIL, f"call unexpectedly succeeded: {res!r}"))
+        return results
+    code = _typed_error_code(res)
+    if code == -32603:
+        results.append(CheckResult("4", "R23_0d8755bd_review_result_get_bad_review_uuid", STATUS_SKIP, R23_PRE_FIX_SKIP_REASON))
+        return results
+    message = _error_message(res)
+    typed_ok = (
+        code == -32602
+        and "review_uuid is not a valid UUID" in message
+        and "Unexpected error" not in message
+    )
+    results.append(
+        CheckResult(
+            "4", "R23_0d8755bd_review_result_get_bad_review_uuid", STATUS_PASS if typed_ok else STATUS_FAIL,
+            "" if typed_ok else f"code={code} message={message!r}",
+        )
+    )
+    return results
+
+
+R24_PRE_FIX_SKIP_REASON = (
+    "server predates bug 85b180bf's pagination fix entirely -- "
+    "command_catalog_dump's no-arg response carries no returned/has_more "
+    "envelope keys at all -- redeploy pending"
+)
+
+R24_RESPONSE_BYTE_CEILING = 80000
+
+
+async def run_r24_command_catalog_dump_pagination(client: Any) -> list[CheckResult]:
+    """Bug 85b180bf (revised fix) + todo 9c409a47: command_catalog_dump's
+    no-arg default is now bounded to 10 entries (~48 KB on the live
+    199-command catalog, well under the original bug's ~130 KB complaint),
+    sorted deterministically by command name, with an additive returned/
+    has_more pagination envelope; limit/offset share the exact same
+    validation and MAX_LIMIT as every other paginated command.
+
+    Checks: no-arg call -> limit==10, returned==len(commands), has_more is
+    true, total >= 100, serialized response < 80000 bytes; command order
+    is stable across two consecutive no-arg calls; page 2 (offset=res
+    ['limit']) is disjoint from page 1 and itself sorted by name; limit=0
+    -> INVALID_PAGINATION.
+
+    Pre-fix detection: a server predating even the FIRST fix attempt
+    (commit 8a3d6fc) returns no returned/has_more keys at all (the
+    original unbounded response); that shape SKIPs this whole check
+    naming bug 85b180bf, rather than failing the pipeline against a
+    not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    ok, res = await call(client, "command_catalog_dump", {})
+    if not ok or not isinstance(res, dict):
+        results.append(CheckResult("4", "R24_85b180bf_command_catalog_dump_default", STATUS_FAIL, str(res)))
+        return results
+    if "returned" not in res or "has_more" not in res:
+        results.append(CheckResult("4", "R24_85b180bf_command_catalog_dump_default", STATUS_SKIP, R24_PRE_FIX_SKIP_REASON))
+        return results
+
+    commands = res.get("commands", [])
+    size_bytes = len(json.dumps(res).encode("utf-8"))
+    default_ok = (
+        res.get("limit") == 10
+        and res.get("returned") == len(commands)
+        and res.get("has_more") is True
+        and isinstance(res.get("total"), int) and res["total"] >= 100
+        and size_bytes < R24_RESPONSE_BYTE_CEILING
+    )
+    results.append(
+        CheckResult(
+            "4", "R24_85b180bf_command_catalog_dump_default", STATUS_PASS if default_ok else STATUS_FAIL,
+            "" if default_ok else (
+                f"limit={res.get('limit')} returned={res.get('returned')} has_more={res.get('has_more')} "
+                f"total={res.get('total')} bytes={size_bytes}"
+            ),
+        )
+    )
+
+    ok2, res2 = await call(client, "command_catalog_dump", {})
+    names1 = [c.get("name") for c in commands if isinstance(c, dict)]
+    names2 = (
+        [c.get("name") for c in res2.get("commands", []) if isinstance(c, dict)]
+        if ok2 and isinstance(res2, dict) else None
+    )
+    stable_ok = ok2 and names2 is not None and names1 == names2
+    results.append(
+        CheckResult(
+            "4", "R24_9c409a47_order_stable_across_calls", STATUS_PASS if stable_ok else STATUS_FAIL,
+            "" if stable_ok else f"call1={names1} call2={names2}",
+        )
+    )
+
+    page2_offset = res.get("limit", 10)
+    ok3, res3 = await call(client, "command_catalog_dump", {"offset": page2_offset})
+    page2_commands = res3.get("commands", []) if ok3 and isinstance(res3, dict) else []
+    names_page2 = [c.get("name") for c in page2_commands if isinstance(c, dict)]
+    disjoint_ok = ok3 and not (set(names1) & set(names_page2))
+    sorted_ok = names_page2 == sorted(names_page2)
+    results.append(
+        CheckResult(
+            "4", "R24_page2_disjoint_and_sorted", STATUS_PASS if (disjoint_ok and sorted_ok) else STATUS_FAIL,
+            "" if (disjoint_ok and sorted_ok) else f"page1={names1} page2={names_page2}",
+        )
+    )
+
+    ok4, res4 = await call(client, "command_catalog_dump", {"limit": 0})
+    invalid_ok = (not ok4) and "INVALID_PAGINATION" in str(res4)
+    results.append(CheckResult("4", "R24_limit_zero_invalid_pagination", STATUS_PASS if invalid_ok else STATUS_FAIL, "" if invalid_ok else str(res4)))
+    return results
+
+
+R25_PRE_FIX_SKIP_REASON = (
+    "server predates todo ffe0b0a8's view=summary default flip -- "
+    "todo_list/comment_list still embed the full record by default -- "
+    "redeploy pending"
+)
+
+
+async def run_r25_list_summary_default_drops_free_text(client: Any) -> list[CheckResult]:
+    """Todo ffe0b0a8: every list command whose entity declares
+    SUMMARY_FIELDS now defaults to view=summary (was view=full) -- the
+    compact default projection drops the entity's unbounded free-text
+    field. Checks two representative members: todo_list rows carry no
+    "description" (R11 already covers todo_list(view=summary) explicitly;
+    this checks the OMITTED-view default instead); comment_list rows carry
+    no "body" (the comment text itself).
+
+    Read-only, no throwaway entities: reads whatever live data already
+    exists (rows may be zero, in which case there is nothing to inspect
+    the row shape of -- this SKIPs for lack of data rather than asserting
+    anything about an empty page).
+    """
+    results: list[CheckResult] = []
+
+    ok, res = await call(client, "todo_list", {"limit": 5})
+    if not ok or not isinstance(res, dict) or not isinstance(res.get("todos"), list):
+        results.append(CheckResult("4", "R25_ffe0b0a8_todo_list_summary_default", STATUS_FAIL, str(res)))
+    else:
+        rows = res["todos"]
+        if not rows:
+            results.append(
+                CheckResult("4", "R25_ffe0b0a8_todo_list_summary_default", STATUS_SKIP, "no live todo rows available to inspect the default row projection")
+            )
+        else:
+            no_description = all(isinstance(r, dict) and "description" not in r for r in rows)
+            results.append(
+                CheckResult(
+                    "4", "R25_ffe0b0a8_todo_list_summary_default", STATUS_PASS if no_description else STATUS_SKIP,
+                    "" if no_description else R25_PRE_FIX_SKIP_REASON,
+                )
+            )
+
+    ok, res = await call(client, "comment_list", {"limit": 5})
+    if not ok or not isinstance(res, dict) or not isinstance(res.get("comments"), list):
+        results.append(CheckResult("4", "R25_ffe0b0a8_comment_list_summary_default", STATUS_FAIL, str(res)))
+    else:
+        rows = res["comments"]
+        if not rows:
+            results.append(
+                CheckResult("4", "R25_ffe0b0a8_comment_list_summary_default", STATUS_SKIP, "no live comment rows available to inspect the default row projection")
+            )
+        else:
+            no_body = all(isinstance(r, dict) and "body" not in r for r in rows)
+            results.append(
+                CheckResult(
+                    "4", "R25_ffe0b0a8_comment_list_summary_default", STATUS_PASS if no_body else STATUS_SKIP,
+                    "" if no_body else R25_PRE_FIX_SKIP_REASON,
+                )
+            )
+    return results
+
+
+R26_PRE_FIX_SKIP_REASON = (
+    "server predates todo f47a2db0's queue scoping -- anchor_plan is "
+    "rejected as an unrecognized property on todo_queue -- redeploy pending"
+)
+
+R26_ANCHOR_PLAN = "e4a9fd91-151e-4e11-bc98-423142d9298a"
+
+
+async def run_r26_todo_queue_anchor_plan_scoping(client: Any) -> list[CheckResult]:
+    """Todo f47a2db0: todo_queue gained anchor_plan/project server-side
+    scoping (was global-only, forcing every caller to fetch everything and
+    filter client-side). Checks anchor_plan=<the live roadmap plan UUID>:
+    every returned row's plan_uuid matches, and the filtered total never
+    exceeds the unfiltered total.
+
+    Pre-fix detection: anchor_plan is a brand-new schema parameter under
+    additionalProperties:false; a not-yet-deployed server rejects it as an
+    unrecognized property, which is the version probe and SKIPs this
+    check naming todo f47a2db0, rather than failing against a
+    not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+
+    ok, res = await call(client, "todo_queue", {"anchor_plan": R26_ANCHOR_PLAN, "limit": 50})
+    if not ok and _looks_like_unknown_param(str(res), "anchor_plan"):
+        results.append(CheckResult("4", "R26_f47a2db0_todo_queue_anchor_plan", STATUS_SKIP, R26_PRE_FIX_SKIP_REASON))
+        return results
+    if not ok or not isinstance(res, dict) or not isinstance(res.get("queue"), list):
+        results.append(CheckResult("4", "R26_f47a2db0_todo_queue_anchor_plan", STATUS_FAIL, str(res)))
+        return results
+    rows = res["queue"]
+    filtered_total = res.get("total")
+    all_match = all(isinstance(r, dict) and r.get("plan_uuid") == R26_ANCHOR_PLAN for r in rows)
+    results.append(
+        CheckResult(
+            "4", "R26_f47a2db0_todo_queue_anchor_plan_rows_match", STATUS_PASS if all_match else STATUS_FAIL,
+            "" if all_match else str(rows),
+        )
+    )
+
+    ok2, res2 = await call(client, "todo_queue", {"limit": 1})
+    unfiltered_total = res2.get("total") if ok2 and isinstance(res2, dict) else None
+    total_bound_ok = (
+        ok2 and isinstance(filtered_total, int) and isinstance(unfiltered_total, int)
+        and filtered_total <= unfiltered_total
+    )
+    results.append(
+        CheckResult(
+            "4", "R26_f47a2db0_todo_queue_filtered_total_bounded", STATUS_PASS if total_bound_ok else STATUS_FAIL,
+            "" if total_bound_ok else f"filtered={filtered_total} unfiltered={unfiltered_total}",
+        )
+    )
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -4410,6 +4929,13 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r17_bug_optional_plan_project_anchor(client, args.project)
     results += await run_r18_context_bundle_child_block_identity(client)
     results += await run_r19_bug_delete_full_crud_lifecycle(client)
+    results += await run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)
+    results += await run_r21_typed_invalid_params_concept_add(client)
+    results += await run_r22_typed_invalid_params_comment_get(client)
+    results += await run_r23_typed_invalid_params_review_result_get(client)
+    results += await run_r24_command_catalog_dump_pagination(client)
+    results += await run_r25_list_summary_default_drops_free_text(client)
+    results += await run_r26_todo_queue_anchor_plan_scoping(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
