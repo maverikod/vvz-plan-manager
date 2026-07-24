@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
@@ -106,6 +107,37 @@ class ReviewResultCreateCommand(Command):
                 "Record findings and verification_commands so a later reviewer can zero-trust re-check the outcome without re-running the review.",
             ],
         )
+
+    _UUID_OPTIONAL_FIELDS: ClassVar[tuple[str, ...]] = (
+        "reviewed_attempt_uuid",
+        "reviewed_revision_uuid",
+        "escalation_target_uuid",
+    )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate review_result_create parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If any of reviewed_attempt_uuid,
+                reviewed_revision_uuid, or escalation_target_uuid is
+                supplied and is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in self._UUID_OPTIONAL_FIELDS:
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

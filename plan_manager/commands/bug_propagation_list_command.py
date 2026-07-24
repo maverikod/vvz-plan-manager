@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -134,6 +135,35 @@ class BugPropagationListCommand(Command):
                 "view=summary returns a compact per-row projection (uuid, bug_fix_uuid, impact_uuid, target_type, action, status, updated_at) instead of the full record (drops evidence and verification_result); there is no bug_propagation_get command, so full detail means re-calling this command with view=full (the default).",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate bug_propagation_list parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If bug_fix_id or impact_id is not a valid
+                UUID string.
+        """
+        params = super().validate_params(params)
+        bug_fix_id = params.get("bug_fix_id")
+        if bug_fix_id is not None:
+            try:
+                uuid.UUID(bug_fix_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"bug_fix_id is not a valid UUID: {bug_fix_id!r}") from exc
+        impact_id = params.get("impact_id")
+        if impact_id is not None:
+            try:
+                uuid.UUID(impact_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"impact_id is not a valid UUID: {impact_id!r}") from exc
+        return params
 
     async def execute(
         self,

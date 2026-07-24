@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_fix_propagation_plan_completed
@@ -79,6 +80,35 @@ class BugPropagationUpdateCommand(Command):
                 "Set linked_todo_id when a generated TODO tracks this propagation's work.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate bug_propagation_update parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If propagation_id or linked_todo_id is not a
+                valid UUID string.
+        """
+        params = super().validate_params(params)
+        propagation_id = params.get("propagation_id")
+        if propagation_id is not None:
+            try:
+                uuid.UUID(propagation_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"propagation_id is not a valid UUID: {propagation_id!r}") from exc
+        linked_todo_id = params.get("linked_todo_id")
+        if linked_todo_id is not None:
+            try:
+                uuid.UUID(linked_todo_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"linked_todo_id is not a valid UUID: {linked_todo_id!r}") from exc
+        return params
 
     async def execute(
         self,

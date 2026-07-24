@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -127,6 +128,35 @@ class ExecutionAttemptListCommand(Command):
             "view=summary returns a compact per-row projection (uuid, plan_uuid, step_uuid, status, used_provider, used_model, updated_at) instead of the full record (drops result_summary, command_test_results, resource_accounting, transcript_ref); use execution_attempt_get for a single attempt's full detail.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate execution_attempt_list parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If step or parent_attempt_id is supplied and
+                is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        step = params.get("step")
+        if step is not None:
+            try:
+                uuid.UUID(step)
+            except ValueError as exc:
+                raise InvalidParamsError(f"step is not a valid UUID: {step!r}") from exc
+        parent_attempt_id = params.get("parent_attempt_id")
+        if parent_attempt_id is not None:
+            try:
+                uuid.UUID(parent_attempt_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"parent_attempt_id is not a valid UUID: {parent_attempt_id!r}") from exc
+        return params
 
     async def execute(
         self,

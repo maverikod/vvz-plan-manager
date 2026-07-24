@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
@@ -134,6 +135,40 @@ class ExecutionAttemptCreateCommand(Command):
             "Follow up with execution_attempt_report to record the run's outcome; this command only opens the record.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
+
+    _UUID_REQUIRED_FIELDS: ClassVar[tuple[str, ...]] = ("step",)
+    _UUID_OPTIONAL_FIELDS: ClassVar[tuple[str, ...]] = (
+        "revision",
+        "todo_id",
+        "bug_fix_id",
+        "assigned_binding_id",
+        "parent_attempt_id",
+    )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate execution_attempt_create parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If step, or any supplied optional identifier
+                (revision, todo_id, bug_fix_id, assigned_binding_id,
+                parent_attempt_id), is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in self._UUID_REQUIRED_FIELDS + self._UUID_OPTIONAL_FIELDS:
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

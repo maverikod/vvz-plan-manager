@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
@@ -70,6 +71,28 @@ class BugFixVerifyCommand(Command):
                 "plan is optional: the fix attempt is always resolved by bug_fix. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the verification; supply it only when you want that plan's own completion checked too.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate bug_fix_verify parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If bug_fix is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        bug_fix = params.get("bug_fix")
+        if bug_fix is not None:
+            try:
+                uuid.UUID(bug_fix)
+            except ValueError as exc:
+                raise InvalidParamsError(f"bug_fix is not a valid UUID: {bug_fix!r}") from exc
+        return params
 
     async def execute(
         self,

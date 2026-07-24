@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
@@ -105,6 +106,39 @@ class EscalationCreateCommand(Command):
             "directly in status resolved."
         )
         return meta
+
+    _UUID_ANCHOR_FIELDS: ClassVar[tuple[str, ...]] = (
+        "anchor_project_id",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_ref_id",
+    )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate escalation_create parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If any of anchor_project_id, anchor_plan_uuid,
+                anchor_revision_uuid, anchor_step_uuid, or anchor_ref_id is
+                supplied and is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in self._UUID_ANCHOR_FIELDS:
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

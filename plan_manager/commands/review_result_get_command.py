@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -57,6 +58,28 @@ class ReviewResultGetCommand(Command):
                 "Soft-deleted review results are still returned; check the deleted_at field in the payload.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate review_result_get parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If review_uuid is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        review_uuid = params.get("review_uuid")
+        if review_uuid is not None:
+            try:
+                uuid.UUID(review_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"review_uuid is not a valid UUID: {review_uuid!r}") from exc
+        return params
 
     async def execute(
         self, plan: str, review_uuid: str, context: object | None = None

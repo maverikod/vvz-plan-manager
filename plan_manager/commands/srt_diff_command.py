@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -52,6 +53,39 @@ class SrtDiffCommand(Command):
             {"success": {"description": "SemanticDiff payload: root_score_delta, improved_nodes, degraded_nodes, new_loss, resolved_loss, new_leakage, resolved_leakage, child_contribution_changes."}},
             [{"description": "Diff two snapshots for a plan.", "command": {"plan": "plan_manager", "base_snapshot_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "target_snapshot_uuid": "5a1e9b0a-2222-4444-8888-abcdefabcdef"}}],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate srt_diff parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If base_snapshot_uuid or target_snapshot_uuid
+                is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        base_snapshot_uuid = params.get("base_snapshot_uuid")
+        if base_snapshot_uuid is not None:
+            try:
+                uuid.UUID(base_snapshot_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"base_snapshot_uuid is not a valid UUID: {base_snapshot_uuid!r}"
+                ) from exc
+        target_snapshot_uuid = params.get("target_snapshot_uuid")
+        if target_snapshot_uuid is not None:
+            try:
+                uuid.UUID(target_snapshot_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"target_snapshot_uuid is not a valid UUID: {target_snapshot_uuid!r}"
+                ) from exc
+        return params
 
     async def execute(
         self,

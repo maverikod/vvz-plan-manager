@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -152,6 +153,31 @@ class ReviewResultListCommand(Command):
                 "view=summary returns a compact per-row projection (uuid, object_type, reviewed_attempt_uuid, reviewer, status, updated_at) instead of the full record (drops findings, evidence, verification_commands); use review_result_get for a single result's full detail.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate review_result_list parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If reviewed_attempt_uuid is supplied and is
+                not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        reviewed_attempt_uuid = params.get("reviewed_attempt_uuid")
+        if reviewed_attempt_uuid is not None:
+            try:
+                uuid.UUID(reviewed_attempt_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"reviewed_attempt_uuid is not a valid UUID: {reviewed_attempt_uuid!r}"
+                ) from exc
+        return params
 
     async def execute(
         self,

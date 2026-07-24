@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.execution_attempt_command_metadata import execution_attempt_metadata, BASE_PARAMETERS
@@ -131,6 +132,28 @@ class ExecutionAttemptReportCommand(Command):
             "changed_by is the actor filing this report and may differ from the attempt's created_by.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate execution_attempt_report parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If attempt_id is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        attempt_id = params.get("attempt_id")
+        if attempt_id is not None:
+            try:
+                uuid.UUID(attempt_id)
+            except ValueError as exc:
+                raise InvalidParamsError(f"attempt_id is not a valid UUID: {attempt_id!r}") from exc
+        return params
 
     async def execute(
         self,

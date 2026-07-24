@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
@@ -82,6 +83,37 @@ class BugFixCreateCommand(Command):
                 "plan is optional: the owning bug is always resolved by `bug`. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the create; supply it only when you want that plan's own completion checked too.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate bug_fix_create parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If bug or source_project_id is not a valid
+                UUID string.
+        """
+        params = super().validate_params(params)
+        bug = params.get("bug")
+        if bug is not None:
+            try:
+                uuid.UUID(bug)
+            except ValueError as exc:
+                raise InvalidParamsError(f"bug is not a valid UUID: {bug!r}") from exc
+        source_project_id = params.get("source_project_id")
+        if source_project_id is not None:
+            try:
+                uuid.UUID(source_project_id)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"source_project_id is not a valid UUID: {source_project_id!r}"
+                ) from exc
+        return params
 
     async def execute(
         self,

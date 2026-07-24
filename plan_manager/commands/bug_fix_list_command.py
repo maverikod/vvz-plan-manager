@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
 from plan_manager.commands.errors import DomainCommandError, map_exception
@@ -118,6 +119,28 @@ class BugFixListCommand(Command):
                 "view=summary returns a compact per-row projection (uuid, bug_uuid, status, fix_type, summary, author, updated_at) instead of the full BugFix record (drops implementation_notes, changed_files, tests, expected/actual_result, revert_info); there is no bug_fix_get command, so full detail means re-calling bug_fix_list with view=full (the default) and a narrowing filter.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate bug_fix_list parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If bug is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        bug = params.get("bug")
+        if bug is not None:
+            try:
+                uuid.UUID(bug)
+            except ValueError as exc:
+                raise InvalidParamsError(f"bug is not a valid UUID: {bug!r}") from exc
+        return params
 
     async def execute(
         self,
