@@ -3654,10 +3654,12 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
     itself is actually bounded, not just decorated with metadata.
 
     Unit 2 (03956ccf) mirrors R12's throwaway-plan recipe (plan_create ->
-    concept_add -> context_bundle with an explicit small limit) to prove
-    the 'common' block's (and each child's) first page is bounded, and
-    that a caller can continue past it with block_get(block_id, limit,
-    offset) using the block_id context_bundle already returns.
+    cascade_begin -> concept_add(cascade_uuid) -> context_bundle with an
+    explicit small limit -- MRS entities are cascade-only, so concept_add
+    needs an open cascade like R8/R12's) to prove the 'common' block's
+    (and each child's) first page is bounded, and that a caller can
+    continue past it with block_get(block_id, limit, offset) using the
+    block_id context_bundle already returns.
 
     Each unit detects a pre-fix server independently (see the two
     _PRE_FIX_SKIP_REASON constants above) and SKIPs only that unit, rather
@@ -3708,6 +3710,7 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
 
     # --- Unit 2 (bug 03956ccf): context_bundle pagination ---
     plan_uuid: Optional[str] = None
+    cascade_uuid: Optional[str] = None
     try:
         ok, res = await call(client, "plan_create", {"name": unique_suffix("r15-plan")})
         if not ok or not isinstance(res, dict) or not res.get("uuid"):
@@ -3715,10 +3718,20 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
             return results
         plan_uuid = res["uuid"]
 
+        # MRS entities are cascade-only (help(concept_add) requires
+        # cascade_uuid) -- open a cascade first, exactly like R8/R12's
+        # cascade_begin -> mutate(cascade_uuid) -> ... -> cascade_abort idiom.
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R15_03956ccf_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+        results.append(CheckResult("4", "R15_03956ccf_cascade_begin", STATUS_PASS, f"cascade_uuid={cascade_uuid}"))
+
         ok, res = await call(
             client, "concept_add",
             {
-                "plan": plan_uuid, "concept_id": "C-001", "name": "LiveSmokeR15Concept",
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001", "name": "LiveSmokeR15Concept",
                 "definition": "R15 scratch concept for the response-size pagination batch.",
             },
         )
@@ -3793,6 +3806,8 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
                 )
             )
     finally:
+        if cascade_uuid is not None:
+            await call(client, "cascade_abort", {"plan": plan_uuid})
         if plan_uuid is not None:
             await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
     return results
