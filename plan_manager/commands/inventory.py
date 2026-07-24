@@ -144,21 +144,25 @@ INVENTORY: tuple[str, ...] = (
     "bug_mark_duplicate",
     "bug_reopen",
     "bug_close",
+    "bug_delete",
     # runtime bug impact
     "bug_impact_add",
     "bug_impact_update",
     "bug_impact_list",
     "bug_impact_discover",
+    "bug_impact_delete",
     # runtime bug fixes
     "bug_fix_create",
     "bug_fix_update",
     "bug_fix_list",
     "bug_fix_verify",
+    "bug_fix_delete",
     # runtime bug propagation
     "bug_propagation_create",
     "bug_propagation_list",
     "bug_propagation_update",
     "bug_propagation_generate_todos",
+    "bug_fix_propagation_delete",
     # runtime project dependencies
     "project_dependency_add",
     "project_dependency_update",
@@ -259,6 +263,11 @@ MUTATING: frozenset[str] = frozenset({
     "plan_unfreeze",
     "bug_reanchor",
     "todo_reanchor",
+    # full bug-family delete surface (user CRUD order, todo 9b09c9b0)
+    "bug_delete",
+    "bug_impact_delete",
+    "bug_fix_delete",
+    "bug_fix_propagation_delete",
     # CR-5a entity mutations
     "tool_create",
     "tool_update",

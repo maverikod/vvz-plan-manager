@@ -6,6 +6,10 @@ import uuid
 
 import psycopg
 
+from plan_manager.domain.bug_fix import BugFix
+from plan_manager.domain.bug_fix_propagation import BugFixPropagation
+from plan_manager.domain.bug_impact import BugImpact
+from plan_manager.domain.bug_report import BugReport
 from plan_manager.domain.todo import TodoItem
 from plan_manager.domain.runtime_comment import RuntimeComment
 from plan_manager.storage.runtime_audit_store import record_runtime_change
@@ -80,6 +84,158 @@ def hard_delete_comment(
         plan_uuid=plan_uuid,
         entity_type="runtime_comment",
         entity_id=comment_uuid,
+        action="hard_delete",
+        changed_by=changed_by,
+    )
+
+
+def hard_delete_bug(
+    conn: psycopg.Connection, bug_uuid: uuid.UUID, *, changed_by: str
+) -> None:
+    """Irreversibly remove a BugReport row and record a hard_delete audit action.
+
+    Delegates the physical deletion to BugReport.crud_hard_delete with
+    require_soft_deleted=False (the command surface deletes live rows
+    directly). The entity base re-checks inbound references (anchored
+    comments, duplicate/child bugs, bug impacts, bug fixes) and raises
+    EntityReferencedError when live referrers exist, and unregisters the
+    row's entity_identity mapping on success.
+
+    Parameters:
+        conn: An open psycopg 3 connection.
+        bug_uuid: UUID of the bug report to remove.
+        changed_by: Identity of the actor recorded on the audit trail.
+
+    Raises:
+        DomainCommandError: With code BUG_NOT_FOUND if no row exists.
+        EntityReferencedError: When live inbound references block deletion.
+    """
+    current = BugReport.crud_get(conn, bug_uuid, include_deleted=True)
+    if current is None:
+        from plan_manager.commands.errors import DomainCommandError
+
+        raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_uuid}")
+    plan_uuid = current.get("source_plan_uuid")
+    BugReport.crud_hard_delete(conn, bug_uuid, returning=False, require_soft_deleted=False)
+    record_runtime_change(
+        conn,
+        plan_uuid=plan_uuid,
+        entity_type="bug_report",
+        entity_id=bug_uuid,
+        action="hard_delete",
+        changed_by=changed_by,
+    )
+
+
+def hard_delete_bug_impact(
+    conn: psycopg.Connection, impact_uuid: uuid.UUID, *, changed_by: str
+) -> None:
+    """Irreversibly remove a BugImpact row and record a hard_delete audit action.
+
+    Delegates the physical deletion to BugImpact.crud_hard_delete with
+    require_soft_deleted=False. The entity base re-checks inbound references
+    (a live bug fix propagation targeting this impact blocks deletion,
+    raising EntityReferencedError) and unregisters the row's
+    entity_identity mapping on success.
+
+    Parameters:
+        conn: An open psycopg 3 connection.
+        impact_uuid: UUID of the bug impact record to remove.
+        changed_by: Identity of the actor recorded on the audit trail.
+
+    Raises:
+        DomainCommandError: With code BUG_IMPACT_NOT_FOUND if no row exists.
+        EntityReferencedError: When live inbound references block deletion.
+    """
+    current = BugImpact.crud_get(conn, impact_uuid, include_deleted=True)
+    if current is None:
+        from plan_manager.commands.errors import DomainCommandError
+
+        raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_uuid}")
+    plan_uuid = current.get("target_plan_uuid")
+    BugImpact.crud_hard_delete(conn, impact_uuid, returning=False, require_soft_deleted=False)
+    record_runtime_change(
+        conn,
+        plan_uuid=plan_uuid,
+        entity_type="bug_impact",
+        entity_id=impact_uuid,
+        action="hard_delete",
+        changed_by=changed_by,
+    )
+
+
+def hard_delete_bug_fix(
+    conn: psycopg.Connection, fix_uuid: uuid.UUID, *, changed_by: str
+) -> None:
+    """Irreversibly remove a BugFix row and record a hard_delete audit action.
+
+    Delegates the physical deletion to BugFix.crud_hard_delete with
+    require_soft_deleted=False. The entity base re-checks inbound references
+    (anchored comments, execution attempts, bug-fix propagations) and raises
+    EntityReferencedError when live referrers exist, and unregisters the
+    row's entity_identity mapping on success. plan_uuid is always recorded
+    as None on the audit trail: BugFix carries no plan_uuid field of its
+    own (only bug_uuid), matching the same convention already used by every
+    bug_fix_store mutation (create/update/soft_delete all record plan_uuid=None).
+
+    Parameters:
+        conn: An open psycopg 3 connection.
+        fix_uuid: UUID of the bug fix attempt to remove.
+        changed_by: Identity of the actor recorded on the audit trail.
+
+    Raises:
+        DomainCommandError: With code BUG_FIX_NOT_FOUND if no row exists.
+        EntityReferencedError: When live inbound references block deletion.
+    """
+    current = BugFix.crud_get(conn, fix_uuid, include_deleted=True)
+    if current is None:
+        from plan_manager.commands.errors import DomainCommandError
+
+        raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {fix_uuid}")
+    BugFix.crud_hard_delete(conn, fix_uuid, returning=False, require_soft_deleted=False)
+    record_runtime_change(
+        conn,
+        plan_uuid=None,
+        entity_type="bug_fix",
+        entity_id=fix_uuid,
+        action="hard_delete",
+        changed_by=changed_by,
+    )
+
+
+def hard_delete_bug_fix_propagation(
+    conn: psycopg.Connection, propagation_uuid: uuid.UUID, *, changed_by: str
+) -> None:
+    """Irreversibly remove a BugFixPropagation row and record a hard_delete audit action.
+
+    Delegates the physical deletion to BugFixPropagation.crud_hard_delete
+    with require_soft_deleted=False. BugFixPropagation is a leaf entity (no
+    domain-specific HARD_DELETE_REFERENCE_CHECKS); the entity base still
+    re-checks any generic FK-derived inbound reference and raises
+    EntityReferencedError when one is live, and unregisters the row's
+    entity_identity mapping on success.
+
+    Parameters:
+        conn: An open psycopg 3 connection.
+        propagation_uuid: UUID of the bug fix propagation record to remove.
+        changed_by: Identity of the actor recorded on the audit trail.
+
+    Raises:
+        DomainCommandError: With code BUG_PROPAGATION_NOT_FOUND if no row exists.
+        EntityReferencedError: When live inbound references block deletion.
+    """
+    current = BugFixPropagation.crud_get(conn, propagation_uuid, include_deleted=True)
+    if current is None:
+        from plan_manager.commands.errors import DomainCommandError
+
+        raise DomainCommandError("BUG_PROPAGATION_NOT_FOUND", f"bug propagation not found: {propagation_uuid}")
+    plan_uuid = current.get("linked_plan_uuid")
+    BugFixPropagation.crud_hard_delete(conn, propagation_uuid, returning=False, require_soft_deleted=False)
+    record_runtime_change(
+        conn,
+        plan_uuid=plan_uuid,
+        entity_type="bug_fix_propagation",
+        entity_id=propagation_uuid,
         action="hard_delete",
         changed_by=changed_by,
     )

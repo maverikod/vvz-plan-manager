@@ -94,61 +94,78 @@ def crud_deletion_posture_reference() -> dict[str, Any]:
                     "bug_update, bug_confirm, bug_reject, bug_mark_duplicate, "
                     "bug_reopen, bug_close"
                 ),
-                "delete": {
-                    "absent": True,
-                    "reason": "terminal_status_replacement",
-                    "detail": (
-                        "bug_close transitions a bug to the terminal closed "
-                        "status (refused unless BugClosureDiscipline is "
-                        "satisfied); bug_reopen preserves prior fix/impact/"
-                        "propagation history rather than deleting it."
-                    ),
-                },
+                "delete": (
+                    "bug_delete (soft by default: recoverable, hidden from "
+                    "bug_get/bug_list, and reversible at the store level; "
+                    "hard=true irreversibly removes the row; both modes are "
+                    "gated by the inbound-reference integrity check - live "
+                    "anchored comments, duplicate/child bugs, bug impacts, "
+                    "or bug fixes refuse with DELETE_BLOCKED; dry_run "
+                    "previews the target, mode, and every live reference "
+                    "without writing. The terminal_status_replacement "
+                    "rationale that historically justified the absence of a "
+                    "delete command here (bug_close's terminal closed "
+                    "status, bug_reopen preserving history) no longer "
+                    "applies: closing a bug and deleting one are now "
+                    "independent, complementary operations - bug_close "
+                    "records a resolved outcome while the row stays live; "
+                    "bug_delete removes the row (recoverably by default)."
+                ),
             },
             "bug_impact": {
                 "create": "bug_impact_add, bug_impact_discover",
                 "read": "bug_impact_list",
                 "update": "bug_impact_update",
-                "delete": {
-                    "absent": True,
-                    "reason": "terminal_status_replacement",
-                    "detail": (
-                        "bug_impact_statuses include the cleared terminal "
-                        "values unaffected, resolved, verified, and skipped; "
-                        "bug_impact_update moves an impact to one of these "
-                        "instead of deleting the record."
-                    ),
-                },
+                "delete": (
+                    "bug_impact_delete (soft by default; hard=true "
+                    "irreversible; both modes gated by the inbound-reference "
+                    "integrity check - a live bug fix propagation targeting "
+                    "the impact refuses with DELETE_BLOCKED; dry_run "
+                    "previews references. The terminal_status_replacement "
+                    "rationale that historically justified the absence of a "
+                    "delete command here no longer applies: moving an "
+                    "impact to a cleared terminal status (unaffected, "
+                    "resolved, verified, skipped) via bug_impact_update and "
+                    "deleting the record via bug_impact_delete are now "
+                    "independent, complementary operations."
+                ),
             },
             "bug_fix": {
                 "create": "bug_fix_create",
                 "read": "bug_fix_list",
                 "update": "bug_fix_update, bug_fix_verify",
-                "delete": {
-                    "absent": True,
-                    "reason": "terminal_status_replacement",
-                    "detail": (
-                        "bug_fix_statuses include the terminal values "
-                        "verified, reverted, and rejected; a failed or "
-                        "superseded fix attempt is transitioned to one of "
-                        "these instead of being deleted."
-                    ),
-                },
+                "delete": (
+                    "bug_fix_delete (soft by default; hard=true "
+                    "irreversible; both modes gated by the inbound-reference "
+                    "integrity check - live anchored comments, execution "
+                    "attempts, or bug-fix propagations refuse with "
+                    "DELETE_BLOCKED; dry_run previews references. The "
+                    "terminal_status_replacement rationale that historically "
+                    "justified the absence of a delete command here no "
+                    "longer applies: transitioning a failed or superseded "
+                    "fix attempt to a terminal status (verified, reverted, "
+                    "rejected) via bug_fix_update and deleting the record "
+                    "via bug_fix_delete are now independent, complementary "
+                    "operations."
+                ),
             },
             "bug_fix_propagation": {
                 "create": "bug_propagation_create, bug_propagation_generate_todos",
                 "read": "bug_propagation_list",
                 "update": "bug_propagation_update",
-                "delete": {
-                    "absent": True,
-                    "reason": "terminal_status_replacement",
-                    "detail": (
-                        "propagation_statuses include the terminal values "
-                        "done, verified, and skipped; bug_propagation_update "
-                        "moves a propagation to one of these instead of "
-                        "deleting the record."
-                    ),
-                },
+                "delete": (
+                    "bug_fix_propagation_delete (soft by default; hard=true "
+                    "irreversible; gated by the inbound-reference integrity "
+                    "check, though BugFixPropagation is a leaf entity so "
+                    "hard delete is normally unblocked; dry_run previews "
+                    "references. The terminal_status_replacement rationale "
+                    "that historically justified the absence of a delete "
+                    "command here no longer applies: moving a propagation "
+                    "to a terminal status (done, verified, skipped) via "
+                    "bug_propagation_update and deleting the record via "
+                    "bug_fix_propagation_delete are now independent, "
+                    "complementary operations."
+                ),
             },
             "project_dependency": {
                 "create": "project_dependency_add, project_dependency_discover",
