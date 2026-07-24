@@ -33,7 +33,16 @@ class BugImpactAddCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The owning "
+                        "bug is always resolved directly by `bug_id` (globally unique). When omitted, the "
+                        "PLAN_COMPLETED guard applies only to the owning bug's own source plan anchor (and "
+                        "to target_plan_uuid's own completion when target_type is plan), if any. When "
+                        "supplied, that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report this impact belongs to."},
                 "target_type": {"type": "string", "description": "Type of the affected object: project, file, plan, revision, step, command, runtime_service, container_image, deployment, dependency, or documentation."},
                 "impact_type": {"type": "string", "description": "How the target is affected: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, defect_source, or unknown. Use defect_source for the single project that owns the underlying defect of a cross-project bug; use the other values for projects that are merely affected as dependents."},
@@ -51,7 +60,7 @@ class BugImpactAddCommand(Command):
                 "target_ref_id": {"type": "string", "format": "uuid", "description": "Reference UUID for command/runtime_service/container_image/deployment/dependency/documentation target types."},
                 "target_identifier": {"type": "string", "description": "Free-form identifier for the target when no structured id/path applies."},
             },
-            "required": ["plan", "bug_id", "target_type", "impact_type", "created_by"],
+            "required": ["bug_id", "target_type", "impact_type", "created_by"],
             "additionalProperties": False,
         }
 
@@ -59,6 +68,16 @@ class BugImpactAddCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The owning bug "
+                    "is always resolved directly by bug_id. Omit it for a project-anchored bug so an "
+                    "unrelated plan's completion never blocks the add; supply it only when you want that "
+                    "plan's own completion checked too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "bug_id": {"description": "UUID of the bug_report this impact belongs to.", "type": "string", "required": True},
             "target_type": {"description": "Type of the affected object.", "type": "string", "required": True},
             "impact_type": {"description": "How the target is affected: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, defect_source, or unknown. Use defect_source for the single project that owns the underlying defect of a cross-project bug; use the other values for projects that are merely affected as dependents.", "type": "string", "required": True},
@@ -107,16 +126,17 @@ class BugImpactAddCommand(Command):
                 "Supply reason and skip_decided_by together whenever status is skipped.",
                 "Record discovery_method to distinguish manual entries from automated discovery.",
                 "Use impact_type=defect_source for the single project that owns the underlying defect of a cross-project bug; use the other impact_type values for projects that are merely affected as dependents.",
+                "plan is optional: the owning bug is always resolved by bug_id. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the add; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         bug_id: str,
         target_type: str,
         impact_type: str,
         created_by: str,
+        plan: str | None = None,
         status: str = "suspected",
         reason: str | None = None,
         skip_decided_by: str | None = None,
@@ -133,7 +153,10 @@ class BugImpactAddCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the owning
+                # bug is always resolved directly by `bug_id` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
                 try:
                     check_row_exists(conn, "bug_report", bug_uuid, frozenset({"bug_report"}))

@@ -38,11 +38,20 @@ class BugPropagationGenerateTodosCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The bug "
+                        "fix is always resolved directly by `bug_fix_id` (globally unique). When omitted, "
+                        "the PLAN_COMPLETED guard applies only to the bug fix's parent bug's own source "
+                        "plan anchor and to each pending propagation's own linked plan anchor, if any. "
+                        "When supplied, that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_fix_id": {"type": "string", "description": "UUID of the bug fix whose pending propagations receive generated TODO items."},
                 "created_by": {"type": "string", "description": "Actor creating the generated TODO items and updating the propagation records."},
             },
-            "required": ["plan", "bug_fix_id", "created_by"],
+            "required": ["bug_fix_id", "created_by"],
             "additionalProperties": False,
         }
 
@@ -50,6 +59,16 @@ class BugPropagationGenerateTodosCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The bug fix "
+                    "is always resolved directly by bug_fix_id. Omit it so an unrelated plan's completion "
+                    "never blocks the generation; supply it only when you want that plan's own completion "
+                    "checked too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "bug_fix_id": {"description": "UUID of the bug fix whose pending propagations receive generated TODO items.", "type": "string", "required": True},
             "created_by": {"description": "Actor creating the generated TODO items and updating the propagation records.", "type": "string", "required": True},
         }
@@ -66,6 +85,7 @@ class BugPropagationGenerateTodosCommand(Command):
                 "Only propagations with status pending receive a generated TODO; re-run after adding new ones.",
                 "Each generated TODO is anchored to the bug_fix and links back to its propagation automatically.",
                 "Assign propagations via assigned_to beforehand so generated TODOs inherit the right owner.",
+                "plan is optional: the bug fix is always resolved by bug_fix_id. Omit it so an unrelated plan's completion never blocks the generation; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
@@ -93,14 +113,17 @@ class BugPropagationGenerateTodosCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         bug_fix_id: str,
         created_by: str,
+        plan: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the bug fix
+                # is always resolved directly by `bug_fix_id` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_fix_uuid = uuid.UUID(bug_fix_id)
                 fix_record = get_bug_fix(conn, bug_fix_uuid)
                 if fix_record is not None:

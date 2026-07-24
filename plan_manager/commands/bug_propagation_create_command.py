@@ -35,7 +35,16 @@ class BugPropagationCreateCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The bug "
+                        "fix is always resolved directly by `bug_fix_id` (globally unique). When omitted, "
+                        "the PLAN_COMPLETED guard applies only to the bug fix's parent bug's own source "
+                        "plan anchor, if any. When supplied, that plan must exist and must not itself be "
+                        "completed."
+                    ),
+                },
                 "bug_fix_id": {"type": "string", "description": "UUID of the bug fix this propagation is required by."},
                 "impact_id": {"type": "string", "description": "UUID of the bug impact record this propagation targets."},
                 "action": {"type": "string", "description": "Required downstream action (one of the 13 PropagationAction values)."},
@@ -44,7 +53,7 @@ class BugPropagationCreateCommand(Command):
                 "target_identifier": {"type": "string", "description": "Optional free-form identifier of the propagation target."},
                 "assigned_to": {"type": "string", "description": "Optional assignee responsible for carrying out the propagation action."},
             },
-            "required": ["plan", "bug_fix_id", "impact_id", "action", "created_by"],
+            "required": ["bug_fix_id", "impact_id", "action", "created_by"],
             "additionalProperties": False,
         }
 
@@ -52,6 +61,16 @@ class BugPropagationCreateCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The bug fix "
+                    "is always resolved directly by bug_fix_id. Omit it so an unrelated plan's completion "
+                    "never blocks the create; supply it only when you want that plan's own completion "
+                    "checked too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "bug_fix_id": {"description": "UUID of the bug fix this propagation is required by.", "type": "string", "required": True},
             "impact_id": {"description": "UUID of the bug impact record this propagation targets.", "type": "string", "required": True},
             "action": {"description": "Required downstream action (one of the 13 PropagationAction values).", "type": "string", "required": True},
@@ -79,6 +98,7 @@ class BugPropagationCreateCommand(Command):
                 "Pick action from the 13 defined PropagationAction values, e.g. rebuild_package or redeploy.",
                 "Set assigned_to at creation when the responsible owner is already known.",
                 "Ensure impact_id references a bug_impact already recorded for the same bug as bug_fix_id.",
+                "plan is optional: the bug fix is always resolved by bug_fix_id. Omit it so an unrelated plan's completion never blocks the create; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
@@ -113,11 +133,11 @@ class BugPropagationCreateCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         bug_fix_id: str,
         impact_id: str,
         action: str,
         created_by: str,
+        plan: str | None = None,
         target_type: str | None = None,
         target_identifier: str | None = None,
         assigned_to: str | None = None,
@@ -125,7 +145,10 @@ class BugPropagationCreateCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the bug fix
+                # is always resolved directly by `bug_fix_id` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_fix_uuid_val = uuid.UUID(bug_fix_id)
                 impact_uuid_val = uuid.UUID(impact_id)
                 fix_record = get_bug_fix(conn, bug_fix_uuid_val)

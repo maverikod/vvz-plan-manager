@@ -35,7 +35,16 @@ class BugPropagationUpdateCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The "
+                        "propagation record is always resolved directly by `propagation_id` (globally "
+                        "unique). When omitted, the PLAN_COMPLETED guard applies only to the propagation's "
+                        "own linked plan anchor, if any. When supplied, that plan must exist and must not "
+                        "itself be completed."
+                    ),
+                },
                 "propagation_id": {"type": "string", "description": "UUID of the bug fix propagation record to update."},
                 "changed_by": {"type": "string", "description": "Actor performing this update, recorded as the audited change actor."},
                 "status": {"type": "string", "description": "New status (one of the 8 PropagationStatus values)."},
@@ -44,7 +53,7 @@ class BugPropagationUpdateCommand(Command):
                 "verification_result": {"type": "string", "description": "Verification result recorded for this propagation."},
                 "linked_todo_id": {"type": "string", "description": "UUID of the TODO item this propagation links to."},
             },
-            "required": ["plan", "propagation_id", "changed_by"],
+            "required": ["propagation_id", "changed_by"],
             "additionalProperties": False,
         }
 
@@ -52,6 +61,16 @@ class BugPropagationUpdateCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The "
+                    "propagation record is always resolved directly by propagation_id. Omit it so an "
+                    "unrelated plan's completion never blocks the update; supply it only when you want "
+                    "that plan's own completion checked too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "propagation_id": {"description": "UUID of the bug fix propagation record to update.", "type": "string", "required": True},
             "changed_by": {"description": "Actor performing this update.", "type": "string", "required": True},
             "status": {"description": "New status.", "type": "string", "required": False},
@@ -78,6 +97,7 @@ class BugPropagationUpdateCommand(Command):
                 "Attach evidence when moving a propagation toward done or verified.",
                 "Use verification_result to record the outcome once a propagation reaches verified.",
                 "Set linked_todo_id when a generated TODO tracks this propagation's work.",
+                "plan is optional: the propagation record is always resolved by propagation_id. Omit it so an unrelated plan's completion never blocks the update; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
@@ -112,9 +132,9 @@ class BugPropagationUpdateCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         propagation_id: str,
         changed_by: str,
+        plan: str | None = None,
         status: str | None = None,
         assigned_to: str | None = None,
         evidence: dict[str, Any] | None = None,
@@ -124,7 +144,11 @@ class BugPropagationUpdateCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the
+                # propagation record is always resolved directly by
+                # `propagation_id` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 propagation_uuid = uuid.UUID(propagation_id)
                 existing = get_bug_fix_propagation(conn, propagation_uuid)
                 if existing is None:

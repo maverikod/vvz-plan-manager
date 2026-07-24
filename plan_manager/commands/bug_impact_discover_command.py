@@ -35,14 +35,22 @@ class BugImpactDiscoverCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The owning "
+                        "bug is always resolved directly by `bug_id` (globally unique). When omitted, the "
+                        "PLAN_COMPLETED guard applies only to the owning bug's own source plan anchor, if "
+                        "any. When supplied, that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug_report the discovered impacts belong to."},
                 "source_project_id": {"type": "string", "format": "uuid", "description": "External project UUID where the bug's source anchor lives; the reverse dependency graph is walked from this project."},
                 "impact_type": {"type": "string", "description": "Impact type applied to every discovered BugImpact record (one of: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, or unknown). Never pass defect_source here: discovery only creates records for dependent projects reached via the reverse graph, never for source_project_id itself."},
                 "created_by": {"type": "string", "description": "Actor identifier recorded as the creator of the discovered impact records."},
                 "discovery_method": {"type": "string", "description": "How these impacts were discovered. Defaults to project_dependency_reverse_graph."},
             },
-            "required": ["plan", "bug_id", "source_project_id", "impact_type", "created_by"],
+            "required": ["bug_id", "source_project_id", "impact_type", "created_by"],
             "additionalProperties": False,
         }
 
@@ -50,6 +58,16 @@ class BugImpactDiscoverCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The owning bug "
+                    "is always resolved directly by bug_id. Omit it so an unrelated plan's completion never "
+                    "blocks the discovery; supply it only when you want that plan's own completion checked "
+                    "too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "bug_id": {"description": "UUID of the bug_report the discovered impacts belong to.", "type": "string", "required": True},
             "source_project_id": {"description": "External project UUID where the bug's source anchor lives.", "type": "string", "required": True},
             "impact_type": {"description": "Impact type applied to every discovered BugImpact record (one of: uses_broken_api, uses_broken_contract, needs_dependency_update, needs_version_bump, needs_pull, needs_rebuild, needs_redeploy, needs_test_rerun, needs_plan_update, needs_cascade, needs_documentation_update, runtime_regression_risk, data_migration_required, security_review_required, or unknown). Never pass defect_source here: discovery only creates records for dependent projects reached via the reverse graph, never for source_project_id itself.", "type": "string", "required": True},
@@ -76,22 +94,26 @@ class BugImpactDiscoverCommand(Command):
                 "Discovered impacts are always created with status suspected; confirm or dismiss them individually afterward.",
                 "Override discovery_method only when the walk source differs from the standard reverse dependency graph.",
                 "Never use impact_type=defect_source with this command: discover only creates suspected records for dependent projects, never for the source project itself; record the defect_source impact of the owning project directly with bug_impact_add instead.",
+                "plan is optional: the owning bug is always resolved by bug_id. Omit it so an unrelated plan's completion never blocks the discovery; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         bug_id: str,
         source_project_id: str,
         impact_type: str,
         created_by: str,
+        plan: str | None = None,
         discovery_method: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the owning
+                # bug is always resolved directly by `bug_id` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
                 try:
                     check_row_exists(conn, "bug_report", bug_uuid, frozenset({"bug_report"}))

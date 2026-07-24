@@ -31,7 +31,16 @@ class BugImpactUpdateCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "plan": {"type": "string", "description": "Plan identifier (name or UUID)."},
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The impact "
+                        "record is always resolved directly by `impact_uuid` (globally unique). When "
+                        "omitted, the PLAN_COMPLETED guard applies only to the impact's own target plan "
+                        "anchor, if any. When supplied, that plan must exist and must not itself be "
+                        "completed."
+                    ),
+                },
                 "impact_uuid": {"type": "string", "format": "uuid", "description": "UUID of the bug_impact record to update."},
                 "changed_by": {"type": "string", "description": "Actor identifier recorded as the author of this change."},
                 "status": {"type": "string", "description": "New impact status: suspected, confirmed, unaffected, pending_resolution, resolved, verified, or skipped (skipped requires a non-empty reason and skip_decided_by, existing or newly supplied)."},
@@ -40,7 +49,7 @@ class BugImpactUpdateCommand(Command):
                 "discovery_method": {"type": "string", "description": "How this impact was discovered."},
                 "resolution_evidence": {"type": "object", "description": "Structured evidence supporting resolution of this impact."},
             },
-            "required": ["plan", "impact_uuid", "changed_by"],
+            "required": ["impact_uuid", "changed_by"],
             "additionalProperties": False,
         }
 
@@ -48,6 +57,16 @@ class BugImpactUpdateCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **BASE_PARAMETERS,
+            "plan": {
+                "description": (
+                    "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2, todo a5ec9c1a). The impact "
+                    "record is always resolved directly by impact_uuid. Omit it so an unrelated plan's "
+                    "completion never blocks the update; supply it only when you want that plan's own "
+                    "completion checked too."
+                ),
+                "type": "string",
+                "required": False,
+            },
             "impact_uuid": {"description": "UUID of the bug_impact record to update.", "type": "string", "required": True},
             "changed_by": {"description": "Actor identifier recorded as the author of this change.", "type": "string", "required": True},
             "status": {"description": "New impact status.", "type": "string", "required": False},
@@ -75,14 +94,15 @@ class BugImpactUpdateCommand(Command):
                 "Only pass the fields that changed; omitted fields keep their current value.",
                 "Record changed_by as the actual actor performing the transition, for audit history.",
                 "Impact type, including the defect_source owning-repo value, is fixed when a bug_impact record is created via bug_impact_add and cannot be changed by bug_impact_update; to correct a wrongly-typed record, create a replacement record with bug_impact_add instead.",
+                "plan is optional: the impact record is always resolved by impact_uuid. Omit it so an unrelated plan's completion never blocks the update; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         impact_uuid: str,
         changed_by: str,
+        plan: str | None = None,
         status: str | None = None,
         reason: str | None = None,
         skip_decided_by: str | None = None,
@@ -92,7 +112,10 @@ class BugImpactUpdateCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the impact
+                # record is always resolved directly by `impact_uuid` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 impact_id = validate_uuid(impact_uuid)
                 current = get_bug_impact(conn, impact_id)
                 if current is None:
