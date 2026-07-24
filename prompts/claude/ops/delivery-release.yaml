@@ -28,24 +28,26 @@ procedure: |
   2. BUILD (LOCAL execution — see `build_execution` above): run ./build.sh at the
      project root. It MUST: run the local unit tests;
      if the project ships a docker image — build it, tag it with the SAME version,
-     push it to Docker Hub; build the .deb package. A missing ./build.sh is a gap
-     to close, not ignore.
-  3. CLIENT PUBLISH: the server's client package is published to PyPI at the same
-     version. Publishing uses ~/.pypirc credentials (twine); never inline tokens,
-     never interactive prompts.
-  4. TRANSFER/DEPLOY: if the transfer+deploy method for this project has not been
+     push it to Docker Hub; build the .deb package; as its final stage, publish the
+     server's client package to PyPI at the same version (built-in, right after the
+     docker/deb artifacts — not a separate manual step), using ~/.pypirc credentials
+     via twine, never inline tokens or interactive prompts; the stage validates
+     root/client version lockstep before publishing and tolerates a "File already
+     exists" re-upload as success only after confirming the version is actually
+     present on PyPI. A missing ./build.sh is a gap to close, not ignore.
+  3. TRANSFER/DEPLOY: if the transfer+deploy method for this project has not been
      established earlier, ASK THE USER before proceeding. Deploy to the
      testing/production server (one and the same server in this setup), from the
      active working branch — never from or before merging main.
-  5. REAL-SERVER PIPELINE: exactly ONE pre-delivery test pipeline, built on the
+  4. REAL-SERVER PIPELINE: exactly ONE pre-delivery test pipeline, built on the
      server's own client (or, if none, the adapter's client), runs against the
      freshly deployed instance: the server is present in the mcp-proxy registry
      (list_servers); every changed/added command AND its related commands respond
      correctly THROUGH the proxy (call_server), not only in isolation; pipeline green.
      Verify registration, health, version, and the changed behavior.
-  6. PLAN MANAGER RECORD: for a bug fix, record and verify the fix in Plan Manager
+  5. PLAN MANAGER RECORD: for a bug fix, record and verify the fix in Plan Manager
      before closing the proven bug (bug lifecycle — see ops/planmgr-bugs.yaml).
-  7. PROPAGATION (branch_discipline): merge the verified working branch into local
+  6. PROPAGATION (branch_discipline): merge the verified working branch into local
      main, report the exact ready commit, and WAIT for explicit user confirmation
      that it was pushed — the model never pushes main. After confirmation, the
      opposite site pulls main through its authoritative Git surface, verifies the

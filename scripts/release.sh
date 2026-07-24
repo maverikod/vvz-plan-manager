@@ -82,6 +82,47 @@ gzip -9n -c build/doc/planmgr.info > build/deb/usr/share/info/planmgr.info.gz
 echo "-- building .deb --"
 dpkg-deb --build --root-owner-group build/deb "build/planmgr_${VERSION}_all.deb"
 
+echo "== stage: publish client to PyPI =="
+CLIENT_VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("client/pyproject.toml","rb"))["project"]["version"])')"
+echo "client_version=${CLIENT_VERSION}"
+
+echo "-- version lockstep check --"
+if [ "${CLIENT_VERSION}" != "${VERSION}" ]; then
+  echo "version mismatch: root pyproject.toml=${VERSION} client/pyproject.toml=${CLIENT_VERSION}" >&2
+  exit 1
+fi
+
+echo "-- cleaning stale client/dist artifacts --"
+mkdir -p client/dist
+find client/dist -type f ! -name "plan_manager_client-${VERSION}*" -delete
+
+echo "-- building client wheel+sdist --"
+.venv/bin/python -m build --wheel --sdist client/
+
+echo "-- publishing client to PyPI --"
+CLIENT_UPLOAD_LOG="$(mktemp)"
+if .venv/bin/python -m twine upload "client/dist/plan_manager_client-${VERSION}"* 2>&1 | tee "${CLIENT_UPLOAD_LOG}"; then
+  echo "client published: plan-manager-client==${VERSION}"
+else
+  if grep -qi "File already exists" "${CLIENT_UPLOAD_LOG}"; then
+    echo "-- twine reported 'File already exists': verifying ${VERSION} is actually present on PyPI --"
+    PYPI_HTTP_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/plan-manager-client/${VERSION}/json")"
+    if [ "${PYPI_HTTP_STATUS}" = "200" ]; then
+      echo "client already published: plan-manager-client==${VERSION} confirmed present on PyPI (idempotent re-run, no-op)"
+    else
+      echo "client publish failed: twine reported 'File already exists' but PyPI does not confirm version ${VERSION} (http ${PYPI_HTTP_STATUS})" >&2
+      rm -f "${CLIENT_UPLOAD_LOG}"
+      exit 1
+    fi
+  else
+    echo "client publish failed: twine upload error (see log above)" >&2
+    rm -f "${CLIENT_UPLOAD_LOG}"
+    exit 1
+  fi
+fi
+rm -f "${CLIENT_UPLOAD_LOG}"
+
 echo "== release summary =="
 echo "image: ${REPO}:${VERSION}"
 echo "deb: build/planmgr_${VERSION}_all.deb"
+echo "client: plan-manager-client==${VERSION} (PyPI)"
