@@ -3653,13 +3653,16 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
     has_more; a smaller explicit limit is also checked to prove the page
     itself is actually bounded, not just decorated with metadata.
 
-    Unit 2 (03956ccf) mirrors R12's throwaway-plan recipe (plan_create ->
-    cascade_begin -> concept_add(cascade_uuid) -> context_bundle with an
-    explicit small limit -- MRS entities are cascade-only, so concept_add
-    needs an open cascade like R8/R12's) to prove the 'common' block's
-    (and each child's) first page is bounded, and that a caller can
-    continue past it with block_get(block_id, limit, offset) using the
-    block_id context_bundle already returns.
+    Unit 2 (03956ccf) mirrors R8/R12's throwaway-plan recipe in full:
+    plan_create -> context_common(plan,level3) -> step_create(level3,
+    direct mode, no cascade_uuid -- establishes the plan's head revision,
+    a precondition cascade_begin enforces) -> cascade_begin ->
+    concept_add(cascade_uuid) -> context_bundle with an explicit small
+    limit (MRS entities are cascade-only, so concept_add needs an open
+    cascade like R8/R12's) to prove the 'common' block's (and each
+    child's) first page is bounded, and that a caller can continue past
+    it with block_get(block_id, limit, offset) using the block_id
+    context_bundle already returns.
 
     Each unit detects a pre-fix server independently (see the two
     _PRE_FIX_SKIP_REASON constants above) and SKIPs only that unit, rather
@@ -3718,9 +3721,31 @@ async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResul
             return results
         plan_uuid = res["uuid"]
 
-        # MRS entities are cascade-only (help(concept_add) requires
-        # cascade_uuid) -- open a cascade first, exactly like R8/R12's
-        # cascade_begin -> mutate(cascade_uuid) -> ... -> cascade_abort idiom.
+        # cascade_begin requires the plan to already have a head revision
+        # (CASCADE_CONFLICT "cannot open a cascade on a plan with no head
+        # revision" otherwise) -- a brand-new plan_create has none. R8/R12
+        # establish one first via a DIRECT-mode (no cascade_uuid) level-3
+        # step_create: StepCreateCommand.execute (plan_manager/commands/
+        # step_create_command.py) admits target_kind="paragraph" with
+        # cascade_uuid=None as a legal direct mutation on a fresh plan
+        # (cascade/regime.check_admission), then calls storage.version_
+        # store.record_revision(..., ref_name=None), which advances the
+        # plan's head_revision_uuid directly (domain.plan.set_head_revision)
+        # -- exactly the missing precondition. Mirror R8/R12's own ordering:
+        # context_common(plan,level3) -> step_create(level3, direct) ->
+        # cascade_begin -> mutate(cascade_uuid) -> ... -> cascade_abort.
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R15_03956ccf_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R15_03956ccf_step_create(head_revision)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R15_03956ccf_step_create(head_revision)", STATUS_PASS, f"G={g_id}"))
+
         ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
             results.append(CheckResult("4", "R15_03956ccf_cascade_begin", STATUS_FAIL, str(res)))
