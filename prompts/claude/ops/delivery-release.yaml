@@ -7,6 +7,13 @@ purpose: full procedure for "work delivered to the user" — versioning, build, 
 project:
   version_source: pyproject.toml (root; single source — client/server/docker/deb lockstep)
   build: ./build.sh (project root)
+  build_execution: >-
+    LOCAL HOST, run by the model in the delivery chain (orchestrator/executor level),
+    from the LOCAL checkout at the release commit, via local shell — NOT via the MCP
+    proxy, NOT via terminal host-exec, NOT on deploy_host. Script path: ./build.sh
+    (relative to the local checkout root). See laws.yaml `local_mode` HARD RULE: the
+    MCP proxy is used ONLY for CA search/analysis in local development, never to run
+    build/test/deploy scripts.
   deploy_host: 192.168.254.26
   live_pipeline: the one real-server MCP smoke pipeline, run via proxy-lan against the deployed planmgr instance
   production_server: planmgr (uuid 8820e595-8ed4-43f2-b9bf-c99f48054fa6)
@@ -18,7 +25,8 @@ procedure: |
      the single source of truth. VERSION LOCKSTEP IS LAW: client package, server
      package, docker image tag, and .deb version must all equal this version
      (sync scripts run as part of the build; never hand-edit derived version files).
-  2. BUILD: run ./build.sh at the project root. It MUST: run the local unit tests;
+  2. BUILD (LOCAL execution — see `build_execution` above): run ./build.sh at the
+     project root. It MUST: run the local unit tests;
      if the project ships a docker image — build it, tag it with the SAME version,
      push it to Docker Hub; build the .deb package. A missing ./build.sh is a gap
      to close, not ignore.
@@ -52,6 +60,7 @@ invariants:
   - a project built on mcp-proxy-adapter implements that client as a WRAPPER over the adapter's client — never reimplements transport
   - do not deploy from or edit main before production verification
   - the model never pushes main (laws.yaml branch_discipline; root CLAUDE.md LOCAL PROJECT LAW governs the exact commit sequence)
+  - build script execution locus is LOCAL (see `build_execution`); only the deploy target and production verification touch deploy_host
 
 gotchas:
   - dpkg on the target host may need --force-confold to keep existing config files

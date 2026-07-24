@@ -3,6 +3,13 @@
 
 meta:
   file_access: local               # THIS PROJECT'S DEFAULT (laws.variables.file_access=local, standing user order 2026-07-18): editor=LOCAL Write/Edit, terminal=LOCAL bash; CA still used for search/analysis and as the REMOTE REPO for git sync. commit-after-edit applies (see laws.yaml local_mode).
+  # HARD RULE (laws.yaml local_mode): the `editor` and `terminal` manuals below, and
+  # every ops/*.yaml procedure they trigger, describe the REMOTE/MCP path used in the
+  # DEFAULT (mcp) profile. In this project's LOCAL default, file edits use local
+  # Write/Edit tools directly on the local checkout (skip CA session_create /
+  # universal_file_* entirely) and scripts (build/test/deploy, sandbox/host-exec
+  # substitutes) run via local shell — the proxy is used ONLY for CA search/analysis
+  # and CA git_* sync.
   proxy: proxy-lan                 # MCP client namespace (address = mcp__proxy-lan__*); set client-side, no registry uuid. NAME can change; if it does, the tool namespace changes with it.
   call: 'mcp__proxy-lan__call_server(server_id, copy_number, command, params)'
   path: project-relative POSIX only; no host paths; no ".."
@@ -52,7 +59,7 @@ triggers:
   - when: the task declares a mode (planning / analysis / refactoring)
     read: [modes]
   - when: before the first release action of a delivery (version bump, build, publish, deploy, real-server pipeline)
-    read: [delivery]
+    read: [delivery]   # delivery.build_execution + laws.yaml local_mode: build/test/deploy scripts run LOCAL, never via this proxy
 
 # error taxonomy — exactly one branch per failure
 errors:
