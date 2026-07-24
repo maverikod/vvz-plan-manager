@@ -118,5 +118,6 @@ class BugDeleteCommand(Command):
                 "hard=true irreversibly removes the row; it cannot be undone - always run dry_run=true first.",
                 "Both modes are gated by the universal deletion rule: while live blocking referrers exist (anchored comments, duplicate/child bugs, bug impacts, bug fixes) the command refuses with DELETE_BLOCKED and lists every referencing record; detach or delete referrers first.",
                 "The deletion is recorded on the runtime audit trail under changed_by; verify the outcome with bug_get, which still returns a soft-deleted row with deleted_at set, or NOT_FOUND after a hard delete.",
+                "The audit record written by this command is readable via audit_list.",
             ],
         )

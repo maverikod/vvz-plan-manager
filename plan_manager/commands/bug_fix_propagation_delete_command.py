@@ -118,5 +118,6 @@ class BugFixPropagationDeleteCommand(Command):
                 "hard=true irreversibly removes the row; it cannot be undone - always run dry_run=true first.",
                 "BugFixPropagation is a leaf entity: nothing else in the schema is defined to reference a propagation by its own uuid, so hard deletion is normally unblocked once the record itself exists.",
                 "The deletion is recorded on the runtime audit trail under changed_by.",
+                "The audit record written by this command is readable via audit_list.",
             ],
         )
