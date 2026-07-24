@@ -775,6 +775,22 @@ def _looks_like_unknown_param(diagnostic_text: str, param_name: str) -> bool:
     )
 
 
+def _looks_like_missing_required_param(diagnostic_text: str, param_name: str) -> bool:
+    """True iff a command-call failure looks like the schema rejecting the
+    call because `param_name` was NOT supplied (a server predating the
+    parameter being made optional), rather than any other validation or
+    domain error naming that string incidentally.
+
+    Mirrors _looks_like_unknown_param's narrow-match idiom, but for the
+    opposite direction: requires `param_name` to appear AND one of a small
+    set of "a required parameter is missing" phrasings (the adapter's own
+    wording is "Missing required parameters: ...", see
+    mcp_proxy_adapter.commands.base.Command.validate_params).
+    """
+    lowered = diagnostic_text.lower()
+    return param_name in diagnostic_text and ("missing required" in lowered or "required parameter" in lowered)
+
+
 def _looks_like_unresolved_command(name: str, diagnostic_text: str) -> bool:
     """True iff a queued-path failure looks like "Command '<name>' not found".
 
@@ -914,6 +930,51 @@ async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) 
 
     DISPATCH_LOG.append({"command": name, "path": "queued", "fallback": False, "ok": ok})
     return ok, data
+
+
+HELP_CATALOG_MAX_PAGE = 200  # matches the server's pagination MAX_LIMIT (plan_manager.commands.runtime_filtering)
+
+
+async def fetch_full_help_catalog(client: Any) -> tuple[bool, dict[str, str], Any]:
+    """Fetch the ENTIRE help() no-cmdname catalog, paging with the server's
+    max page size until exhausted.
+
+    Bug 507b74ae bounded help()'s default no-cmdname response (bounded
+    default 50, max 200 rows per page, per plan_manager.commands.
+    runtime_filtering's uniform pagination contract) -- but tier1+ of this
+    pipeline classify/probe EVERY catalog command, so they need the full
+    catalog, not just a bounded first page. This loops requesting
+    HELP_CATALOG_MAX_PAGE rows at a time, merging every page's 'commands'
+    map, until the response's 'pagination.has_more' is false.
+
+    Backward compatible with a server predating the fix: such a server has
+    no 'pagination' key in its response at all (limit/offset are silently
+    ignored by the pre-fix builtin's **kwargs) and already returns every
+    command in the single unbounded response, so the loop takes exactly one
+    iteration in that case, unchanged from before this helper existed.
+
+    Returns (ok, catalog, last_raw_response); ok is False only if the very
+    first page's call fails, in which case last_raw_response carries the
+    failure detail for the caller's existing catalog_fetch FAIL reporting.
+    """
+    catalog: dict[str, str] = {}
+    offset = 0
+    while True:
+        ok, page = await call(client, "help", {"limit": HELP_CATALOG_MAX_PAGE, "offset": offset})
+        if not ok or not isinstance(page, dict):
+            return ok, catalog, page
+        page_commands = page.get("commands", {})
+        if isinstance(page_commands, dict):
+            catalog.update(page_commands)
+        pagination = page.get("pagination")
+        if not isinstance(pagination, dict) or not pagination.get("has_more"):
+            return True, catalog, page
+        returned = pagination.get("returned", len(page_commands) if isinstance(page_commands, dict) else 0)
+        if not isinstance(returned, int) or returned <= 0:
+            # Defensive: has_more=True with no forward progress would loop
+            # forever; stop here with whatever was collected so far.
+            return True, catalog, page
+        offset += returned
 
 
 async def run_tier0(client: Any, expect_version: Optional[str]) -> list[CheckResult]:
@@ -3061,6 +3122,14 @@ async def run_r10_branch_scope_hierarchical_selectors(client: Any) -> list[Check
 
 R11_SUMMARY_ROW_BYTE_CEILING = 512
 
+# bug_list's summary projection widened under bugs 7383c8a8/45f0c128 (18
+# fields, including short_description and five anchor/ownership fields, vs
+# the original 10-field 8a13977d shape) so a page is independently useful
+# for triage; see tests/test_bug_8a13977d_list_view_projection.py's
+# BUG_SUMMARY_ROW_BYTE_CEILING for the matching unit-level ceiling and its
+# rationale.
+R11_BUG_SUMMARY_ROW_BYTE_CEILING = 1024
+
 R11_PRE_FIX_SKIP_REASON = (
     "server does not accept the view parameter on the list-family commands "
     "yet (bug 8a13977d: todo_list(active_only=true, limit=50) serialized "
@@ -3120,13 +3189,17 @@ async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
     bug_summary_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list)
     results.append(CheckResult("4", "R11_bug_list(view=summary)_call", STATUS_PASS if bug_summary_ok else STATUS_FAIL, "" if bug_summary_ok else str(res)))
     if bug_summary_ok:
+        # Widened under bugs 7383c8a8/45f0c128 (bug_list oversized response /
+        # no usable pagination; project_view leaked the same full bodies).
         expected_bug_fields = {
-            "uuid", "bug_uuid", "title", "kind", "severity", "status",
-            "priority_nice", "source_anchor_type", "source_ref_id", "updated_at",
+            "uuid", "bug_uuid", "title", "short_description", "status", "kind", "severity",
+            "priority_nice", "reporter", "owner", "source_anchor_type", "source_project_id",
+            "source_plan_uuid", "source_command", "source_service", "created_at", "updated_at",
+            "closed_at",
         }
-        oversized = [row for row in res["bugs"] if len(json.dumps(row).encode("utf-8")) >= R11_SUMMARY_ROW_BYTE_CEILING]
+        oversized = [row for row in res["bugs"] if len(json.dumps(row).encode("utf-8")) >= R11_BUG_SUMMARY_ROW_BYTE_CEILING]
         wrong_shape = [row for row in res["bugs"] if isinstance(row, dict) and set(row) != expected_bug_fields]
-        results.append(CheckResult("4", "R11_bug_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_SUMMARY_ROW_BYTE_CEILING} bytes"))
+        results.append(CheckResult("4", "R11_bug_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_BUG_SUMMARY_ROW_BYTE_CEILING} bytes"))
         results.append(CheckResult("4", "R11_bug_list(view=summary)_row_fields", STATUS_PASS if not wrong_shape else STATUS_FAIL, "" if not wrong_shape else f"unexpected shape: {wrong_shape[:1]}"))
 
     # One CR-5a agent-config family member, per the mandate.
@@ -3324,6 +3397,111 @@ async def run_r12_response_size_and_cascade_tip_batch(client: Any) -> list[Check
     return results
 
 
+R13_PRE_FIX_SKIP_REASON = (
+    "server predates bugs 7383c8a8/45f0c128 (bug_list still defaults to "
+    "view=full / project_view still embeds full bug bodies) -- redeploy pending"
+)
+
+
+async def run_r13_bug_list_project_view_bounded(client: Any, project_id: str) -> list[CheckResult]:
+    """Bugs 7383c8a8 (bug_list: 176,477 chars for 42 active bugs live, no
+    usable pagination) and 45f0c128 (project_view: 63,439 chars spilled for
+    7 bugs despite limit params) -- both traced to embedding the full
+    BugReport body (detailed_description, expected_behavior, actual_behavior,
+    reproduction, evidence, environment) in every row.
+
+    Fix: bug_list's `view` parameter now defaults to "summary" (the widened
+    projection: uuid, bug_uuid, title, short_description, status, kind,
+    severity, priority_nice, reporter, owner, source_anchor_type,
+    source_project_id, source_plan_uuid, source_command, source_service,
+    created_at, updated_at, closed_at), with limit/offset/total pagination
+    (default 50, max 200, unchanged from before this fix); project_view's
+    bug AND todo rows are now unconditionally the same summary projection
+    (no view param there -- the whole command is a bounded aggregate view).
+
+    Recipe: a dedicated throwaway plan + one scratch bug carrying a
+    multi-KB detailed_description (the exact shape that spilled live),
+    taken through the full documented closure path (mirrors
+    run_tier3_bug_create) so cleanup can hard-delete the plan afterward;
+    self-contained top-level try/finally, no shared Tier-3 state touched.
+
+    project_id is the SAME --project argument R3_project_view already uses;
+    this check's project_view assertions are about GENERAL boundedness
+    (no bug/todo row on that project ever carries a body field) rather than
+    requiring the scratch bug specifically be project-anchored (source_type
+    project/file anchoring is confirmed live against the Code Analysis
+    server and can legitimately fall back to unidentified -- not something
+    this response-size check should depend on).
+
+    Pre-fix detection: the scratch bug_list row is itself the version probe
+    -- if omitting `view` still returns detailed_description, the fix is
+    not deployed yet and the whole group is SKIPped, not FAILed.
+    """
+    results: list[CheckResult] = []
+    plan_name = unique_suffix("r13-plan")
+    ok, plan_res = await call(client, "plan_create", {"name": plan_name})
+    if not ok or not isinstance(plan_res, dict) or not plan_res.get("uuid"):
+        results.append(CheckResult("4", "R13_plan_create", STATUS_FAIL, str(plan_res)))
+        return results
+    plan_uuid = plan_res["uuid"]
+    try:
+        big_body = "lorem ipsum dolor sit amet " * 300  # ~8.1 KB, mirrors the live-reported spill
+        title = unique_suffix("r13-bug")
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": title, "short_description": "R13 scratch bug (large body)",
+                "detailed_description": big_body, "kind": "functional", "severity": "trivial",
+                "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R13_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R13_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        # 7383c8a8: bug_list, `view` omitted -- must already be bounded.
+        ok, res = await call(client, "bug_list", {"plan": plan_uuid})
+        bug_list_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list)
+        if not bug_list_ok:
+            results.append(CheckResult("4", "R13_7383c8a8_bug_list_call", STATUS_FAIL, str(res)))
+            return results
+
+        row = next((b for b in res["bugs"] if isinstance(b, dict) and b.get("uuid") == bug_uuid), None)
+        pre_fix_detected = row is not None and "detailed_description" in row
+        if pre_fix_detected:
+            results.append(CheckResult("4", "R13_bug_list_project_view_bounded", STATUS_SKIP, R13_PRE_FIX_SKIP_REASON))
+            return results
+
+        results.append(CheckResult("4", "R13_7383c8a8_bug_list_call", STATUS_PASS))
+        row_ok = row is not None
+        results.append(CheckResult("4", "R13_7383c8a8_bug_list_row_present", STATUS_PASS if row_ok else STATUS_FAIL, "" if row_ok else f"bug {bug_uuid} not in bug_list(plan={plan_name}) response"))
+        if row_ok:
+            no_body = not any(f in row for f in ("detailed_description", "expected_behavior", "actual_behavior", "reproduction", "evidence", "environment"))
+            results.append(CheckResult("4", "R13_7383c8a8_bug_list_row_no_body", STATUS_PASS if no_body else STATUS_FAIL, "" if no_body else f"row leaked a body field: {sorted(row.keys())}"))
+        pagination_ok = all(k in res for k in ("total", "limit", "offset"))
+        results.append(CheckResult("4", "R13_7383c8a8_bug_list_pagination_fields", STATUS_PASS if pagination_ok else STATUS_FAIL, "" if pagination_ok else f"missing pagination field(s) in {sorted(res.keys())}"))
+
+        # 45f0c128: project_view must stay bounded -- no bug/todo body leaks,
+        # regardless of which project's live data is currently on file.
+        ok, res = await call(client, "project_view", {"project": project_id, "active_only": True, "bug_limit": 50, "todo_limit": 50})
+        view_ok = ok and isinstance(res, dict)
+        results.append(CheckResult("4", "R13_45f0c128_project_view_call", STATUS_PASS if view_ok else STATUS_FAIL, "" if view_ok else str(res)))
+        if view_ok:
+            bug_rows = [b for b in res.get("bugs", []) if isinstance(b, dict)]
+            leaked_bug = [b for b in bug_rows if any(f in b for f in ("detailed_description", "expected_behavior", "actual_behavior", "reproduction", "evidence", "environment"))]
+            results.append(CheckResult("4", "R13_45f0c128_project_view_bugs_no_body", STATUS_PASS if not leaked_bug else STATUS_FAIL, "" if not leaked_bug else f"{len(leaked_bug)} bug row(s) leaked a body field"))
+            todo_rows = [t for t in res.get("todos", []) if isinstance(t, dict)]
+            leaked_todo = [t for t in todo_rows if any(f in t for f in ("description", "blocking_reason", "execution_result"))]
+            results.append(CheckResult("4", "R13_45f0c128_project_view_todos_no_body", STATUS_PASS if not leaked_todo else STATUS_FAIL, "" if not leaked_todo else f"{len(leaked_todo)} todo row(s) leaked a body field"))
+    finally:
+        ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+        results.append(CheckResult("4", "R13_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 R14_PRE_FIX_SKIP_REASON = (
     "server predates bug e6152cc0's plan_score AS-selector fix -- "
     "score_branch resolved via resolve_branch (plain Branch, no `depth`) "
@@ -3446,6 +3624,359 @@ async def run_r14_plan_score_as_selector_depth(client: Any) -> list[CheckResult]
     return results
 
 
+R15_HELP_PRE_FIX_SKIP_REASON = (
+    "server predates bug 507b74ae's help() catalog pagination: the "
+    "no-cmdname response carries no 'pagination' envelope (limit/offset "
+    "are silently ignored by the pre-fix builtin help's **kwargs, per its "
+    "additionalProperties: True schema)"
+)
+
+R15_CONTEXT_BUNDLE_PRE_FIX_SKIP_REASON = (
+    "server predates bug 03956ccf's context_bundle pagination: 'limit' is "
+    "rejected as an unrecognized property (pre-fix schema's "
+    "additionalProperties: False)"
+)
+
+
+async def run_r15_response_size_pagination_batch(client: Any) -> list[CheckResult]:
+    """Bugs 507b74ae (help() no-cmdname catalog was unbounded -- ~200+
+    commands, name + description per row, in one response) and 03956ccf
+    (context_bundle's compiled 'common' block, and each child's own delta
+    block, can grow to hundreds of entries when the parent scope is
+    plan-wide and were returned unbounded). Both now use the project's
+    uniform limit/offset pagination contract (plan_manager.commands.
+    runtime_filtering: bounded default 50, max 200).
+
+    Unit 1 (507b74ae) needs no throwaway plan: calls help() directly and
+    checks the no-cmdname response stays under a sane byte bound and
+    carries a 'pagination' envelope with total/limit/offset/returned/
+    has_more; a smaller explicit limit is also checked to prove the page
+    itself is actually bounded, not just decorated with metadata.
+
+    Unit 2 (03956ccf) mirrors R12's throwaway-plan recipe (plan_create ->
+    concept_add -> context_bundle with an explicit small limit) to prove
+    the 'common' block's (and each child's) first page is bounded, and
+    that a caller can continue past it with block_get(block_id, limit,
+    offset) using the block_id context_bundle already returns.
+
+    Each unit detects a pre-fix server independently (see the two
+    _PRE_FIX_SKIP_REASON constants above) and SKIPs only that unit, rather
+    than failing the whole batch against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+
+    # --- Unit 1 (bug 507b74ae): help() no-cmdname catalog pagination ---
+    ok, res = await call(client, "help", {"limit": 5, "offset": 0})
+    if not ok or not isinstance(res, dict):
+        results.append(CheckResult("4", "R15_507b74ae_help_catalog_reachable", STATUS_FAIL, str(res)))
+    else:
+        pagination = res.get("pagination")
+        if not isinstance(pagination, dict):
+            results.append(
+                CheckResult("4", "R15_507b74ae_help_catalog_pagination", STATUS_SKIP, R15_HELP_PRE_FIX_SKIP_REASON)
+            )
+        else:
+            envelope_ok = {"total", "limit", "offset", "returned", "has_more"} <= set(pagination)
+            results.append(
+                CheckResult(
+                    "4", "R15_507b74ae_help_catalog_pagination_envelope",
+                    STATUS_PASS if envelope_ok else STATUS_FAIL, "" if envelope_ok else str(pagination),
+                )
+            )
+            page_bounded_ok = (
+                isinstance(res.get("commands"), dict)
+                and len(res["commands"]) <= 5
+                and pagination.get("limit") == 5
+            )
+            results.append(
+                CheckResult(
+                    "4", "R15_507b74ae_help_catalog_page_bounded",
+                    STATUS_PASS if page_bounded_ok else STATUS_FAIL,
+                    "" if page_bounded_ok else str(res.get("commands")),
+                )
+            )
+
+            ok2, res2 = await call(client, "help", {})
+            size_ok = ok2 and isinstance(res2, dict) and len(json.dumps(res2)) < 20000
+            results.append(
+                CheckResult(
+                    "4", "R15_507b74ae_help_default_response_size_bounded",
+                    STATUS_PASS if size_ok else STATUS_FAIL,
+                    "" if size_ok else f"len={len(json.dumps(res2)) if ok2 and isinstance(res2, dict) else 'n/a'}",
+                )
+            )
+
+    # --- Unit 2 (bug 03956ccf): context_bundle pagination ---
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r15-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R15_03956ccf_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "concept_id": "C-001", "name": "LiveSmokeR15Concept",
+                "definition": "R15 scratch concept for the response-size pagination batch.",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R15_03956ccf_concept_add", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "context_bundle",
+            {
+                "plan": plan_uuid, "node": "plan", "child_level": 4,
+                "children": [{"ref": "r15-child", "concepts": ["C-001"]}],
+                "limit": 1, "offset": 0,
+            },
+        )
+        if not ok and _looks_like_unknown_param(str(res), "limit"):
+            results.append(
+                CheckResult(
+                    "4", "R15_03956ccf_context_bundle_pagination", STATUS_SKIP,
+                    R15_CONTEXT_BUNDLE_PRE_FIX_SKIP_REASON,
+                )
+            )
+            return results
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R15_03956ccf_context_bundle", STATUS_FAIL, str(res)))
+            return results
+
+        common = res.get("common") if isinstance(res.get("common"), dict) else {}
+        children = res.get("children") if isinstance(res.get("children"), list) else []
+
+        common_bounded_ok = (
+            {"blocks", "content", "total", "limit", "offset", "block_id"} <= set(common)
+            and len(common.get("blocks", [])) <= 1
+            and common.get("limit") == 1
+        )
+        results.append(
+            CheckResult(
+                "4", "R15_03956ccf_context_bundle_common_bounded",
+                STATUS_PASS if common_bounded_ok else STATUS_FAIL, "" if common_bounded_ok else str(common),
+            )
+        )
+
+        child_bounded_ok = (
+            len(children) == 1
+            and {"blocks", "content", "total", "limit", "offset"} <= set(children[0])
+            and len(children[0].get("blocks", [])) <= 1
+        )
+        results.append(
+            CheckResult(
+                "4", "R15_03956ccf_context_bundle_child_bounded",
+                STATUS_PASS if child_bounded_ok else STATUS_FAIL, "" if child_bounded_ok else str(children),
+            )
+        )
+
+        # Subsequent-page retrieval works: block_get on the SAME block_id
+        # context_bundle returned, with offset=1, must not error and must
+        # report the same total -- proving context_bundle's block_id feeds
+        # block_get's own pagination without a schema mismatch (the
+        # documented continuation path for anything past the first page).
+        if common_bounded_ok:
+            block_id = common["block_id"]
+            ok, res2 = await call(client, "block_get", {"plan": plan_uuid, "block_id": block_id, "limit": 50, "offset": 1})
+            follow_on_ok = (
+                ok and isinstance(res2, dict)
+                and {"blocks", "content", "total", "limit", "offset"} <= set(res2)
+                and res2["total"] == common["total"]
+            )
+            results.append(
+                CheckResult(
+                    "4", "R15_03956ccf_context_bundle_block_get_follow_on_page",
+                    STATUS_PASS if follow_on_ok else STATUS_FAIL, "" if follow_on_ok else str(res2),
+                )
+            )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
+R16_PRE_FIX_SKIP_REASON = (
+    "server predates bug 32755092's append mode -- `append` is rejected as "
+    "an unrecognized bug_update property (pre-fix schema's "
+    "additionalProperties: False) -- redeploy pending"
+)
+
+
+async def run_r16_bug_update_append_history(client: Any) -> list[CheckResult]:
+    """Bug 32755092: bug_update's free-text fields (detailed_description,
+    expected_behavior, actual_behavior, reproduction) silently REPLACED the
+    whole field instead of appending -- a history-loss footgun. Fixed by an
+    optional `append` boolean (default false, unchanged REPLACE semantics):
+    append=true joins the incoming text onto the currently stored value with
+    a blank-line separator; appending to an empty/null field just sets it.
+
+    Recipe (throwaway `live-smoke-` prefixed plan, hard-deleted in a
+    top-level try/finally; one scratch bug anchored to it via
+    source_type=plan -- per the established convention in this pipeline,
+    see R13's docstring, source_plan_uuid carries no FK/cascade, so the
+    scratch bug row itself is never independently deleted, only its plan):
+    plan_create -> bug_create(detailed_description=<seed>) ->
+    bug_update(detailed_description=<note1>, append=true) ->
+    bug_update(detailed_description=<note2>, append=true), asserting each
+    response's detailed_description accumulates seed+note1, then
+    seed+note1+note2 -> a final bug_update WITHOUT append, asserting the
+    unchanged default REPLACE semantics still overwrite the whole field.
+
+    Pre-fix detection: `append` is a brand-new schema parameter under
+    additionalProperties:false, so a not-yet-deployed server rejects the
+    FIRST append=true call with a validation error naming `append` as an
+    unrecognized property; that failure is the version probe and SKIPs the
+    whole group naming bug 32755092, rather than failing the pipeline
+    against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r16-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R16_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        seed_text = "R16 seed detailed description."
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": unique_suffix("r16-bug"), "short_description": "R16 append scratch bug",
+                "detailed_description": seed_text, "kind": "functional", "severity": "trivial",
+                "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R16_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R16_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        note1 = "R16 first appended note."
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "detailed_description": note1, "append": True},
+        )
+        if not ok:
+            pre_fix = _looks_like_unknown_param(str(res), "append")
+            results.append(
+                CheckResult(
+                    "4", "R16_bug_update_append(1)", STATUS_SKIP if pre_fix else STATUS_FAIL,
+                    R16_PRE_FIX_SKIP_REASON if pre_fix else str(res),
+                )
+            )
+            return results
+        after_first = res.get("detailed_description") if isinstance(res, dict) else None
+        first_ok = isinstance(after_first, str) and seed_text in after_first and note1 in after_first
+        results.append(
+            CheckResult(
+                "4", "R16_bug_update_append(1)_history_preserved", STATUS_PASS if first_ok else STATUS_FAIL,
+                "" if first_ok else f"got: {after_first!r}",
+            )
+        )
+
+        note2 = "R16 second appended note."
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "detailed_description": note2, "append": True},
+        )
+        after_second = res.get("detailed_description") if ok and isinstance(res, dict) else None
+        second_ok = ok and isinstance(after_second, str) and seed_text in after_second and note1 in after_second and note2 in after_second
+        results.append(
+            CheckResult(
+                "4", "R16_bug_update_append(2)_history_preserved", STATUS_PASS if second_ok else STATUS_FAIL,
+                "" if second_ok else str(res),
+            )
+        )
+
+        # append=false (the default) must still REPLACE -- unchanged prior behavior.
+        replace_text = "R16 replacement text."
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "detailed_description": replace_text},
+        )
+        replaced_text = res.get("detailed_description") if ok and isinstance(res, dict) else None
+        replace_ok = ok and replaced_text == replace_text
+        results.append(
+            CheckResult(
+                "4", "R16_bug_update_default_replace_unchanged", STATUS_PASS if replace_ok else STATUS_FAIL,
+                "" if replace_ok else str(res),
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R16_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
+R17_PRE_FIX_SKIP_REASON = (
+    "server predates bug 3eec33f2's optional-plan fix -- bug_create still "
+    "hard-requires `plan` even for a source_type=project anchor -- redeploy pending"
+)
+
+
+async def run_r17_bug_optional_plan_project_anchor(client: Any, project_id: str) -> list[CheckResult]:
+    """Bug 3eec33f2: the bug command group required a mandatory `plan`
+    parameter even for project-anchored bugs (source_type=project has no
+    plan anchor at all), so an unrelated completed plan's PLAN_COMPLETED
+    lock could block mutating a bug that has nothing to do with that plan.
+    Fixed: `plan` is now OPTIONAL on bug_create and the bug/bug_fix
+    mutating and lifecycle commands; bug_create still REQUIRES `plan` when
+    source_type is plan/revision/step (that anchor itself needs it).
+
+    Recipe: create a project-anchored bug (source_type=project,
+    source_project_id=<--project>) WITHOUT ever supplying `plan`, then
+    bug_update it (also without `plan`), asserting both succeed. No plan
+    is ever created here, so there is nothing to hard-delete in a
+    finally -- per the established convention in this pipeline (see R13's
+    docstring), a scratch bug row is never independently deleted anyway.
+
+    Pre-fix detection: `plan` is REQUIRED at the schema level on a
+    not-yet-deployed server, so the bug_create call fails with a "missing
+    required parameter" validation error naming `plan`; that failure is
+    the version probe and SKIPs the whole group naming bug 3eec33f2,
+    rather than failing the pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    ok, res = await call(
+        client, "bug_create",
+        {
+            "title": unique_suffix("r17-bug"), "short_description": "R17 project-anchored scratch bug (no plan)",
+            "detailed_description": "R17: created without a plan parameter.", "kind": "functional",
+            "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+            "source_type": "project", "source_project_id": project_id,
+        },
+    )
+    if not ok:
+        pre_fix = _looks_like_missing_required_param(str(res), "plan")
+        results.append(
+            CheckResult(
+                "4", "R17_bug_create_without_plan", STATUS_SKIP if pre_fix else STATUS_FAIL,
+                R17_PRE_FIX_SKIP_REASON if pre_fix else str(res),
+            )
+        )
+        return results
+    bug_ok = isinstance(res, dict) and bool(res.get("uuid"))
+    results.append(CheckResult("4", "R17_bug_create_without_plan", STATUS_PASS if bug_ok else STATUS_FAIL, "" if bug_ok else str(res)))
+    if not bug_ok:
+        return results
+    bug_uuid = res["uuid"]
+
+    ok, res = await call(
+        client, "bug_update",
+        {"bug_id": bug_uuid, "changed_by": "live-smoke", "severity": "minor"},
+    )
+    update_ok = ok and isinstance(res, dict) and res.get("severity") == "minor"
+    results.append(CheckResult("4", "R17_bug_update_without_plan", STATUS_PASS if update_ok else STATUS_FAIL, "" if update_ok else str(res)))
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -3458,8 +3989,11 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     if any(r.status == STATUS_FAIL and r.name == "server_reachable" for r in results):
         return compute_summary(results)
 
-    ok, help_all = await call(client, "help", {})
-    catalog: dict[str, str] = help_all.get("commands", {}) if ok and isinstance(help_all, dict) else {}
+    # Bug 507b74ae bounded help()'s no-cmdname default to one page (bounded
+    # default 50, max 200 rows); every tier below needs the FULL catalog, so
+    # fetch_full_help_catalog pages through it (single iteration, unchanged,
+    # against a server predating the fix -- see its own docstring).
+    ok, catalog, help_all = await fetch_full_help_catalog(client)
     if not ok or not catalog:
         results.append(CheckResult("1", "catalog_fetch", STATUS_FAIL, str(help_all)))
         return compute_summary(results)
@@ -3529,7 +4063,11 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r10_branch_scope_hierarchical_selectors(client)
     results += await run_r11_list_view_projection(client)
     results += await run_r12_response_size_and_cascade_tip_batch(client)
+    results += await run_r13_bug_list_project_view_bounded(client, args.project)
     results += await run_r14_plan_score_as_selector_depth(client)
+    results += await run_r15_response_size_pagination_batch(client)
+    results += await run_r16_bug_update_append_history(client)
+    results += await run_r17_bug_optional_plan_project_anchor(client, args.project)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

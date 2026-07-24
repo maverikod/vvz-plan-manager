@@ -2646,11 +2646,18 @@ _R11_TODO_FULL_ROW = {
     "deleted_at": None,
 }
 
+# Widened under bugs 7383c8a8/45f0c128 (bug_list oversized response / no
+# usable pagination; project_view leaked the same full bug bodies): the
+# summary projection now carries short_description plus the ownership/
+# anchor/lifecycle fields a caller needs to triage a page without opening
+# each bug (see plan_manager.domain.bug_report.BugReport.SUMMARY_FIELDS).
 _R11_BUG_SUMMARY_ROW = {
-    "uuid": "bug-1", "bug_uuid": "bug-1", "title": "b", "kind": "performance",
-    "severity": "major", "status": "reported", "priority_nice": -4,
-    "source_anchor_type": "command", "source_ref_id": None,
-    "updated_at": "2026-07-23T00:00:00+00:00",
+    "uuid": "bug-1", "bug_uuid": "bug-1", "title": "b", "short_description": "s",
+    "status": "reported", "kind": "performance", "severity": "major", "priority_nice": -4,
+    "reporter": "tester", "owner": None, "source_anchor_type": "command",
+    "source_project_id": None, "source_plan_uuid": None, "source_command": None,
+    "source_service": None, "created_at": "2026-07-23T00:00:00+00:00",
+    "updated_at": "2026-07-23T00:00:00+00:00", "closed_at": None,
 }
 
 _R11_TOOL_SUMMARY_ROW = {
@@ -2973,3 +2980,118 @@ def test_r8_cascade_preview_call_requests_view_full_with_pre_fix_fallback():
     source = inspect.getsource(ls.run_r8_gs_coverage_live_cascade_read)
     assert '"view": "full"' in source
     assert "_looks_like_unknown_param" in source
+
+
+# --------------------------------------------------------------------------
+# R13 (bugs 7383c8a8/45f0c128): bug_list default-view=summary bounding +
+# project_view's unconditional bug/todo summary projection. Exercised
+# against a scripted fake client (no real network).
+# --------------------------------------------------------------------------
+
+_R13_BUG_ROW_SUMMARY = {
+    "uuid": "r13-bug-1", "bug_uuid": "r13-bug-1", "title": "r13-bug", "short_description": "R13 scratch bug (large body)",
+    "status": "reported", "kind": "functional", "severity": "trivial", "priority_nice": 19,
+    "reporter": "live-smoke", "owner": None, "source_anchor_type": "plan",
+    "source_project_id": None, "source_plan_uuid": "r13-plan", "source_command": None,
+    "source_service": None, "created_at": "2026-07-24T00:00:00+00:00",
+    "updated_at": "2026-07-24T00:00:00+00:00", "closed_at": None,
+}
+
+_R13_BUG_ROW_PRE_FIX = {**_R13_BUG_ROW_SUMMARY, "detailed_description": "x" * 8000}
+
+
+def _r13_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "r13-plan"}),
+        "bug_create": _ok({"uuid": "r13-bug-1"}),
+        "bug_list": _ok({"bugs": [_R13_BUG_ROW_SUMMARY], "total": 1, "limit": 50, "offset": 0}),
+        "project_view": _ok({
+            "project": {"uuid": "proj-1"},
+            "todos": [{"uuid": "todo-x", "todo_uuid": "todo-x", "title": "t", "status": "open"}],
+            "bugs": [_R13_BUG_ROW_SUMMARY],
+            "todo_total": 1, "todo_limit": 50, "todo_offset": 0,
+            "bug_total": 1, "bug_limit": 50, "bug_offset": 0,
+        }),
+        "plan_delete": _ok({"deleted": True}),
+    }
+
+
+def _r13_client(*, pre_fix: bool = False) -> "_ScriptedClient":
+    responses = _r13_success_responses()
+    if pre_fix:
+        responses["bug_list"] = _ok({"bugs": [_R13_BUG_ROW_PRE_FIX], "total": 1, "limit": 50, "offset": 0})
+    return _ScriptedClient(responses)
+
+
+def test_run_r13_post_fix_server_passes_every_check():
+    client = _r13_client()
+
+    results = asyncio.run(ls.run_r13_bug_list_project_view_bounded(client, "proj-1"))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R13_bug_create"].status == ls.STATUS_PASS
+    assert by_name["R13_7383c8a8_bug_list_call"].status == ls.STATUS_PASS
+    assert by_name["R13_7383c8a8_bug_list_row_present"].status == ls.STATUS_PASS
+    assert by_name["R13_7383c8a8_bug_list_row_no_body"].status == ls.STATUS_PASS
+    assert by_name["R13_7383c8a8_bug_list_pagination_fields"].status == ls.STATUS_PASS
+    assert by_name["R13_45f0c128_project_view_call"].status == ls.STATUS_PASS
+    assert by_name["R13_45f0c128_project_view_bugs_no_body"].status == ls.STATUS_PASS
+    assert by_name["R13_45f0c128_project_view_todos_no_body"].status == ls.STATUS_PASS
+    assert by_name["R13_plan_delete(hard)"].status == ls.STATUS_PASS
+
+    names = [name for name, _ in client.calls]
+    assert names[0] == "plan_create"
+    assert names[-1] == "plan_delete"
+
+
+def test_run_r13_pre_fix_server_skips_not_fails():
+    """A server predating the default-view/summary-projection fix must be
+    reported as SKIP (redeploy pending), never FAIL."""
+    client = _r13_client(pre_fix=True)
+
+    results = asyncio.run(ls.run_r13_bug_list_project_view_bounded(client, "proj-1"))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R13_bug_list_project_view_bounded"].status == ls.STATUS_SKIP
+    assert ls.R13_PRE_FIX_SKIP_REASON in by_name["R13_bug_list_project_view_bounded"].detail
+    names = [name for name, _ in client.calls]
+    assert names[-1] == "plan_delete"  # cleanup still ran
+
+
+def test_run_r13_bug_list_row_missing_is_a_failure():
+    client = _r13_client()
+    client._responses["bug_list"] = _ok({"bugs": [], "total": 0, "limit": 50, "offset": 0})
+
+    results = asyncio.run(ls.run_r13_bug_list_project_view_bounded(client, "proj-1"))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R13_7383c8a8_bug_list_row_present"].status == ls.STATUS_FAIL
+
+
+def test_run_r13_project_view_body_leak_is_a_failure():
+    client = _r13_client()
+    leaked_bug = {**_R13_BUG_ROW_SUMMARY, "uuid": "other-bug", "evidence": {"k": "v"}}
+    client._responses["project_view"] = _ok({
+        "project": {"uuid": "proj-1"},
+        "todos": [{"uuid": "todo-x", "description": "leaked body"}],
+        "bugs": [_R13_BUG_ROW_SUMMARY, leaked_bug],
+        "todo_total": 1, "todo_limit": 50, "todo_offset": 0,
+        "bug_total": 2, "bug_limit": 50, "bug_offset": 0,
+    })
+
+    results = asyncio.run(ls.run_r13_bug_list_project_view_bounded(client, "proj-1"))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R13_45f0c128_project_view_bugs_no_body"].status == ls.STATUS_FAIL
+    assert by_name["R13_45f0c128_project_view_todos_no_body"].status == ls.STATUS_FAIL
+
+
+def test_run_r13_is_called_from_run_pipeline():
+    """Dead-code guard, matching R10/R11/R12's own."""
+    import inspect
+
+    source = inspect.getsource(ls.run_pipeline)
+    assert "run_r13_bug_list_project_view_bounded(client, args.project)" in source
