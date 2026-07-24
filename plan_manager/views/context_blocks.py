@@ -81,6 +81,7 @@ class ContextBlockRecord(DataclassEntity):
     content: list[dict[str, Any]]
     content_hash: str
     created_at: str
+    child_ref: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -98,6 +99,7 @@ class ContextBlockRecord(DataclassEntity):
             "blocks": list(self.content),
             "content": list(self.content),
             "created_at": self.created_at,
+            "child_ref": self.child_ref,
         }
 
 
@@ -425,6 +427,7 @@ def _row_to_record(row) -> ContextBlockRecord:
         content=list(row[9]),
         content_hash=row[10],
         created_at=row[11].isoformat(),
+        child_ref=row[12] if len(row) > 12 else None,
     )
 
 
@@ -438,17 +441,38 @@ def store_context_block(
     scope_concepts: list[str],
     content: list[dict[str, Any]],
     common_block_id: uuid.UUID | None = None,
+    child_ref: str | None = None,
 ) -> ContextBlockRecord:
+    """Store (or reuse) one derived context-block row.
+
+    Identity/dedup is content-addressed over (plan, revision/cascade,
+    node_path, child_level, kind, common_block, scope_concepts,
+    content_hash) -- AND, bug a795ea4d, over `child_ref` too. Without
+    child_ref in the identity, several sibling children compiled by the
+    SAME context_bundle call that happen to share an identical concept
+    scope (a legitimate authoring pattern) produce byte-identical delta
+    content -- worst case an empty delta, when the scope is already fully
+    covered by the parent's common block -- and therefore the same
+    content_hash, so every child after the first silently reused the
+    first child's stored row. Passing each child's own `ref` here keeps
+    every supplied child reference individually addressable even when its
+    scope and content are identical to a sibling's; callers that do not
+    have a per-child identity (context_common/context_compile, and single
+    ad-hoc context_specific calls) pass child_ref=None, preserving their
+    prior content-addressed reuse behavior unchanged.
+    """
     hash_value = content_hash(content)
     row = conn.execute(
         "SELECT uuid, plan_uuid, revision_uuid, cascade_uuid, node_path, child_level, "
-        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at "
+        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at, "
+        "child_ref "
         "FROM context_block WHERE plan_uuid = %s "
         "AND revision_uuid IS NOT DISTINCT FROM %s "
         "AND cascade_uuid IS NOT DISTINCT FROM %s "
         "AND node_path = %s AND child_level = %s AND kind = %s AND content_hash = %s "
         "AND common_block_uuid IS NOT DISTINCT FROM %s "
-        "AND scope_concepts = %s",
+        "AND scope_concepts = %s "
+        "AND child_ref IS NOT DISTINCT FROM %s",
         (
             plan_uuid,
             context_revision.revision_uuid,
@@ -459,6 +483,7 @@ def store_context_block(
             hash_value,
             common_block_id,
             scope_concepts,
+            child_ref,
         ),
     ).fetchone()
     if row is not None:
@@ -469,8 +494,9 @@ def store_context_block(
     conn.execute(
         "INSERT INTO context_block "
         "(uuid, plan_uuid, revision_uuid, cascade_uuid, node_path, child_level, "
-        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at, "
+        "child_ref) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             block_id,
             plan_uuid,
@@ -484,6 +510,7 @@ def store_context_block(
             Jsonb(content),
             hash_value,
             created_at,
+            child_ref,
         ),
     )
     return ContextBlockRecord(
@@ -499,6 +526,7 @@ def store_context_block(
         content=list(content),
         content_hash=hash_value,
         created_at=created_at.isoformat(),
+        child_ref=child_ref,
     )
 
 
@@ -509,7 +537,8 @@ def get_context_block(
 ) -> ContextBlockRecord:
     row = conn.execute(
         "SELECT uuid, plan_uuid, revision_uuid, cascade_uuid, node_path, child_level, "
-        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at "
+        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at, "
+        "child_ref "
         "FROM context_block WHERE plan_uuid = %s AND uuid = %s",
         (plan_uuid, block_id),
     ).fetchone()

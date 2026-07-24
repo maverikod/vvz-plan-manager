@@ -35,7 +35,7 @@ def _content(n: int, prefix: str = "frag") -> list[dict[str, object]]:
     return [{"type": "hrs_fragment", "label": f"{prefix}-{i:03d}", "text": "x"} for i in range(n)]
 
 
-def _record(node_path: str, level: int, kind: str, content: list[dict[str, object]], common_block_id=None) -> ContextBlockRecord:
+def _record(node_path: str, level: int, kind: str, content: list[dict[str, object]], common_block_id=None, child_ref=None) -> ContextBlockRecord:
     return ContextBlockRecord(
         block_id=uuid.uuid4(),
         plan_uuid=uuid.uuid4(),
@@ -49,6 +49,7 @@ def _record(node_path: str, level: int, kind: str, content: list[dict[str, objec
         content=content,
         content_hash="deadbeef",
         created_at="2026-07-23T00:00:00+00:00",
+        child_ref=child_ref,
     )
 
 
@@ -67,8 +68,8 @@ def _patch(monkeypatch, *, common_entry_count: int, child_entry_count: int) -> _
     def fake_common_context(conn, plan_uuid, node, child_level, shared_concepts):
         return "plan", ["C-001"], _content(common_entry_count)
 
-    def fake_store_context_block(conn, plan_uuid, ctx_revision, node_path, level, kind, scope, content, common_block_id=None):
-        return _record(node_path, level, kind, content, common_block_id)
+    def fake_store_context_block(conn, plan_uuid, ctx_revision, node_path, level, kind, scope, content, common_block_id=None, child_ref=None):
+        return _record(node_path, level, kind, content, common_block_id, child_ref)
 
     def fake_specific_delta(conn, plan_uuid, common, concepts):
         return concepts, _content(child_entry_count, prefix="delta")

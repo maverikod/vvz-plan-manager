@@ -3992,6 +3992,157 @@ async def run_r17_bug_optional_plan_project_anchor(client: Any, project_id: str)
     return results
 
 
+A795EA4D_PRE_FIX_SKIP_REASON = (
+    "server predates bug a795ea4d's fix -- context_bundle's store_context_block "
+    "dedup identity has no per-child discriminator, so distinct AS children "
+    "sharing an identical concept scope are silently aliased onto ONE shared "
+    "specific block_id -- redeploy pending"
+)
+
+
+async def run_r18_context_bundle_child_block_identity(client: Any) -> list[CheckResult]:
+    """Bug a795ea4d: context_bundle(node=T, child_level=5, children=[A-001..
+    A-005], each scoped to the SAME live concepts) returned ONE shared
+    specific block_id for all five children -- store_context_block's
+    idempotent-dedup identity keyed a 'specific' block on (plan,
+    revision/cascade, node_path, child_level, kind, common_block,
+    scope_concepts, content_hash) with no per-child discriminator, so
+    siblings whose scope is fully covered by the common block (hence an
+    identically EMPTY compiled delta) collapsed onto the first child's row.
+    Fixed by threading each child's supplied 'ref' into that identity as an
+    explicit child_ref column (migration 0023).
+
+    Recipe (mirrors R15 unit 2's/R8's cascade_begin -> concept_add(cascade_
+    scoped) -> ... idiom, since MRS concepts are cascade-only): plan_create
+    -> step_create G (level 3) -> step_create T (level 4, parent=G) ->
+    cascade_begin -> concept_add(C-001/C-002/C-003, cascade-scoped) ->
+    context_bundle(node=T, child_level=5, shared_concepts=[C-001..C-003],
+    children=[A-001..A-005] each scoped to the SAME three concepts) --
+    every child's compiled delta is legitimately empty (fully covered by
+    the T common block), so this reproduces the worst-case aliasing the
+    bug report described. Asserts the five returned block_ids are
+    pairwise distinct, then reads each back via block_get and asserts its
+    child_ref/attribution matches the child that requested it.
+
+    Pre-fix detection: aliased (non-distinct) block_ids across the five
+    children IS the bug's own symptom -- observing it here is the version
+    probe, and SKIPs (not FAILs) this check against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r18-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R18_a795ea4d_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R18_a795ea4d_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R18_a795ea4d_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
+
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R18_a795ea4d_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R18_a795ea4d_step_create(T)", STATUS_PASS, f"step_id={t_id}"))
+
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R18_a795ea4d_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+        results.append(CheckResult("4", "R18_a795ea4d_cascade_begin", STATUS_PASS, f"cascade_uuid={cascade_uuid}"))
+
+        concept_ids = ["C-001", "C-002", "C-003"]
+        for concept_id in concept_ids:
+            ok, res = await call(
+                client, "concept_add",
+                {
+                    "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": concept_id,
+                    "name": f"LiveSmokeR18Concept{concept_id[-1]}",
+                    "definition": "R18 scratch concept for bug a795ea4d's child-block-identity check.",
+                },
+            )
+            if not ok:
+                results.append(CheckResult("4", f"R18_a795ea4d_concept_add({concept_id})", STATUS_FAIL, str(res)))
+                return results
+        results.append(CheckResult("4", "R18_a795ea4d_concept_add(C-001..C-003)", STATUS_PASS))
+
+        child_refs = [f"A-{i:03d}" for i in range(1, 6)]
+        children = [{"ref": ref, "concepts": list(concept_ids)} for ref in child_refs]
+        ok, res = await call(
+            client, "context_bundle",
+            {
+                "plan": plan_uuid, "node": t_id, "child_level": 5,
+                "shared_concepts": list(concept_ids), "children": children,
+                "cascade_uuid": cascade_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R18_a795ea4d_context_bundle", STATUS_FAIL, str(res)))
+            return results
+
+        bundle_children = res.get("children") if isinstance(res.get("children"), list) else []
+        shape_ok = len(bundle_children) == 5 and all(
+            isinstance(c, dict) and c.get("total") == 0 and c.get("blocks") == [] for c in bundle_children
+        )
+        results.append(
+            CheckResult(
+                "4", "R18_a795ea4d_context_bundle_empty_delta_shape",
+                STATUS_PASS if shape_ok else STATUS_FAIL, "" if shape_ok else str(bundle_children),
+            )
+        )
+        if not shape_ok:
+            return results
+
+        returned_refs = [c.get("ref") for c in bundle_children]
+        block_ids = [c.get("block_id") for c in bundle_children]
+        if len(set(block_ids)) != 5:
+            results.append(
+                CheckResult(
+                    "4", "R18_a795ea4d_distinct_child_block_ids", STATUS_SKIP,
+                    A795EA4D_PRE_FIX_SKIP_REASON,
+                )
+            )
+            return results
+        results.append(
+            CheckResult(
+                "4", "R18_a795ea4d_distinct_child_block_ids", STATUS_PASS,
+                f"refs={returned_refs} block_ids={block_ids}",
+            )
+        )
+
+        # block_get path: each child's own stored block, read back
+        # independently, must identify -- via child_ref -- its own child.
+        attribution_ok = True
+        attribution_detail = ""
+        for ref, block_id in zip(returned_refs, block_ids):
+            ok, res = await call(client, "block_get", {"plan": plan_uuid, "block_id": block_id})
+            if not ok or not isinstance(res, dict) or res.get("child_ref") != ref:
+                attribution_ok = False
+                attribution_detail = f"ref={ref} block_id={block_id} block_get={res}"
+                break
+        results.append(
+            CheckResult(
+                "4", "R18_a795ea4d_block_get_child_attribution",
+                STATUS_PASS if attribution_ok else STATUS_FAIL, attribution_detail,
+            )
+        )
+    finally:
+        if cascade_uuid is not None:
+            await call(client, "cascade_abort", {"plan": plan_uuid})
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R18_a795ea4d_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -4083,6 +4234,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r15_response_size_pagination_batch(client)
     results += await run_r16_bug_update_append_history(client)
     results += await run_r17_bug_optional_plan_project_anchor(client, args.project)
+    results += await run_r18_context_bundle_child_block_identity(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

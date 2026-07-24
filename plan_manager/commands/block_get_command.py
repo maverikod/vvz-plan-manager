@@ -59,7 +59,7 @@ class BlockGetCommand(Command):
                         "The stored ContextBlock record's scalar fields (block_id, "
                         "plan_uuid, revision_uuid, cascade_uuid, node_path, "
                         "child_level, kind, common_block_id, scope_concepts, "
-                        "content_hash, hash, created_at, is_current) unchanged, plus "
+                        "content_hash, hash, created_at, child_ref, is_current) unchanged, plus "
                         "'blocks'/'content' holding only the current page of the "
                         "block's entry list (deterministically ordered, unchanged "
                         "from stored order), and total/limit/offset describing that "

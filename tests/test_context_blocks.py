@@ -147,6 +147,7 @@ class _StoreConn:
                 and row[10] == params[6]
                 and row[7] == params[7]
                 and row[8] == list(params[8])
+                and row[12] == params[9]
             ]
             return _Rows(matches)
         if query.startswith("INSERT INTO context_block"):
@@ -164,6 +165,7 @@ class _StoreConn:
                 content,
                 hash_value,
                 created_at,
+                child_ref,
             ) = params
             self.rows.append(
                 (
@@ -179,6 +181,7 @@ class _StoreConn:
                     content.obj,
                     hash_value,
                     created_at,
+                    child_ref,
                 )
             )
             return _Rows([])
@@ -228,3 +231,43 @@ def test_store_context_block_keeps_distinct_empty_specific_scopes() -> None:
     assert first.scope_concepts == ["C-010"]
     assert second.scope_concepts == ["C-011"]
     assert conn.insert_count == 2
+
+
+def test_store_context_block_bug_a795ea4d_keeps_distinct_same_scope_children_by_ref() -> None:
+    """Two children of the same parent sharing an IDENTICAL scope (and thus
+    identical, here empty, delta content) must still be stored as distinct,
+    correctly-attributed rows when given distinct child_ref values -- the
+    exact scenario that aliased in bug a795ea4d."""
+    conn = _StoreConn()
+    revision = ContextRevision(REVISION_UUID, None)
+
+    first = store_context_block(
+        conn, PLAN_UUID, revision, "T-001", 5, "specific", ["C-025", "C-026", "C-098"], [], COMMON_UUID, "A-001"
+    )
+    second = store_context_block(
+        conn, PLAN_UUID, revision, "T-001", 5, "specific", ["C-025", "C-026", "C-098"], [], COMMON_UUID, "A-002"
+    )
+
+    assert first.block_id != second.block_id
+    assert first.child_ref == "A-001"
+    assert second.child_ref == "A-002"
+    assert first.scope_concepts == second.scope_concepts == ["C-025", "C-026", "C-098"]
+    assert conn.insert_count == 2
+
+
+def test_store_context_block_child_ref_is_idempotent() -> None:
+    """A repeated call for the SAME child (same identity, including
+    child_ref) reuses the existing row -- content-addressed idempotency is
+    preserved, only the missing per-child discrimination was the bug."""
+    conn = _StoreConn()
+    revision = ContextRevision(REVISION_UUID, None)
+
+    first = store_context_block(
+        conn, PLAN_UUID, revision, "T-001", 5, "specific", ["C-025"], [], COMMON_UUID, "A-001"
+    )
+    second = store_context_block(
+        conn, PLAN_UUID, revision, "T-001", 5, "specific", ["C-025"], [], COMMON_UUID, "A-001"
+    )
+
+    assert first.block_id == second.block_id
+    assert conn.insert_count == 1

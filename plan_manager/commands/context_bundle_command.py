@@ -15,6 +15,12 @@ bundle whose common and child blocks are all within the default page size
 that needs entries past the first page continues with
 block_get(block_id, limit, offset) using the block_id already present in the
 payload -- no semantic content changes, only the transport shape.
+
+Bug a795ea4d: each child's specific block is now stored keyed additionally
+by its supplied 'ref' (child_ref), so distinct children that happen to
+share an identical concept scope -- and therefore compile a byte-identical,
+possibly empty, delta -- each still get their own addressable, correctly-
+attributed block_id instead of being silently aliased onto one shared row.
 """
 
 from __future__ import annotations
@@ -161,8 +167,20 @@ class ContextBundleCommand(Command):
                 common = store_context_block(conn, p.uuid, context_revision, node_path, child_level, "common", scope, content)
                 child_payloads = []
                 inherited_revision = ContextRevision(common.revision_uuid, common.cascade_uuid)
-                for child in children:
+                for index, child in enumerate(children):
                     child_scope, delta = specific_delta(conn, p.uuid, common, list(child.get("concepts", [])))
+                    # Bug a795ea4d: without a per-child discriminator, siblings
+                    # that share an identical concept scope compile a
+                    # byte-identical (possibly empty) delta and would
+                    # otherwise be silently aliased onto the same stored
+                    # block by store_context_block's content-addressed dedup.
+                    # child_ref threads each supplied child reference into
+                    # that identity so every child gets its own addressable,
+                    # correctly-attributed row; a caller that omits 'ref'
+                    # still gets per-position distinctness within this call
+                    # via the positional fallback.
+                    child_ref = child.get("ref")
+                    child_ref = str(child_ref) if child_ref is not None else f"__unnamed_child_{index}"
                     record = store_context_block(
                         conn,
                         p.uuid,
@@ -173,6 +191,7 @@ class ContextBundleCommand(Command):
                         child_scope,
                         delta,
                         common.block_id,
+                        child_ref,
                     )
                     payload = _paginate_block_payload(record.to_payload(), pagination)
                     payload["ref"] = child.get("ref")
