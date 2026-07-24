@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import pytest
@@ -86,6 +87,11 @@ def test_record_runtime_change_writes_unchanged_columns_and_params() -> None:
         def execute(self, sql, params):
             captured["sql"] = sql
             captured["params"] = params
+
+        @contextmanager
+        def transaction(self):
+            """Minimal stand-in for psycopg's savepoint-aware transaction() context manager (bug 1e13649f: record_runtime_change wraps plan-anchored inserts in a nested transaction to recover from a dangling plan anchor)."""
+            yield self
 
     entity_id = uuid.uuid4()
     plan_uuid = uuid.uuid4()

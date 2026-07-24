@@ -125,6 +125,96 @@ def _row_to_record(row: tuple[Any, ...]) -> RuntimeAuditRecord:
     )
 
 
+_INSERT_SQL = (
+    "INSERT INTO runtime_audit_log "
+    "(uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason, "
+    "changed_fields, linked_attempt_id, linked_review_id, created_at) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+)
+
+# changed_fields key used to preserve a dangling plan anchor's original
+# uuid when record_runtime_change falls back to an unanchored (plan_uuid
+# NULL) audit row -- see the dangling-anchor fallback branch below
+# (bug 1e13649f). Kept as a module constant so callers/tests reading the
+# audit payload back have one name to depend on.
+DANGLING_PLAN_UUID_FIELD: str = "_dangling_plan_uuid"
+
+
+def _insert_audit_row(
+    conn: psycopg.Connection,
+    *,
+    audit_uuid: uuid.UUID,
+    plan_uuid: uuid.UUID | None,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    action: str,
+    changed_by: str,
+    change_reason: str | None,
+    changed_fields: dict[str, Any] | None,
+    linked_attempt_id: uuid.UUID | None,
+    linked_review_id: uuid.UUID | None,
+    created_at: datetime,
+) -> None:
+    """Execute the one INSERT statement shared by record_runtime_change's fast path and its dangling-plan-anchor fallback.
+
+    Parameters:
+        conn: psycopg.Connection
+            Open connection used to execute the INSERT.
+        audit_uuid: uuid.UUID
+            Identity of the audit row being inserted.
+        plan_uuid: uuid.UUID | None
+            The plan_uuid value to persist on this attempt (the caller
+            decides whether this is the original anchor or a NULL
+            fallback).
+        entity_type: str
+            The runtime entity kind changed.
+        entity_id: uuid.UUID
+            The runtime record changed.
+        action: str
+            One of the ALLOWED_ACTIONS values.
+        changed_by: str
+            Who performed the change.
+        change_reason: str | None
+            Why the change was made.
+        changed_fields: dict[str, Any] | None
+            What changed, as a JSON-serializable mapping (the caller
+            decides whether this already carries a preserved dangling
+            anchor uuid).
+        linked_attempt_id: uuid.UUID | None
+            The linked execution attempt, if any.
+        linked_review_id: uuid.UUID | None
+            The linked review, if any.
+        created_at: datetime
+            Timestamp recorded on the row.
+
+    Returns:
+        None
+
+    Raises:
+        psycopg.errors.ForeignKeyViolation
+            When plan_uuid is not None and does not reference a live plan
+            row; the caller is responsible for wrapping the call in a
+            savepoint when it wants to recover from this instead of
+            aborting the surrounding transaction.
+    """
+    conn.execute(
+        _INSERT_SQL,
+        (
+            audit_uuid,
+            plan_uuid,
+            entity_type,
+            entity_id,
+            action,
+            changed_by,
+            change_reason,
+            Jsonb(changed_fields) if changed_fields is not None else None,
+            linked_attempt_id,
+            linked_review_id,
+            created_at,
+        ),
+    )
+
+
 def record_runtime_change(
     conn: psycopg.Connection,
     *,
@@ -145,7 +235,12 @@ def record_runtime_change(
             Open connection used to execute the INSERT.
         plan_uuid: uuid.UUID | None
             The plan the runtime change is anchored to, or None for an
-            unanchored runtime change.
+            unanchored runtime change. plan_uuid carries no FK at the
+            entity-table level (e.g. bug_report.source_plan_uuid,
+            todo.anchor_plan_uuid, ...) so a hard plan_delete does not
+            cascade to plan-anchored runtime entities: the anchor can
+            legally go dangling (bug 1e13649f). This function tolerates
+            that -- see the dangling-anchor fallback below.
         entity_type: str
             The runtime entity kind changed.
         entity_id: uuid.UUID
@@ -167,7 +262,11 @@ def record_runtime_change(
 
     Returns:
         RuntimeAuditRecord
-            The persisted audit record.
+            The persisted audit record. When plan_uuid was given but no
+            longer references a live plan, the returned record has
+            plan_uuid=None and changed_fields carries an extra
+            DANGLING_PLAN_UUID_FIELD entry holding the original (dangling)
+            plan uuid as a string, so no information is lost.
 
     Raises:
         ValueError
@@ -175,6 +274,36 @@ def record_runtime_change(
 
     This function only INSERTs into runtime_audit_log. It never issues
     UPDATE or DELETE against runtime_audit_log.
+
+    Dangling-anchor fallback (bug 1e13649f): runtime_audit_log.plan_uuid
+    carries `REFERENCES plan(uuid) ON DELETE CASCADE`, but the entity
+    tables this function is called for (bug_report, todo, runtime_comment,
+    bug_impact, bug_fix_propagation, escalation, ...) do NOT carry a
+    matching FK on their own plan-anchor column, by design (a runtime
+    entity must be able to outlive its anchor plan). That asymmetry means
+    a *new* audit INSERT for such an entity can violate
+    runtime_audit_log_plan_uuid_fkey once the anchor plan has been hard
+    -deleted, even though the write is otherwise legitimate (e.g.
+    recording the entity's own deletion). The audit trail must still be
+    written in that case -- silently dropping it would be a worse outcome
+    than an unanchored row. When plan_uuid is given, the INSERT is first
+    attempted inside a SAVEPOINT (a nested transaction via
+    ``conn.transaction()``): on success the savepoint is released as part
+    of the normal commit path; on ForeignKeyViolation only that savepoint
+    is rolled back (the caller's surrounding command transaction, managed
+    by ``plan_manager.runtime.context.db_connection``, is untouched) and
+    the INSERT is retried unanchored (plan_uuid=NULL) with the original
+    plan_uuid preserved under DANGLING_PLAN_UUID_FIELD in changed_fields.
+    Retrying on the database's own FK failure (rather than a preceding
+    ``SELECT ... FROM plan WHERE uuid = %s`` existence check) is
+    deliberate: a pre-check has an unavoidable race window between the
+    check and the INSERT (the plan could be hard-deleted by a concurrent
+    request in between), whereas letting Postgres itself enforce the
+    constraint and reacting to the one specific violation it raises is
+    correct under that race by construction, at the cost of one savepoint
+    per plan-anchored write (unaffected: calls that already pass
+    plan_uuid=None, the common case for several entity families, skip the
+    savepoint entirely).
     """
     if action not in ALLOWED_ACTIONS:
         raise ValueError(f"invalid action: {action}")
@@ -182,34 +311,69 @@ def record_runtime_change(
 
     audit_uuid = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO runtime_audit_log "
-        "(uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason, "
-        "changed_fields, linked_attempt_id, linked_review_id, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            audit_uuid,
-            plan_uuid,
-            entity_type,
-            entity_id,
-            action,
-            changed_by,
-            change_reason,
-            Jsonb(changed_fields) if changed_fields is not None else None,
-            linked_attempt_id,
-            linked_review_id,
-            created_at,
-        ),
-    )
+    effective_plan_uuid = plan_uuid
+    effective_changed_fields = changed_fields
+
+    if plan_uuid is None:
+        _insert_audit_row(
+            conn,
+            audit_uuid=audit_uuid,
+            plan_uuid=None,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            changed_by=changed_by,
+            change_reason=change_reason,
+            changed_fields=changed_fields,
+            linked_attempt_id=linked_attempt_id,
+            linked_review_id=linked_review_id,
+            created_at=created_at,
+        )
+    else:
+        try:
+            with conn.transaction():
+                _insert_audit_row(
+                    conn,
+                    audit_uuid=audit_uuid,
+                    plan_uuid=plan_uuid,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    action=action,
+                    changed_by=changed_by,
+                    change_reason=change_reason,
+                    changed_fields=changed_fields,
+                    linked_attempt_id=linked_attempt_id,
+                    linked_review_id=linked_review_id,
+                    created_at=created_at,
+                )
+        except psycopg.errors.ForeignKeyViolation:
+            effective_plan_uuid = None
+            effective_changed_fields = dict(changed_fields) if changed_fields else {}
+            effective_changed_fields[DANGLING_PLAN_UUID_FIELD] = str(plan_uuid)
+            _insert_audit_row(
+                conn,
+                audit_uuid=audit_uuid,
+                plan_uuid=None,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                action=action,
+                changed_by=changed_by,
+                change_reason=change_reason,
+                changed_fields=effective_changed_fields,
+                linked_attempt_id=linked_attempt_id,
+                linked_review_id=linked_review_id,
+                created_at=created_at,
+            )
+
     return RuntimeAuditRecord(
         audit_uuid=audit_uuid,
-        plan_uuid=plan_uuid,
+        plan_uuid=effective_plan_uuid,
         target_type=entity_type,
         target_id=entity_id,
         action=action,
         changed_by=changed_by,
         change_reason=change_reason,
-        changed_fields=changed_fields,
+        changed_fields=effective_changed_fields,
         linked_attempt_id=linked_attempt_id,
         linked_review_id=linked_review_id,
         created_at=created_at.isoformat(),

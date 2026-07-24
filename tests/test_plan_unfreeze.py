@@ -158,6 +158,11 @@ def test_runtime_audit_store_accepts_plan_unfreeze_action() -> None:
             captured["sql"] = sql
             captured["params"] = params
 
+        @contextmanager
+        def transaction(self):
+            """Minimal stand-in for psycopg's savepoint-aware transaction() context manager (bug 1e13649f: record_runtime_change wraps plan-anchored inserts in a nested transaction to recover from a dangling plan anchor)."""
+            yield self
+
     rec = runtime_audit_store.record_runtime_change(
         _Conn(),
         plan_uuid=PLAN_UUID,
