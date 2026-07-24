@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception, DomainCommandError
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
@@ -71,6 +72,21 @@ class TodoUpdateCommand(Command):
                 "status may move to in_progress, blocked, or cancelled here via the guarded todo_update transition path; use todo_resolve or todo_close for the separate unconditional resolved/closed transitions.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate todo_update parameters beyond the base schema check: todo must parse as a UUID.
+
+        Raises:
+            InvalidParamsError: If todo is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        todo = params.get("todo")
+        if todo is not None:
+            try:
+                uuid.UUID(todo)
+            except ValueError as exc:
+                raise InvalidParamsError(f"todo is not a valid UUID: {todo!r}") from exc
+        return params
 
     async def execute(
         self,

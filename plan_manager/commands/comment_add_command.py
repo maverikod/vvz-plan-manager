@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.comment_command_metadata import comment_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
@@ -85,6 +86,29 @@ class CommentAddCommand(Command):
                 "created_by (audit actor) and author (comment writer) are distinct fields — don't collapse them when recording a third party's observation.",
             ],
         )
+
+    _UUID_FIELDS: ClassVar[tuple[str, ...]] = (
+        "anchor_project_id", "anchor_plan_uuid", "anchor_revision_uuid",
+        "anchor_step_uuid", "anchor_ref_id", "supersedes_comment_uuid",
+    )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate comment_add parameters beyond the base schema check: every
+        UUID-shaped anchor_*/supersedes_comment_uuid field, when supplied, must
+        parse as a UUID.
+
+        Raises:
+            InvalidParamsError: If any UUID-shaped field is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in self._UUID_FIELDS:
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

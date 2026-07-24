@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
@@ -55,6 +56,21 @@ class TodoLinkRemoveCommand(Command):
                 "The parameter is the link_uuid returned by todo_link_add, not the from/to todo uuids it connects.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate todo_link_remove parameters beyond the base schema check: link must parse as a UUID.
+
+        Raises:
+            InvalidParamsError: If link is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        link = params.get("link")
+        if link is not None:
+            try:
+                uuid.UUID(link)
+            except ValueError as exc:
+                raise InvalidParamsError(f"link is not a valid UUID: {link!r}") from exc
+        return params
 
     async def execute(
         self,

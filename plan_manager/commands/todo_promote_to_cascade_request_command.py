@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
@@ -68,6 +69,23 @@ class TodoPromoteToCascadeRequestCommand(Command):
                 "cascade_request has no update or delete command; it is a supersede-immutable audit-trail record of the raised need, created only by this command, and its status is not advanced by any exposed command — the actual normative change is carried out through the ordinary cascade discipline (cascade_begin, cascade_preview, cascade_commit, cascade_abort) against the target HRS/MRS/GS/TS/AS artifact, not by mutating or deleting this record.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate todo_promote_to_cascade_request parameters beyond the base schema
+        check: todo and, when supplied, revision must parse as UUIDs.
+
+        Raises:
+            InvalidParamsError: If todo or revision is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in ("todo", "revision"):
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

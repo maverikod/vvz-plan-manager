@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.comment_command_metadata import comment_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import DomainCommandError, map_exception
@@ -57,6 +58,21 @@ class CommentResolveCommand(Command):
                 "changed_by is the audit actor for this action, not the original author field, which stays unchanged.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate comment_resolve parameters beyond the base schema check: comment_uuid must parse as a UUID.
+
+        Raises:
+            InvalidParamsError: If comment_uuid is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        comment_uuid = params.get("comment_uuid")
+        if comment_uuid is not None:
+            try:
+                uuid.UUID(comment_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"comment_uuid is not a valid UUID: {comment_uuid!r}") from exc
+        return params
 
     async def execute(
         self,

@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
@@ -86,6 +87,23 @@ class TodoLinkAddCommand(Command):
                 "Self-links (from_todo == to_todo) are rejected before the existence and duplicate checks even run.",
             ],
         )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate todo_link_add parameters beyond the base schema check:
+        from_todo and to_todo must parse as UUIDs.
+
+        Raises:
+            InvalidParamsError: If from_todo or to_todo is not a valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in ("from_todo", "to_todo"):
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,

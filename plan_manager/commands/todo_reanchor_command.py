@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.errors import map_exception
@@ -64,6 +65,29 @@ class TodoReanchorCommand(Command):
             error_cases=REANCHOR_ERROR_CASES,
             best_practices=REANCHOR_BEST_PRACTICES,
         )
+
+    _UUID_FIELDS: ClassVar[tuple[str, ...]] = (
+        "todo", "new_anchor_project_id", "new_anchor_plan_uuid",
+        "new_anchor_revision_uuid", "new_anchor_step_uuid", "new_anchor_ref_id",
+    )
+
+    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate todo_reanchor parameters beyond the base schema check: todo and
+        every UUID-shaped new_anchor_* field, when supplied, must parse as a UUID.
+
+        Raises:
+            InvalidParamsError: If todo or any new_anchor_* UUID field is not a
+                valid UUID string.
+        """
+        params = super().validate_params(params)
+        for field in self._UUID_FIELDS:
+            value = params.get(field)
+            if value is not None:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise InvalidParamsError(f"{field} is not a valid UUID: {value!r}") from exc
+        return params
 
     async def execute(
         self,
