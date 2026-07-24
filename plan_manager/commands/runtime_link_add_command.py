@@ -7,12 +7,12 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_link_endpoint_plan_completed
 from plan_manager.commands.runtime_link_command_metadata import runtime_link_metadata
 from plan_manager.domain.runtime_link import RUNTIME_LINK_ENTITY_TYPES, RUNTIME_LINK_TYPES
-from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_link_store import create_runtime_link
 
@@ -67,17 +67,43 @@ class RuntimeLinkAddCommand(Command):
         }
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate runtime_link_add parameters beyond the base schema check.
+
+        Args:
+            params: Raw parameter dict as received by the adapter.
+
+        Returns:
+            The validated parameter dict, unchanged beyond the base
+            validator's own normalization.
+
+        Raises:
+            InvalidParamsError: If from_entity_uuid or to_entity_uuid does not
+                parse as a UUID, or if the source and target endpoints are
+                identical (same entity type and UUID).
+        """
         params = super().validate_params(params)
         if "from_entity_uuid" in params:
-            uuid.UUID(params.get("from_entity_uuid"))
+            from_entity_uuid_raw = params.get("from_entity_uuid")
+            try:
+                uuid.UUID(from_entity_uuid_raw)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"from_entity_uuid is not a valid UUID: {from_entity_uuid_raw!r}"
+                ) from exc
         if "to_entity_uuid" in params:
-            uuid.UUID(params.get("to_entity_uuid"))
+            to_entity_uuid_raw = params.get("to_entity_uuid")
+            try:
+                uuid.UUID(to_entity_uuid_raw)
+            except ValueError as exc:
+                raise InvalidParamsError(
+                    f"to_entity_uuid is not a valid UUID: {to_entity_uuid_raw!r}"
+                ) from exc
         from_entity_type = params.get("from_entity_type")
         from_entity_uuid = params.get("from_entity_uuid")
         to_entity_type = params.get("to_entity_type")
         to_entity_uuid = params.get("to_entity_uuid")
         if from_entity_type == to_entity_type and from_entity_uuid == to_entity_uuid:
-            raise RuntimeValidationError("a runtime link may not reference the same record as both source and target")
+            raise InvalidParamsError("a runtime link may not reference the same record as both source and target")
         return params
 
     @classmethod

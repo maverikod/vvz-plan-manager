@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
@@ -48,7 +49,10 @@ class TodoDeleteCommand(Command):
         params = super().validate_params(params)
         todo = params.get("todo")
         if todo is not None:
-            uuid.UUID(todo)
+            try:
+                uuid.UUID(todo)
+            except ValueError as exc:
+                raise InvalidParamsError(f"todo is not a valid UUID: {todo!r}") from exc
         return params
 
     async def execute(

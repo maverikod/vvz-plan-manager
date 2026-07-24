@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Optional, Type
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
@@ -72,13 +73,16 @@ class PlanExportCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: When the optional 'revision' parameter is present
+            InvalidParamsError: When the optional 'revision' parameter is present
                 but does not parse as a UUID.
         """
         params = super().validate_params(params)
         revision = params.get("revision")
         if revision is not None:
-            uuid.UUID(revision)
+            try:
+                uuid.UUID(revision)
+            except ValueError as exc:
+                raise InvalidParamsError(f"revision is not a valid UUID: {revision!r}") from exc
         return params
 
     async def execute(

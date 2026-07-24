@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_link_endpoint_plan_completed
@@ -44,7 +45,10 @@ class RuntimeLinkRemoveCommand(Command):
         params = super().validate_params(params)
         link = params.get("link")
         if link is not None:
-            uuid.UUID(link)
+            try:
+                uuid.UUID(link)
+            except ValueError as exc:
+                raise InvalidParamsError(f"link is not a valid UUID: {link!r}") from exc
         return params
 
     @classmethod

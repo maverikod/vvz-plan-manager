@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission, frozen_at_or_below
@@ -77,12 +78,15 @@ class StepSetStatusCommand(Command):
             validator's own normalization.
 
         Raises:
-            ValueError: If cascade_uuid is not a valid UUID string.
+            InvalidParamsError: If cascade_uuid is not a valid UUID string.
         """
         params = super().validate_params(params)
         cascade_uuid = params.get("cascade_uuid")
         if cascade_uuid is not None:
-            uuid.UUID(cascade_uuid)
+            try:
+                uuid.UUID(cascade_uuid)
+            except ValueError as exc:
+                raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(

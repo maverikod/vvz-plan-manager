@@ -4,6 +4,7 @@ import uuid
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.concept_remove_metadata import get_concept_remove_metadata
 from plan_manager.commands.errors import domain_error, map_exception
@@ -63,10 +64,14 @@ class ConceptRemoveCommand(Command):
         """Validate params: shallow schema checks, then parse cascade_uuid format.
 
         Raises:
-            ValueError: if cascade_uuid is not a well-formed UUID string.
+            InvalidParamsError: if cascade_uuid is not a well-formed UUID string.
         """
         params = super().validate_params(params)
-        uuid.UUID(params["cascade_uuid"])
+        cascade_uuid = params["cascade_uuid"]
+        try:
+            uuid.UUID(cascade_uuid)
+        except ValueError as exc:
+            raise InvalidParamsError(f"cascade_uuid is not a valid UUID: {cascade_uuid!r}") from exc
         return params
 
     async def execute(

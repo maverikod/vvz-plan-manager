@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.comment_command_metadata import comment_metadata
@@ -48,7 +49,10 @@ class CommentDeleteCommand(Command):
         params = super().validate_params(params)
         comment = params.get("comment")
         if comment is not None:
-            uuid.UUID(comment)
+            try:
+                uuid.UUID(comment)
+            except ValueError as exc:
+                raise InvalidParamsError(f"comment is not a valid UUID: {comment!r}") from exc
         return params
 
     async def execute(
