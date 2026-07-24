@@ -62,6 +62,10 @@ class BugProjectCommandsMixin:
         """Transition a bug report to status closed after enforcing the closure discipline invariant on server-derived state."""
         return await self._call("bug_close", params)
 
+    async def bug_delete(self, **params: Any) -> Any:
+        """Delete a bug report: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
+        return await self._call("bug_delete", params)
+
     async def bug_impact_add(self, **params: Any) -> Any:
         """Create one BugImpact record describing an object affected by a bug."""
         return await self._call("bug_impact_add", params)
@@ -77,6 +81,10 @@ class BugProjectCommandsMixin:
     async def bug_impact_discover(self, **params: Any) -> Any:
         """Auto-discover the suspected impact set of a bug from the reverse project dependency graph."""
         return await self._call("bug_impact_discover", params)
+
+    async def bug_impact_delete(self, **params: Any) -> Any:
+        """Delete a bug impact record: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
+        return await self._call("bug_impact_delete", params)
 
     async def bug_fix_create(self, **params: Any) -> Any:
         """Create a new fix attempt for a bug (C-024)."""
@@ -94,6 +102,10 @@ class BugProjectCommandsMixin:
         """Record a verification outcome for a fix attempt (C-024)."""
         return await self._call("bug_fix_verify", params)
 
+    async def bug_fix_delete(self, **params: Any) -> Any:
+        """Delete a bug fix attempt: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
+        return await self._call("bug_fix_delete", params)
+
     async def bug_propagation_create(self, **params: Any) -> Any:
         """Create a bug fix propagation record for one impact target after a source fix."""
         return await self._call("bug_propagation_create", params)
@@ -109,6 +121,10 @@ class BugProjectCommandsMixin:
     async def bug_propagation_generate_todos(self, **params: Any) -> Any:
         """Generate linked TODO items for every pending propagation of a bug fix."""
         return await self._call("bug_propagation_generate_todos", params)
+
+    async def bug_fix_propagation_delete(self, **params: Any) -> Any:
+        """Delete a bug fix propagation record: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
+        return await self._call("bug_fix_propagation_delete", params)
 
     async def project_dependency_add(self, **params: Any) -> Any:
         """Create a project dependency edge between two external projects."""
