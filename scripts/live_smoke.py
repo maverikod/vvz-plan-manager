@@ -3210,10 +3210,14 @@ async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
     caller-selectable compact shape, an unusable response for a
     token-budgeted agent caller.
 
-    Fix: a uniform `view` parameter ("full", unchanged default; "summary",
+    Fix: a uniform `view` parameter ("full", the original default; "summary",
     a compact per-entity projection) across the *_list command surface,
     implemented once in plan_manager.commands.list_projection and declared
-    per-entity via SUMMARY_FIELDS.
+    per-entity via SUMMARY_FIELDS. Todo ffe0b0a8 later flipped the default
+    to view=summary for 9 of those commands -- including todo_list, the one
+    this group's default-view check exercises (see
+    R11_default_view_matches_summary below) -- wherever the entity already
+    declared SUMMARY_FIELDS; view=full remains available and unchanged.
 
     Read-only, no throwaway entities: every check here reads whatever data
     already exists live (rows may be zero -- the shape/size assertions
@@ -3286,16 +3290,20 @@ async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
     )
     results.append(CheckResult("4", "R11_todo_list(view=full)_still_verbose", STATUS_PASS if full_verbose_ok else STATUS_FAIL, "" if full_verbose_ok else str(res)))
 
-    # Omitting view entirely must behave identically to view=full (default pinned).
+    # Omitting view entirely must behave identically to view=summary: todo
+    # ffe0b0a8 flipped the default for todo_list (one of the 9 commands in
+    # its scope) from view=full to view=summary, so the omitted-view
+    # default is no longer the verbose shape (that is still checked
+    # explicitly above, via R11_todo_list(view=full)_still_verbose).
     ok_default, res_default = await call(client, "todo_list", {"limit": 1})
-    ok_explicit_full, res_explicit_full = await call(client, "todo_list", {"limit": 1, "view": "full"})
-    default_matches_full = (
-        ok_default and ok_explicit_full
-        and isinstance(res_default, dict) and isinstance(res_explicit_full, dict)
+    ok_explicit_summary, res_explicit_summary = await call(client, "todo_list", {"limit": 1, "view": "summary"})
+    default_matches_summary = (
+        ok_default and ok_explicit_summary
+        and isinstance(res_default, dict) and isinstance(res_explicit_summary, dict)
         and set(res_default.get("todos", [{}])[0] if res_default.get("todos") else {}) ==
-        set(res_explicit_full.get("todos", [{}])[0] if res_explicit_full.get("todos") else {})
+        set(res_explicit_summary.get("todos", [{}])[0] if res_explicit_summary.get("todos") else {})
     )
-    results.append(CheckResult("4", "R11_default_view_matches_full", STATUS_PASS if default_matches_full else STATUS_FAIL, "" if default_matches_full else f"default={res_default} explicit_full={res_explicit_full}"))
+    results.append(CheckResult("4", "R11_default_view_matches_summary", STATUS_PASS if default_matches_summary else STATUS_FAIL, "" if default_matches_summary else f"default={res_default} explicit_summary={res_explicit_summary}"))
 
     # An invalid view value must error cleanly (INVALID_FILTER), not crash or hang.
     ok, res = await call(client, "todo_list", {"limit": 1, "view": "bogus"})

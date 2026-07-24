@@ -2674,9 +2674,12 @@ def _r11_todo_list_dispatch(*, pre_fix: bool):
             return _R11_PRE_FIX_ERROR
         if params.get("view") == "bogus":
             return {"success": False, "error": {"code": -32602, "message": "view must be one of ['full', 'summary'], got 'bogus'"}}
-        if params.get("view") == "summary":
-            return _ok({"todos": [_R11_TODO_SUMMARY_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
-        return _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+        if params.get("view") == "full":
+            return _ok({"todos": [_R11_TODO_FULL_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+        # Omitted view and explicit view=summary both return the compact
+        # projection: todo ffe0b0a8 flipped todo_list's default from
+        # view=full to view=summary.
+        return _ok({"todos": [_R11_TODO_SUMMARY_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
 
     return _dispatch
 
@@ -2718,7 +2721,7 @@ def test_run_r11_post_fix_server_passes_every_check():
     assert by_name["R11_tool_list(view=summary)_row_size"].status == ls.STATUS_PASS
     assert by_name["R11_tool_list(view=summary)_row_fields"].status == ls.STATUS_PASS
     assert by_name["R11_todo_list(view=full)_still_verbose"].status == ls.STATUS_PASS
-    assert by_name["R11_default_view_matches_full"].status == ls.STATUS_PASS
+    assert by_name["R11_default_view_matches_summary"].status == ls.STATUS_PASS
     assert by_name["R11_invalid_view_rejected"].status == ls.STATUS_PASS
 
 
