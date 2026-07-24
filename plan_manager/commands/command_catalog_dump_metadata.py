@@ -34,9 +34,16 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
             "source_module (the dotted module path of the command's "
             "implementation). The result is returned as a bounded, "
             "total-annotated page: offset and limit follow the uniform "
-            "pagination convention (limit 1..200, default 50; "
-            "non-negative offset; out-of-range values rejected with "
-            "INVALID_PAGINATION) and the response always carries total "
+            "pagination validation (limit 1..200; non-negative offset; "
+            "out-of-range or non-integer values rejected with "
+            "INVALID_PAGINATION), but an OMITTED limit defaults to 10 for "
+            "this command specifically, not the project's general 50-row "
+            "default -- each catalog entry is a complete per-command "
+            "metadata blob (full parameter descriptions/examples, "
+            "usage_examples, error_cases, best_practices), averaging ~4.3 "
+            "KB on the live catalog, so a 50-entry page would still "
+            "serialize to roughly a quarter of a megabyte (bug 85b180bf's "
+            "revised fix). The response always carries total "
             "alongside the page. Entries are sorted alphabetically by "
             "command name before slicing, giving a stable, deterministic "
             "page ordering across calls (independent of command "
@@ -50,7 +57,12 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
         ),
         "parameters": {
             "limit": {
-                "description": "Maximum number of catalog entries to return (default 50, max 200).",
+                "description": (
+                    "Maximum number of catalog entries to return (default 10 for this "
+                    "command specifically -- smaller than the project's general 50-row "
+                    "default because each entry is a complete per-command metadata blob; "
+                    "max 200, same as every other paginated command)."
+                ),
                 "type": "integer",
                 "required": False,
             },
@@ -83,7 +95,7 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
             {
                 "description": "List the first page of the command catalog with default pagination.",
                 "command": {},
-                "explanation": "Returns up to 50 catalog entries starting at offset 0, plus the total entry count.",
+                "explanation": "Returns up to 10 catalog entries starting at offset 0, plus the total entry count.",
             },
             {
                 "description": "Page through the catalog with an explicit limit and offset.",
@@ -102,5 +114,6 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
             "Use has_more (or total in the response) to detect additional pages; total reflects the full catalog size before pagination, not the returned page size.",
             "The catalog is generated from the live command inventory on every call; it always reflects the currently registered command set. Entries are always sorted alphabetically by name first, so consecutive calls with the same limit/offset return identical, gap-free, duplicate-free pages even if the underlying inventory order changes.",
             "execution_mode mirrors each command class's own use_queue ClassVar; a command with execution_mode 'queued' must be invoked through the queued discipline (job_id + poll_with).",
+            "The default page (limit omitted) is intentionally smaller (10) than this project's general 50-row pagination default: each entry is a full per-command metadata blob (parameters, usage_examples, error_cases, best_practices), so a larger default page would still be a large response. Pass an explicit larger limit (up to 200) only when the full detail for many commands at once is actually needed.",
         ],
     }

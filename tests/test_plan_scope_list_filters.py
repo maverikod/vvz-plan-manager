@@ -171,6 +171,12 @@ class _FakeComment:
     def to_payload(self):
         return {"anchor_plan_uuid": str(self.anchor_plan_uuid)}
 
+    def to_summary_payload(self):
+        # todo ffe0b0a8: comment_list now defaults to view=summary; these
+        # tests assert plan-scope/anchor_plan forwarding and total
+        # pass-through, not row shape, so mirroring to_payload() is enough.
+        return self.to_payload()
+
 
 def test_comment_list_forwards_both_plan_scope_and_anchor_plan_filter(monkeypatch) -> None:
     """The command must forward BOTH the resolved `plan` scope and the independent

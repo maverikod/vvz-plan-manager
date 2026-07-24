@@ -26,10 +26,10 @@ from plan_manager.storage.bug_impact_store import list_bug_impacts
 from plan_manager.storage.bug_report_store import get_bug
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
 
 _LIST_FILTER_FIELDS = ["status", "impact_type", "unresolved_impacts", "created_after", "created_before", "project"]
@@ -39,6 +39,40 @@ _FILTER_ENUMS = {"status": BUG_IMPACT_STATUSES, "impact_type": BUG_IMPACT_TYPES}
 # Ordered vocabulary published in the schema/metadata so the values are
 # discoverable directly, not only via an INVALID_FILTER error.
 _ENUM_OVERRIDES = {"status": [e.value for e in BugImpactStatus], "impact_type": [e.value for e in BugImpactType]}
+
+# bug_impact_list does NOT use list_projection's packaged view_schema_properties()/
+# view_metadata_params(): those hardcode default="full". bug_impact_list's
+# biggest offender is `reason` (unbounded free text) always embedded per row.
+# Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing list command's default to
+# summary) fixes this: the default becomes VIEW_SUMMARY (the same deliberate
+# deviation bug_list and srt_snapshot_list already made), pointing at
+# BugImpact.SUMMARY_FIELDS; limit/offset/total pagination is unchanged.
+# 'view=full' still opts into the complete record; there is no
+# bug_impact_get command, so full detail means re-calling bug_impact_list
+# with view=full.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, bug_uuid, target_type, target_ref_id, "
+    "impact_type, status, updated_at) -- reason, resolution_evidence, and "
+    "discovery_method are never included by default. 'full' opts into the "
+    "complete BugImpact record; there is no bug_impact_get command, so full "
+    "detail means re-calling bug_impact_list with view=full. One of: "
+    + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
 
 
 class BugImpactListCommand(Command):
@@ -68,7 +102,7 @@ class BugImpactListCommand(Command):
         }
         properties.update(filter_schema_properties(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         properties.update(pagination_schema_properties())
-        properties.update(view_schema_properties())
+        properties["view"] = dict(_VIEW_SCHEMA_PROPERTY)
         return {
             "type": "object",
             "properties": properties,
@@ -95,7 +129,7 @@ class BugImpactListCommand(Command):
         }
         params.update(filter_metadata_params(_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES))
         params.update(pagination_metadata_params())
-        params.update(view_metadata_params())
+        params["view"] = dict(_VIEW_METADATA_PARAM)
         return bug_impact_metadata(
             cls,
             params,
@@ -124,7 +158,7 @@ class BugImpactListCommand(Command):
                 "Combine created_after and created_before to scope impacts to a time window.",
                 "Use limit and offset to page through large impact sets instead of fetching all at once.",
                 "Filter by a specific status to inspect one lifecycle stage instead of unresolved_impacts.",
-                "view=summary returns a compact per-row projection (uuid, bug_uuid, target_type, target_ref_id, impact_type, status, updated_at) instead of the full BugImpact record (drops reason, resolution_evidence, discovery_method); there is no bug_impact_get command, so full detail means re-calling bug_impact_list with view=full (the default).",
+                "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, bug_uuid, target_type, target_ref_id, impact_type, status, updated_at) instead of the full BugImpact record (drops reason, resolution_evidence, discovery_method); there is no bug_impact_get command, so full detail means re-calling bug_impact_list with view=full.",
             ],
         )
 
@@ -144,7 +178,7 @@ class BugImpactListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = validate_uuid(bug_id)

@@ -18,11 +18,43 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_binding_store import list_model_bindings
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
+
+# model_binding_list does NOT use list_projection's packaged
+# view_schema_properties()/view_metadata_params(): those hardcode
+# default="full". Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing list
+# command's default to summary) fixes this: the default becomes VIEW_SUMMARY
+# (the same deliberate deviation bug_list and srt_snapshot_list already
+# made), pointing at ModelBinding.SUMMARY_FIELDS; limit/offset/total
+# pagination is unchanged. 'view=full' still opts into the complete record;
+# full detail is always one model_binding_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, scope, role, plan_uuid, provider, model, "
+    "active, updated_at) -- fallback_provider/fallback_model, max_retries, "
+    "timeout, and context_budget are never included by default. 'full' opts "
+    "into the complete ModelBinding record; use model_binding_get for full "
+    "detail either way. One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class ModelBindingListCommand(Command):
     name: ClassVar[str] = "model_binding_list"
@@ -44,7 +76,7 @@ class ModelBindingListCommand(Command):
                 "role": {"description": "Optional RuntimeRole value to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted bindings. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -58,7 +90,7 @@ class ModelBindingListCommand(Command):
         parameters["role"] = {"description": "Optional RuntimeRole value to filter by.", "type": "string", "required": False}
         parameters["include_deleted"] = {"description": "Include soft-deleted bindings. Defaults to false.", "type": "boolean", "required": False}
         parameters.update(pagination_metadata_params())
-        parameters.update(view_metadata_params())
+        parameters["view"] = dict(_VIEW_METADATA_PARAM)
         return_value = {
             "description": "An object with a bindings key holding a page of ModelBinding records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
@@ -72,7 +104,7 @@ class ModelBindingListCommand(Command):
             "include_deleted=true surfaces soft-deleted bindings for audit review; the default false hides them.",
             "Results are ordered by created_at, not inheritance specificity; use model_binding_resolve to find the winning binding for a target.",
             "Compare offset+limit against total to detect additional pages.",
-            "view=summary returns a compact per-row projection (uuid, scope, role, plan_uuid, provider, model, active, updated_at) instead of the full ModelBinding record (drops fallback_provider/fallback_model, max_retries, timeout, context_budget); use model_binding_get for full detail.",
+            "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, scope, role, plan_uuid, provider, model, active, updated_at) instead of the full ModelBinding record (drops fallback_provider/fallback_model, max_retries, timeout, context_budget); use model_binding_get for full detail. Pass view=full to opt back into the complete record.",
         ]
         return model_binding_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -88,7 +120,7 @@ class ModelBindingListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_uuid = validate_uuid(plan) if plan is not None else None
                 pagination = parse_pagination({"limit": limit, "offset": offset})

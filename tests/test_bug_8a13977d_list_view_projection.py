@@ -548,8 +548,9 @@ def test_touched_command_metadata_documents_view_parameter(module_name: str, cla
     assert parameters["view"]["enum"] == ["full", "summary"], command.name
 
 
-# srt_snapshot_list and bug_list are deliberately EXCLUDED from the
-# default=full pin below:
+# srt_snapshot_list, bug_list, and (per todo ffe0b0a8) every OTHER
+# SUMMARY_FIELDS-bearing list command below are deliberately EXCLUDED from
+# the default=full pin below:
 # - srt_snapshot_list: todo 4265fa4e (paginate/project srt_snapshot_list)
 #   mandates a compact metadata-only DEFAULT for this one command
 #   specifically -- a caller listing snapshots got ~246K tokens of embedded
@@ -558,14 +559,54 @@ def test_touched_command_metadata_documents_view_parameter(module_name: str, cla
 #   bugs serialized 176,477 chars; project_view's bug rows leaked the same
 #   full bodies despite limit params) mandate the same compact-by-default
 #   contract for bug_list specifically.
-# Both are explicit, spec-mandated deviations from this CR's general
-# default=full convention for every OTHER touched command. See
-# test_srt_snapshot_list_schema_view_defaults_to_summary and
-# test_bug_list_schema_view_defaults_to_summary below.
+# - todo_list, comment_list, bug_fix_list, bug_impact_list,
+#   review_result_list, escalation_list, invocation_profile_list,
+#   model_binding_list, execution_attempt_list: todo ffe0b0a8 (bug 8a13977d's
+#   own live reproduction -- todo_list(active_only=true, limit=50) serialized
+#   137,022 chars for 50 rows) extends the SAME compact-by-default fix to
+#   every OTHER touched command whose entity already declares SUMMARY_FIELDS,
+#   closing the gap this suite's original default=full pin left open.
+# These are all explicit, spec-mandated deviations from this CR's general
+# default=full convention for the remaining (non-SUMMARY_FIELDS) touched
+# commands. See test_bug_list_schema_view_defaults_to_summary,
+# test_srt_snapshot_list_schema_view_defaults_to_summary, and
+# test_todo_ffe0b0a8_command_schema_view_defaults_to_summary below.
+_SUMMARY_DEFAULT_COMMAND_CLASS_NAMES = (
+    "SrtSnapshotListCommand",
+    "BugListCommand",
+    # todo ffe0b0a8
+    "TodoListCommand",
+    "CommentListCommand",
+    "BugFixListCommand",
+    "BugImpactListCommand",
+    "ReviewResultListCommand",
+    "EscalationListCommand",
+    "InvocationProfileListCommand",
+    "ModelBindingListCommand",
+    "ExecutionAttemptListCommand",
+)
+
 _DEFAULT_FULL_COMMAND_MODULES = [
     (module_name, class_name)
     for module_name, class_name in _TOUCHED_LIST_COMMAND_MODULES
-    if class_name not in ("SrtSnapshotListCommand", "BugListCommand")
+    if class_name not in _SUMMARY_DEFAULT_COMMAND_CLASS_NAMES
+]
+
+# todo ffe0b0a8: the 9 commands flipped to view=summary default in this fix,
+# paired with the SUMMARY_FIELDS-projected fields their own best_practices
+# documents (used only to assert the schema default here; the exact-field
+# shape itself is already pinned per-entity above, e.g.
+# test_todo_summary_shape_is_exact).
+_TODO_FFE0B0A8_SUMMARY_DEFAULT_MODULES = [
+    ("plan_manager.commands.todo_list_command", "TodoListCommand"),
+    ("plan_manager.commands.comment_list_command", "CommentListCommand"),
+    ("plan_manager.commands.bug_fix_list_command", "BugFixListCommand"),
+    ("plan_manager.commands.bug_impact_list_command", "BugImpactListCommand"),
+    ("plan_manager.commands.review_result_list_command", "ReviewResultListCommand"),
+    ("plan_manager.commands.escalation_list_command", "EscalationListCommand"),
+    ("plan_manager.commands.invocation_profile_list_command", "InvocationProfileListCommand"),
+    ("plan_manager.commands.model_binding_list_command", "ModelBindingListCommand"),
+    ("plan_manager.commands.execution_attempt_list_command", "ExecutionAttemptListCommand"),
 ]
 
 
@@ -573,13 +614,14 @@ _DEFAULT_FULL_COMMAND_MODULES = [
     "module_name,class_name", _DEFAULT_FULL_COMMAND_MODULES, ids=[c for _, c in _DEFAULT_FULL_COMMAND_MODULES]
 )
 def test_touched_command_schema_view_defaults_to_full(module_name: str, class_name: str) -> None:
-    """Pins the default-view decision: every touched command keeps view=full
-    as the default (opt-in summary), for backward compatibility with existing
+    """Pins the default-view decision: every REMAINING touched command (i.e.
+    not in _SUMMARY_DEFAULT_COMMAND_CLASS_NAMES) keeps view=full as the
+    default (opt-in summary), for backward compatibility with existing
     callers (client facade, live_smoke recipes, internal command chains).
-    srt_snapshot_list and bug_list are the deliberate exceptions (todo
-    4265fa4e, bugs 7383c8a8/45f0c128); see
-    test_srt_snapshot_list_schema_view_defaults_to_summary and
-    test_bug_list_schema_view_defaults_to_summary.
+    srt_snapshot_list, bug_list, and the todo ffe0b0a8 group are the
+    deliberate exceptions; see test_srt_snapshot_list_schema_view_defaults_to_summary,
+    test_bug_list_schema_view_defaults_to_summary, and
+    test_todo_ffe0b0a8_command_schema_view_defaults_to_summary.
     """
     import importlib
 
@@ -608,3 +650,23 @@ def test_srt_snapshot_list_schema_view_defaults_to_summary() -> None:
 
     properties = SrtSnapshotListCommand.get_schema()["properties"]
     assert properties["view"]["default"] == "summary"
+
+
+@pytest.mark.parametrize(
+    "module_name,class_name",
+    _TODO_FFE0B0A8_SUMMARY_DEFAULT_MODULES,
+    ids=[c for _, c in _TODO_FFE0B0A8_SUMMARY_DEFAULT_MODULES],
+)
+def test_todo_ffe0b0a8_command_schema_view_defaults_to_summary(module_name: str, class_name: str) -> None:
+    """Todo ffe0b0a8: every list command whose entity declares SUMMARY_FIELDS
+    but still defaulted view=full (leaking unbounded free-text rows) is
+    flipped to view=summary by default, mirroring bug_list's own fix
+    (bugs 7383c8a8/45f0c128) and srt_snapshot_list's (todo 4265fa4e). Pinned
+    explicitly so a future change here is a deliberate decision, not a
+    silent regression either way.
+    """
+    import importlib
+
+    command = getattr(importlib.import_module(module_name), class_name)
+    properties = command.get_schema()["properties"]
+    assert properties["view"]["default"] == "summary", command.name

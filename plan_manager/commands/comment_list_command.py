@@ -24,10 +24,10 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_comment_store import list_comments_page
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
 
 FILTER_FIELDS: list[str] = [
@@ -50,6 +50,38 @@ _ENUM_OVERRIDES = {
     "kind": [e.value for e in CommentKind],
 }
 
+# comment_list does NOT use list_projection's packaged view_schema_properties()/
+# view_metadata_params(): those hardcode default="full". comment_list's biggest
+# offender is `body` (the comment text itself, unbounded free text) always
+# embedded per row. Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing list
+# command's default to summary) fixes this: the default becomes VIEW_SUMMARY
+# (the same deliberate deviation bug_list and srt_snapshot_list already made),
+# pointing at RuntimeComment.SUMMARY_FIELDS; limit/offset/total pagination is
+# unchanged. 'view=full' still opts into the complete record; full detail is
+# always one comment_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, primary_anchor_type, anchor_ref_id, kind, "
+    "resolved, updated_at) -- body (the comment text itself, unbounded free "
+    "text) is never included by default. 'full' opts into the complete "
+    "RuntimeComment record; use comment_get for a single comment's full "
+    "detail either way. One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class CommentListCommand(Command):
     name: ClassVar[str] = "comment_list"
@@ -69,7 +101,7 @@ class CommentListCommand(Command):
                 "plan": {"type": "string", "description": "Plan identifier (name or UUID), optional. When supplied, scopes the listing: only comments whose anchor_plan_uuid equals the resolved plan are returned; comments anchored to other plans or with no plan anchor (anchor_plan_uuid NULL) are excluded (direct anchor equality, no transitive matching). When omitted, no plan scoping is applied. The project filter (below) is independent and IS transitive via plan.project_ids."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -86,7 +118,7 @@ class CommentListCommand(Command):
             },
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
-            **view_metadata_params(),
+            "view": dict(_VIEW_METADATA_PARAM),
         }
         return comment_metadata(
             cls,
@@ -101,7 +133,7 @@ class CommentListCommand(Command):
                 "The plan scope, anchor_plan, step, project, file, revision, kind, owner, status, active_only, and created_after/before are all pushed down to SQL WHERE clauses -- none is applied by post-fetch, in-memory filtering. anchor_plan is redundant unless it differs from plan (which yields an empty page).",
                 "The project filter matches transitively: a comment whose anchor_project_id equals the filter value matches directly, and a comment with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "total is the filtered, pre-pagination count — page by advancing offset past total, there is no cursor.",
-                "view=summary returns a compact per-row projection (uuid, primary_anchor_type, anchor_ref_id, kind, resolved, updated_at) instead of the full RuntimeComment record (drops body, the comment text itself); use comment_get for a single comment's full detail.",
+                "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, primary_anchor_type, anchor_ref_id, kind, resolved, updated_at) instead of the full RuntimeComment record (drops body, the comment text itself); use comment_get for a single comment's full detail. Pass view=full to opt back into the complete record.",
             ],
         )
 
@@ -125,7 +157,7 @@ class CommentListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params: dict[str, Any] = {

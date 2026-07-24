@@ -27,10 +27,10 @@ from plan_manager.storage.bug_fix_store import list_bug_fixes
 from plan_manager.storage.bug_report_store import get_bug
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
 
 
@@ -41,6 +41,41 @@ _FILTER_ENUMS = {"status": BUG_FIX_STATUSES}
 # Ordered vocabulary published in the schema/metadata so the values are
 # discoverable directly, not only via an INVALID_FILTER error.
 _ENUM_OVERRIDES = {"status": [e.value for e in BugFixStatus]}
+
+# bug_fix_list does NOT use list_projection's packaged view_schema_properties()/
+# view_metadata_params(): those hardcode default="full". bug_fix_list's
+# biggest offenders are implementation_notes/expected_result/actual_result
+# (unbounded free text) always embedded per row. Todo ffe0b0a8 (flip every
+# SUMMARY_FIELDS-bearing list command's default to summary) fixes this: the
+# default becomes VIEW_SUMMARY (the same deliberate deviation bug_list and
+# srt_snapshot_list already made), pointing at BugFix.SUMMARY_FIELDS;
+# limit/offset/total pagination is unchanged. 'view=full' still opts into
+# the complete record; there is no bug_fix_get command, so full detail means
+# re-calling bug_fix_list with view=full and a narrowing filter.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, bug_uuid, status, fix_type, summary, author, "
+    "updated_at) -- the free-text/list fields (implementation_notes, "
+    "changed_files, tests, expected_result, actual_result, revert_info) that "
+    "dominate row size are never included by default. 'full' opts into the "
+    "complete BugFix record; there is no bug_fix_get command, so full detail "
+    "means re-calling bug_fix_list with view=full and a narrowing filter. "
+    "One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
 
 
 class BugFixListCommand(Command):
@@ -71,7 +106,7 @@ class BugFixListCommand(Command):
                 "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL)."},
                 **filter_schema_properties(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": ["bug"],
             "additionalProperties": False,
@@ -95,7 +130,7 @@ class BugFixListCommand(Command):
             "bug": {"description": "UUID of the BugReport (C-020) whose fix attempts are listed. Must be anchored to the resolved plan when plan is supplied (source_plan_uuid equal or NULL).", "type": "string", "required": True},
             **filter_metadata_params(FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
-            **view_metadata_params(),
+            "view": dict(_VIEW_METADATA_PARAM),
         }
         return bug_fix_metadata(
             cls,
@@ -116,7 +151,7 @@ class BugFixListCommand(Command):
                 "The project filter matches transitively: a fix whose source_project_id equals the filter value matches directly, and a fix with source_project_id NULL still matches when the owning bug's source_plan_uuid is bound to that project (plan.project_ids).",
                 "Set unverified_fixes=true to see only fix attempts not yet verified.",
                 "Use limit/offset for pagination and compare offset+limit against total to detect more pages.",
-                "view=summary returns a compact per-row projection (uuid, bug_uuid, status, fix_type, summary, author, updated_at) instead of the full BugFix record (drops implementation_notes, changed_files, tests, expected/actual_result, revert_info); there is no bug_fix_get command, so full detail means re-calling bug_fix_list with view=full (the default) and a narrowing filter.",
+                "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, bug_uuid, status, fix_type, summary, author, updated_at) instead of the full BugFix record (drops implementation_notes, changed_files, tests, expected/actual_result, revert_info); there is no bug_fix_get command, so full detail means re-calling bug_fix_list with view=full and a narrowing filter.",
             ],
         )
 
@@ -157,7 +192,7 @@ class BugFixListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 bug_uuid = uuid.UUID(bug)

@@ -20,10 +20,10 @@ from plan_manager.commands.runtime_filtering import (
     parse_pagination,
 )
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
 from plan_manager.domain.todo import TODO_KINDS, TODO_STATUSES, TodoKind, TodoStatus
 from plan_manager.domain.runtime_validation import validate_uuid
@@ -49,6 +49,40 @@ _ENUM_OVERRIDES = {
 # this copy is kept as the documented, importable vocabulary for callers/tests.
 _ACTIVE_STATUSES = frozenset({"open", "in_progress", "blocked"})
 
+# todo_list does NOT use list_projection's packaged view_schema_properties()/
+# view_metadata_params(): those hardcode default="full". Bug 8a13977d found
+# todo_list(active_only=true, limit=50) serializing 137,022 chars for 50 rows
+# (~2.7 KB/item avg) because every row always embedded description/
+# blocking_reason/execution_result. Todo ffe0b0a8 (flip every
+# SUMMARY_FIELDS-bearing list command's default to summary) fixes this: the
+# default becomes VIEW_SUMMARY (the same deliberate deviation bug_list and
+# srt_snapshot_list already made), pointing at TodoItem.SUMMARY_FIELDS;
+# limit/offset/total pagination is unchanged. 'view=full' still opts into
+# the complete record; full detail is always one todo_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, todo_uuid, title, status, kind, priority_nice, "
+    "primary_anchor_type, anchor_ref_id, updated_at) -- the free-text fields "
+    "(description, blocking_reason, execution_result) that dominate row size "
+    "are never included by default. 'full' opts into the complete TodoItem "
+    "record; use todo_get for a single item's full detail either way. One of: "
+    + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class TodoListCommand(Command):
     name: ClassVar[str] = "todo_list"
@@ -65,7 +99,7 @@ class TodoListCommand(Command):
         properties = {
             **filter_schema_properties(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_schema_properties(),
-            **view_schema_properties(),
+            "view": dict(_VIEW_SCHEMA_PROPERTY),
         }
         return {
             "type": "object",
@@ -79,7 +113,7 @@ class TodoListCommand(Command):
         params = {
             **filter_metadata_params(TODO_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
             **pagination_metadata_params(),
-            **view_metadata_params(),
+            "view": dict(_VIEW_METADATA_PARAM),
         }
         return todo_metadata(
             cls,
@@ -93,7 +127,7 @@ class TodoListCommand(Command):
                 "The project filter matches transitively: a TODO whose anchor_project_id equals the filter value matches directly, and a TODO with anchor_project_id NULL still matches when its anchor_plan_uuid is bound to that project (plan.project_ids).",
                 "The model filter parameter is accepted in the schema but is not currently applied to the result set — passing it has no filtering effect.",
                 "total reflects the filtered count before pagination is applied, not the page size — use it, together with limit and offset, to detect additional pages.",
-                "view=summary returns a compact per-row projection (uuid, todo_uuid, title, status, kind, priority_nice, primary_anchor_type, anchor_ref_id, updated_at) instead of the full TodoItem record; use it for listing/triage and follow up with todo_get for a single item's full detail.",
+                "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, todo_uuid, title, status, kind, priority_nice, primary_anchor_type, anchor_ref_id, updated_at) instead of the full TodoItem record; use it for listing/triage and follow up with todo_get for a single item's full detail. Pass view=full to opt back into the complete record.",
             ],
         )
 
@@ -120,7 +154,7 @@ class TodoListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 raw_params: dict[str, Any] = {
                     "project": project, "file": file,

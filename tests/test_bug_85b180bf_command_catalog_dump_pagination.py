@@ -2,29 +2,48 @@
 params, previously returned the entire ~200+ command catalog (~130 KB) in a
 single response instead of a bounded first page.
 
-Fix (plan_manager.commands.command_catalog_dump_command.CommandCatalogDumpCommand):
-apply the project's uniform limit/offset pagination contract
-(plan_manager.commands.runtime_filtering: bounded default 50, max 200,
-INVALID_PAGINATION on bad values) to the catalog entries, after sorting them
-deterministically by command name (todo 9c409a47 -- INVENTORY order is
-registration order, not a guaranteed-stable page boundary). The response
-adds `returned`/`has_more` alongside the pre-existing `commands`/`total`/
-`limit`/`offset` envelope keys (additive; existing keys/shape unchanged).
+FIRST fix attempt (commit 8a3d6fc) bounded the default page to the shared
+runtime_filtering.DEFAULT_LIMIT (50 entries) and sorted entries
+deterministically by command name (todo 9c409a47) -- but count-only
+bounding did NOT actually close the live defect. Acceptance-hold
+investigation (same session, before this file's current form) proved it
+empirically: unlike this project's other paginated entities (steps, bugs,
+todos -- small structured records), each catalog entry embeds a COMPLETE
+per-command metadata blob (full parameter descriptions/examples,
+usage_examples, error_cases, best_practices); measured against the real,
+live catalog (199 commands, 2026-07-24) entries average ~4.3 KB each (min
+0.8 KB, max 9.7 KB), so a "bounded to 50 entries" page still serialized to
+~248 KB -- almost DOUBLE the original bug's own ~130 KB complaint. See
+plan_manager/commands/command_catalog_dump_command.py's module docstring
+for the full measurement and the revised fix: this command's own no-param
+default is `_DEFAULT_CATALOG_LIMIT` (10 entries, ~48 KB on the real
+catalog), substituted BEFORE parse_pagination runs; parse_pagination's own
+validation (1..MAX_LIMIT, INVALID_PAGINATION) and offset defaulting are
+otherwise completely unchanged, and an explicitly-provided `limit` is never
+overridden.
 
-These tests exercise the command against a synthetic large catalog (via
-monkeypatching build_command_catalog in the command module's namespace) so
-the pagination/ordering contract is verified independent of however many
-commands happen to be registered on any given day.
+This file has two kinds of tests: (1) pagination/ordering-contract tests
+against a synthetic large catalog (monkeypatching build_command_catalog),
+verifying page-slicing math/ordering/no-dupes-no-gaps independent of
+however many commands happen to be registered on any given day -- these
+alone previously passed despite the real defect, because synthetic entries
+were tiny; and (2) REAL-catalog byte-size regression tests (no
+monkeypatching, exercising the actual build_command_catalog()) that would
+have caught the true defect and are the ones that actually prove the fix.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 
 from plan_manager.commands import command_catalog_dump_command as ccd_module
-from plan_manager.commands.command_catalog_dump_command import CommandCatalogDumpCommand
-from plan_manager.commands.runtime_filtering import DEFAULT_LIMIT, MAX_LIMIT
+from plan_manager.commands.command_catalog_dump_command import (
+    _DEFAULT_CATALOG_LIMIT,
+    CommandCatalogDumpCommand,
+)
+from plan_manager.commands.runtime_filtering import MAX_LIMIT
 
 
 def _synthetic_entry(i: int) -> dict:
@@ -59,19 +78,68 @@ def _run(**kwargs):
     return asyncio.run(CommandCatalogDumpCommand().execute(**kwargs))
 
 
-def test_default_call_on_large_catalog_is_bounded_to_default_limit(monkeypatch):
-    """The observed defect: command_catalog_dump() with no params must never
-    dump the whole ~200+ command catalog (~130 KB) in one response."""
+# --- real-catalog byte-size regression (the tests that actually prove the fix) ---
+
+
+def test_real_default_no_arg_response_is_bounded_to_the_catalog_specific_default():
+    """No monkeypatching: exercises the ACTUAL live command inventory, exactly
+    as a no-param JSON-RPC call would. This is the test that would have
+    caught the original defect -- a page bounded to 50 *entries* still
+    serialized to ~248 KB on the real catalog, because entries are large.
+    """
+    result = _run()
+    data = result.to_dict()["data"]
+
+    assert data["limit"] == _DEFAULT_CATALOG_LIMIT == 10
+    assert len(data["commands"]) <= _DEFAULT_CATALOG_LIMIT
+    assert data["returned"] == len(data["commands"])
+    assert data["total"] >= 100  # sanity: real catalog is not accidentally empty/tiny
+
+
+def test_real_default_no_arg_response_size_is_actually_bounded_in_bytes():
+    """The defect's own terms: called with no params, the response body must
+    stay well under the ~130 KB the bug complained about -- not just be
+    bounded in entry *count*. Measured on the real catalog (2026-07-24): 10
+    entries ~= 48 KB; this asserts a generous-but-real ceiling (80 KB) that
+    catches both a reverted count-fix and a per-entry metadata bloat
+    regression, without being so tight it flakes as the catalog grows by a
+    handful of commands.
+    """
+    result = _run()
+    payload = result.to_dict()
+
+    size = len(json.dumps(payload))
+    assert size < 80_000, f"default no-arg response is {size} bytes -- not actually bounded"
+
+
+def test_real_explicit_max_limit_response_still_reflects_full_catalog_scope():
+    """An explicit large limit (up to MAX_LIMIT) is still an informed,
+    opt-in choice per the binding design decision ("full catalog remains
+    reachable by paging ... do NOT add an unbounded escape hatch") -- it is
+    the no-param DEFAULT that must be small, not the ceiling."""
+    result = _run(limit=MAX_LIMIT)
+    data = result.to_dict()["data"]
+
+    assert data["limit"] == MAX_LIMIT == 200
+    assert len(data["commands"]) == min(MAX_LIMIT, data["total"])
+
+
+# --- pagination / ordering contract (synthetic catalog, size-independent) ---
+
+
+def test_default_call_on_large_catalog_is_bounded_to_command_specific_default(monkeypatch):
+    """The observed defect, restated in count terms: command_catalog_dump()
+    with no params must never dump the whole catalog in one response."""
     _patch_catalog(monkeypatch, 222)
 
     result = _run()
     data = result.to_dict()["data"]
 
-    assert len(data["commands"]) == DEFAULT_LIMIT == 50
+    assert len(data["commands"]) == _DEFAULT_CATALOG_LIMIT == 10
     assert data["total"] == 222
-    assert data["limit"] == DEFAULT_LIMIT
+    assert data["limit"] == _DEFAULT_CATALOG_LIMIT
     assert data["offset"] == 0
-    assert data["returned"] == 50
+    assert data["returned"] == 10
     assert data["has_more"] is True
 
 
@@ -88,8 +156,9 @@ def test_default_limit_never_exceeds_max_limit_even_if_requested(monkeypatch):
 
 
 def test_small_catalog_returns_everything_with_additive_keys_only(monkeypatch):
-    """A catalog within the default page size (50) returns every command, and
-    the only change vs. the pre-fix shape is the two new additive keys."""
+    """A catalog within the command-specific default page size (10) returns
+    every command, and the only change vs. the pre-fix shape is the two new
+    additive keys."""
     _patch_catalog(monkeypatch, 5, shuffled=False)
 
     result = _run()
@@ -98,7 +167,7 @@ def test_small_catalog_returns_everything_with_additive_keys_only(monkeypatch):
     assert set(data.keys()) == {"commands", "total", "limit", "offset", "returned", "has_more"}
     assert [entry["name"] for entry in data["commands"]] == [f"synthetic_cmd_{i:04d}" for i in range(5)]
     assert data["total"] == 5
-    assert data["limit"] == 50
+    assert data["limit"] == _DEFAULT_CATALOG_LIMIT
     assert data["offset"] == 0
     assert data["returned"] == 5
     assert data["has_more"] is False
@@ -154,6 +223,28 @@ def test_pagination_covers_every_entry_alphabetically_with_no_duplicates_or_gaps
     assert len(seen) == len(set(seen)) == 313
 
 
+def test_pagination_covers_every_entry_using_the_no_arg_default_page_size(monkeypatch):
+    """Same no-dupes/no-gaps walk as above, but paging with the OMITTED
+    default (10) on every call after the first -- the actual shape a caller
+    gets if it just keeps calling with offset=offset+returned and no
+    explicit limit."""
+    _patch_catalog(monkeypatch, 47, shuffled=True)
+
+    seen: list[str] = []
+    offset = 0
+    while True:
+        result = _run(offset=offset)
+        data = result.to_dict()["data"]
+        seen.extend(entry["name"] for entry in data["commands"])
+        if not data["has_more"]:
+            break
+        offset += data["limit"]
+
+    expected = sorted(f"synthetic_cmd_{i:04d}" for i in range(47))
+    assert seen == expected
+    assert len(seen) == len(set(seen)) == 47
+
+
 def test_invalid_pagination_surfaces_invalid_pagination_domain_code(monkeypatch):
     _patch_catalog(monkeypatch, 5)
 
@@ -201,14 +292,28 @@ def test_ordering_is_deterministic_across_two_consecutive_calls(monkeypatch):
     assert names_first == sorted(names_first)
 
 
-def test_default_schema_documents_limit_and_offset_with_canonical_pagination_contract():
+def test_schema_offset_matches_canonical_pagination_contract_limit_documents_true_default():
+    """This command is NOT part of the byte-for-byte
+    pagination_schema_properties() contract enforced by
+    tests/test_uniform_pagination_contract.py's _RETROFITTED_COMMANDS list
+    (by design -- see the command module's docstring): `offset` matches the
+    canonical shared property exactly (its semantics/default are unchanged),
+    but `limit`'s description is deliberately overridden to truthfully
+    document the smaller, command-specific default (10, not the general
+    50) -- type/minimum/maximum still match the canonical contract."""
     from plan_manager.commands.runtime_filtering import pagination_schema_properties
 
     properties = CommandCatalogDumpCommand.get_schema()["properties"]
     canonical = pagination_schema_properties()
 
-    assert properties["limit"] == canonical["limit"]
     assert properties["offset"] == canonical["offset"]
+
+    limit_property = properties["limit"]
+    assert limit_property["type"] == canonical["limit"]["type"]
+    assert limit_property["minimum"] == canonical["limit"]["minimum"]
+    assert limit_property["maximum"] == canonical["limit"]["maximum"]
+    assert limit_property != canonical["limit"], "limit description must diverge to document the true default"
+    assert str(_DEFAULT_CATALOG_LIMIT) in limit_property["description"]
 
 
 def test_metadata_documents_returned_and_has_more_fields():
@@ -220,3 +325,11 @@ def test_metadata_documents_returned_and_has_more_fields():
     assert "total" in data_docs
     assert "limit" in data_docs
     assert "offset" in data_docs
+
+
+def test_metadata_limit_parameter_documents_the_true_default_of_ten():
+    blob = CommandCatalogDumpCommand.metadata()
+    limit_doc = blob["parameters"]["limit"]["description"]
+
+    assert "default 10" in limit_doc
+    assert "default 50" not in limit_doc  # no stale claim from the first fix attempt

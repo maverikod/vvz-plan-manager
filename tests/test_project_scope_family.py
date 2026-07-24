@@ -214,6 +214,12 @@ class _FakeFix:
     def to_payload(self):
         return {}
 
+    def to_summary_payload(self):
+        # todo ffe0b0a8: bug_fix_list now defaults to view=summary; these
+        # tests assert project-filter reachability via `total`, not row
+        # shape, so an empty projection mirrors to_payload() unchanged.
+        return {}
+
 
 def test_bug_fix_list_project_filter_reaches_null_anchored_fix_via_bug_plan_binding(monkeypatch) -> None:
     """When the owning bug's plan is bound to the project, every fix under that bug
@@ -276,6 +282,12 @@ class _FakeImpact:
         self.created_at = "2026-07-17T00:00:00+00:00"
 
     def to_payload(self):
+        return {}
+
+    def to_summary_payload(self):
+        # todo ffe0b0a8: bug_impact_list now defaults to view=summary; these
+        # tests assert project-filter reachability via `total`, not row
+        # shape, so an empty projection mirrors to_payload() unchanged.
         return {}
 
 

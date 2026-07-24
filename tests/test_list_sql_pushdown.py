@@ -348,6 +348,12 @@ def test_todo_list_command_calls_store_once_and_trusts_its_total(monkeypatch) ->
         def to_payload(self):
             return {}
 
+        def to_summary_payload(self):
+            # todo ffe0b0a8: todo_list now defaults to view=summary; this
+            # test only asserts store-call-count/total pass-through, not row
+            # shape, so an empty projection mirrors to_payload() unchanged.
+            return {}
+
     def fake_list_todos_page(conn, **kwargs):
         calls["n"] += 1
         return [_FakeTodoPayload()], 123
@@ -366,6 +372,12 @@ def test_comment_list_command_calls_store_once_and_trusts_its_total(monkeypatch)
 
     class _FakeCommentPayload:
         def to_payload(self):
+            return {}
+
+        def to_summary_payload(self):
+            # todo ffe0b0a8: comment_list now defaults to view=summary; this
+            # test only asserts store-call-count/total pass-through, not row
+            # shape, so an empty projection mirrors to_payload() unchanged.
             return {}
 
     def fake_list_comments_page(conn, **kwargs):

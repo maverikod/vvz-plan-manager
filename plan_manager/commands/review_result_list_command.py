@@ -23,11 +23,45 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.review_result_store import list_review_results
 from plan_manager.storage.project_scope import resolve_project_plan_uuids
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
+
+# review_result_list does NOT use list_projection's packaged
+# view_schema_properties()/view_metadata_params(): those hardcode
+# default="full". review_result_list's biggest offender is `findings`
+# (unbounded free text), plus evidence/verification_commands, always
+# embedded per row. Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing list
+# command's default to summary) fixes this: the default becomes VIEW_SUMMARY
+# (the same deliberate deviation bug_list and srt_snapshot_list already
+# made), pointing at ReviewResult.SUMMARY_FIELDS; limit/offset/total
+# pagination is unchanged. 'view=full' still opts into the complete record;
+# full detail is always one review_result_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, object_type, reviewed_attempt_uuid, reviewer, "
+    "status, updated_at) -- findings, evidence, and verification_commands are "
+    "never included by default. 'full' opts into the complete ReviewResult "
+    "record; use review_result_get for a single result's full detail either "
+    "way. One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class ReviewResultListCommand(Command):
     name: ClassVar[str] = "review_result_list"
@@ -83,7 +117,7 @@ class ReviewResultListCommand(Command):
                     "description": "Include soft-deleted review results in the listing. Defaults to false.",
                 },
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -127,7 +161,7 @@ class ReviewResultListCommand(Command):
             },
             "include_deleted": {"description": "Include soft-deleted review results in the listing. Defaults to false.", "type": "boolean", "required": False},
             **pagination_metadata_params(),
-            **view_metadata_params(),
+            "view": dict(_VIEW_METADATA_PARAM),
         }
         return review_escalation_metadata(
             cls,
@@ -150,7 +184,7 @@ class ReviewResultListCommand(Command):
                 "Results are ordered oldest first (created_at ASC); reverse client-side for a newest-first view.",
                 "Filter by status escalated or needs_owner_decision to find review results still awaiting an owner decision.",
                 "Compare offset+limit against total to detect additional pages.",
-                "view=summary returns a compact per-row projection (uuid, object_type, reviewed_attempt_uuid, reviewer, status, updated_at) instead of the full record (drops findings, evidence, verification_commands); use review_result_get for a single result's full detail.",
+                "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, object_type, reviewed_attempt_uuid, reviewer, status, updated_at) instead of the full record (drops findings, evidence, verification_commands); use review_result_get for a single result's full detail. Pass view=full to opt back into the complete record.",
             ],
         )
 
@@ -192,7 +226,7 @@ class ReviewResultListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 if status is not None and status not in REVIEW_STATUSES:

@@ -21,11 +21,46 @@ from plan_manager.domain.execution_attempt import ATTEMPT_STATUSES
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.execution_attempt_store import list_execution_attempts
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
+
+# execution_attempt_list does NOT use list_projection's packaged
+# view_schema_properties()/view_metadata_params(): those hardcode
+# default="full". execution_attempt_list's rows always embed
+# result_summary/command_test_results/resource_accounting/transcript_ref.
+# Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing list command's default to
+# summary) fixes this: the default becomes VIEW_SUMMARY (the same
+# deliberate deviation bug_list and srt_snapshot_list already made),
+# pointing at ExecutionAttempt.SUMMARY_FIELDS; limit/offset/total pagination
+# is unchanged. 'view=full' still opts into the complete record; full
+# detail is always one execution_attempt_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, plan_uuid, step_uuid, status, used_provider, "
+    "used_model, updated_at) -- result_summary, command_test_results, "
+    "resource_accounting, transcript_ref, and error detail are never "
+    "included by default. 'full' opts into the complete record; use "
+    "execution_attempt_get for a single attempt's full detail either way. "
+    "One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class ExecutionAttemptListCommand(Command):
     name: ClassVar[str] = "execution_attempt_list"
@@ -86,7 +121,7 @@ class ExecutionAttemptListCommand(Command):
                     "required": False,
                 },
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -96,7 +131,7 @@ class ExecutionAttemptListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = dict(cls.get_schema()["properties"])
         params.update(pagination_metadata_params())
-        params.update(view_metadata_params())
+        params["view"] = dict(_VIEW_METADATA_PARAM)
         return_value = {
             "success": {
                 "description": "A page of the matching execution attempt records (or, with view=summary, compact projections), with all UUID fields rendered as strings, plus total/limit/offset.",
@@ -125,7 +160,7 @@ class ExecutionAttemptListCommand(Command):
             "status, so this filter reflects whatever status was most recently reported, not a "
             "state-machine-validated progression.",
             "Compare offset+limit against total to detect additional pages.",
-            "view=summary returns a compact per-row projection (uuid, plan_uuid, step_uuid, status, used_provider, used_model, updated_at) instead of the full record (drops result_summary, command_test_results, resource_accounting, transcript_ref); use execution_attempt_get for a single attempt's full detail.",
+            "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, plan_uuid, step_uuid, status, used_provider, used_model, updated_at) instead of the full record (drops result_summary, command_test_results, resource_accounting, transcript_ref); use execution_attempt_get for a single attempt's full detail. Pass view=full to opt back into the complete record.",
         ]
         return execution_attempt_metadata(cls, params, return_value, examples, best_practices=best_practices)
 
@@ -171,7 +206,7 @@ class ExecutionAttemptListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_uuid = None
                 if plan is not None:

@@ -18,11 +18,47 @@ from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import list_invocation_profiles
 from plan_manager.commands.list_projection import (
+    VIEW_SUMMARY,
+    VIEW_VALUES,
     parse_view,
     project_entities,
-    view_metadata_params,
-    view_schema_properties,
 )
+
+# invocation_profile_list does NOT use list_projection's packaged
+# view_schema_properties()/view_metadata_params(): those hardcode
+# default="full". invocation_profile_list's rows always embed a wide set of
+# tuning fields (temperature, top_p, retry_policy, rate_hint,
+# response_schema, etc.). Todo ffe0b0a8 (flip every SUMMARY_FIELDS-bearing
+# list command's default to summary) fixes this: the default becomes
+# VIEW_SUMMARY (the same deliberate deviation bug_list and srt_snapshot_list
+# already made), pointing at InvocationProfile.SUMMARY_FIELDS;
+# limit/offset/total pagination is unchanged. 'view=full' still opts into
+# the complete record; full detail is always one invocation_profile_get
+# call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; todo ffe0b0a8) returns a compact "
+    "per-row projection (uuid, scope, role, plan_uuid, step_path, active, "
+    "updated_at) -- the tuning fields (temperature, top_p, retry_policy, "
+    "rate_hint, response_schema, etc.) are never included by default. 'full' "
+    "opts into the complete InvocationProfile record; use "
+    "invocation_profile_get for full detail either way. One of: "
+    + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
+_VIEW_METADATA_PARAM: dict[str, Any] = {
+    "type": "string",
+    "description": _VIEW_DESCRIPTION,
+    "required": False,
+    "enum": list(VIEW_VALUES),
+}
+
 
 class InvocationProfileListCommand(Command):
     name: ClassVar[str] = "invocation_profile_list"
@@ -44,7 +80,7 @@ class InvocationProfileListCommand(Command):
                 "role": {"description": "Optional RuntimeRole value to filter by.", "type": "string"},
                 "include_deleted": {"description": "Include soft-deleted invocation profiles. Defaults to false.", "type": "boolean", "default": False},
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -58,7 +94,7 @@ class InvocationProfileListCommand(Command):
         parameters["role"] = {"description": "Optional RuntimeRole value to filter by.", "type": "string", "required": False}
         parameters["include_deleted"] = {"description": "Include soft-deleted invocation profiles. Defaults to false.", "type": "boolean", "required": False}
         parameters.update(pagination_metadata_params())
-        parameters.update(view_metadata_params())
+        parameters["view"] = dict(_VIEW_METADATA_PARAM)
         return_value = {
             "description": "An object with a profiles key holding a page of InvocationProfile records (or, with view=summary, compact projections), plus total/limit/offset.",
             "type": "object",
@@ -72,7 +108,7 @@ class InvocationProfileListCommand(Command):
             "include_deleted=true surfaces soft-deleted profiles for audit review; the default false hides them.",
             "Results are ordered by created_at, not inheritance specificity; a future resolve command will find the winning profile for a target the same way model_binding_resolve does for bindings.",
             "Compare offset+limit against total to detect additional pages.",
-            "view=summary returns a compact per-row projection (uuid, scope, role, plan_uuid, step_path, active, updated_at) instead of the full InvocationProfile record (drops the tuning fields: temperature, top_p, retry_policy, rate_hint, response_schema, etc.); use invocation_profile_get for full detail.",
+            "view=summary (the default; todo ffe0b0a8) returns a compact per-row projection (uuid, scope, role, plan_uuid, step_path, active, updated_at) instead of the full InvocationProfile record (drops the tuning fields: temperature, top_p, retry_policy, rate_hint, response_schema, etc.); use invocation_profile_get for full detail. Pass view=full to opt back into the complete record.",
         ]
         return invocation_profile_metadata(cls, parameters, return_value, examples, best_practices=best_practices)
 
@@ -88,7 +124,7 @@ class InvocationProfileListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_uuid = validate_uuid(plan) if plan is not None else None
                 pagination = parse_pagination({"limit": limit, "offset": offset})
