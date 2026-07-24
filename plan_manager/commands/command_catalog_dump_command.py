@@ -1,4 +1,15 @@
-"""Command: dump the complete machine-readable command catalog (C-007), paginated (C-001)."""
+"""Command: dump the complete machine-readable command catalog (C-007), paginated (C-001).
+
+Bug 85b180bf: called with no params this command previously returned the
+entire ~200+ command catalog (~130 KB) in one response. Fix: bound the
+default page to DEFAULT_LIMIT (50, uniform runtime_filtering contract,
+max 200), sort entries deterministically by command name (todo 9c409a47 --
+the raw INVENTORY order is registration order, not guaranteed stable page
+boundaries across code changes) before slicing, and add `returned`/
+`has_more` alongside the existing `commands`/`total`/`limit`/`offset`
+envelope keys (additive; existing keys/shape unchanged for callers already
+paging via explicit limit/offset).
+"""
 
 from __future__ import annotations
 
@@ -48,14 +59,17 @@ class CommandCatalogDumpCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             pagination = parse_pagination({"limit": limit, "offset": offset})
-            entries = build_command_catalog()
+            entries = sorted(build_command_catalog(), key=lambda entry: entry["name"])
             total = len(entries)
             page = entries[pagination.offset : pagination.offset + pagination.limit]
+            returned = len(page)
             return SuccessResult(data={
                 "commands": page,
                 "total": total,
                 "limit": pagination.limit,
                 "offset": pagination.offset,
+                "returned": returned,
+                "has_more": (pagination.offset + returned) < total,
             })
         except Exception as exc:
             return map_exception(exc)

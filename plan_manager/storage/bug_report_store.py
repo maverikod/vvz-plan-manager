@@ -213,6 +213,14 @@ def list_bugs_page(
     requested page is empty (e.g. offset lands past the end of the filtered set)
     the window aggregate has no output row to ride along on, so a second, cheap
     `SELECT count(*)` with the same WHERE clause recovers the true total.
+
+    Ordering (todo 9c409a47): `ORDER BY created_at ASC, uuid ASC`. `created_at`
+    alone is not a unique key -- bugs created in the same batch/transaction can
+    share an identical timestamp, which would make row order across pages
+    (and thus which rows land on which page) unspecified/flaky under
+    PostgreSQL. `uuid` (the table's primary key, see bug_report.bug_uuid) is
+    appended as a deterministic tiebreaker so paging is stable and gap/dupe
+    free even when many rows share one `created_at`.
     """
     where_clauses: list[str] = []
     params: list[Any] = []
@@ -272,7 +280,7 @@ def list_bugs_page(
 
     sql = (
         f"SELECT *, count(*) OVER() AS total FROM bug_report WHERE {where_clause} "
-        "ORDER BY created_at ASC LIMIT %s OFFSET %s"
+        "ORDER BY created_at ASC, uuid ASC LIMIT %s OFFSET %s"
     )
     rows = conn.execute(sql, params + [limit, offset]).fetchall()
 

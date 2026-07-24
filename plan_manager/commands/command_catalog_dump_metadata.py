@@ -37,7 +37,16 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
             "pagination convention (limit 1..200, default 50; "
             "non-negative offset; out-of-range values rejected with "
             "INVALID_PAGINATION) and the response always carries total "
-            "alongside the page."
+            "alongside the page. Entries are sorted alphabetically by "
+            "command name before slicing, giving a stable, deterministic "
+            "page ordering across calls (independent of command "
+            "registration/inventory order) -- the same contract used by "
+            "the paginated help() catalog override. The response also "
+            "carries returned (the actual entry count on this page) and "
+            "has_more (True when offset + returned < total), alongside "
+            "the existing commands/total/limit/offset keys, so paging "
+            "loops do not need to recompute either from total/limit/offset "
+            "themselves."
         ),
         "parameters": {
             "limit": {
@@ -53,12 +62,14 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
         },
         "return_value": {
             "success": {
-                "description": "A page of command catalog entries plus the total entry count before pagination.",
+                "description": "A page of command catalog entries, sorted alphabetically by name, plus the total entry count before pagination.",
                 "data": {
-                    "commands": "List of catalog entry dicts: name, category, parameters, execution_mode, metadata, source_module.",
+                    "commands": "List of catalog entry dicts, sorted alphabetically by name: name, category, parameters, execution_mode, metadata, source_module.",
                     "total": "Total number of catalog entries before pagination.",
                     "limit": "The limit actually applied to this page.",
                     "offset": "The offset actually applied to this page.",
+                    "returned": "The actual number of entries on this page (len(commands)); equals limit except possibly on the last page.",
+                    "has_more": "True when offset + returned < total, i.e. additional pages remain.",
                 },
             },
             "error": {
@@ -88,8 +99,8 @@ def get_command_catalog_dump_metadata(cls: type) -> dict[str, Any]:
             },
         },
         "best_practices": [
-            "Use total in the response to detect additional pages; it reflects the full catalog size before pagination, not the returned page size.",
-            "The catalog is generated from the live command inventory on every call; it always reflects the currently registered command set.",
+            "Use has_more (or total in the response) to detect additional pages; total reflects the full catalog size before pagination, not the returned page size.",
+            "The catalog is generated from the live command inventory on every call; it always reflects the currently registered command set. Entries are always sorted alphabetically by name first, so consecutive calls with the same limit/offset return identical, gap-free, duplicate-free pages even if the underlying inventory order changes.",
             "execution_mode mirrors each command class's own use_queue ClassVar; a command with execution_mode 'queued' must be invoked through the queued discipline (job_id + poll_with).",
         ],
     }
