@@ -3324,6 +3324,128 @@ async def run_r12_response_size_and_cascade_tip_batch(client: Any) -> list[Check
     return results
 
 
+R14_PRE_FIX_SKIP_REASON = (
+    "server predates bug e6152cc0's plan_score AS-selector fix -- "
+    "score_branch resolved via resolve_branch (plain Branch, no `depth`) "
+    "and handed it to run_gate, which crashes inside "
+    "plan_manager.verify.gate_data.scope_steps on branch.depth for any "
+    "non-None branch scope -- redeploy pending"
+)
+
+# The documented ErrorResult codes plan_score's own docstring names for a
+# scope='branch' call (GATE_RED / STEP_NOT_FOUND / PLAN_NOT_FOUND /
+# EMBEDDINGS_UNAVAILABLE / VERDICT_STALE): any of these appearing in a
+# failed call's diagnostic proves the command reached its normal
+# domain-error mapping rather than leaking the unmapped AttributeError this
+# bug raised (map_exception's fallback re-raises anything it does not
+# recognize, so bug e6152cc0's crash was never wrapped in one of these
+# codes -- it surfaced as a raw, uncoded internal failure instead).
+_R14_KNOWN_DOMAIN_CODES = (
+    "GATE_RED", "STEP_NOT_FOUND", "PLAN_NOT_FOUND", "EMBEDDINGS_UNAVAILABLE", "VERDICT_STALE",
+)
+
+
+async def run_r14_plan_score_as_selector_depth(client: Any) -> list[CheckResult]:
+    """Bug e6152cc0: plan_score crashed on AS-level selectors because the
+    plain ``Branch`` object ``score_branch`` resolved its scope into (via
+    ``plan_manager.views.branch.resolve_branch``) has no ``depth`` field,
+    while ``run_gate``'s hierarchical scoping (bug e197b94a's depth
+    dispatch, ``plan_manager.verify.gate_data.scope_steps``) unconditionally
+    reads ``branch.depth`` the instant a non-None branch is passed in --
+    before any check group ever runs. Fixed by resolving through
+    ``resolve_branch_scope`` instead (``BranchScope`` carries ``depth``).
+
+    Recipe (throwaway ``live-smoke-`` prefixed plan, hard-deleted in a
+    top-level try/finally, mirroring R10's minimal G/T/A chain):
+    plan_create -> context_common(plan,level3) -> step_create G (level 3)
+    -> context_common(G,level4) -> step_create T (level 4, parent=G) ->
+    context_common(T,level5) -> step_create A (level 5, parent=T) ->
+    plan_score(scope='branch', gs_step_id=G, ts_step_id=T, as_step_id=A).
+
+    The plan_score call itself is both the repro and the version probe (same
+    idiom as R10's GS-only call): this minimal fixture has no target_file,
+    concepts, or inputs/outputs, so the mechanical gate is essentially
+    certain to be red -- the fixed server therefore answers with the
+    documented GATE_RED domain error (or, if the gate happens to be green,
+    a genuine score); either is a clean, mapped response. The pre-fix
+    server instead leaks the unmapped AttributeError as a raw, uncoded
+    failure (map_exception's fallback re-raises anything it does not
+    recognize) -- detected as "failed, and none of plan_score's documented
+    error codes appear in the diagnostic" -- and this check group SKIPs
+    naming bug e6152cc0, rather than failing the pipeline against a
+    not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r14-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R14_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R14_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R14_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R14_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R14_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R14_context_common(T,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
+        a_id = _extract_step_id(res) if ok else None
+        if not ok or a_id is None:
+            results.append(CheckResult("4", "R14_step_create(A)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R14_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_id} A={a_id}"))
+
+        ok, res = await call(
+            client, "plan_score",
+            {"plan": plan_uuid, "scope": "branch", "gs_step_id": g_id, "ts_step_id": t_id, "as_step_id": a_id},
+        )
+        if ok:
+            score_shape_ok = isinstance(res, dict) and res.get("scope") == "branch" and "index" in res
+            results.append(
+                CheckResult(
+                    "4", "R14_plan_score_as_selector_no_depth_crash", STATUS_PASS if score_shape_ok else STATUS_FAIL,
+                    "" if score_shape_ok else f"unexpected shape: {res!r}",
+                )
+            )
+            return results
+
+        if any(code in str(res) for code in _R14_KNOWN_DOMAIN_CODES):
+            results.append(
+                CheckResult(
+                    "4", "R14_plan_score_as_selector_no_depth_crash", STATUS_PASS,
+                    f"clean documented domain error, not a raw crash: {res!r}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult("4", "R14_plan_score_as_selector_no_depth_crash", STATUS_SKIP, R14_PRE_FIX_SKIP_REASON)
+            )
+    finally:
+        if plan_uuid is not None:
+            await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
@@ -3407,6 +3529,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     results += await run_r10_branch_scope_hierarchical_selectors(client)
     results += await run_r11_list_view_projection(client)
     results += await run_r12_response_size_and_cascade_tip_batch(client)
+    results += await run_r14_plan_score_as_selector_depth(client)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:

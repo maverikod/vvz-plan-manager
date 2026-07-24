@@ -33,7 +33,7 @@ from plan_manager.scoring.types import (
 )
 from plan_manager.verify.gate import run_gate
 from plan_manager.verify.verdict import current_head_revision
-from plan_manager.views.branch import resolve_branch
+from plan_manager.views.branch import resolve_branch, resolve_branch_scope
 from plan_manager.views.dependency_graph import load_steps
 
 
@@ -209,7 +209,7 @@ def score_branch(
     require_embeddings: bool = False,
 ) -> BranchScore:
     """Compute the 0..100 SemanticIndex (C-013) score of one branch."""
-    branch = resolve_branch(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
+    branch = resolve_branch_scope(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
     branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
 
     if progress is not None:
