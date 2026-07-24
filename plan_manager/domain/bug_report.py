@@ -58,20 +58,33 @@ class BugReport(DataclassEntity):
     ENTITY_TYPE = "bug"
     ENTITY_ID_FIELD = "bug_uuid"
     TABLE_NAME = "bug_report"
-    # Compact view=summary projection (bug 8a13977d): drops short/detailed_description,
-    # expected/actual_behavior, reproduction, evidence, and environment -- the
-    # free-text fields that dominate a bug row's size.
+    # Compact view=summary projection, now bug_list's DEFAULT shape (bugs
+    # 7383c8a8/45f0c128, superseding the narrower 8a13977d field set): keeps
+    # short_description (the one-line summary field, distinct from the free
+    # text below) plus the ownership/anchor/lifecycle fields a caller needs
+    # to triage a page of bugs without opening each one; still drops the
+    # unboundedly-verbose detailed_description, expected/actual_behavior,
+    # reproduction, evidence, and environment -- those remain one bug_get
+    # call away.
     SUMMARY_FIELDS = (
         "uuid",
         "bug_uuid",
         "title",
+        "short_description",
+        "status",
         "kind",
         "severity",
-        "status",
         "priority_nice",
+        "reporter",
+        "owner",
         "source_anchor_type",
-        "source_ref_id",
+        "source_project_id",
+        "source_plan_uuid",
+        "source_command",
+        "source_service",
+        "created_at",
         "updated_at",
+        "closed_at",
     )
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "bug_uuid": find_entity_reference_counts

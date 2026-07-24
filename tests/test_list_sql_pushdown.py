@@ -309,6 +309,12 @@ def test_bug_list_command_calls_store_once_and_trusts_its_total(monkeypatch) -> 
         def to_payload(self):
             return {}
 
+        def to_summary_payload(self):
+            # bug_list's default view is now VIEW_SUMMARY (bugs
+            # 7383c8a8/45f0c128); this test exercises store-call/total
+            # plumbing, not row shape, so summary == full here.
+            return {}
+
     def fake_list_bugs_page(conn, **kwargs):
         calls["n"] += 1
         return [_FakeBugPayload(), _FakeBugPayload()], 999  # mismatched total proves no Python recomputation

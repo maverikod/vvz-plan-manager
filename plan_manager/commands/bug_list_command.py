@@ -10,7 +10,7 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, filter_sche
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.commands.runtime_filtering import parse_filters, parse_pagination
-from plan_manager.commands.list_projection import parse_view, project_entities, view_schema_properties
+from plan_manager.commands.list_projection import VIEW_SUMMARY, VIEW_VALUES, parse_view, project_entities
 from plan_manager.domain.bug_report import BUG_KINDS, BUG_SEVERITIES, BUG_STATUSES, BugKind, BugSeverity, BugStatus
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -34,6 +34,38 @@ _ENUM_OVERRIDES = {
 # this copy is kept only as the documented, importable vocabulary for callers/tests.
 BUG_TERMINAL_STATUSES = frozenset({"closed", "rejected", "duplicate"})
 
+# bug_list does NOT use list_projection's packaged view_schema_properties()/
+# view_metadata_params(): those hardcode default="full". Bugs 7383c8a8 (a
+# live active_only=true page of 42 bugs serialized 176,477 chars, no usable
+# pagination) and 45f0c128 (project_view's bug rows leaked the same full
+# bodies despite limit params) trace to the SAME root cause -- every bug row
+# always embedded detailed_description/expected_behavior/actual_behavior/
+# reproduction/evidence/environment. Fix: bug_list's default becomes
+# VIEW_SUMMARY (a deliberate, spec-mandated deviation from the general list
+# family default=full convention -- the same deviation srt_snapshot_list
+# already made for todo 4265fa4e), pointing at BugReport.SUMMARY_FIELDS'
+# now-enriched projection; limit/offset/total pagination (default 50, max
+# 200) was already bounded and is unchanged. 'view=full' still opts into the
+# complete record; full body detail is always one bug_get call away either way.
+_VIEW_DESCRIPTION: str = (
+    "Row projection shape. 'summary' (default; bugs 7383c8a8/45f0c128) returns a "
+    "compact per-row projection (uuid, bug_uuid, title, short_description, status, "
+    "kind, severity, priority_nice, reporter, owner, source_anchor_type, "
+    "source_project_id, source_plan_uuid, source_command, source_service, "
+    "created_at, updated_at, closed_at) -- the free-text detail fields "
+    "(detailed_description, expected_behavior, actual_behavior, reproduction, "
+    "evidence, environment) that dominate row size are never included by default. "
+    "'full' opts into the complete BugReport record; use bug_get for a single "
+    "bug's full detail either way. One of: " + ", ".join(VIEW_VALUES) + "."
+)
+
+_VIEW_SCHEMA_PROPERTY: dict[str, Any] = {
+    "type": "string",
+    "enum": list(VIEW_VALUES),
+    "default": VIEW_SUMMARY,
+    "description": _VIEW_DESCRIPTION,
+}
+
 
 class BugListCommand(Command):
     name: ClassVar[str] = "bug_list"
@@ -56,7 +88,7 @@ class BugListCommand(Command):
                 },
                 **filter_schema_properties(BUG_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
                 **pagination_schema_properties(),
-                **view_schema_properties(),
+                "view": dict(_VIEW_SCHEMA_PROPERTY),
             },
             "required": [],
             "additionalProperties": False,
@@ -80,7 +112,7 @@ class BugListCommand(Command):
             {"type": "array", "description": "A page of BugReport payloads (or, with view=summary, compact projections) plus total/limit/offset."},
             [{"description": "List open bugs owned by alice.", "command": {"plan": "my-plan", "owner": "alice", "active_only": True}}],
             best_practices=[
-                "view=summary returns a compact per-row projection (uuid, bug_uuid, title, kind, severity, status, priority_nice, source_anchor_type, source_ref_id, updated_at) instead of the full BugReport record (drops short/detailed_description, expected/actual_behavior, reproduction, evidence, environment); use bug_get for a single bug's full detail.",
+                "view=summary (the default; bugs 7383c8a8/45f0c128) returns a compact per-row projection (uuid, bug_uuid, title, short_description, status, kind, severity, priority_nice, reporter, owner, source_anchor_type, source_project_id, source_plan_uuid, source_command, source_service, created_at, updated_at, closed_at) instead of the full BugReport record (drops detailed_description, expected/actual_behavior, reproduction, evidence, environment -- the free-text fields that dominate row size); use bug_get for a single bug's full detail. Pass view=full to opt back into the complete record.",
                 "The optional plan parameter scopes the listing by direct source anchor: only bugs with source_plan_uuid equal to the resolved plan are returned; NULL and foreign plan anchors are excluded (no transitive matching via other anchor fields). Omit it to list across all plans.",
                 "A supplied but nonexistent plan name or UUID raises PLAN_NOT_FOUND rather than returning an empty page.",
                 "Set active_only=True to exclude closed, rejected, and duplicate bugs.",
@@ -114,7 +146,7 @@ class BugListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
+            view_value = parse_view(view, default=VIEW_SUMMARY)
             with db_connection() as conn:
                 plan_record = resolve_plan(conn, plan) if plan is not None else None
                 raw_params = {

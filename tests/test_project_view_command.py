@@ -35,6 +35,11 @@ class _FakeTodo:
     def to_payload(self):
         return {"uuid": str(self.uuid), "status": self.status}
 
+    def to_summary_payload(self):
+        # project_view rows are always the summary projection (bug 45f0c128);
+        # this fake carries no body fields to begin with, so summary == full.
+        return self.to_payload()
+
 
 class _FakeBug:
     def __init__(self, row_uuid, status, source_project_id=None, transitive_project_id=None):
@@ -45,6 +50,11 @@ class _FakeBug:
 
     def to_payload(self):
         return {"uuid": str(self.uuid), "status": self.status}
+
+    def to_summary_payload(self):
+        # project_view rows are always the summary projection (bug 45f0c128);
+        # this fake carries no body fields to begin with, so summary == full.
+        return self.to_payload()
 
 
 class _FakeComment:

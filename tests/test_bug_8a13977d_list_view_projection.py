@@ -104,7 +104,13 @@ def _maximally_populated_bug() -> BugReport:
     return BugReport(
         bug_uuid=_UUID_A,
         title=_LONG_TITLE,
-        short_description=_LONG_TEXT,
+        # short_description is now part of the bug_list/project_view summary
+        # projection (bugs 7383c8a8/45f0c128): unlike the OTHER free-text
+        # fields below (which the fix keeps excluding), it is a one-line
+        # summary BY CONVENTION, not an unbounded body -- modeled here at a
+        # realistic-worst-case length, not the same 5.4 KB _LONG_TEXT blob
+        # used to stress the fields that must stay excluded.
+        short_description=_LONG_TITLE * 2,
         detailed_description=_LONG_TEXT,
         expected_behavior=_LONG_TEXT,
         actual_behavior=_LONG_TEXT,
@@ -116,13 +122,13 @@ def _maximally_populated_bug() -> BugReport:
         priority_nice=-4,
         status="reported",
         reporter="tester",
-        owner=None,
+        owner="tester2",
         duplicate_of_uuid=None,
         parent_bug_uuid=None,
         source_anchor_type="command",
-        source_project_id=None,
+        source_project_id=_UUID_B,
         source_file_path=None,
-        source_plan_uuid=None,
+        source_plan_uuid=_UUID_A,
         source_revision_uuid=None,
         source_step_uuid=None,
         source_step_path=None,
@@ -130,7 +136,7 @@ def _maximally_populated_bug() -> BugReport:
         source_command="todo_list",
         source_service=None,
         confirmed_at=None,
-        closed_at=None,
+        closed_at="2026-07-23T00:00:00+00:00",
         reopened_at=None,
         created_by="tester",
         created_at="2026-07-23T00:00:00+00:00",
@@ -297,15 +303,24 @@ def test_todo_summary_shape_is_exact() -> None:
 
 
 def test_bug_summary_shape_is_exact() -> None:
+    """Bugs 7383c8a8/45f0c128: bug_list's default view and project_view's
+    (unconditional) bug-row projection both widened beyond the original
+    8a13977d field set to include short_description (a one-line summary,
+    unlike the free-text fields below) plus ownership/anchor/lifecycle
+    fields, so a caller can triage a page of bugs without opening each one.
+    """
     bug = _maximally_populated_bug()
     full = bug.to_payload()
     summary = bug.to_summary_payload()
     assert set(summary) == {
-        "uuid", "bug_uuid", "title", "kind", "severity", "status",
-        "priority_nice", "source_anchor_type", "source_ref_id", "updated_at",
+        "uuid", "bug_uuid", "title", "short_description", "status", "kind", "severity",
+        "priority_nice", "reporter", "owner", "source_anchor_type", "source_project_id",
+        "source_plan_uuid", "source_command", "source_service", "created_at", "updated_at",
+        "closed_at",
     }
+    assert summary["short_description"] == full["short_description"]
     for verbose_field in (
-        "short_description", "detailed_description", "expected_behavior",
+        "detailed_description", "expected_behavior",
         "actual_behavior", "reproduction", "evidence", "environment",
     ):
         assert verbose_field not in summary
@@ -427,18 +442,35 @@ def test_step_list_summary_keys_drop_only_the_fields_key() -> None:
 # Byte ceiling
 # ---------------------------------------------------------------------------
 
+# bug's ceiling is intentionally wider than the general 512-byte one: bugs
+# 7383c8a8/45f0c128 deliberately grew the bug summary projection (18 fields,
+# including short_description and five anchor/ownership fields, vs the
+# original 10-field 8a13977d shape) to make a page independently useful for
+# triage. 1024 bytes comfortably covers the maximally-populated fixture
+# above (964 bytes with a 240-char short_description and two 36-char anchor
+# UUIDs) while still catching a regression that reintroduces a genuinely
+# unbounded field (detailed_description et al. stay excluded either way).
+BUG_SUMMARY_ROW_BYTE_CEILING = 1024
+
+_SUMMARY_ROW_BYTE_CEILINGS = {
+    "bug": BUG_SUMMARY_ROW_BYTE_CEILING,
+}
+
+
 @pytest.mark.parametrize(
     "build_entity",
     [_maximally_populated_todo, _maximally_populated_bug, _bug_fix, _tool, _model_binding, _audit_record],
     ids=["todo", "bug", "bug_fix", "tool", "model_binding", "audit"],
 )
-def test_summary_row_stays_under_byte_ceiling(build_entity) -> None:
+def test_summary_row_stays_under_byte_ceiling(build_entity, request) -> None:
+    entity_id = request.node.callspec.id
+    ceiling = _SUMMARY_ROW_BYTE_CEILINGS.get(entity_id, SUMMARY_ROW_BYTE_CEILING)
     entity = build_entity()
     summary = entity.to_summary_payload()
     size = len(json.dumps(summary).encode("utf-8"))
-    assert size < SUMMARY_ROW_BYTE_CEILING, (
+    assert size < ceiling, (
         f"{type(entity).__name__} summary row is {size} bytes, "
-        f"exceeding the documented {SUMMARY_ROW_BYTE_CEILING}-byte ceiling: {summary}"
+        f"exceeding the documented {ceiling}-byte ceiling: {summary}"
     )
 
 
@@ -516,18 +548,24 @@ def test_touched_command_metadata_documents_view_parameter(module_name: str, cla
     assert parameters["view"]["enum"] == ["full", "summary"], command.name
 
 
-# srt_snapshot_list is deliberately EXCLUDED from the default=full pin below:
-# todo 4265fa4e (paginate/project srt_snapshot_list) mandates a compact
-# metadata-only DEFAULT for this one command specifically -- a caller listing
-# snapshots got ~246K tokens of embedded tree_content/vectors truncated
-# mid-response, and the spec's required contract is explicit ("make the list
-# response compact by default"), overriding this CR's general default=full
-# convention for every OTHER touched command. See
-# test_srt_snapshot_list_schema_view_defaults_to_summary below.
+# srt_snapshot_list and bug_list are deliberately EXCLUDED from the
+# default=full pin below:
+# - srt_snapshot_list: todo 4265fa4e (paginate/project srt_snapshot_list)
+#   mandates a compact metadata-only DEFAULT for this one command
+#   specifically -- a caller listing snapshots got ~246K tokens of embedded
+#   tree_content/vectors truncated mid-response.
+# - bug_list: bugs 7383c8a8/45f0c128 (a live active_only=true page of 42
+#   bugs serialized 176,477 chars; project_view's bug rows leaked the same
+#   full bodies despite limit params) mandate the same compact-by-default
+#   contract for bug_list specifically.
+# Both are explicit, spec-mandated deviations from this CR's general
+# default=full convention for every OTHER touched command. See
+# test_srt_snapshot_list_schema_view_defaults_to_summary and
+# test_bug_list_schema_view_defaults_to_summary below.
 _DEFAULT_FULL_COMMAND_MODULES = [
     (module_name, class_name)
     for module_name, class_name in _TOUCHED_LIST_COMMAND_MODULES
-    if class_name != "SrtSnapshotListCommand"
+    if class_name not in ("SrtSnapshotListCommand", "BugListCommand")
 ]
 
 
@@ -538,14 +576,27 @@ def test_touched_command_schema_view_defaults_to_full(module_name: str, class_na
     """Pins the default-view decision: every touched command keeps view=full
     as the default (opt-in summary), for backward compatibility with existing
     callers (client facade, live_smoke recipes, internal command chains).
-    srt_snapshot_list is the sole deliberate exception (todo 4265fa4e); see
-    test_srt_snapshot_list_schema_view_defaults_to_summary.
+    srt_snapshot_list and bug_list are the deliberate exceptions (todo
+    4265fa4e, bugs 7383c8a8/45f0c128); see
+    test_srt_snapshot_list_schema_view_defaults_to_summary and
+    test_bug_list_schema_view_defaults_to_summary.
     """
     import importlib
 
     command = getattr(importlib.import_module(module_name), class_name)
     properties = command.get_schema()["properties"]
     assert properties["view"].get("default", "full") == "full", command.name
+
+
+def test_bug_list_schema_view_defaults_to_summary() -> None:
+    """Bugs 7383c8a8/45f0c128: bug_list's compact-by-default deviation from
+    the rest of the touched list family, pinned explicitly so a future
+    change here is a deliberate decision, not a silent regression either way.
+    """
+    from plan_manager.commands.bug_list_command import BugListCommand
+
+    properties = BugListCommand.get_schema()["properties"]
+    assert properties["view"]["default"] == "summary"
 
 
 def test_srt_snapshot_list_schema_view_defaults_to_summary() -> None:

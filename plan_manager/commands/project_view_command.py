@@ -131,10 +131,11 @@ class ProjectViewCommand(Command):
         return runtime_metadata(
             cls,
             params,
-            {"success": {"description": "project (uuid; no name -- planmgr never owns a local project catalog, C-032), summary (todo/bug status counts + totals), todos/bugs (independently paginated pages, each row annotated match_source: direct|transitive_plan), diagnostics (per-collection direct/transitive counts), and an additional comments section plus omitted_count_by_reason for the runtime record kinds not covered in v1."}},
+            {"success": {"description": "project (uuid; no name -- planmgr never owns a local project catalog, C-032), summary (todo/bug status counts + totals), todos/bugs (independently paginated pages of compact SUMMARY-projected rows -- see best_practices -- each annotated match_source: direct|transitive_plan), diagnostics (per-collection direct/transitive counts), and an additional comments section plus omitted_count_by_reason for the runtime record kinds not covered in v1."}},
             [{"description": "View a project's active work.", "command": {"project": "22222222-2222-2222-2222-222222222222", "active_only": True}}],
             best_practices=[
                 "This command never reimplements the project-scope SQL predicate: it calls list_todos_page/list_bugs_page/list_comments_page -- the exact same store functions todo_list/bug_list/comment_list call -- with project and active_only as the only filters, so its todos/bugs UUID sets and counters match todo_list(project=..., active_only=...)/bug_list(project=..., active_only=...) exactly under equal filters.",
+                "Bug 45f0c128: every todo/bug row is ALWAYS a compact SUMMARY projection (each entity's own to_summary_payload(), whitelisting its declared SUMMARY_FIELDS) -- bug rows drop detailed_description/expected_behavior/actual_behavior/reproduction/evidence/environment, todo rows drop description/blocking_reason/execution_result. There is no view=full opt-in here (unlike bug_list/todo_list): this command's whole premise is a bounded aggregate view; call bug_get/todo_get for one record's full detail.",
                 "match_source on each todo/bug row is 'direct' when the row's own anchor_project_id/source_project_id equals the requested project, else 'transitive_plan' (reached only via the row's bound plan's plan.project_ids).",
                 "summary and diagnostics are computed over the SAME active_only-filtered, project-scoped set as the todos/bugs pages -- not over the unfiltered universe; with the active_only default of true, terminal-status records (resolved/closed/cancelled todos, closed/rejected/duplicate bugs) contribute 0 to the status counts unless active_only=false is passed.",
                 "No project name is returned: planmgr stores only an opaque external project UUID reference (C-032) and never owns or looks up a local project catalog, so there is nothing to resolve a name from.",
@@ -178,12 +179,23 @@ class ProjectViewCommand(Command):
                 todo_page = all_todos[todo_pagination.offset:todo_pagination.offset + todo_pagination.limit]
                 bug_page = all_bugs[bug_pagination.offset:bug_pagination.offset + bug_pagination.limit]
 
+                # Bug 45f0c128: project_view embedded the full BugReport body
+                # (detailed_description/expected_behavior/actual_behavior/
+                # reproduction/evidence/environment) in every bug row --
+                # 63,439 chars spilled for just 7 bugs, despite bug_limit
+                # already being honored. Rows are now ALWAYS the same bounded
+                # SUMMARY projection bug_list's default uses (EntityRecord.
+                # to_summary_payload(), whitelisting each entity's declared
+                # SUMMARY_FIELDS) -- there is no view param here, unlike
+                # bug_list/todo_list, because this command's whole premise is
+                # a bounded aggregate view; full detail is one bug_get/
+                # todo_get call away.
                 todos_payload = [
-                    {**r.to_payload(), "match_source": "direct" if r.anchor_project_id == project_uuid else "transitive_plan"}
+                    {**r.to_summary_payload(), "match_source": "direct" if r.anchor_project_id == project_uuid else "transitive_plan"}
                     for r in todo_page
                 ]
                 bugs_payload = [
-                    {**r.to_payload(), "match_source": "direct" if r.source_project_id == project_uuid else "transitive_plan"}
+                    {**r.to_summary_payload(), "match_source": "direct" if r.source_project_id == project_uuid else "transitive_plan"}
                     for r in bug_page
                 ]
 
