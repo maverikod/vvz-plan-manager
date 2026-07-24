@@ -36,6 +36,15 @@ class BugReanchorCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2). The bug is always "
+                        "resolved directly by bug_id (globally unique). When omitted, the PLAN_COMPLETED "
+                        "guard applies only to the bug's CURRENT source plan anchor (before the move), if "
+                        "any. When supplied, that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug report to re-anchor."},
                 "changed_by": {"type": "string", "description": "Actor performing this re-anchor move, for audit."},
                 "new_source_type": {"type": "string", "description": "The candidate new bug source kind: project, file, plan, revision, step, command, runtime_service, execution_attempt, or unidentified."},
@@ -49,7 +58,7 @@ class BugReanchorCommand(Command):
                 "new_source_command": {"type": "string", "description": "Command name; required when new_source_type is command."},
                 "new_source_service": {"type": "string", "description": "Service name; required when new_source_type is runtime_service."},
             },
-            "required": ["plan", "bug_id", "changed_by", "new_source_type"],
+            "required": ["bug_id", "changed_by", "new_source_type"],
             "additionalProperties": False,
         }
 
@@ -71,10 +80,10 @@ class BugReanchorCommand(Command):
 
     async def execute(
         self,
-        plan: str,
         bug_id: str,
         changed_by: str,
         new_source_type: str,
+        plan: str | None = None,
         new_source_project_id: str | None = None,
         new_source_file_path: str | None = None,
         new_source_plan_uuid: str | None = None,
@@ -95,7 +104,10 @@ class BugReanchorCommand(Command):
                 file_path=new_source_file_path,
             )
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2: `plan` is optional -- the bug is always resolved
+                # directly by bug_id (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
                 # The CURRENT source anchor's plan (bug c3950b83), before the
                 # move; reanchor_bug_source's own validate_bug_source call

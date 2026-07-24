@@ -36,12 +36,21 @@ class BugCloseCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2). The bug is always "
+                        "resolved directly by bug_id (globally unique). When omitted, the PLAN_COMPLETED "
+                        "guard applies only to the bug's own source plan anchor, if any. When supplied, "
+                        "that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug report to close."},
                 "closed_by": {"type": "string", "description": "Actor performing this closure transition, for audit."},
                 "mandatory_todos_closed": {"type": "boolean", "description": "Whether every mandatory linked TODO item for this bug is closed. TODO linkage is not derivable from the G-005 stores, so it is caller-attested. Defaults to true."},
                 "required_cascades_finished": {"type": "boolean", "description": "Whether every required plan cascade for this bug is finished. Cascade completion is not derivable from the G-005 stores, so it is caller-attested. Defaults to true."},
             },
-            "required": ["plan", "bug_id", "closed_by"],
+            "required": ["bug_id", "closed_by"],
             "additionalProperties": False,
         }
 
@@ -61,21 +70,23 @@ class BugCloseCommand(Command):
                 "bug_close enforces BugClosureDiscipline server-side: it fails unless a fix is verified and passed, every impact is resolved/verified or explicitly skipped with a reason and owner decision, and every propagation is done/verified/skipped.",
                 "Only set mandatory_todos_closed or required_cascades_finished to false if you are intentionally attesting they are not finished; both default to true.",
                 "On INVALID_RUNTIME_STATUS_TRANSITION, inspect the error details to see exactly which precondition failed.",
+                "plan is optional: the bug is always resolved by bug_id. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the closure; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         bug_id: str,
         closed_by: str,
+        plan: str | None = None,
         mandatory_todos_closed: bool = True,
         required_cascades_finished: bool = True,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:

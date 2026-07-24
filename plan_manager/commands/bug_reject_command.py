@@ -33,10 +33,19 @@ class BugRejectCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2). The bug is always "
+                        "resolved directly by bug_id (globally unique). When omitted, the PLAN_COMPLETED "
+                        "guard applies only to the bug's own source plan anchor, if any. When supplied, "
+                        "that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug report to reject."},
                 "changed_by": {"type": "string", "description": "Actor performing this transition, for audit."},
             },
-            "required": ["plan", "bug_id", "changed_by"],
+            "required": ["bug_id", "changed_by"],
             "additionalProperties": False,
         }
 
@@ -56,13 +65,15 @@ class BugRejectCommand(Command):
                 "Use bug_reject when investigation shows the report is not a real defect.",
                 "Use bug_mark_duplicate instead when the defect is already tracked under another bug.",
                 "Rejected bugs are treated as terminal by bug_list's active_only filter.",
+                "plan is optional: the bug is always resolved by bug_id. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the transition; supply it only when you want that plan's own completion checked too.",
             ],
         )
 
-    async def execute(self, plan: str, bug_id: str, changed_by: str, context: object | None = None) -> SuccessResult | ErrorResult:
+    async def execute(self, bug_id: str, changed_by: str, plan: str | None = None, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = validate_uuid(bug_id)
                 existing = get_bug(conn, bug_uuid)
                 if existing is None:

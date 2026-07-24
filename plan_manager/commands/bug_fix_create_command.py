@@ -34,6 +34,15 @@ class BugFixCreateCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2). The owning bug is always "
+                        "resolved directly by `bug` (globally unique). When omitted, the PLAN_COMPLETED "
+                        "guard applies only to the owning bug's own source plan anchor, if any. When "
+                        "supplied, that plan must exist and must not itself be completed."
+                    ),
+                },
                 "bug": {"type": "string", "format": "uuid", "description": "UUID of the BugReport (C-020) this fix attempt belongs to."},
                 "fix_type": {"type": "string", "description": "BugFix fix type (C-024): one of code, configuration, migration, data, dependency_update, documentation, test, workaround, deployment, plan_cascade."},
                 "summary": {"type": "string", "description": "Short summary of the fix attempt."},
@@ -51,7 +60,7 @@ class BugFixCreateCommand(Command):
                 "verification_method": {"type": "string", "description": "Planned verification method for this fix attempt."},
                 "expected_result": {"type": "string", "description": "Expected result once the fix is verified."},
             },
-            "required": ["plan", "bug", "fix_type", "summary", "author", "created_by"],
+            "required": ["bug", "fix_type", "summary", "author", "created_by"],
             "additionalProperties": False,
         }
 
@@ -66,17 +75,22 @@ class BugFixCreateCommand(Command):
             cls,
             params,
             {"success": {"description": "The created BugFix (C-024) payload."}},
-            [{"description": "Create a fix attempt for a bug.", "command": {"plan": "plan_manager", "bug": "11111111-1111-1111-1111-111111111111", "fix_type": "code", "summary": "Patch the null check", "author": "agent", "created_by": "agent"}}],
+            [{"description": "Create a fix attempt for a bug.", "command": {"bug": "11111111-1111-1111-1111-111111111111", "fix_type": "code", "summary": "Patch the null check", "author": "agent", "created_by": "agent"}}],
+            best_practices=[
+                "Call bug_fix_create only after the owning bug exists.",
+                "Call bug_fix_verify after implementing a fix to record whether it passed.",
+                "plan is optional: the owning bug is always resolved by `bug`. Omit it for a project-anchored bug so an unrelated plan's completion never blocks the create; supply it only when you want that plan's own completion checked too.",
+            ],
         )
 
     async def execute(
         self,
-        plan: str,
         bug: str,
         fix_type: str,
         summary: str,
         author: str,
         created_by: str,
+        plan: str | None = None,
         status: str = "proposed",
         implementation_notes: str | None = None,
         source_project_id: str | None = None,
@@ -92,7 +106,10 @@ class BugFixCreateCommand(Command):
     ) -> SuccessResult | ErrorResult:
         try:
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                # Bug 3eec33f2: `plan` is optional -- the owning bug is always
+                # resolved directly by `bug` (globally unique).
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 bug_uuid = uuid.UUID(bug)
                 bug_record = get_bug(conn, bug_uuid)
                 if bug_record is None:

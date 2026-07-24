@@ -13,9 +13,16 @@ from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAME
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.domain.bug_source import BugSource
-from plan_manager.domain.runtime_validation import validate_uuid
+from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.storage.bug_report_store import create_bug
+
+# Bug 3eec33f2: source types whose anchor is itself the plan/revision/step
+# G-002 primary anchor -- the top-level `plan` command parameter is required
+# for these (the anchor needs a resolvable plan), optional for every other
+# source_type (project, file, command, runtime_service, execution_attempt,
+# unidentified).
+_SOURCE_TYPES_REQUIRING_PLAN: frozenset[str] = frozenset({"plan", "revision", "step"})
 
 
 class BugCreateCommand(Command):
@@ -34,6 +41,16 @@ class BugCreateCommand(Command):
             "type": "object",
             "properties": {
                 **BASE_PARAMETERS,
+                "plan": {
+                    "type": "string",
+                    "description": (
+                        "Plan identifier (name or UUID); OPTIONAL for most source types (bug 3eec33f2) -- "
+                        "REQUIRED only when source_type is plan, revision, or step (the anchor itself needs "
+                        "a resolvable plan). Optional for project, file, command, runtime_service, "
+                        "execution_attempt, or unidentified anchors. When supplied, that plan must exist and "
+                        "must not itself be completed."
+                    ),
+                },
                 "title": {"type": "string", "description": "Short title of the bug."},
                 "short_description": {"type": "string", "description": "One-line summary of the defect."},
                 "detailed_description": {"type": "string", "description": "Full description of the defect."},
@@ -63,7 +80,7 @@ class BugCreateCommand(Command):
                 "source_service": {"type": "string", "description": "Runtime service name; required when source_type is runtime_service."},
             },
             "required": [
-                "plan", "title", "short_description", "detailed_description", "kind",
+                "title", "short_description", "detailed_description", "kind",
                 "severity", "priority_nice", "reporter", "created_by", "source_type",
             ],
             "additionalProperties": False,
@@ -80,19 +97,22 @@ class BugCreateCommand(Command):
             cls,
             params,
             {"type": "object", "description": "The created BugReport payload."},
-            [{"description": "Create a functional bug with a file source anchor.", "command": {"plan": "my-plan", "title": "Null pointer on save", "short_description": "Save crashes", "detailed_description": "Saving with an empty title crashes the service.", "kind": "functional", "severity": "major", "priority_nice": 0, "reporter": "alice", "created_by": "alice", "source_type": "file", "source_project_id": "11111111-1111-1111-1111-111111111111", "source_file_path": "src/save.py"}}],
+            [
+                {"description": "Create a functional bug with a file source anchor; plan omitted (bug 3eec33f2).", "command": {"title": "Null pointer on save", "short_description": "Save crashes", "detailed_description": "Saving with an empty title crashes the service.", "kind": "functional", "severity": "major", "priority_nice": 0, "reporter": "alice", "created_by": "alice", "source_type": "file", "source_project_id": "11111111-1111-1111-1111-111111111111", "source_file_path": "src/save.py"}},
+                {"description": "Create a bug anchored to a plan; plan is required here because source_type=plan.", "command": {"plan": "my-plan", "title": "Cascade never fires", "short_description": "Cascade stuck", "detailed_description": "cascade_begin never transitions.", "kind": "functional", "severity": "major", "priority_nice": 0, "reporter": "alice", "created_by": "alice", "source_type": "plan", "source_plan_uuid": "11111111-1111-1111-1111-111111111111"}},
+            ],
             best_practices=[
                 "Set source_type consistently with the identifier fields it requires (e.g. file needs source_project_id and source_file_path).",
                 "Leave status unset to default to 'reported' unless intentionally seeding historical data.",
                 "Use priority_nice in [-20, 19]; lower values are higher priority.",
                 "Record reporter and created_by even when they are the same actor.",
                 "source_type=project or file is confirmed live against the Code Analysis server before it is persisted; when CA cannot confirm the project (or file) -- unreachable/unconfigured, or a clean not-found response -- the bug is still created but its source is recorded unanchored (source_type=unidentified) and the response's anchor_confirmation.reason names why (ca_unreachable or not_found). Check anchor_confirmation.confirmed rather than assuming the requested anchor was honored.",
+                "plan is optional (bug 3eec33f2): omit it for project/file/command/runtime_service/execution_attempt/unidentified anchors so an unrelated plan's completion never blocks the create. It remains REQUIRED when source_type is plan, revision, or step, since that anchor itself needs a resolvable plan.",
             ],
         )
 
     async def execute(
         self,
-        plan: str,
         title: str,
         short_description: str,
         detailed_description: str,
@@ -102,6 +122,7 @@ class BugCreateCommand(Command):
         reporter: str,
         created_by: str,
         source_type: str,
+        plan: str | None = None,
         status: str | None = None,
         owner: str | None = None,
         expected_behavior: str | None = None,
@@ -123,6 +144,14 @@ class BugCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
+            # Bug 3eec33f2: `plan` is required only when source_type is
+            # plan/revision/step (that anchor itself needs a resolvable plan);
+            # optional for every other source_type.
+            if plan is None and source_type in _SOURCE_TYPES_REQUIRING_PLAN:
+                raise RuntimeValidationError(
+                    f"plan is required when source_type is {source_type!r} (one of "
+                    f"{sorted(_SOURCE_TYPES_REQUIRING_PLAN)}); it is optional for every other source_type"
+                )
             resolved_source_project_id = validate_uuid(source_project_id) if source_project_id is not None else None
             confirmation = confirm_anchor(
                 app_config,
@@ -131,7 +160,8 @@ class BugCreateCommand(Command):
                 file_path=source_file_path,
             )
             with db_connection() as conn:
-                resolve_plan(conn, plan)
+                if plan is not None:
+                    resolve_plan(conn, plan)
                 if confirmation.confirmed:
                     source = BugSource(
                         source_type=source_type,
