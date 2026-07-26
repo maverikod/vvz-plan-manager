@@ -1,6 +1,6 @@
 # plan-manager — Codex tooling contract
 
-template_version: v1.6.1
+template_version: v1.6.2
 
 meta:
   workspace: local
