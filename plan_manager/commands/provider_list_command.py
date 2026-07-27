@@ -8,17 +8,15 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_list_command_helpers import perform_projected_runtime_list
 from plan_manager.commands.provider_command_metadata import provider_metadata
 from plan_manager.commands.runtime_filtering import (
     pagination_metadata_params,
     pagination_schema_properties,
-    parse_pagination,
 )
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.provider_store import list_providers
 from plan_manager.commands.list_projection import (
-    parse_view,
-    project_entities,
     view_metadata_params,
     view_schema_properties,
 )
@@ -87,17 +85,18 @@ class ProviderListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view)
-            with db_connection() as conn:
-                pagination = parse_pagination({"limit": limit, "offset": offset})
-                providers = list_providers(conn, type=type, status=status, include_deleted=include_deleted)
-                total = len(providers)
-                page = providers[pagination.offset : pagination.offset + pagination.limit]
-                return SuccessResult(data={
-                    "providers": project_entities(page, view_value),
-                    "total": total,
-                    "limit": pagination.limit,
-                    "offset": pagination.offset,
-                })
+            return perform_projected_runtime_list(
+                fetch_records=lambda conn: list_providers(
+                    conn,
+                    type=type,
+                    status=status,
+                    include_deleted=include_deleted,
+                ),
+                result_key="providers",
+                limit=limit,
+                offset=offset,
+                view=view,
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

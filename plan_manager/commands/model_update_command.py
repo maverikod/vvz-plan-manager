@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.commands.model_command_metadata import model_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_store import get_model, update_model
 
@@ -76,23 +79,25 @@ class ModelUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(model_uuid)
-                existing = get_model(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("MODEL_NOT_FOUND", f"model not found: {model_uuid}")
-                if all(value is None for value in (level, context_window, cost_class, availability, execution_mode)):
-                    raise RuntimeValidationError("model_update requires at least one mutable field to patch")
-                model = update_model(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    level=level,
-                    context_window=context_window,
-                    cost_class=cost_class,
-                    availability=availability,
-                    execution_mode=execution_mode,
-                )
-                return SuccessResult(data=model.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=model_uuid,
+                get_record=get_model,
+                update_record=update_model,
+                changed_by=changed_by,
+                not_found_code="MODEL_NOT_FOUND",
+                not_found_message=f"model not found: {model_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "level": level,
+                    "context_window": context_window,
+                    "cost_class": cost_class,
+                    "availability": availability,
+                    "execution_mode": execution_mode,
+                },
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "model_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

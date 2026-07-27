@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
 from plan_manager.commands.provider_command_metadata import provider_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.provider_store import create_provider
@@ -76,17 +77,18 @@ class ProviderCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                provider = create_provider(
-                    conn,
-                    name=name,
-                    type=type,
-                    rented_hardware=rented_hardware,
-                    status=status,
-                    created_by=created_by,
-                    billing_notes=billing_notes,
-                    quota_notes=quota_notes,
-                )
-                return SuccessResult(data=provider.to_payload())
+            return perform_runtime_create(
+                create_record=create_provider,
+                db_connect=db_connection,
+                create_fields={
+                    "name": name,
+                    "type": type,
+                    "rented_hardware": rented_hardware,
+                    "status": status,
+                    "created_by": created_by,
+                    "billing_notes": billing_notes,
+                    "quota_notes": quota_notes,
+                },
+            )
         except Exception as exc:
             return map_exception(exc)

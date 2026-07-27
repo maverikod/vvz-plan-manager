@@ -10,6 +10,7 @@ from plan_manager.cascade.record import get_open_cascade
 from plan_manager.cascade.close import abort_cascade
 from plan_manager.domain.plan import get_plan
 from plan_manager.commands.cascade_abort_metadata import get_cascade_abort_metadata
+from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
 class CascadeAbortCommand(Command):
@@ -85,7 +86,8 @@ class CascadeAbortCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                if get_open_cascade(conn, p.uuid) is None:
+                open_cascade = get_open_cascade(conn, p.uuid)
+                if open_cascade is None:
                     return domain_error(
                         "CASCADE_REQUIRED",
                         f"plan {p.name} has no open cascade",
@@ -97,6 +99,21 @@ class CascadeAbortCommand(Command):
                     "re-read"
                 )
                 refreshed = get_plan(conn, p.uuid)
+                record_runtime_change(
+                    conn,
+                    plan_uuid=p.uuid,
+                    entity_type="plan",
+                    entity_id=p.uuid,
+                    action="cascade_abort",
+                    changed_by="api",
+                    changed_fields={
+                        "cascade_uuid": str(open_cascade.uuid),
+                        "base_revision_uuid": str(open_cascade.base_revision_uuid),
+                        "restored_head_revision_uuid": str(
+                            refreshed.head_revision_uuid
+                        ),
+                    },
+                )
                 return SuccessResult(
                     data={
                         "aborted": True,

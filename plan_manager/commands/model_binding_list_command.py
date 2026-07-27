@@ -9,10 +9,10 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_list_command_helpers import perform_projected_runtime_list
 from plan_manager.commands.runtime_filtering import (
     pagination_metadata_params,
     pagination_schema_properties,
-    parse_pagination,
 )
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -20,8 +20,6 @@ from plan_manager.storage.model_binding_store import list_model_bindings
 from plan_manager.commands.list_projection import (
     VIEW_SUMMARY,
     VIEW_VALUES,
-    parse_view,
-    project_entities,
 )
 
 # model_binding_list does NOT use list_projection's packaged
@@ -120,24 +118,21 @@ class ModelBindingListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            view_value = parse_view(view, default=VIEW_SUMMARY)
-            with db_connection() as conn:
-                plan_uuid = validate_uuid(plan) if plan is not None else None
-                pagination = parse_pagination({"limit": limit, "offset": offset})
-                bindings = list_model_bindings(
+            plan_uuid = validate_uuid(plan) if plan is not None else None
+            return perform_projected_runtime_list(
+                fetch_records=lambda conn: list_model_bindings(
                     conn,
                     plan_uuid=plan_uuid,
                     scope=scope,
                     role=role,
                     include_deleted=include_deleted,
-                )
-                total = len(bindings)
-                page = bindings[pagination.offset : pagination.offset + pagination.limit]
-                return SuccessResult(data={
-                    "bindings": project_entities(page, view_value),
-                    "total": total,
-                    "limit": pagination.limit,
-                    "offset": pagination.offset,
-                })
+                ),
+                result_key="bindings",
+                limit=limit,
+                offset=offset,
+                view=view,
+                view_default=VIEW_SUMMARY,
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

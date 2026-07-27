@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.commands.provider_command_metadata import provider_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.provider_store import get_provider, update_provider
 
@@ -77,23 +80,25 @@ class ProviderUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(provider_uuid)
-                existing = get_provider(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("PROVIDER_NOT_FOUND", f"provider not found: {provider_uuid}")
-                if all(value is None for value in (type, rented_hardware, status, billing_notes, quota_notes)):
-                    raise RuntimeValidationError("provider_update requires at least one mutable field to patch")
-                provider = update_provider(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    type=type,
-                    rented_hardware=rented_hardware,
-                    status=status,
-                    billing_notes=billing_notes,
-                    quota_notes=quota_notes,
-                )
-                return SuccessResult(data=provider.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=provider_uuid,
+                get_record=get_provider,
+                update_record=update_provider,
+                changed_by=changed_by,
+                not_found_code="PROVIDER_NOT_FOUND",
+                not_found_message=f"provider not found: {provider_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "type": type,
+                    "rented_hardware": rented_hardware,
+                    "status": status,
+                    "billing_notes": billing_notes,
+                    "quota_notes": quota_notes,
+                },
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "provider_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

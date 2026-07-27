@@ -10,9 +10,10 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.bug_fix_command_metadata import BASE_PARAMETERS, bug_fix_metadata
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_fix_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.commands.runtime_record_command_helpers import perform_guarded_runtime_update
 from plan_manager.commands.text_merge import merge_text_field
 from plan_manager.domain.bug_fix_status_transitions import guard_fix_transition
 from plan_manager.runtime.context import db_connection
@@ -133,40 +134,49 @@ class BugFixUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                # Bug 3eec33f2: `plan` is optional -- the fix attempt is always
-                # resolved directly by bug_fix (globally unique). When plan IS
-                # supplied, the prior behavior is preserved unchanged;
-                # refuse_if_bug_fix_plan_completed below always separately checks
-                # the owning bug's OWN source plan anchor regardless.
-                if plan is not None:
-                    resolve_plan(conn, plan)
-                fix_uuid = uuid.UUID(bug_fix)
-                existing = get_bug_fix(conn, fix_uuid)
-                if existing is None:
-                    raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {bug_fix}")
-                refuse_if_bug_fix_plan_completed(conn, existing)
-                if status is not None:
-                    guard_fix_transition(existing.status, status)
-                # Bug 32755092: append=True joins the incoming text onto the
-                # currently stored value instead of replacing it; append=False
-                # (default) keeps the prior REPLACE semantics.
-                if implementation_notes is not None:
-                    implementation_notes = merge_text_field(existing.implementation_notes, implementation_notes, append)
-                record = update_bug_fix(
-                    conn,
-                    fix_uuid,
-                    changed_by=changed_by,
-                    status=status,
-                    implementation_notes=implementation_notes,
-                    branch=branch,
-                    commit_hash=commit_hash,
-                    pull_request=pull_request,
-                    changed_files=changed_files,
-                    tests=tests,
-                    reviewer=reviewer,
-                    summary=summary,
-                )
-                return SuccessResult(data={"bug_fix": record.to_payload()})
+            return perform_guarded_runtime_update(
+                raw_entity_id=bug_fix,
+                get_record=get_bug_fix,
+                update_record=update_bug_fix,
+                changed_by=changed_by,
+                not_found_code="BUG_FIX_NOT_FOUND",
+                not_found_message=f"bug fix not found: {bug_fix}",
+                db_connect=db_connection,
+                update_fields={
+                    "status": status,
+                    "implementation_notes": implementation_notes,
+                    "branch": branch,
+                    "commit_hash": commit_hash,
+                    "pull_request": pull_request,
+                    "changed_files": changed_files,
+                    "tests": tests,
+                    "reviewer": reviewer,
+                    "summary": summary,
+                },
+                resolve_scope=(lambda conn: resolve_plan(conn, plan)) if plan is not None else None,
+                pre_update=lambda conn, existing, update_fields: _guard_bug_fix_update(conn, existing, update_fields),
+                before_store_update=lambda conn, entity_id, existing, update_fields: _merge_bug_fix_notes(
+                    existing, update_fields, append
+                ),
+                build_result_data=lambda record: {"bug_fix": record.to_payload()},
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _guard_bug_fix_update(conn: object, existing: object, update_fields: dict[str, Any]) -> None:
+    """Apply owning-plan and status-transition guards before bug_fix update."""
+    refuse_if_bug_fix_plan_completed(conn, existing)
+    if update_fields.get("status") is not None:
+        guard_fix_transition(existing.status, update_fields["status"])
+
+
+def _merge_bug_fix_notes(existing: object, update_fields: dict[str, Any], append: bool) -> None:
+    """Apply append-aware merge semantics for implementation_notes in-place."""
+    incoming = update_fields.get("implementation_notes")
+    if incoming is not None:
+        update_fields["implementation_notes"] = merge_text_field(
+            existing.implementation_notes,
+            incoming,
+            append,
+        )

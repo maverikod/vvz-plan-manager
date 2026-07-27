@@ -24,6 +24,9 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "restore",
         "plan_unfreeze",
         "subtree_unfreeze",
+        "cascade_begin",
+        "cascade_commit",
+        "cascade_abort",
         "plan_completed_set",
         "plan_comment_set",
     }
@@ -149,7 +152,8 @@ def record_runtime_change(
             The runtime record changed.
         action: str
             One of "create", "update", "soft_delete", "hard_delete", "archive",
-            "restore", "plan_unfreeze", "subtree_unfreeze".
+            "restore", "plan_unfreeze", "subtree_unfreeze", "cascade_begin",
+            "cascade_commit", or "cascade_abort".
         changed_by: str
             Who performed the change.
         change_reason: str | None

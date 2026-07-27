@@ -8,11 +8,15 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.runtime_delete_command_helpers import (
+    delete_command_metadata_params,
+    delete_command_schema,
+    perform_runtime_delete,
+    validate_delete_uuid_param,
+)
 from plan_manager.commands.tool_command_metadata import tool_metadata
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.domain.tool import Tool
-from plan_manager.runtime.context import db_connection
-from plan_manager.storage.runtime_audit_store import record_runtime_change
 from plan_manager.storage.tool_store import get_tool, remove_tool
 
 
@@ -28,25 +32,11 @@ class ToolDeleteCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "tool_uuid": {"type": "string", "description": "The tool_uuid identifier of the tool record to delete."},
-                "changed_by": {"type": "string", "description": "Identity of the actor performing the deletion; recorded on the audit trail."},
-                "hard": {"type": "boolean", "description": "When false (the default), soft-delete: recoverable, hidden from listings. When true, irreversibly remove the row; gated by the inbound-reference integrity check.", "default": False},
-                "dry_run": {"type": "boolean", "description": "When true, write nothing: report the deletion target, mode, whether it would be blocked, and the live referencing records as a dict mapping 'table.column' to the count of live referencing rows.", "default": False},
-            },
-            "required": ["tool_uuid", "changed_by"],
-            "additionalProperties": False,
-        }
+        return delete_command_schema("tool_uuid", "The tool_uuid identifier of the tool record to delete.")
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Validate tool_delete parameters beyond the base schema check: tool_uuid must parse as a UUID."""
-        params = super().validate_params(params)
-        tool_uuid = params.get("tool_uuid")
-        if tool_uuid is not None:
-            validate_uuid(tool_uuid)
-        return params
+        return validate_delete_uuid_param(super().validate_params(params), "tool_uuid")
 
     async def execute(
         self,
@@ -57,46 +47,26 @@ class ToolDeleteCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(tool_uuid)
-                record = get_tool(conn, parsed_uuid)
-                if record is None:
-                    raise DomainCommandError("TOOL_NOT_FOUND", f"tool not found: {tool_uuid}")
-                references = Tool.crud_reference_counts(conn, parsed_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(parsed_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                if hard:
-                    Tool.crud_hard_delete(conn, parsed_uuid, returning=False, require_soft_deleted=False)
-                    record_runtime_change(
-                        conn,
-                        plan_uuid=None,
-                        entity_type="tool",
-                        entity_id=parsed_uuid,
-                        action="hard_delete",
-                        changed_by=changed_by,
-                    )
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(parsed_uuid)}
-                else:
-                    deleted = remove_tool(conn, parsed_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "tool": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=tool_uuid,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=Tool,
+                get_record=get_tool,
+                soft_delete=remove_tool,
+                not_found_code="TOOL_NOT_FOUND",
+                not_found_message=f"tool not found: {tool_uuid}",
+                payload_key="tool",
+            )
         except Exception as exc:
             return map_exception(exc)
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "tool_uuid": {"description": "The tool_uuid identifier of the tool record to delete.", "type": "string", "required": True},
-            "changed_by": {"description": "Identity of the actor performing the deletion; recorded on the audit trail.", "type": "string", "required": True},
-            "hard": {"description": "False (default): soft-delete - recoverable, hidden from listings. True: irreversible row removal, gated by the inbound-reference integrity check.", "type": "boolean", "required": False, "default": False},
-            "dry_run": {"description": "True: write nothing; report target, mode, blocked flag, and all live referencing records.", "type": "boolean", "required": False, "default": False},
-        }
+        params: dict[str, Any] = delete_command_metadata_params(
+            "tool_uuid", "The tool_uuid identifier of the tool record to delete."
+        )
         return tool_metadata(
             cls,
             params,

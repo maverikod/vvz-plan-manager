@@ -7,12 +7,16 @@ from typing import Any, ClassVar
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
 from plan_manager.commands.plan_completion_guard import refuse_if_model_binding_plan_completed
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_binding_store import get_model_binding, update_model_binding
+
 
 class ModelBindingUpdateCommand(Command):
     name: ClassVar[str] = "model_binding_update"
@@ -85,30 +89,38 @@ class ModelBindingUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(binding_uuid)
-                existing = get_model_binding(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("MODEL_BINDING_NOT_FOUND", f"model binding not found: {binding_uuid}")
-                refuse_if_model_binding_plan_completed(conn, existing)
-                if all(
-                    value is None
-                    for value in (provider, model, fallback_provider, fallback_model, max_retries, timeout, context_budget, active)
-                ):
-                    raise RuntimeValidationError("model_binding_update requires at least one mutable field to patch")
-                binding = update_model_binding(
+            return perform_guarded_runtime_update(
+                raw_entity_id=binding_uuid,
+                get_record=get_model_binding,
+                update_record=update_model_binding,
+                changed_by=changed_by,
+                not_found_code="MODEL_BINDING_NOT_FOUND",
+                not_found_message=f"model binding not found: {binding_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "provider": provider,
+                    "model": model,
+                    "fallback_provider": fallback_provider,
+                    "fallback_model": fallback_model,
+                    "max_retries": max_retries,
+                    "timeout": timeout,
+                    "context_budget": context_budget,
+                    "active": active,
+                },
+                pre_update=lambda conn, existing, update_fields: _guard_model_binding_update(
                     conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    provider=provider,
-                    model=model,
-                    fallback_provider=fallback_provider,
-                    fallback_model=fallback_model,
-                    max_retries=max_retries,
-                    timeout=timeout,
-                    context_budget=context_budget,
-                    active=active,
-                )
-                return SuccessResult(data=binding.to_payload())
+                    existing,
+                    update_fields,
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _guard_model_binding_update(conn: object, existing: object, update_fields: dict[str, Any]) -> None:
+    """Apply plan-completion and empty-patch guards before model_binding update."""
+    refuse_if_model_binding_plan_completed(conn, existing)
+    require_mutable_patch(
+        update_fields,
+        "model_binding_update requires at least one mutable field to patch",
+    )

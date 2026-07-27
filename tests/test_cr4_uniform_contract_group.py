@@ -34,14 +34,20 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # bringing the pinned total to 195. The full bug-family CRUD delete surface
 # (todo 9b09c9b0, user order 2026-07-24) then legitimately registered 4 more
 # top-level commands (bug_delete, bug_impact_delete, bug_fix_delete,
-# bug_fix_propagation_delete), bringing the pinned total to 199. The constant
+# bug_fix_propagation_delete), bringing the pinned total to 199. Runtime
+# work-tracking then legitimately registered 10 more top-level commands on
+# Sunday, July 26, 2026: the wish CRUD family and the calendar_entry CRUD
+# family, bringing the pinned total to 209. The context-block batch rebuild
+# command (todo 60c3a375, user order 2026-07-26) then legitimately registered
+# 1 more top-level command (block_rebuild), bringing the pinned total to 210.
+# The constant
 # is intentionally kept in lockstep with the CURRENT inventory size (not
 # frozen at the historical CR-4 baseline) so this test still catches any
 # FUTURE accidental top-level command addition; the CR-4-specific invariant
 # (its mechanisms never became commands in their own right) remains
 # independently enforced by the fragment scan below, which is unaffected by
 # these later additions.
-_PRE_CR4_INVENTORY_COUNT = 199
+_PRE_CR4_INVENTORY_COUNT = 210
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

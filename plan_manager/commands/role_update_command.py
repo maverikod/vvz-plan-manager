@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.commands.role_command_metadata import role_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.role_store import get_role, update_role
 
@@ -63,19 +66,19 @@ class RoleUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(role_uuid)
-                existing = get_role(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("ROLE_NOT_FOUND", f"role not found: {role_uuid}")
-                if description is None:
-                    raise RuntimeValidationError("role_update requires at least one mutable field to patch")
-                role = update_role(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    description=description,
-                )
-                return SuccessResult(data=role.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=role_uuid,
+                get_record=get_role,
+                update_record=update_role,
+                changed_by=changed_by,
+                not_found_code="ROLE_NOT_FOUND",
+                not_found_message=f"role not found: {role_uuid}",
+                db_connect=db_connection,
+                update_fields={"description": description},
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "role_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

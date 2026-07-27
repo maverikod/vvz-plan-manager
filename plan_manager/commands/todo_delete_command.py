@@ -9,12 +9,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
+from plan_manager.commands.runtime_delete_command_helpers import perform_runtime_delete
 from plan_manager.commands.todo_command_metadata import todo_metadata
-from plan_manager.domain.entity import EntityReferencedError
 from plan_manager.domain.todo import TodoItem
-from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_hard_delete import hard_delete_todo
 from plan_manager.storage.todo_store import get_todo, soft_delete_todo
 
@@ -65,30 +64,21 @@ class TodoDeleteCommand(Command):
     ) -> SuccessResult | ErrorResult:
         """Delete a TODO item (soft by default, hard when hard=true), or preview with dry_run=true."""
         try:
-            with db_connection() as conn:
-                todo_uuid = uuid.UUID(todo)
-                record = get_todo(conn, todo_uuid)
-                if record is None:
-                    raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
-                references = TodoItem.crud_reference_counts(conn, todo_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(todo_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                refuse_if_todo_plan_completed(conn, record)
-                if references:
-                    raise EntityReferencedError("todo", todo_uuid, references)
-                if hard:
-                    hard_delete_todo(conn, todo_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(todo_uuid)}
-                else:
-                    deleted = soft_delete_todo(conn, todo_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "todo": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=todo,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=TodoItem,
+                get_record=get_todo,
+                soft_delete=soft_delete_todo,
+                not_found_code="TODO_NOT_FOUND",
+                not_found_message=f"todo not found: {todo}",
+                payload_key="todo",
+                entity_label="todo",
+                pre_delete=refuse_if_todo_plan_completed,
+                hard_delete=hard_delete_todo,
+            )
         except Exception as exc:
             return map_exception(exc)
 

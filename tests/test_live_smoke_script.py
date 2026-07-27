@@ -148,6 +148,18 @@ def test_classify_catalog_bug_fix_and_step_update_moved_out_of_skip():
     assert {"bug_fix_create", "bug_fix_verify", "step_update"} <= set(result.tier3_handled) | set(result.tier4_handled)
 
 
+def test_classify_catalog_runtime_work_layer_commands_moved_out_of_skip():
+    names = {
+        "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
+        "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
+        "calendar_entry_update", "calendar_entry_delete",
+    }
+    result = ls.classify_catalog(frozenset(names))
+    skipped_names = {n for n, _ in result.skipped}
+    assert skipped_names.isdisjoint(names)
+    assert names <= set(result.tier4_handled)
+
+
 # --------------------------------------------------------------------------
 # Third-live-run "cosmetic" fix: every adapter-builtin/admin/transfer/stub
 # command must have a SPECIFIC skip reason, not the generic fallback --
@@ -442,6 +454,8 @@ def test_build_arg_parser_defaults():
     assert args.host == "127.0.0.1"
     assert args.port == 8080
     assert args.project == ls.DEFAULT_PROJECT_ID
+    assert args.list_tests is False
+    assert args.test == []
     assert args.json is False
 
 
@@ -453,6 +467,28 @@ def test_build_arg_parser_rejects_unknown_protocol():
         assert exc.code != 0
     else:
         raise AssertionError("expected argparse to reject an invalid --protocol choice")
+
+
+def test_build_arg_parser_accepts_repeatable_test_selection():
+    parser = ls.build_arg_parser()
+    args = parser.parse_args(["--test", "r2", "--test", "r13"])
+    assert args.test == ["r2", "r13"]
+
+
+def test_resolve_selected_test_specs_defaults_to_all_registered_tests():
+    specs = ls.resolve_selected_test_specs([])
+    assert [spec.key for spec in specs] == list(ls.LIVE_SMOKE_TEST_KEYS)
+
+
+def test_resolve_selected_test_specs_returns_registry_order_for_subset():
+    specs = ls.resolve_selected_test_specs(["r13", "r2"])
+    assert [spec.key for spec in specs] == ["r2", "r13"]
+
+
+def test_format_live_smoke_test_listing_mentions_known_ids():
+    text = ls.format_live_smoke_test_listing()
+    assert "r2" in text
+    assert "r13" in text
 
 
 # --------------------------------------------------------------------------
@@ -2593,15 +2629,9 @@ def test_run_r10_skipped_level_call_omits_ts_step_id():
     assert "ts_step_id" not in skipped_call
 
 
-def test_run_r10_is_wired_into_run_pipeline():
-    """run_r10_branch_scope_hierarchical_selectors must actually be called
-    from run_pipeline, not merely defined (dead-code guard, matching the
-    same concern every other R-group carries implicitly by being present
-    in run_pipeline's source)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r10_branch_scope_hierarchical_selectors(client)" in source
+def test_run_r10_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r10")
+    assert spec.function_name == "run_r10_branch_scope_hierarchical_selectors"
 
 
 # --------------------------------------------------------------------------
@@ -2781,13 +2811,9 @@ def test_run_r11_invalid_view_not_rejected_fails() -> None:
     assert by_name["R11_invalid_view_rejected"].status == ls.STATUS_FAIL
 
 
-def test_run_r11_is_wired_into_run_pipeline():
-    """run_r11_list_view_projection must actually be called from
-    run_pipeline, not merely defined (dead-code guard, matching R10's own)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r11_list_view_projection(client)" in source
+def test_run_r11_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r11")
+    assert spec.function_name == "run_r11_list_view_projection"
 
 
 # --------------------------------------------------------------------------
@@ -3023,14 +3049,9 @@ def test_run_r12_cleanup_runs_even_when_a_mid_recipe_check_fails():
     assert names[-1] == "plan_delete"
 
 
-def test_run_r12_is_wired_into_run_pipeline():
-    """run_r12_response_size_and_cascade_tip_batch must actually be called
-    from run_pipeline, not merely defined (dead-code guard, matching R10/
-    R11's own)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r12_response_size_and_cascade_tip_batch(client)" in source
+def test_run_r12_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r12")
+    assert spec.function_name == "run_r12_response_size_and_cascade_tip_batch"
 
 
 def test_looks_like_unknown_param_matches_schema_rejection_not_domain_error():
@@ -3164,16 +3185,82 @@ def test_run_r13_project_view_body_leak_is_a_failure():
     assert by_name["R13_45f0c128_project_view_todos_no_body"].status == ls.STATUS_FAIL
 
 
-def test_run_r13_is_called_from_run_pipeline():
-    """Dead-code guard, matching R10/R11/R12's own."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r13_bug_list_project_view_bounded(client, args.project)" in source
+def test_run_r13_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r13")
+    assert spec.function_name == "run_r13_bug_list_project_view_bounded"
+    assert spec.needs_project is True
 
 
 # --------------------------------------------------------------------------
-# R20-R26 (wave W2 regression checks) + the R12 gate-findings-pagination
+# R27 runtime work-layer lifecycle: wish + calendar_entry. Grouped live
+# regression following the same pre-deploy-skip / post-deploy-full-lifecycle
+# convention as R7 and R9.
+# --------------------------------------------------------------------------
+
+
+def _r27_success_responses() -> dict[str, Any]:
+    return {
+        "wish_create": _ok({"uuid": "wish-1", "wish_uuid": "wish-1"}),
+        "wish_get": _ok({"uuid": "wish-1", "wish_uuid": "wish-1"}),
+        "wish_list": _ok({"wishes": [{"wish_uuid": "wish-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "wish_update": _ok({"uuid": "wish-1", "wish_uuid": "wish-1", "status": "planned"}),
+        "calendar_entry_create": _ok({"uuid": "entry-1", "calendar_entry_uuid": "entry-1"}),
+        "calendar_entry_get": _ok({"uuid": "entry-1", "calendar_entry_uuid": "entry-1"}),
+        "calendar_entry_list": _ok({"calendar_entries": [{"calendar_entry_uuid": "entry-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "calendar_entry_update": _ok({"uuid": "entry-1", "calendar_entry_uuid": "entry-1", "status": "in_progress"}),
+        "wish_delete": _sequence(
+            _ok(
+                {
+                    "dry_run": True,
+                    "would_delete": "wish-1",
+                    "mode": "soft",
+                    "blocked": True,
+                    "references": {"calendar_entry.wish_uuid": 1},
+                }
+            ),
+            _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "wish-1"}),
+        ),
+        "calendar_entry_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "entry-1"}),
+    }
+
+
+def test_run_r27_pre_deploy_server_skips_entire_group_not_per_command():
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r27_runtime_work_layer_lifecycle(client, frozenset(), "proj-1"))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "R27_runtime_work_layer_lifecycle"
+    assert result.status == ls.STATUS_SKIP
+    assert ls.R27_PRE_DEPLOY_SKIP_REASON in result.detail
+    assert client.calls == []
+
+
+def test_run_r27_full_success_every_check_passes():
+    client = _ScriptedClient(_r27_success_responses())
+
+    results = asyncio.run(ls.run_r27_runtime_work_layer_lifecycle(client, ls.R27_REQUIRED_COMMANDS, "proj-1"))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    assert [name for name, _ in client.calls] == [
+        "wish_create",
+        "wish_get",
+        "wish_list",
+        "wish_update",
+        "calendar_entry_create",
+        "calendar_entry_get",
+        "calendar_entry_list",
+        "calendar_entry_update",
+        "wish_delete",
+        "calendar_entry_delete",
+        "wish_delete",
+    ]
+
+
+# --------------------------------------------------------------------------
+# R20-R27 (wave W2/W3 regression checks) + the R12 gate-findings-pagination
 # extension: dead-code wiring/structure guards, matching the convention
 # every check from R10 through R13 established (R14-R19 stopped adding
 # dedicated per-check ScriptedClient suites but the wiring-guard convention
@@ -3182,87 +3269,53 @@ def test_run_r13_is_called_from_run_pipeline():
 # --------------------------------------------------------------------------
 
 
-def test_run_r20_is_wired_into_run_pipeline():
-    """run_r20_bug_impact_optional_plan_a5ec9c1a must actually be called
-    from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)" in source
+def test_run_r20_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r20")
+    assert spec.function_name == "run_r20_bug_impact_optional_plan_a5ec9c1a"
+    assert spec.needs_project is True
 
 
-def test_run_r21_is_wired_into_run_pipeline():
-    """run_r21_typed_invalid_params_concept_add must actually be called
-    from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r21_typed_invalid_params_concept_add(client)" in source
+def test_run_r21_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r21")
+    assert spec.function_name == "run_r21_typed_invalid_params_concept_add"
 
 
-def test_run_r22_is_wired_into_run_pipeline():
-    """run_r22_typed_invalid_params_comment_get must actually be called
-    from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r22_typed_invalid_params_comment_get(client)" in source
+def test_run_r22_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r22")
+    assert spec.function_name == "run_r22_typed_invalid_params_comment_get"
 
 
-def test_run_r23_is_wired_into_run_pipeline():
-    """run_r23_typed_invalid_params_review_result_get must actually be
-    called from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r23_typed_invalid_params_review_result_get(client)" in source
+def test_run_r23_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r23")
+    assert spec.function_name == "run_r23_typed_invalid_params_review_result_get"
 
 
-def test_run_r24_is_wired_into_run_pipeline():
-    """run_r24_command_catalog_dump_pagination must actually be called
-    from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r24_command_catalog_dump_pagination(client)" in source
+def test_run_r24_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r24")
+    assert spec.function_name == "run_r24_command_catalog_dump_pagination"
 
 
-def test_run_r25_is_wired_into_run_pipeline():
-    """run_r25_list_summary_default_drops_free_text must actually be
-    called from run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r25_list_summary_default_drops_free_text(client)" in source
+def test_run_r25_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r25")
+    assert spec.function_name == "run_r25_list_summary_default_drops_free_text"
 
 
-def test_run_r26_is_wired_into_run_pipeline():
-    """run_r26_todo_queue_anchor_plan_scoping must actually be called from
-    run_pipeline, not merely defined (dead-code guard)."""
-    import inspect
-
-    source = inspect.getsource(ls.run_pipeline)
-    assert "run_r26_todo_queue_anchor_plan_scoping(client)" in source
+def test_run_r26_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r26")
+    assert spec.function_name == "run_r26_todo_queue_anchor_plan_scoping"
 
 
-def test_run_r19_through_r26_wired_after_r19_in_source_order():
-    """R20-R26 must be wired in strictly after R19's own call site (fa17408
-    already committed R19; U4's numbering directive says "number the rest
-    sequentially R20+ ... after R19"), preserving tier-4 append order."""
-    import inspect
+def test_run_r27_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r27")
+    assert spec.function_name == "run_r27_runtime_work_layer_lifecycle"
+    assert spec.needs_catalog is True
+    assert spec.needs_project is True
 
-    source = inspect.getsource(ls.run_pipeline)
-    ordered_markers = [
-        "run_r19_bug_delete_full_crud_lifecycle(client)",
-        "run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)",
-        "run_r21_typed_invalid_params_concept_add(client)",
-        "run_r22_typed_invalid_params_comment_get(client)",
-        "run_r23_typed_invalid_params_review_result_get(client)",
-        "run_r24_command_catalog_dump_pagination(client)",
-        "run_r25_list_summary_default_drops_free_text(client)",
-        "run_r26_todo_queue_anchor_plan_scoping(client)",
-    ]
-    positions = [source.index(marker) for marker in ordered_markers]
+
+def test_run_r19_through_r27_registry_order_is_stable():
+    ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
+    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27"}]
+    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27"]]
     assert positions == sorted(positions)
 
 

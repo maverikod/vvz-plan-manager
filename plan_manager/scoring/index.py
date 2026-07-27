@@ -1,8 +1,4 @@
-"""SemanticIndex (C-013) scoring: branch and plan-level ensemble measurement.
-
-Implements the normative fold and refusal discipline of NormativeAlgorithmSet
-(C-036). Results are returned to the caller and never stored.
-"""
+"""SemanticIndex scoring for branches and whole plans."""
 
 from __future__ import annotations
 
@@ -128,6 +124,7 @@ def _score_one(
     branch,
     branch_path: str,
     concept_rows,
+    plan_nodes,
     config: ScoringConfig,
     vectors: dict[str, list[float]],
     embedding_state: str,
@@ -145,7 +142,9 @@ def _score_one(
 
     estimator_vector["coverage"] = coverage_estimator(required, declared)
     weights["coverage"] = 1.0
-    estimator_vector["references"] = reference_estimator(conn, branch, concept_rows)
+    estimator_vector["references"] = reference_estimator(
+        conn, branch, concept_rows, plan_nodes
+    )
     weights["references"] = 1.0
 
     pair_values: dict[str, float] = {}
@@ -211,6 +210,7 @@ def score_branch(
     """Compute the 0..100 SemanticIndex (C-013) score of one branch."""
     branch = resolve_branch_scope(conn, plan_uuid, gs_step_id, ts_step_id, as_step_id)
     branch_path = f"{gs_step_id}/{ts_step_id}/{as_step_id}"
+    plan_nodes = load_steps(conn, plan_uuid)
 
     if progress is not None:
         progress(pct=0, message=f"Scoring branch {branch_path}")
@@ -239,6 +239,7 @@ def score_branch(
         branch,
         branch_path,
         concept_rows,
+        plan_nodes,
         config,
         vectors,
         embedding_state,
@@ -326,6 +327,7 @@ def score_plan(
                 branch,
                 branch_path,
                 concept_rows,
+                steps,
                 config,
                 vectors,
                 embedding_state,
@@ -365,14 +367,7 @@ def score_plan(
 
 
 def embedding_block(embedding_state: str, embedding_detail: str | None) -> dict:
-    """Build the ``embedding`` block reported by the scoring commands.
-
-    Always carries ``available`` and ``state``; adds ``detail`` with the
-    precise reason whenever the embedding estimator did not contribute, so a
-    degraded score is never reported without an explanation of why — in
-    particular the real batch-vectorization failure when the health endpoint
-    reported the model ready.
-    """
+    """Build the scoring commands' ``embedding`` status block."""
     block: dict = {
         "available": embedding_state == READINESS_READY,
         "state": embedding_state,

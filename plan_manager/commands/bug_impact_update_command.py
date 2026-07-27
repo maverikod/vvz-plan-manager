@@ -11,7 +11,7 @@ from plan_manager.commands.bug_impact_command_metadata import BASE_PARAMETERS, b
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_impact_plan_completed
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
-from plan_manager.domain.runtime_validation import validate_uuid
+from plan_manager.commands.runtime_record_command_helpers import perform_guarded_runtime_update
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_impact_store import get_bug_impact, update_bug_impact
 
@@ -111,34 +111,47 @@ class BugImpactUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                # Bug 3eec33f2 / todo a5ec9c1a: `plan` is optional -- the impact
-                # record is always resolved directly by `impact_uuid` (globally unique).
-                if plan is not None:
-                    resolve_plan(conn, plan)
-                impact_id = validate_uuid(impact_uuid)
-                current = get_bug_impact(conn, impact_id)
-                if current is None:
-                    raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_uuid}")
-                refuse_if_bug_impact_plan_completed(conn, current)
-                if status == "skipped":
-                    resulting_reason = reason if reason is not None else current.reason
-                    resulting_decider = skip_decided_by if skip_decided_by is not None else current.skip_decided_by
-                    if not (resulting_reason and resulting_decider):
-                        raise DomainCommandError(
-                            "INVALID_RUNTIME_STATUS_TRANSITION",
-                            f"cannot transition bug impact {impact_uuid} to skipped without a reason and an owner decision",
-                        )
-                record = update_bug_impact(
-                    conn,
-                    impact_id,
-                    changed_by=changed_by,
-                    status=status,
-                    reason=reason,
-                    skip_decided_by=skip_decided_by,
-                    discovery_method=discovery_method,
-                    resolution_evidence=resolution_evidence,
-                )
-                return SuccessResult(data=record.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=impact_uuid,
+                get_record=get_bug_impact,
+                update_record=update_bug_impact,
+                changed_by=changed_by,
+                not_found_code="BUG_IMPACT_NOT_FOUND",
+                not_found_message=f"bug impact not found: {impact_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "status": status,
+                    "reason": reason,
+                    "skip_decided_by": skip_decided_by,
+                    "discovery_method": discovery_method,
+                    "resolution_evidence": resolution_evidence,
+                },
+                resolve_scope=(lambda conn: resolve_plan(conn, plan)) if plan is not None else None,
+                pre_update=lambda conn, existing, update_fields: _guard_bug_impact_update(
+                    conn, existing, impact_uuid, update_fields
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _guard_bug_impact_update(
+    conn: object,
+    current: object,
+    impact_uuid: str,
+    update_fields: dict[str, Any],
+) -> None:
+    """Apply plan-completion and skipped-status guards before bug_impact update."""
+    refuse_if_bug_impact_plan_completed(conn, current)
+    if update_fields.get("status") == "skipped":
+        resulting_reason = update_fields["reason"] if update_fields.get("reason") is not None else current.reason
+        resulting_decider = (
+            update_fields["skip_decided_by"]
+            if update_fields.get("skip_decided_by") is not None
+            else current.skip_decided_by
+        )
+        if not (resulting_reason and resulting_decider):
+            raise DomainCommandError(
+                "INVALID_RUNTIME_STATUS_TRANSITION",
+                f"cannot transition bug impact {impact_uuid} to skipped without a reason and an owner decision",
+            )

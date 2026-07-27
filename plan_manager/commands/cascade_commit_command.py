@@ -10,6 +10,7 @@ from plan_manager.cascade.record import get_open_cascade
 from plan_manager.cascade.close import commit_cascade
 from plan_manager.domain.plan import get_plan
 from plan_manager.commands.cascade_commit_metadata import get_cascade_commit_metadata
+from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
 class CascadeCommitCommand(Command):
@@ -86,7 +87,8 @@ class CascadeCommitCommand(Command):
         try:
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                if get_open_cascade(conn, p.uuid) is None:
+                open_cascade = get_open_cascade(conn, p.uuid)
+                if open_cascade is None:
                     return domain_error(
                         "CASCADE_REQUIRED",
                         f"plan {p.name} has no open cascade",
@@ -100,6 +102,19 @@ class CascadeCommitCommand(Command):
                 ), (
                     f"cascade commit for plan {p.name} did not verify by "
                     "re-read"
+                )
+                record_runtime_change(
+                    conn,
+                    plan_uuid=p.uuid,
+                    entity_type="plan",
+                    entity_id=p.uuid,
+                    action="cascade_commit",
+                    changed_by="api",
+                    changed_fields={
+                        "cascade_uuid": str(open_cascade.uuid),
+                        "base_revision_uuid": str(open_cascade.base_revision_uuid),
+                        "head_revision_uuid": str(refreshed.head_revision_uuid),
+                    },
                 )
                 return SuccessResult(
                     data={

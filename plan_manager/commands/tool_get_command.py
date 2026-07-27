@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.commands.tool_command_metadata import tool_metadata
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.tool_store import get_tool
 
@@ -26,20 +30,11 @@ class ToolGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "tool_uuid": {"description": "The tool_uuid identifier of the tool record.", "type": "string"},
-            },
-            "required": ["tool_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("tool_uuid", "The tool_uuid identifier of the tool record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "tool_uuid": {"description": "The tool_uuid identifier of the tool record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("tool_uuid", "The tool_uuid identifier of the tool record.")
         return_value = {"description": "The Tool record.", "type": "object"}
         examples = [
             {"description": "Fetch a tool by its uuid.", "command": {"tool_uuid": "b6b6b6b6-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class ToolGetCommand(Command):
 
     async def execute(self, tool_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(tool_uuid)
-                tool = get_tool(conn, parsed_uuid)
-                if tool is None:
-                    raise DomainCommandError("TOOL_NOT_FOUND", f"tool not found: {tool_uuid}")
-                return SuccessResult(data=tool.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=tool_uuid,
+                get_record=get_tool,
+                not_found_code="TOOL_NOT_FOUND",
+                not_found_message=f"tool not found: {tool_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

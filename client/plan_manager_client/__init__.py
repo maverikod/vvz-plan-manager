@@ -4,6 +4,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-__version__ = "0.1.52"
+from plan_manager_client._version import __version__
 
-__all__: list[str] = []
+__all__ = ["__version__"]

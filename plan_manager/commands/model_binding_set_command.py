@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
 from plan_manager.domain.model_binding import InvalidRuntimeRoleError
 from plan_manager.domain.plan import refuse_if_completed
 from plan_manager.domain.runtime_role import validate_runtime_role
@@ -112,19 +113,11 @@ class ModelBindingSetCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                if role is not None:
-                    try:
-                        validate_runtime_role(role)
-                    except RuntimeValidationError as exc:
-                        raise InvalidRuntimeRoleError(str(exc)) from exc
-                plan_uuid = validate_uuid(plan) if plan is not None else None
-                refuse_if_completed(conn, plan_uuid)
-                branch_step_uuid = validate_uuid(branch_step) if branch_step is not None else None
-                revision_uuid = validate_uuid(revision) if revision is not None else None
-                step_uuid = validate_uuid(step) if step is not None else None
-                binding = create_model_binding(
-                    conn,
+            return perform_runtime_create(
+                create_record=create_model_binding,
+                db_connect=db_connection,
+                prepare_create_fields=lambda conn: _prepare_model_binding_create_fields(
+                    conn=conn,
                     scope=scope,
                     provider=provider,
                     model=model,
@@ -132,17 +125,67 @@ class ModelBindingSetCommand(Command):
                     timeout=timeout,
                     created_by=created_by,
                     role=role,
-                    plan_uuid=plan_uuid,
+                    plan=plan,
                     spec_level=spec_level,
-                    branch_step_uuid=branch_step_uuid,
-                    revision_uuid=revision_uuid,
-                    step_uuid=step_uuid,
+                    branch_step=branch_step,
+                    revision=revision,
+                    step=step,
                     step_path=step_path,
                     fallback_provider=fallback_provider,
                     fallback_model=fallback_model,
                     context_budget=context_budget,
                     active=active,
-                )
-                return SuccessResult(data=binding.to_payload())
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _prepare_model_binding_create_fields(
+    *,
+    conn: object,
+    scope: str,
+    provider: str,
+    model: str,
+    max_retries: int,
+    timeout: int,
+    created_by: str,
+    role: str | None,
+    plan: str | None,
+    spec_level: str | None,
+    branch_step: str | None,
+    revision: str | None,
+    step: str | None,
+    step_path: str | None,
+    fallback_provider: str | None,
+    fallback_model: str | None,
+    context_budget: int | None,
+    active: bool,
+) -> dict[str, Any]:
+    """Validate and normalize model_binding_set inputs before create."""
+    if role is not None:
+        try:
+            validate_runtime_role(role)
+        except RuntimeValidationError as exc:
+            raise InvalidRuntimeRoleError(str(exc)) from exc
+    plan_uuid = validate_uuid(plan) if plan is not None else None
+    refuse_if_completed(conn, plan_uuid)
+    return {
+        "scope": scope,
+        "provider": provider,
+        "model": model,
+        "max_retries": max_retries,
+        "timeout": timeout,
+        "created_by": created_by,
+        "role": role,
+        "plan_uuid": plan_uuid,
+        "spec_level": spec_level,
+        "branch_step_uuid": validate_uuid(branch_step) if branch_step is not None else None,
+        "revision_uuid": validate_uuid(revision) if revision is not None else None,
+        "step_uuid": validate_uuid(step) if step is not None else None,
+        "step_path": step_path,
+        "fallback_provider": fallback_provider,
+        "fallback_model": fallback_model,
+        "context_budget": context_budget,
+        "active": active,
+    }

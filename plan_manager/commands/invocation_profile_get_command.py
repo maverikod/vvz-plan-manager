@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.invocation_profile_command_metadata import invocation_profile_metadata
-from plan_manager.domain.runtime_validation import validate_uuid
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import get_invocation_profile
 
@@ -26,20 +30,11 @@ class InvocationProfileGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "profile_uuid": {"description": "The profile_uuid identifier of the invocation_profile record.", "type": "string"},
-            },
-            "required": ["profile_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("profile_uuid", "The profile_uuid identifier of the invocation_profile record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "profile_uuid": {"description": "The profile_uuid identifier of the invocation_profile record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("profile_uuid", "The profile_uuid identifier of the invocation_profile record.")
         return_value = {"description": "The InvocationProfile record.", "type": "object"}
         examples = [
             {"description": "Fetch a profile by its uuid.", "command": {"profile_uuid": "b6b6b6b6-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class InvocationProfileGetCommand(Command):
 
     async def execute(self, profile_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(profile_uuid)
-                profile = get_invocation_profile(conn, parsed_uuid)
-                if profile is None:
-                    raise DomainCommandError("INVOCATION_PROFILE_NOT_FOUND", f"invocation profile not found: {profile_uuid}")
-                return SuccessResult(data=profile.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=profile_uuid,
+                get_record=get_invocation_profile,
+                not_found_code="INVOCATION_PROFILE_NOT_FOUND",
+                not_found_message=f"invocation profile not found: {profile_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

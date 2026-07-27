@@ -9,11 +9,14 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import DomainCommandError, map_exception
 from plan_manager.commands.invocation_profile_command_metadata import invocation_profile_metadata
+from plan_manager.commands.runtime_delete_command_helpers import (
+    delete_command_metadata_params,
+    delete_command_schema,
+    perform_runtime_delete,
+    validate_delete_uuid_param,
+)
 from plan_manager.domain.invocation_profile import InvocationProfile
-from plan_manager.domain.runtime_validation import validate_uuid
-from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import get_invocation_profile, remove_invocation_profile
-from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
 class InvocationProfileDeleteCommand(Command):
@@ -28,25 +31,13 @@ class InvocationProfileDeleteCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "profile_uuid": {"type": "string", "description": "The profile_uuid identifier of the invocation_profile record to delete."},
-                "changed_by": {"type": "string", "description": "Identity of the actor performing the deletion; recorded on the audit trail."},
-                "hard": {"type": "boolean", "description": "When false (the default), soft-delete: recoverable, hidden from listings. When true, irreversibly remove the row; gated by the inbound-reference integrity check.", "default": False},
-                "dry_run": {"type": "boolean", "description": "When true, write nothing: report the deletion target, mode, whether it would be blocked, and the live referencing records as a dict mapping 'table.column' to the count of live referencing rows.", "default": False},
-            },
-            "required": ["profile_uuid", "changed_by"],
-            "additionalProperties": False,
-        }
+        return delete_command_schema(
+            "profile_uuid", "The profile_uuid identifier of the invocation_profile record to delete."
+        )
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Validate invocation_profile_delete parameters beyond the base schema check: profile_uuid must parse as a UUID."""
-        params = super().validate_params(params)
-        profile_uuid = params.get("profile_uuid")
-        if profile_uuid is not None:
-            validate_uuid(profile_uuid)
-        return params
+        return validate_delete_uuid_param(super().validate_params(params), "profile_uuid")
 
     async def execute(
         self,
@@ -57,46 +48,27 @@ class InvocationProfileDeleteCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(profile_uuid)
-                record = get_invocation_profile(conn, parsed_uuid)
-                if record is None:
-                    raise DomainCommandError("INVOCATION_PROFILE_NOT_FOUND", f"invocation profile not found: {profile_uuid}")
-                references = InvocationProfile.crud_reference_counts(conn, parsed_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(parsed_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                if hard:
-                    InvocationProfile.crud_hard_delete(conn, parsed_uuid, returning=False, require_soft_deleted=False)
-                    record_runtime_change(
-                        conn,
-                        plan_uuid=record.plan_uuid,
-                        entity_type="invocation_profile",
-                        entity_id=parsed_uuid,
-                        action="hard_delete",
-                        changed_by=changed_by,
-                    )
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(parsed_uuid)}
-                else:
-                    deleted = remove_invocation_profile(conn, parsed_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "invocation_profile": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=profile_uuid,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=InvocationProfile,
+                get_record=get_invocation_profile,
+                soft_delete=remove_invocation_profile,
+                not_found_code="INVOCATION_PROFILE_NOT_FOUND",
+                not_found_message=f"invocation profile not found: {profile_uuid}",
+                payload_key="invocation_profile",
+                audit_plan_uuid=lambda record: record.plan_uuid,
+            )
         except Exception as exc:
             return map_exception(exc)
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "profile_uuid": {"description": "The profile_uuid identifier of the invocation_profile record to delete.", "type": "string", "required": True},
-            "changed_by": {"description": "Identity of the actor performing the deletion; recorded on the audit trail.", "type": "string", "required": True},
-            "hard": {"description": "False (default): soft-delete - recoverable, hidden from listings. True: irreversible row removal, gated by the inbound-reference integrity check.", "type": "boolean", "required": False, "default": False},
-            "dry_run": {"description": "True: write nothing; report target, mode, blocked flag, and all live referencing records.", "type": "boolean", "required": False, "default": False},
-        }
+        params: dict[str, Any] = delete_command_metadata_params(
+            "profile_uuid", "The profile_uuid identifier of the invocation_profile record to delete."
+        )
         return invocation_profile_metadata(
             cls,
             params,

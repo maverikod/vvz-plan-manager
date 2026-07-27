@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.commands.toolset_command_metadata import toolset_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.toolset_store import get_toolset, update_toolset
 
@@ -64,19 +67,19 @@ class ToolsetUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(toolset_uuid)
-                existing = get_toolset(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("TOOLSET_NOT_FOUND", f"toolset not found: {toolset_uuid}")
-                if description is None:
-                    raise RuntimeValidationError("toolset_update requires at least one mutable field to patch")
-                toolset = update_toolset(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    description=description,
-                )
-                return SuccessResult(data=toolset.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=toolset_uuid,
+                get_record=get_toolset,
+                update_record=update_toolset,
+                changed_by=changed_by,
+                not_found_code="TOOLSET_NOT_FOUND",
+                not_found_message=f"toolset not found: {toolset_uuid}",
+                db_connect=db_connection,
+                update_fields={"description": description},
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "toolset_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

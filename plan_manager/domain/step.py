@@ -26,6 +26,9 @@ SLUG_PATTERN: re.Pattern[str] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 CONCEPT_ID_PATTERN: re.Pattern[str] = re.compile(r"^C-\d{3}$")
+CANONICAL_STEP_PATH_PATTERN: re.Pattern[str] = re.compile(
+    r"^G-\d{3}(?:/T-\d{3})?(?:/A-\d{3})?$"
+)
 
 
 # Bug 26fa21a5: allowed values of a level-4 (TS) inputs/outputs item's "type"
@@ -217,9 +220,18 @@ def validate_step(step: Step) -> None:
                 f"step_id {step.step_id!r} does not match pattern for level {step.level}"
             )
         for dep in step.depends_on:
-            if not pattern.match(dep):
+            try:
+                uuid_ok = UUID(dep)
+            except (ValueError, TypeError, AttributeError):
+                uuid_ok = None
+            if not (
+                pattern.match(dep)
+                or CANONICAL_STEP_PATH_PATTERN.match(dep)
+                or uuid_ok is not None
+            ):
                 errors.append(
-                    f"depends_on entry {dep!r} does not match pattern for level {step.level}"
+                    "depends_on entry "
+                    f"{dep!r} is not a valid sibling step_id, canonical step path, or UUID"
                 )
 
     if not SLUG_PATTERN.match(step.slug):

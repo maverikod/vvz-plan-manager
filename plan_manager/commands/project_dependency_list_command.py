@@ -10,15 +10,16 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.commands.runtime_list_command_helpers import perform_runtime_list_page
 from plan_manager.commands.runtime_filtering import (
     pagination_metadata_params,
     pagination_schema_properties,
-    parse_pagination,
 )
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.project_dependency_store import list_project_dependencies
+
 
 class ProjectDependencyListCommand(Command):
     name: ClassVar[str] = "project_dependency_list"
@@ -109,24 +110,39 @@ class ProjectDependencyListCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                p = resolve_plan(conn, plan)
-                pagination = parse_pagination({"limit": limit, "offset": offset})
-                bound_project_uuids = [uuid.UUID(pid) for pid in p.project_ids]
-                records = list_project_dependencies(
-                    conn,
-                    dependent_project_id=validate_uuid(dependent_project_id) if dependent_project_id else None,
-                    depends_on_project_id=validate_uuid(depends_on_project_id) if depends_on_project_id else None,
+            return perform_runtime_list_page(
+                fetch_records=lambda conn: _fetch_project_dependency_records(
+                    conn=conn,
+                    plan=plan,
+                    dependent_project_id=dependent_project_id,
+                    depends_on_project_id=depends_on_project_id,
                     active_only=active_only,
-                    project_ids=bound_project_uuids,
-                )
-                total = len(records)
-                page = records[pagination.offset: pagination.offset + pagination.limit]
-                return SuccessResult(data={
-                    "project_dependencies": [r.to_payload() for r in page],
-                    "total": total,
-                    "limit": pagination.limit,
-                    "offset": pagination.offset,
-                })
+                ),
+                result_key="project_dependencies",
+                row_mapper=lambda record: record.to_payload(),
+                limit=limit,
+                offset=offset,
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _fetch_project_dependency_records(
+    *,
+    conn: object,
+    plan: str,
+    dependent_project_id: str | None,
+    depends_on_project_id: str | None,
+    active_only: bool,
+) -> list[Any]:
+    """Resolve plan scope and fetch the filtered project dependency rows."""
+    plan_record = resolve_plan(conn, plan)
+    bound_project_uuids = [uuid.UUID(pid) for pid in plan_record.project_ids]
+    return list_project_dependencies(
+        conn,
+        dependent_project_id=validate_uuid(dependent_project_id) if dependent_project_id else None,
+        depends_on_project_id=validate_uuid(depends_on_project_id) if depends_on_project_id else None,
+        active_only=active_only,
+        project_ids=bound_project_uuids,
+    )

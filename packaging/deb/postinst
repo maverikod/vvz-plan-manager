@@ -27,6 +27,12 @@ case "$1" in
         install -d -o planmgruser -g planmgrgrp -m 750 /var/planmgr/export
         install -d -o planmgruser -g planmgrgrp -m 750 /var/log/planmgr
 
+        if [ -s /etc/default/planmgr.dpkg-old ] && [ -f /usr/lib/planmgr/planmgr_merge_operator_env.py ]; then
+            python3 /usr/lib/planmgr/planmgr_merge_operator_env.py \
+                --current /etc/default/planmgr \
+                --previous /etc/default/planmgr.dpkg-old
+        fi
+
         set -a
         . /etc/default/planmgr
         set +a

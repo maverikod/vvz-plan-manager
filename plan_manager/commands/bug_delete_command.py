@@ -8,12 +8,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_command_metadata import bug_metadata
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
-from plan_manager.domain.entity import EntityReferencedError
+from plan_manager.commands.runtime_delete_command_helpers import perform_runtime_delete
 from plan_manager.domain.bug_report import BugReport
 from plan_manager.domain.runtime_validation import validate_uuid
-from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_hard_delete import hard_delete_bug
 from plan_manager.storage.bug_report_store import get_bug, soft_delete_bug
 
@@ -61,30 +60,21 @@ class BugDeleteCommand(Command):
     ) -> SuccessResult | ErrorResult:
         """Delete a bug report (soft by default, hard when hard=true), or preview with dry_run=true."""
         try:
-            with db_connection() as conn:
-                bug_uuid = validate_uuid(bug_id)
-                record = get_bug(conn, bug_uuid)
-                if record is None:
-                    raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
-                references = BugReport.crud_reference_counts(conn, bug_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(bug_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                refuse_if_bug_plan_completed(conn, record)
-                if references:
-                    raise EntityReferencedError("bug", bug_uuid, references)
-                if hard:
-                    hard_delete_bug(conn, bug_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(bug_uuid)}
-                else:
-                    deleted = soft_delete_bug(conn, bug_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "bug": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=bug_id,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=BugReport,
+                get_record=get_bug,
+                soft_delete=soft_delete_bug,
+                not_found_code="BUG_NOT_FOUND",
+                not_found_message=f"bug not found: {bug_id}",
+                payload_key="bug",
+                entity_label="bug",
+                pre_delete=refuse_if_bug_plan_completed,
+                hard_delete=hard_delete_bug,
+            )
         except Exception as exc:
             return map_exception(exc)
 

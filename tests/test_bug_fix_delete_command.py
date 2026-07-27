@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from plan_manager.commands import bug_fix_delete_command, plan_completion_guard
+from plan_manager.commands import bug_fix_delete_command, plan_completion_guard, runtime_delete_command_helpers
 from plan_manager.domain.bug_fix import BugFix
 
 FIX_UUID = uuid.uuid4()
@@ -74,7 +74,7 @@ def _install_fakes(
     get_result: BugFix | None = _bug_fix(),
     soft_delete_result: BugFix | None = None,
 ) -> None:
-    monkeypatch.setattr(bug_fix_delete_command, "db_connection", lambda: _fake_db())
+    monkeypatch.setattr(runtime_delete_command_helpers, "db_connection", lambda: _fake_db())
     monkeypatch.setattr(bug_fix_delete_command, "get_bug_fix", lambda conn, fix_uuid: get_result)
     monkeypatch.setattr(
         BugFix, "crud_reference_counts", classmethod(lambda cls, conn, entity_id: dict(references or {}))

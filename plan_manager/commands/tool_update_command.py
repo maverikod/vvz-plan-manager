@@ -7,9 +7,12 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.commands.tool_command_metadata import tool_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.tool_store import get_tool, update_tool
 
@@ -73,22 +76,24 @@ class ToolUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(tool_uuid)
-                existing = get_tool(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("TOOL_NOT_FOUND", f"tool not found: {tool_uuid}")
-                if all(value is None for value in (server_id, command, pinned_options, description)):
-                    raise RuntimeValidationError("tool_update requires at least one mutable field to patch")
-                tool = update_tool(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    server_id=server_id,
-                    command=command,
-                    pinned_options=pinned_options,
-                    description=description,
-                )
-                return SuccessResult(data=tool.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=tool_uuid,
+                get_record=get_tool,
+                update_record=update_tool,
+                changed_by=changed_by,
+                not_found_code="TOOL_NOT_FOUND",
+                not_found_message=f"tool not found: {tool_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "server_id": server_id,
+                    "command": command,
+                    "pinned_options": pinned_options,
+                    "description": description,
+                },
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "tool_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

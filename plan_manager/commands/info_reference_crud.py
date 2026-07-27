@@ -225,5 +225,30 @@ def crud_deletion_posture_reference() -> dict[str, Any]:
                 ),
                 "delete": "runtime_link_remove (soft; dry_run preview)",
             },
+            "wish": {
+                "create": "wish_create",
+                "read": "wish_get, wish_list",
+                "update": "wish_update",
+                "delete": (
+                    "wish_delete (soft by default: recoverable, hidden from "
+                    "wish_get/wish_list; hard=true irreversibly removes the "
+                    "row; both modes are gated by the inbound-reference "
+                    "integrity check - live calendar entries linked via "
+                    "wish_uuid refuse with DELETE_BLOCKED; dry_run previews "
+                    "references before any write)."
+                ),
+            },
+            "calendar_entry": {
+                "create": "calendar_entry_create",
+                "read": "calendar_entry_get, calendar_entry_list",
+                "update": "calendar_entry_update",
+                "delete": (
+                    "calendar_entry_delete (soft by default: recoverable, "
+                    "hidden from calendar_entry_get/calendar_entry_list; "
+                    "hard=true irreversibly removes the row; dry_run "
+                    "previews the deletion mode and current reference map "
+                    "before any write)."
+                ),
+            },
         },
     }

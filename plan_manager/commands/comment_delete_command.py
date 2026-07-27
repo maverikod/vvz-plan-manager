@@ -9,12 +9,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.comment_command_metadata import comment_metadata
 from plan_manager.commands.plan_completion_guard import refuse_if_comment_plan_completed
-from plan_manager.domain.entity import EntityReferencedError
+from plan_manager.commands.runtime_delete_command_helpers import perform_runtime_delete
 from plan_manager.domain.runtime_comment import RuntimeComment
-from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_hard_delete import hard_delete_comment
 from plan_manager.storage.runtime_comment_store import get_comment, soft_delete_comment
 
@@ -65,30 +64,21 @@ class CommentDeleteCommand(Command):
     ) -> SuccessResult | ErrorResult:
         """Delete a runtime comment (soft by default, hard when hard=true), or preview with dry_run=true."""
         try:
-            with db_connection() as conn:
-                comment_uuid = uuid.UUID(comment)
-                record = get_comment(conn, comment_uuid)
-                if record is None:
-                    raise DomainCommandError("COMMENT_NOT_FOUND", f"comment not found: {comment}")
-                references = RuntimeComment.crud_reference_counts(conn, comment_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(comment_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                refuse_if_comment_plan_completed(conn, record)
-                if references:
-                    raise EntityReferencedError("comment", comment_uuid, references)
-                if hard:
-                    hard_delete_comment(conn, comment_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(comment_uuid)}
-                else:
-                    deleted = soft_delete_comment(conn, comment_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "comment": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=comment,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=RuntimeComment,
+                get_record=get_comment,
+                soft_delete=soft_delete_comment,
+                not_found_code="COMMENT_NOT_FOUND",
+                not_found_message=f"comment not found: {comment}",
+                payload_key="comment",
+                entity_label="comment",
+                pre_delete=refuse_if_comment_plan_completed,
+                hard_delete=hard_delete_comment,
+            )
         except Exception as exc:
             return map_exception(exc)
 

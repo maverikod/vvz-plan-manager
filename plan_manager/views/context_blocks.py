@@ -102,6 +102,19 @@ class ContextBlockRecord(DataclassEntity):
             "child_ref": self.child_ref,
         }
 
+    def to_summary_payload(self) -> dict[str, Any]:
+        return {
+            "block_id": str(self.block_id),
+            "hash": self.content_hash,
+            "kind": self.kind,
+            "node_path": self.node_path,
+            "child_level": self.child_level,
+            "revision_uuid": str(self.revision_uuid) if self.revision_uuid else None,
+            "cascade_uuid": str(self.cascade_uuid) if self.cascade_uuid else None,
+            "common_block_id": str(self.common_block_id) if self.common_block_id else None,
+            "child_ref": self.child_ref,
+        }
+
 
 def validate_child_level(child_level: int) -> None:
     if child_level not in (3, 4, 5):
@@ -411,6 +424,124 @@ def specific_delta(
         if _delta_key(block) not in common_delta_keys
     ]
     return scope, sorted(delta, key=_block_sort_key)
+
+
+def _compile_include_from_record(record: ContextBlockRecord) -> dict[str, Any]:
+    """Recover compile_context's include flags from a stored compile row."""
+    include = {
+        "authoring_template": any(block["type"] == "authoring_template" for block in record.content),
+        "standards": any(block["type"] == "standards" for block in record.content),
+        "field_schema": any(block["type"] == "field_schema" for block in record.content),
+    }
+    for block in record.content:
+        if block["type"] == "step_definition":
+            include["step_definition_of"] = block["path"]
+            break
+    return include
+
+
+def rebuild_context_block(
+    conn: psycopg.Connection,
+    plan: Plan,
+    source: ContextBlockRecord,
+    context_revision: ContextRevision,
+    rebuilt_common_by_source: dict[uuid.UUID, ContextBlockRecord] | None = None,
+) -> ContextBlockRecord:
+    """Rebuild one stored context block against the supplied working state."""
+    common_cache = rebuilt_common_by_source if rebuilt_common_by_source is not None else {}
+
+    if source.kind == "compile":
+        include = _compile_include_from_record(source)
+        content, scope = compile_context(
+            conn,
+            plan.uuid,
+            list(source.scope_concepts),
+            source.child_level,
+            include,
+            source.node_path,
+        )
+        return store_context_block(
+            conn,
+            plan.uuid,
+            context_revision,
+            source.node_path,
+            source.child_level,
+            "compile",
+            scope,
+            content,
+            child_ref=source.child_ref,
+        )
+
+    if source.kind == "common":
+        if source.block_id in common_cache:
+            return common_cache[source.block_id]
+        node_path, scope, content = common_context(
+            conn,
+            plan.uuid,
+            source.node_path,
+            source.child_level,
+            list(source.scope_concepts),
+        )
+        rebuilt = store_context_block(
+            conn,
+            plan.uuid,
+            context_revision,
+            node_path,
+            source.child_level,
+            "common",
+            scope,
+            content,
+            child_ref=source.child_ref,
+        )
+        common_cache[source.block_id] = rebuilt
+        return rebuilt
+
+    if source.kind == "specific":
+        if source.common_block_id is None:
+            raise DomainCommandError(
+                "COMMON_BLOCK_NOT_FOUND",
+                f"specific block {source.block_id} has no common_block_id",
+                {"block_id": str(source.block_id)},
+            )
+        common_source = get_context_block(conn, plan.uuid, source.common_block_id)
+        if common_source.kind != "common":
+            raise DomainCommandError(
+                "COMMON_BLOCK_NOT_FOUND",
+                "specific block does not reference a common block",
+                {
+                    "block_id": str(source.block_id),
+                    "common_block_id": str(source.common_block_id),
+                    "kind": common_source.kind,
+                },
+            )
+        rebuilt_common = common_cache.get(common_source.block_id)
+        if rebuilt_common is None:
+            rebuilt_common = rebuild_context_block(
+                conn,
+                plan,
+                common_source,
+                context_revision,
+                common_cache,
+            )
+        scope, delta = specific_delta(conn, plan.uuid, rebuilt_common, list(source.scope_concepts))
+        return store_context_block(
+            conn,
+            plan.uuid,
+            context_revision,
+            rebuilt_common.node_path,
+            rebuilt_common.child_level,
+            "specific",
+            scope,
+            delta,
+            rebuilt_common.block_id,
+            source.child_ref,
+        )
+
+    raise DomainCommandError(
+        "INVALID_CONTEXT_BLOCK_KIND",
+        f"context block kind is not rebuildable: {source.kind}",
+        {"block_id": str(source.block_id), "kind": source.kind},
+    )
 
 
 def _row_to_record(row) -> ContextBlockRecord:

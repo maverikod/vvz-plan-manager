@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 
 from plan_manager.views.branch import Branch
+from plan_manager.views.dependency_graph import load_steps, resolve_dependency_target
 
 
 def load_concept_rows(conn, plan_uuid) -> list[tuple[str, str, list[str]]]:
@@ -107,7 +108,7 @@ def coverage_diagnostics(
     }
 
 
-def reference_estimator(conn, branch: Branch, concept_rows) -> float:
+def reference_estimator(conn, branch: Branch, concept_rows, plan_nodes=None) -> float:
     """Deterministic reference-resolution estimator."""
     allowed_relation_types = {
         "uses",
@@ -119,6 +120,8 @@ def reference_estimator(conn, branch: Branch, concept_rows) -> float:
         "consumes",
     }
     concept_ids = {row[0] for row in concept_rows}
+    if plan_nodes is None:
+        plan_nodes = load_steps(conn, branch.plan_uuid)
     total = 0
     resolved = 0
 
@@ -127,17 +130,10 @@ def reference_estimator(conn, branch: Branch, concept_rows) -> float:
             total += 1
             if concept_id in concept_ids:
                 resolved += 1
-        for dep_step_id in step.depends_on:
+        for dep_ref in step.depends_on:
             total += 1
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT 1 FROM step WHERE plan_uuid = %s AND level = %s "
-                    "AND parent_step_uuid IS NOT DISTINCT FROM %s "
-                    "AND step_id = %s",
-                    (branch.plan_uuid, step.level, step.parent_step_uuid, dep_step_id),
-                )
-                if cur.fetchone() is not None:
-                    resolved += 1
+            if resolve_dependency_target(plan_nodes, step, dep_ref) is not None:
+                resolved += 1
 
     for relation in branch.gs.fields.get("relations", []):
         total += 1

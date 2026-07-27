@@ -8,11 +8,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_plan_completed
+from plan_manager.commands.runtime_record_command_helpers import perform_guarded_runtime_update
 from plan_manager.commands.text_merge import merge_text_field
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.bug_report_store import get_bug, update_bug
 
@@ -117,46 +117,45 @@ class BugUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                # Bug 3eec33f2: `plan` is optional -- the bug is always resolved
-                # directly by bug_id (globally unique). When plan IS supplied, the
-                # prior behavior (resolve + PLAN_COMPLETED check on THAT plan) is
-                # preserved unchanged; refuse_if_bug_plan_completed below always
-                # separately checks the bug's OWN source plan anchor regardless.
-                if plan is not None:
-                    resolve_plan(conn, plan)
-                bug_uuid = validate_uuid(bug_id)
-                existing = get_bug(conn, bug_uuid)
-                if existing is None:
-                    raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_id}")
-                refuse_if_bug_plan_completed(conn, existing)
-                # Bug 32755092: append=True joins the incoming text onto the
-                # currently stored value instead of replacing it (history-preserving
-                # mode); append=False (default) keeps the prior REPLACE semantics.
-                if detailed_description is not None:
-                    detailed_description = merge_text_field(existing.detailed_description, detailed_description, append)
-                if expected_behavior is not None:
-                    expected_behavior = merge_text_field(existing.expected_behavior, expected_behavior, append)
-                if actual_behavior is not None:
-                    actual_behavior = merge_text_field(existing.actual_behavior, actual_behavior, append)
-                if reproduction is not None:
-                    reproduction = merge_text_field(existing.reproduction, reproduction, append)
-                updated = update_bug(
-                    conn,
-                    bug_uuid,
-                    changed_by=changed_by,
-                    title=title,
-                    short_description=short_description,
-                    detailed_description=detailed_description,
-                    expected_behavior=expected_behavior,
-                    actual_behavior=actual_behavior,
-                    reproduction=reproduction,
-                    evidence=evidence,
-                    environment=environment,
-                    severity=severity,
-                    priority_nice=priority_nice,
-                    owner=owner,
-                )
-                return SuccessResult(data=updated.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=bug_id,
+                get_record=get_bug,
+                update_record=update_bug,
+                changed_by=changed_by,
+                not_found_code="BUG_NOT_FOUND",
+                not_found_message=f"bug not found: {bug_id}",
+                db_connect=db_connection,
+                update_fields={
+                    "title": title,
+                    "short_description": short_description,
+                    "detailed_description": detailed_description,
+                    "expected_behavior": expected_behavior,
+                    "actual_behavior": actual_behavior,
+                    "reproduction": reproduction,
+                    "evidence": evidence,
+                    "environment": environment,
+                    "severity": severity,
+                    "priority_nice": priority_nice,
+                    "owner": owner,
+                },
+                resolve_scope=(lambda conn: resolve_plan(conn, plan)) if plan is not None else None,
+                pre_update=lambda conn, existing, update_fields: refuse_if_bug_plan_completed(conn, existing),
+                before_store_update=lambda conn, entity_id, existing, update_fields: _merge_bug_update_text_fields(
+                    existing, update_fields, append
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _merge_bug_update_text_fields(existing: object, update_fields: dict[str, Any], append: bool) -> None:
+    """Apply append-aware merge semantics for bug free-text fields in-place."""
+    for field_name in (
+        "detailed_description",
+        "expected_behavior",
+        "actual_behavior",
+        "reproduction",
+    ):
+        incoming = update_fields.get(field_name)
+        if incoming is not None:
+            update_fields[field_name] = merge_text_field(getattr(existing, field_name), incoming, append)

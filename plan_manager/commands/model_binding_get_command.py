@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.model_binding_command_metadata import model_binding_metadata, BASE_PARAMETERS
-from plan_manager.domain.runtime_validation import validate_uuid
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_binding_store import get_model_binding
 
@@ -26,20 +30,11 @@ class ModelBindingGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "binding_uuid": {"description": "The binding_uuid identifier of the model_binding record.", "type": "string"},
-            },
-            "required": ["binding_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("binding_uuid", "The binding_uuid identifier of the model_binding record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "binding_uuid": {"description": "The binding_uuid identifier of the model_binding record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("binding_uuid", "The binding_uuid identifier of the model_binding record.")
         return_value = {"description": "The ModelBinding record.", "type": "object"}
         examples = [
             {"description": "Fetch a binding by its uuid.", "command": {"binding_uuid": "b6b6b6b6-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class ModelBindingGetCommand(Command):
 
     async def execute(self, binding_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(binding_uuid)
-                binding = get_model_binding(conn, parsed_uuid)
-                if binding is None:
-                    raise DomainCommandError("MODEL_BINDING_NOT_FOUND", f"model binding not found: {binding_uuid}")
-                return SuccessResult(data=binding.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=binding_uuid,
+                get_record=get_model_binding,
+                not_found_code="MODEL_BINDING_NOT_FOUND",
+                not_found_message=f"model binding not found: {binding_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

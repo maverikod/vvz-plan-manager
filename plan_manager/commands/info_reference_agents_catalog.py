@@ -212,8 +212,9 @@ def pagination_convention_reference() -> dict[str, Any]:
             "asserts the actual runtime response envelope keys "
             "{<entity>, total, limit, offset} for step_list, step_search, "
             "files_report, and step_xref via each command's execute() path. "
-            "No single test enumerates every list-bearing command in one "
-            "place; this reference is the closest thing to that index."
+            "tests/test_paginated_command_registry.py now pins the single "
+            "registry in plan_manager.commands.pagination_registry, so every "
+            "known list-bearing top-level surface is enumerated in one place."
         ),
     }
 
@@ -246,6 +247,8 @@ def crud_matrix() -> dict[str, Any]:
             "project_dependency": {"create": "project_dependency_add/project_dependency_discover", "read": "project_dependency_list/project_dependents", "update": "project_dependency_update/project_dependency_confirm (confirm raises a discovered edge's confidence to confirmed)", "delete": "project_dependency_remove (soft)"},
             "cascade_request": {"create": "todo_promote_to_cascade_request (the sole command that creates a cascade_request)", "read": "none exposed; read via export_runtime_overlay (C-034, 'cascade_requests' section, filtered by plan_uuid)", "update": "none", "delete": "none (supersede-immutable audit-trail record; the normative change it requests is carried out through the ordinary cascade discipline against the target HRS/MRS/GS/TS/AS artifact, not by mutating or deleting this record)"},
             "runtime_audit_log": {"create": "none (append-only; records are written only as the side effect of existing mutating commands via record_runtime_change)", "read": "audit_list", "update": "none", "delete": "none"},
+            "wish": {"create": "wish_create", "read": "wish_get/wish_list", "update": "wish_update", "delete": "wish_delete (soft by default; hard=true irreversible; linked calendar entries refuse with DELETE_BLOCKED; dry_run previews references)"},
+            "calendar_entry": {"create": "calendar_entry_create", "read": "calendar_entry_get/calendar_entry_list", "update": "calendar_entry_update", "delete": "calendar_entry_delete (soft by default; hard=true irreversible; dry_run previews references)"},
         },
     }
 
@@ -285,7 +288,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     ],
     "context_prompt": [
         "branch_prompt", "plan_prompt_chain", "context_compile", "context_common",
-        "context_specific", "context_bundle", "block_get", "block_list",
+        "context_specific", "context_bundle", "block_get", "block_rebuild", "block_list",
         "branch_dump", "branch_weak",
     ],
     "cascade": ["cascade_begin", "cascade_preview", "cascade_commit", "cascade_abort", "plan_unfreeze"],
@@ -296,6 +299,11 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "todo_create", "todo_get", "todo_list", "todo_update", "todo_reanchor",
         "todo_resolve", "todo_close", "todo_delete", "todo_link_add", "todo_link_remove",
         "todo_queue", "todo_promote_to_cascade_request",
+    ],
+    "wish": ["wish_create", "wish_get", "wish_list", "wish_update", "wish_delete"],
+    "calendar_entry": [
+        "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
+        "calendar_entry_update", "calendar_entry_delete",
     ],
     "runtime_link": [
         "runtime_link_add", "runtime_link_list", "runtime_link_remove",

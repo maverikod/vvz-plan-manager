@@ -9,9 +9,10 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
-from plan_manager.commands.errors import map_exception, DomainCommandError
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_todo_plan_completed
-from plan_manager.commands.todo_command_metadata import todo_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_record_command_helpers import perform_guarded_runtime_update
+from plan_manager.commands.todo_command_metadata import todo_metadata
 from plan_manager.domain.todo_status_transitions import guard_todo_transition
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.todo_status_store import transition_todo_status
@@ -102,26 +103,40 @@ class TodoUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                todo_uuid = uuid.UUID(todo)
-                existing = get_todo(conn, todo_uuid)
-                if existing is None:
-                    raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo}")
-                refuse_if_todo_plan_completed(conn, existing)
-                if status is not None:
-                    guard_todo_transition(existing.status, status)
-                    transition_todo_status(conn, todo_uuid, changed_by=changed_by, new_status=status)
-                record = update_todo(
-                    conn,
-                    todo_uuid,
-                    changed_by=changed_by,
-                    title=title,
-                    description=description,
-                    priority_nice=priority_nice,
-                    assigned_to=assigned_to,
-                    blocking_reason=blocking_reason,
-                    execution_result=execution_result,
-                )
-                return SuccessResult(data=record.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=todo,
+                get_record=get_todo,
+                update_record=update_todo,
+                changed_by=changed_by,
+                not_found_code="TODO_NOT_FOUND",
+                not_found_message=f"todo not found: {todo}",
+                db_connect=db_connection,
+                update_fields={
+                    "title": title,
+                    "description": description,
+                    "priority_nice": priority_nice,
+                    "assigned_to": assigned_to,
+                    "blocking_reason": blocking_reason,
+                    "execution_result": execution_result,
+                },
+                pre_update=lambda conn, existing, update_fields: refuse_if_todo_plan_completed(conn, existing),
+                before_store_update=lambda conn, entity_id, existing, update_fields: _apply_todo_status_transition(
+                    conn, entity_id, existing, changed_by, status
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _apply_todo_status_transition(
+    conn: object,
+    todo_uuid: uuid.UUID,
+    existing: object,
+    changed_by: str,
+    status: str | None,
+) -> None:
+    """Run todo status validation/transition before the store patch when requested."""
+    if status is None:
+        return
+    guard_todo_transition(existing.status, status)
+    transition_todo_status(conn, todo_uuid, changed_by=changed_by, new_status=status)

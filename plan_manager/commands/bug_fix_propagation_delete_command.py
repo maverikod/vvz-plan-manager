@@ -8,12 +8,11 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.bug_propagation_command_metadata import bug_propagation_metadata
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_completion_guard import refuse_if_bug_fix_propagation_plan_completed
-from plan_manager.domain.entity import EntityReferencedError
+from plan_manager.commands.runtime_delete_command_helpers import perform_runtime_delete
 from plan_manager.domain.bug_fix_propagation import BugFixPropagation
 from plan_manager.domain.runtime_validation import validate_uuid
-from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_hard_delete import hard_delete_bug_fix_propagation
 from plan_manager.storage.bug_fix_propagation_store import get_bug_fix_propagation, soft_delete_bug_fix_propagation
 
@@ -61,30 +60,21 @@ class BugFixPropagationDeleteCommand(Command):
     ) -> SuccessResult | ErrorResult:
         """Delete a bug fix propagation record (soft by default, hard when hard=true), or preview with dry_run=true."""
         try:
-            with db_connection() as conn:
-                propagation_uuid = validate_uuid(propagation_id)
-                record = get_bug_fix_propagation(conn, propagation_uuid)
-                if record is None:
-                    raise DomainCommandError("BUG_PROPAGATION_NOT_FOUND", f"bug propagation not found: {propagation_id}")
-                references = BugFixPropagation.crud_reference_counts(conn, propagation_uuid)
-                if dry_run:
-                    return SuccessResult(data={
-                        "dry_run": True,
-                        "would_delete": str(propagation_uuid),
-                        "mode": "hard" if hard else "soft",
-                        "blocked": bool(references),
-                        "references": references,
-                    })
-                refuse_if_bug_fix_propagation_plan_completed(conn, record)
-                if references:
-                    raise EntityReferencedError("bug_fix_propagation", propagation_uuid, references)
-                if hard:
-                    hard_delete_bug_fix_propagation(conn, propagation_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "hard", "deleted_uuid": str(propagation_uuid)}
-                else:
-                    deleted = soft_delete_bug_fix_propagation(conn, propagation_uuid, changed_by=changed_by)
-                    data = {"dry_run": False, "mode": "soft", "bug_fix_propagation": deleted.to_payload()}
-                return SuccessResult(data=data)
+            return perform_runtime_delete(
+                raw_entity_id=propagation_id,
+                changed_by=changed_by,
+                hard=hard,
+                dry_run=dry_run,
+                entity_cls=BugFixPropagation,
+                get_record=get_bug_fix_propagation,
+                soft_delete=soft_delete_bug_fix_propagation,
+                not_found_code="BUG_PROPAGATION_NOT_FOUND",
+                not_found_message=f"bug propagation not found: {propagation_id}",
+                payload_key="bug_fix_propagation",
+                entity_label="bug_fix_propagation",
+                pre_delete=refuse_if_bug_fix_propagation_plan_completed,
+                hard_delete=hard_delete_bug_fix_propagation,
+            )
         except Exception as exc:
             return map_exception(exc)
 

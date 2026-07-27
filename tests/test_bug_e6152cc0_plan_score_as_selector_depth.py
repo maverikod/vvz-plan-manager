@@ -102,7 +102,9 @@ CONCEPT_ROWS = [("C-001", "concept one definition", ["{L1}"])]
 # (bug e6152cc0's crash site) -> the group loop -> the branch.depth-keyed
 # scope_label tail (bug e197b94a's crash site, same missing-depth failure
 # mode). The two conn-driven coverage/context checks are stubbed for the same
-# reason load_tree is: this test supplies no real database connection.
+# reason load_tree is: this test supplies no real database connection. The
+# object-axis coverage helpers are stubbed too because they now consult the
+# DB-backed object inventory.
 _NO_FINDINGS_CHECKS = [
     "check_parse_required_fields",
     "check_parse_inputs_outputs",
@@ -123,6 +125,9 @@ _NO_FINDINGS_CHECKS = [
     "check_references_source_labels",
     "check_dependencies_same_file_order",
     "check_coverage_gs",
+    "check_object_multiple_owner_keys",
+    "check_object_multiple_modules",
+    "check_object_concepts_not_covered",
     "check_embedded_code_parses",
     "check_context_coverage_common_current",
     "check_context_coverage_specific_subset",
@@ -142,6 +147,7 @@ def _patch_branch_flow(monkeypatch, gs: Step, ts: Step, atomic: Step) -> None:
         monkeypatch.setattr(gate, name, lambda *a, **k: [])
     monkeypatch.setattr(gate, "current_head_revision", lambda conn, plan_uuid: uuid4())
     monkeypatch.setattr(index, "load_concept_rows", lambda conn, plan_uuid: CONCEPT_ROWS)
+    monkeypatch.setattr(index, "load_steps", lambda conn, plan_uuid: steps)
     monkeypatch.setattr(index, "current_head_revision", lambda conn, plan_uuid: uuid4())
 
 

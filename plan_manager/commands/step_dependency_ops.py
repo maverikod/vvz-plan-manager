@@ -28,6 +28,7 @@ from plan_manager.verify.verdict import current_head_revision
 from plan_manager.views.dependency_graph import (
     build_edges,
     load_steps,
+    resolve_dependency_target,
     topological_order,
     waves,
 )
@@ -63,17 +64,17 @@ def _find_sibling(nodes: dict[uuid.UUID, Step], target: Step, bare: str) -> Step
 def resolve_dependency_bare(
     nodes: dict[uuid.UUID, Step], target: Step, ref: str
 ) -> str:
-    """Resolve a dependency reference to the bare sibling step_id it names.
+    """Resolve a dependency reference to its stored depends_on representation.
 
-    Accepts a UUID, canonical path, or bare step_id. Enforces that the named
-    step is a sibling of ``target`` (same parent, same level) and is not the
-    target itself.
+    Accepts a UUID, canonical path, or bare step_id. Legacy sibling
+    dependencies keep storing the bare sibling ``step_id``. Explicit
+    cross-branch atomic dependencies are stored as canonical step paths.
 
     Raises:
         DomainCommandError: DEPENDENCY_STEP_NOT_FOUND when the reference does
             not resolve, AMBIGUOUS_STEP_ID when a bare id is ambiguous,
             SELF_DEPENDENCY when it resolves to the target, and
-            INVALID_DEPENDENCY_SCOPE when it is not a sibling of the target.
+            INVALID_DEPENDENCY_SCOPE when it is outside the supported scope.
     """
     dep = resolve_step_ref(nodes, ref, not_found_code="DEPENDENCY_STEP_NOT_FOUND")
     if dep.uuid == target.uuid:
@@ -82,34 +83,46 @@ def resolve_dependency_bare(
             f"a step cannot depend on itself: {canonical_step_path(nodes, target)}",
             {"step": canonical_step_path(nodes, target)},
         )
-    if dep.parent_step_uuid != target.parent_step_uuid or dep.level != target.level:
+    if dep.parent_step_uuid == target.parent_step_uuid and dep.level == target.level:
+        return dep.step_id
+    if dep.level == target.level == 5:
+        return canonical_step_path(nodes, dep)
+    if dep.level != target.level:
         raise DomainCommandError(
             "INVALID_DEPENDENCY_SCOPE",
-            "a dependency must reference a sibling step (same parent and level); "
-            "cross-level and cross-parent dependencies are not allowed in the MVP",
+            "a dependency must stay on the same step level; only atomic "
+            "steps admit cross-branch dependencies outside one parent scope",
             {
                 "step": canonical_step_path(nodes, target),
                 "dependency": canonical_step_path(nodes, dep),
             },
         )
-    return dep.step_id
+    raise DomainCommandError(
+        "INVALID_DEPENDENCY_SCOPE",
+        "a non-sibling dependency is allowed only between atomic steps; "
+        "global and tactical steps remain sibling-scoped",
+        {
+            "step": canonical_step_path(nodes, target),
+            "dependency": canonical_step_path(nodes, dep),
+        },
+    )
 
 
 def _resolve_for_remove(
-    nodes: dict[uuid.UUID, Step], target: Step, ref: str
+    nodes: dict[uuid.UUID, Step], target: Step, ref: str, current: list[str]
 ) -> str:
     """Like resolve_dependency_bare but tolerant of a dangling bare id.
 
     Removal must stay usable even when the referenced sibling no longer
-    exists: a bare id matching the target level's pattern is returned as-is
-    so a stale entry can still be cleared.
+    exists: a stale stored reference already present in ``current`` is returned
+    as-is so it can still be cleared.
     """
     try:
         return resolve_dependency_bare(nodes, target, ref)
     except DomainCommandError as exc:
-        if exc.code == "DEPENDENCY_STEP_NOT_FOUND" and STEP_ID_PATTERNS[
-            target.level
-        ].match(ref):
+        if exc.code == "DEPENDENCY_STEP_NOT_FOUND" and ref in current:
+            return ref
+        if exc.code == "DEPENDENCY_STEP_NOT_FOUND" and STEP_ID_PATTERNS[target.level].match(ref):
             return ref
         raise
 
@@ -148,7 +161,7 @@ def compute_op_list(
     if op == "remove":
         new = list(current)
         for r in refs:
-            bare = _resolve_for_remove(nodes, target, r)
+            bare = _resolve_for_remove(nodes, target, r, new)
             new = [d for d in new if d != bare]
         return new
     raise DomainCommandError(
@@ -164,23 +177,24 @@ def compute_op_list(
 def render_depends(
     nodes: dict[uuid.UUID, Step], target: Step, bares: list[str]
 ) -> list[str]:
-    """Render bare sibling ids as canonical paths for command output."""
+    """Render stored dependency refs as canonical paths for command output."""
     out: list[str] = []
-    for bare in bares:
-        sibling = _find_sibling(nodes, target, bare)
-        out.append(canonical_step_path(nodes, sibling) if sibling else bare)
+    for stored_ref in bares:
+        dep = resolve_dependency_target(nodes, target, stored_ref)
+        out.append(canonical_step_path(nodes, dep) if dep is not None else stored_ref)
     return out
 
 
 def dependents_paths(nodes: dict[uuid.UUID, Step], target: Step) -> list[str]:
-    """Canonical paths of sibling steps that depend on ``target``."""
+    """Canonical paths of steps that depend on ``target``."""
     result: list[str] = []
     for step in nodes.values():
-        if (
-            step.uuid != target.uuid
-            and step.parent_step_uuid == target.parent_step_uuid
-            and step.level == target.level
-            and target.step_id in step.depends_on
+        if step.uuid == target.uuid:
+            continue
+        if any(
+            (dep := resolve_dependency_target(nodes, step, stored_ref)) is not None
+            and dep.uuid == target.uuid
+            for stored_ref in step.depends_on
         ):
             result.append(canonical_step_path(nodes, step))
     return sorted(result)

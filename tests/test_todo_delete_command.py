@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from plan_manager.commands import todo_delete_command
+from plan_manager.commands import runtime_delete_command_helpers, todo_delete_command
 from plan_manager.domain.todo import TodoItem
 
 TODO_UUID = uuid.uuid4()
@@ -146,7 +146,7 @@ def _fake_db(blocked_at: dict[int, int] | None = None):
 
 
 def _install_fakes(monkeypatch, *, blocked_at: dict[int, int] | None = None, soft_delete_result: TodoItem | None = None) -> None:
-    monkeypatch.setattr(todo_delete_command, "db_connection", lambda: _fake_db(blocked_at))
+    monkeypatch.setattr(runtime_delete_command_helpers, "db_connection", lambda: _fake_db(blocked_at))
     monkeypatch.setattr(todo_delete_command, "get_todo", lambda conn, todo_uuid: _todo_item())
     if soft_delete_result is not None:
         monkeypatch.setattr(
@@ -247,7 +247,7 @@ def test_todo_delete_blocked_by_live_reference_refuses_non_dry_run_delete(monkey
 def test_todo_delete_reports_todo_not_found_for_missing_todo(monkeypatch) -> None:
     """Sanity check on the sibling branch untouched by this fix: a nonexistent todo
     still reports TODO_NOT_FOUND, not KeyError."""
-    monkeypatch.setattr(todo_delete_command, "db_connection", lambda: _fake_db())
+    monkeypatch.setattr(runtime_delete_command_helpers, "db_connection", lambda: _fake_db())
     monkeypatch.setattr(todo_delete_command, "get_todo", lambda conn, todo_uuid: None)
 
     result = asyncio.run(

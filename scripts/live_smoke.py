@@ -112,6 +112,12 @@ _CLIENT_SRC = REPO_ROOT / "client"
 if str(_CLIENT_SRC) not in sys.path:
     sys.path.insert(0, str(_CLIENT_SRC))
 
+from live_smoke_tests import LIVE_SMOKE_TEST_KEYS
+from live_smoke_tests import LIVE_SMOKE_TEST_SPECS
+from live_smoke_tests import format_live_smoke_test_listing
+from live_smoke_tests import get_live_smoke_test_spec
+from live_smoke_tests import resolve_selected_test_specs
+
 PREFIX = "live-smoke-"
 DEFAULT_PROJECT_ID = "f06b7269-cc9c-4293-886b-24984e4033ba"
 
@@ -200,6 +206,12 @@ class Summary:
 def compute_summary(results: list[CheckResult]) -> Summary:
     """Build a Summary from a flat list of CheckResult (pure, no network)."""
     return Summary(results=list(results))
+
+
+def has_failures(results: list[CheckResult]) -> bool:
+    """Return True iff any result in the batch is a failure."""
+
+    return any(r.status == STATUS_FAIL for r in results)
 
 
 # --------------------------------------------------------------------------
@@ -406,6 +418,12 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         # run_r19_bug_delete_full_crud_lifecycle, and also used for cleanup
         # by R13/R16/R17's finally blocks.
         "bug_delete",
+        # R27 runtime work-layer CRUD: live lifecycle for the new wish and
+        # calendar_entry surfaces, exercised end-to-end by
+        # run_r27_runtime_work_layer_lifecycle below.
+        "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
+        "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
+        "calendar_entry_update", "calendar_entry_delete",
     }
 )
 
@@ -450,6 +468,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "context_compile": "requires a populated concept scope beyond the minimal throwaway lifecycle",
     "context_specific": "requires a common_block_id and concept scope beyond the minimal throwaway lifecycle",
     "context_bundle": "requires a populated children/concept scope beyond the minimal throwaway lifecycle",
+    "block_rebuild": "mutates stored derived context-block artifacts; not exercised outside a dedicated stale-block refresh scenario",
     "branch_prompt": "requires a fully-populated GS/TS/AS branch; out of scope for the minimal throwaway lifecycle",
     "plan_prompt_chain": "requires a populated authoring branch; out of scope for the minimal throwaway lifecycle",
     "step_prompt_verify": "verifies a frozen atomic-step prompt hash; no frozen plan exists in this pass",
@@ -1067,14 +1086,17 @@ async def run_tier1(client: Any, catalog_names: list[str]) -> list[CheckResult]:
         ok, schema = await call(client, "help", {"cmdname": name})
         if not ok:
             results.append(CheckResult("1", f"help({name})", STATUS_FAIL, str(schema)))
-            continue
+            break
         has_schema = isinstance(schema, dict) and bool(schema.get("schema") or schema.get("metadata"))
-        results.append(
-            CheckResult(
-                "1", f"help({name})", STATUS_PASS if has_schema else STATUS_FAIL,
-                "" if has_schema else f"empty/malformed help payload: {schema!r}",
-            )
+        check = CheckResult(
+            "1",
+            f"help({name})",
+            STATUS_PASS if has_schema else STATUS_FAIL,
+            "" if has_schema else f"empty/malformed help payload: {schema!r}",
         )
+        results.append(check)
+        if check.status == STATUS_FAIL:
+            break
     return results
 
 
@@ -1084,7 +1106,10 @@ async def run_tier2_static(client: Any, catalog_names: frozenset[str]) -> list[C
         if name not in catalog_names:
             continue
         ok, res = await call(client, name, params)
-        results.append(CheckResult("2", name, STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        check = CheckResult("2", name, STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res))
+        results.append(check)
+        if check.status == STATUS_FAIL:
+            break
     return results
 
 
@@ -1100,9 +1125,15 @@ async def run_tier2_scoped(client: Any, catalog_names: frozenset[str], entities:
         ok, res = await call(client, name, params)
         if name in GATE_RED_EXPECTED:
             status, detail = interpret_gate_red_probe(ok, res)
-            results.append(CheckResult("2", f"{name}(gate_red_contract)", status, detail))
+            check = CheckResult("2", f"{name}(gate_red_contract)", status, detail)
+            results.append(check)
+            if check.status == STATUS_FAIL:
+                break
             continue
-        results.append(CheckResult("2", name, STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        check = CheckResult("2", name, STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res))
+        results.append(check)
+        if check.status == STATUS_FAIL:
+            break
     return results
 
 
@@ -4830,36 +4861,294 @@ async def run_r26_todo_queue_anchor_plan_scoping(client: Any) -> list[CheckResul
     return results
 
 
+R27_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the runtime work-layer CRUD surface for wish/calendar_entry "
+    "-- redeploy pending"
+)
+
+R27_REQUIRED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
+        "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
+        "calendar_entry_update", "calendar_entry_delete",
+    }
+)
+
+
+async def run_r27_runtime_work_layer_lifecycle(
+    client: Any,
+    catalog_names: frozenset[str],
+    project_id: str,
+) -> list[CheckResult]:
+    """Runtime work-layer CRUD lifecycle: wish + calendar_entry.
+
+    Marker-gated on the full command surface being present in the live
+    catalog, mirroring R7/R9's grouped "skip pre-deploy, exercise
+    post-deploy" convention.
+
+    Recipe:
+      1. wish_create(project anchor) -> wish_get -> wish_list(project,
+         active_only, limit) -> wish_update(status=planned).
+      2. calendar_entry_create(project anchor, linked to that wish) ->
+         calendar_entry_get -> calendar_entry_list(project, wish, day
+         window, limit) -> calendar_entry_update(status=in_progress).
+      3. wish_delete(dry_run=true) proves the inbound-reference guard is
+         live while the calendar entry still points at it.
+      4. calendar_entry_delete(hard=true) -> wish_delete(hard=true).
+
+    Cleanup is top-level try/finally: if a mid-sequence failure leaves
+    either row alive, the finally block hard-deletes the calendar entry
+    first, then the wish, so the reference guard is respected even during
+    cleanup.
+    """
+    if not R27_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R27_REQUIRED_COMMANDS - catalog_names)
+        return [
+            CheckResult(
+                "4",
+                "R27_runtime_work_layer_lifecycle",
+                STATUS_SKIP,
+                f"{R27_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        ]
+
+    results: list[CheckResult] = []
+    wish_uuid: Optional[str] = None
+    calendar_entry_uuid: Optional[str] = None
+    try:
+        ok, res = await call(
+            client,
+            "wish_create",
+            {
+                "title": unique_suffix("r27-wish"),
+                "description": "R27 live CRUD probe for the runtime work layer.",
+                "kind": "feature",
+                "priority_nice": -4,
+                "created_by": "live-smoke",
+                "anchor_type": "project",
+                "anchor_project_id": project_id,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("wish_uuid"):
+            results.append(CheckResult("4", "R27_wish_create", STATUS_FAIL, str(res)))
+            return results
+        wish_uuid = res["wish_uuid"]
+        results.append(CheckResult("4", "R27_wish_create", STATUS_PASS, f"uuid={wish_uuid}"))
+
+        ok, res = await call(client, "wish_get", {"wish": wish_uuid})
+        wish_get_ok = ok and isinstance(res, dict) and res.get("wish_uuid") == wish_uuid
+        results.append(CheckResult("4", "R27_wish_get", STATUS_PASS if wish_get_ok else STATUS_FAIL, "" if wish_get_ok else str(res)))
+        if not wish_get_ok:
+            return results
+
+        ok, res = await call(client, "wish_list", {"project": project_id, "active_only": True, "limit": 5})
+        wish_list_ok = (
+            ok and isinstance(res, dict) and isinstance(res.get("wishes"), list)
+            and isinstance(res.get("total"), int) and res.get("limit") == 5 and res.get("offset") == 0
+            and any(isinstance(row, dict) and row.get("wish_uuid") == wish_uuid for row in res["wishes"])
+        )
+        results.append(CheckResult("4", "R27_wish_list", STATUS_PASS if wish_list_ok else STATUS_FAIL, "" if wish_list_ok else str(res)))
+        if not wish_list_ok:
+            return results
+
+        ok, res = await call(client, "wish_update", {"wish": wish_uuid, "changed_by": "live-smoke", "status": "planned"})
+        wish_update_ok = ok and isinstance(res, dict) and res.get("status") == "planned"
+        results.append(CheckResult("4", "R27_wish_update", STATUS_PASS if wish_update_ok else STATUS_FAIL, "" if wish_update_ok else str(res)))
+        if not wish_update_ok:
+            return results
+
+        ok, res = await call(
+            client,
+            "calendar_entry_create",
+            {
+                "title": unique_suffix("r27-calendar"),
+                "description": "R27 linked calendar entry for the runtime work-layer lifecycle.",
+                "status": "planned",
+                "start_date": "2026-07-27",
+                "end_date": "2026-07-28",
+                "created_by": "live-smoke",
+                "anchor_type": "project",
+                "anchor_project_id": project_id,
+                "wish": wish_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("calendar_entry_uuid"):
+            results.append(CheckResult("4", "R27_calendar_entry_create", STATUS_FAIL, str(res)))
+            return results
+        calendar_entry_uuid = res["calendar_entry_uuid"]
+        results.append(CheckResult("4", "R27_calendar_entry_create", STATUS_PASS, f"uuid={calendar_entry_uuid}"))
+
+        ok, res = await call(client, "calendar_entry_get", {"calendar_entry": calendar_entry_uuid})
+        entry_get_ok = ok and isinstance(res, dict) and res.get("calendar_entry_uuid") == calendar_entry_uuid
+        results.append(CheckResult("4", "R27_calendar_entry_get", STATUS_PASS if entry_get_ok else STATUS_FAIL, "" if entry_get_ok else str(res)))
+        if not entry_get_ok:
+            return results
+
+        ok, res = await call(
+            client,
+            "calendar_entry_list",
+            {"project": project_id, "wish": wish_uuid, "day_from": "2026-07-27", "day_to": "2026-07-28", "limit": 5},
+        )
+        entry_list_ok = (
+            ok and isinstance(res, dict) and isinstance(res.get("calendar_entries"), list)
+            and isinstance(res.get("total"), int) and res.get("limit") == 5 and res.get("offset") == 0
+            and any(isinstance(row, dict) and row.get("calendar_entry_uuid") == calendar_entry_uuid for row in res["calendar_entries"])
+        )
+        results.append(CheckResult("4", "R27_calendar_entry_list", STATUS_PASS if entry_list_ok else STATUS_FAIL, "" if entry_list_ok else str(res)))
+        if not entry_list_ok:
+            return results
+
+        ok, res = await call(
+            client,
+            "calendar_entry_update",
+            {"calendar_entry": calendar_entry_uuid, "changed_by": "live-smoke", "status": "in_progress"},
+        )
+        entry_update_ok = ok and isinstance(res, dict) and res.get("status") == "in_progress"
+        results.append(CheckResult("4", "R27_calendar_entry_update", STATUS_PASS if entry_update_ok else STATUS_FAIL, "" if entry_update_ok else str(res)))
+        if not entry_update_ok:
+            return results
+
+        ok, res = await call(client, "wish_delete", {"wish": wish_uuid, "changed_by": "live-smoke", "dry_run": True})
+        wish_delete_preview_ok = (
+            ok and isinstance(res, dict) and res.get("dry_run") is True
+            and res.get("would_delete") == wish_uuid and res.get("mode") == "soft"
+            and res.get("blocked") is True
+            and isinstance(res.get("references"), dict)
+            and res["references"].get("calendar_entry.wish_uuid", 0) >= 1
+        )
+        results.append(
+            CheckResult(
+                "4",
+                "R27_wish_delete(dry_run_blocked_by_calendar_entry)",
+                STATUS_PASS if wish_delete_preview_ok else STATUS_FAIL,
+                "" if wish_delete_preview_ok else str(res),
+            )
+        )
+        if not wish_delete_preview_ok:
+            return results
+
+        ok, res = await call(
+            client,
+            "calendar_entry_delete",
+            {"calendar_entry": calendar_entry_uuid, "changed_by": "live-smoke", "hard": True},
+        )
+        entry_delete_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == calendar_entry_uuid
+        results.append(CheckResult("4", "R27_calendar_entry_delete(hard)", STATUS_PASS if entry_delete_ok else STATUS_FAIL, "" if entry_delete_ok else str(res)))
+        if not entry_delete_ok:
+            return results
+        calendar_entry_uuid = None
+
+        ok, res = await call(client, "wish_delete", {"wish": wish_uuid, "changed_by": "live-smoke", "hard": True})
+        wish_delete_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == wish_uuid
+        results.append(CheckResult("4", "R27_wish_delete(hard)", STATUS_PASS if wish_delete_ok else STATUS_FAIL, "" if wish_delete_ok else str(res)))
+        if not wish_delete_ok:
+            return results
+        wish_uuid = None
+    finally:
+        if calendar_entry_uuid is not None:
+            ok, res = await call(
+                client,
+                "calendar_entry_delete",
+                {"calendar_entry": calendar_entry_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            results.append(CheckResult("4", "R27_calendar_entry_delete(hard_cleanup)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if wish_uuid is not None:
+            ok, res = await call(client, "wish_delete", {"wish": wish_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R27_wish_delete(hard_cleanup)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
+async def run_selected_tests(
+    client: Any,
+    catalog_names: frozenset[str],
+    args: argparse.Namespace,
+    selected_specs: Optional[list[Any]] = None,
+) -> list[CheckResult]:
+    """Run the selected Tier-4 regression tests in registry order.
+
+    Stops on the first failing test group and returns only the accumulated
+    results up to that point.
+    """
+
+    specs = selected_specs if selected_specs is not None else resolve_selected_test_specs(args.test)
+    results: list[CheckResult] = []
+    for spec in specs:
+        runner = globals().get(spec.function_name)
+        if runner is None:
+            results.append(
+                CheckResult(
+                    "4",
+                    f"{spec.key}_missing_runner",
+                    STATUS_FAIL,
+                    f"no runner named {spec.function_name}",
+                )
+            )
+            break
+        kwargs: dict[str, Any] = {}
+        if spec.needs_catalog:
+            kwargs["catalog_names"] = catalog_names
+        if spec.needs_project:
+            kwargs["project_id"] = args.project
+        batch = await runner(client, **kwargs)
+        results += batch
+        if has_failures(batch):
+            break
+    return results
+
+
 async def run_pipeline(args: argparse.Namespace) -> Summary:
     from plan_manager_client.client import PlanManagerClient
 
     reset_dispatch_log()
     config = build_config(args)
     client = PlanManagerClient(**config.to_jsonrpc_kwargs())
+    selected_specs = resolve_selected_test_specs(args.test)
 
     results: list[CheckResult] = []
-    results += await run_tier0(client, args.expect_version)
-    if any(r.status == STATUS_FAIL and r.name == "server_reachable" for r in results):
+    tier0_results = await run_tier0(client, args.expect_version)
+    results += tier0_results
+    if any(r.status == STATUS_FAIL and r.name == "server_reachable" for r in tier0_results):
+        return compute_summary(results)
+    if has_failures(tier0_results):
         return compute_summary(results)
 
-    # Bug 507b74ae bounded help()'s no-cmdname default to one page (bounded
-    # default 50, max 200 rows); every tier below needs the FULL catalog, so
-    # fetch_full_help_catalog pages through it (single iteration, unchanged,
-    # against a server predating the fix -- see its own docstring).
-    ok, catalog, help_all = await fetch_full_help_catalog(client)
-    if not ok or not catalog:
-        results.append(CheckResult("1", "catalog_fetch", STATUS_FAIL, str(help_all)))
-        return compute_summary(results)
-    catalog_names = frozenset(catalog.keys())
-    results.append(CheckResult("1", "catalog_fetch", STATUS_PASS, f"{len(catalog_names)} commands"))
+    needs_catalog = (not args.test) or any(spec.needs_catalog for spec in selected_specs)
 
-    results += await run_tier1(client, sorted(catalog_names))
+    catalog_names: frozenset[str] = frozenset()
+    if needs_catalog:
+        # Bug 507b74ae bounded help()'s no-cmdname default to one page (bounded
+        # default 50, max 200 rows); every tier below needs the FULL catalog, so
+        # fetch_full_help_catalog pages through it (single iteration, unchanged,
+        # against a server predating the fix -- see its own docstring).
+        ok, catalog, help_all = await fetch_full_help_catalog(client)
+        if not ok or not catalog:
+            results.append(CheckResult("1", "catalog_fetch", STATUS_FAIL, str(help_all)))
+            return compute_summary(results)
+        catalog_names = frozenset(catalog.keys())
+        results.append(CheckResult("1", "catalog_fetch", STATUS_PASS, f"{len(catalog_names)} commands"))
+
+    if args.test:
+        selected_results = await run_selected_tests(client, catalog_names, args, selected_specs)
+        results += selected_results
+        if not has_failures(selected_results):
+            fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
+            if fallback_note is not None:
+                results.append(CheckResult("diag", "dispatch_fallbacks_used", STATUS_PASS, fallback_note))
+        return compute_summary(results)
+
+    tier1_results = await run_tier1(client, sorted(catalog_names))
+    results += tier1_results
+    if has_failures(tier1_results):
+        return compute_summary(results)
 
     classification = classify_catalog(catalog_names)
     for name, reason in classification.skipped:
         results.append(CheckResult("2", name, STATUS_SKIP, reason))
 
-    results += await run_tier2_static(client, catalog_names)
+    tier2_static_results = await run_tier2_static(client, catalog_names)
+    results += tier2_static_results
+    if has_failures(tier2_static_results):
+        return compute_summary(results)
 
     # --- Tier 3 CREATE phase: every throwaway entity Tier-2-scoped reads
     # need is created here and kept ALIVE until those reads have run (third
@@ -4892,16 +5181,18 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
 
     entities["project"] = args.project
 
-    results += plan_step_results
-    results += todo_create_results
-    results += bug_create_results
+    tier3_create_results = plan_step_results + todo_create_results + bug_create_results
+    results += tier3_create_results
 
-    # --- Tier 2 scoped probes run WHILE every entity above is still alive.
-    results += await run_tier2_scoped(client, catalog_names, entities)
+    tier2_scoped_results: list[CheckResult] = []
+    if not has_failures(tier3_create_results):
+        # --- Tier 2 scoped probes run WHILE every entity above is still alive.
+        tier2_scoped_results = await run_tier2_scoped(client, catalog_names, entities)
+        results += tier2_scoped_results
 
     # --- Tier 3 CLEANUP phase: now it is safe to tear everything down.
-    results += await run_tier3_plan_step_cleanup(client, plan_uuid, plan_name)
-    results += await run_tier3_todo_cleanup(client, todo_uuid)
+    cleanup_results = await run_tier3_plan_step_cleanup(client, plan_uuid, plan_name)
+    cleanup_results += await run_tier3_todo_cleanup(client, todo_uuid)
     # bug_delete (todo 9b09c9b0) now exists: hard-delete the child fix, then
     # the bug itself, BEFORE the plan -- bug_report.source_plan_uuid carries
     # no FK/cascade of its own, so the plan hard delete below never touched
@@ -4910,40 +5201,21 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
     # would otherwise block the bug's own hard delete, hence fix-then-bug.
     if bug_fix_uuid is not None:
         ok, res = await call(client, "bug_fix_delete", {"bug_fix": bug_fix_uuid, "changed_by": "live-smoke", "hard": True})
-        results.append(CheckResult("3", "bug_fix_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        cleanup_results.append(CheckResult("3", "bug_fix_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     if bug_uuid is not None:
         ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
-        results.append(CheckResult("3", "bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        cleanup_results.append(CheckResult("3", "bug_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
     if bug_plan_uuid is not None:
         ok, res = await call(client, "plan_delete", {"plan": bug_plan_uuid, "hard": True})
-        results.append(CheckResult("3", "bug_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        cleanup_results.append(CheckResult("3", "bug_plan_delete(hard)", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    results += cleanup_results
+    if has_failures(tier3_create_results) or has_failures(tier2_scoped_results) or has_failures(cleanup_results):
+        return compute_summary(results)
 
-    results += await run_r1_todo_anchor_none(client)
-    results += await run_r2_same_file_order_ambiguity(client)
-    results += await run_r3_project_view(client, catalog_names, args.project)
-    results += await run_r4_ts_inputs_outputs_schema(client)
-    results += await run_r5_step_id_selector_docs(client)
-    results += await run_r6_write_intent_negation(client)
-    results += await run_r7_agent_config_lifecycle(client, catalog_names)
-    results += await run_r8_gs_coverage_live_cascade_read(client)
-    results += await run_r9_plan_completion_lock(client, catalog_names)
-    results += await run_r10_branch_scope_hierarchical_selectors(client)
-    results += await run_r11_list_view_projection(client)
-    results += await run_r12_response_size_and_cascade_tip_batch(client)
-    results += await run_r13_bug_list_project_view_bounded(client, args.project)
-    results += await run_r14_plan_score_as_selector_depth(client)
-    results += await run_r15_response_size_pagination_batch(client)
-    results += await run_r16_bug_update_append_history(client)
-    results += await run_r17_bug_optional_plan_project_anchor(client, args.project)
-    results += await run_r18_context_bundle_child_block_identity(client)
-    results += await run_r19_bug_delete_full_crud_lifecycle(client)
-    results += await run_r20_bug_impact_optional_plan_a5ec9c1a(client, args.project)
-    results += await run_r21_typed_invalid_params_concept_add(client)
-    results += await run_r22_typed_invalid_params_comment_get(client)
-    results += await run_r23_typed_invalid_params_review_result_get(client)
-    results += await run_r24_command_catalog_dump_pagination(client)
-    results += await run_r25_list_summary_default_drops_free_text(client)
-    results += await run_r26_todo_queue_anchor_plan_scoping(client)
+    selected_results = await run_selected_tests(client, catalog_names, args, selected_specs)
+    results += selected_results
+    if has_failures(selected_results):
+        return compute_summary(results)
 
     fallback_note = summarize_dispatch_fallbacks(DISPATCH_LOG)
     if fallback_note is not None:
@@ -4965,12 +5237,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--expect-version", default=None, help="fail Tier 0 if info's package_version differs")
     parser.add_argument("--project", default=DEFAULT_PROJECT_ID, help="project UUID used for project-scoped reads (default: this project's own id)")
+    parser.add_argument("--list-tests", action="store_true", help="list selectable Tier-4 live-smoke tests and exit")
+    parser.add_argument("--test", action="append", choices=LIVE_SMOKE_TEST_KEYS, default=[], help="run only the selected Tier-4 test key (repeatable)")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON summary instead of text")
     return parser
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.list_tests:
+        print(format_live_smoke_test_listing())
+        return 0
     summary = asyncio.run(run_pipeline(args))
     if args.json:
         payload = summary.to_dict()

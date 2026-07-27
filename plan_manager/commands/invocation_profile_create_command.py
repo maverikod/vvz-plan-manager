@@ -9,6 +9,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.invocation_profile_command_metadata import invocation_profile_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import create_invocation_profile
@@ -139,42 +140,38 @@ class InvocationProfileCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                plan_uuid = validate_uuid(plan) if plan is not None else None
-                branch_step_uuid = validate_uuid(branch_step) if branch_step is not None else None
-                revision_uuid = validate_uuid(revision) if revision is not None else None
-                step_uuid = validate_uuid(step) if step is not None else None
-                dialogue_chain_uuid = validate_uuid(dialogue_chain_ref) if dialogue_chain_ref is not None else None
-                profile = create_invocation_profile(
-                    conn,
-                    scope=scope,
-                    created_by=created_by,
-                    role=role,
-                    plan_uuid=plan_uuid,
-                    spec_level=spec_level,
-                    branch_step_uuid=branch_step_uuid,
-                    revision_uuid=revision_uuid,
-                    step_uuid=step_uuid,
-                    step_path=step_path,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_output_tokens=max_output_tokens,
-                    reasoning_effort=reasoning_effort,
-                    context_window_budget=context_window_budget,
-                    timeout=timeout,
-                    retry_policy=retry_policy,
-                    concurrency=concurrency,
-                    rate_hint=rate_hint,
-                    response_format=response_format,
-                    response_schema=response_schema,
-                    max_tool_iterations=max_tool_iterations,
-                    per_call_timeout=per_call_timeout,
-                    execution_mode=execution_mode,
-                    token_budget=token_budget,
-                    cost_budget=cost_budget,
-                    dialogue_chain_ref=dialogue_chain_uuid,
-                    active=active,
-                )
-                return SuccessResult(data=profile.to_payload())
+            return perform_runtime_create(
+                create_record=create_invocation_profile,
+                db_connect=db_connection,
+                create_fields={
+                    "scope": scope,
+                    "created_by": created_by,
+                    "role": role,
+                    "plan_uuid": validate_uuid(plan) if plan is not None else None,
+                    "spec_level": spec_level,
+                    "branch_step_uuid": validate_uuid(branch_step) if branch_step is not None else None,
+                    "revision_uuid": validate_uuid(revision) if revision is not None else None,
+                    "step_uuid": validate_uuid(step) if step is not None else None,
+                    "step_path": step_path,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_output_tokens": max_output_tokens,
+                    "reasoning_effort": reasoning_effort,
+                    "context_window_budget": context_window_budget,
+                    "timeout": timeout,
+                    "retry_policy": retry_policy,
+                    "concurrency": concurrency,
+                    "rate_hint": rate_hint,
+                    "response_format": response_format,
+                    "response_schema": response_schema,
+                    "max_tool_iterations": max_tool_iterations,
+                    "per_call_timeout": per_call_timeout,
+                    "execution_mode": execution_mode,
+                    "token_budget": token_budget,
+                    "cost_budget": cost_budget,
+                    "dialogue_chain_ref": validate_uuid(dialogue_chain_ref) if dialogue_chain_ref is not None else None,
+                    "active": active,
+                },
+            )
         except Exception as exc:
             return map_exception(exc)

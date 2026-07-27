@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from plan_manager.commands import bug_fix_propagation_delete_command
+from plan_manager.commands import bug_fix_propagation_delete_command, runtime_delete_command_helpers
 from plan_manager.domain.bug_fix_propagation import BugFixPropagation
 
 PROPAGATION_UUID = uuid.uuid4()
@@ -65,7 +65,7 @@ def _install_fakes(
     get_result: BugFixPropagation | None = _propagation(),
     soft_delete_result: BugFixPropagation | None = None,
 ) -> None:
-    monkeypatch.setattr(bug_fix_propagation_delete_command, "db_connection", lambda: _fake_db())
+    monkeypatch.setattr(runtime_delete_command_helpers, "db_connection", lambda: _fake_db())
     monkeypatch.setattr(
         bug_fix_propagation_delete_command, "get_bug_fix_propagation", lambda conn, propagation_uuid: get_result
     )

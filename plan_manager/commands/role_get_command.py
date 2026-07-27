@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.commands.role_command_metadata import role_metadata
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.role_store import get_role
 
@@ -26,20 +30,11 @@ class RoleGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "role_uuid": {"description": "The role_uuid identifier of the role record.", "type": "string"},
-            },
-            "required": ["role_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("role_uuid", "The role_uuid identifier of the role record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "role_uuid": {"description": "The role_uuid identifier of the role record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("role_uuid", "The role_uuid identifier of the role record.")
         return_value = {"description": "The Role record.", "type": "object"}
         examples = [
             {"description": "Fetch a role by its uuid.", "command": {"role_uuid": "c7c7c7c7-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class RoleGetCommand(Command):
 
     async def execute(self, role_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(role_uuid)
-                role = get_role(conn, parsed_uuid)
-                if role is None:
-                    raise DomainCommandError("ROLE_NOT_FOUND", f"role not found: {role_uuid}")
-                return SuccessResult(data=role.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=role_uuid,
+                get_record=get_role,
+                not_found_code="ROLE_NOT_FOUND",
+                not_found_message=f"role not found: {role_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

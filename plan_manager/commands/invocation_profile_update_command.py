@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.invocation_profile_command_metadata import invocation_profile_metadata
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.invocation_profile_store import get_invocation_profile, update_invocation_profile
 
@@ -119,46 +123,39 @@ class InvocationProfileUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(profile_uuid)
-                existing = get_invocation_profile(conn, parsed_uuid)
-                if existing is None:
-                    raise DomainCommandError("INVOCATION_PROFILE_NOT_FOUND", f"invocation profile not found: {profile_uuid}")
-                if all(
-                    value is None
-                    for value in (
-                        step_path, temperature, top_p, max_output_tokens, reasoning_effort,
-                        context_window_budget, timeout, retry_policy, concurrency, rate_hint,
-                        response_format, response_schema, max_tool_iterations, per_call_timeout,
-                        execution_mode, token_budget, cost_budget, dialogue_chain_ref, active,
-                    )
-                ):
-                    raise RuntimeValidationError("invocation_profile_update requires at least one mutable field to patch")
-                dialogue_chain_uuid = validate_uuid(dialogue_chain_ref) if dialogue_chain_ref is not None else None
-                profile = update_invocation_profile(
-                    conn,
-                    parsed_uuid,
-                    changed_by=changed_by,
-                    step_path=step_path,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_output_tokens=max_output_tokens,
-                    reasoning_effort=reasoning_effort,
-                    context_window_budget=context_window_budget,
-                    timeout=timeout,
-                    retry_policy=retry_policy,
-                    concurrency=concurrency,
-                    rate_hint=rate_hint,
-                    response_format=response_format,
-                    response_schema=response_schema,
-                    max_tool_iterations=max_tool_iterations,
-                    per_call_timeout=per_call_timeout,
-                    execution_mode=execution_mode,
-                    token_budget=token_budget,
-                    cost_budget=cost_budget,
-                    dialogue_chain_ref=dialogue_chain_uuid,
-                    active=active,
-                )
-                return SuccessResult(data=profile.to_payload())
+            return perform_guarded_runtime_update(
+                raw_entity_id=profile_uuid,
+                get_record=get_invocation_profile,
+                update_record=update_invocation_profile,
+                changed_by=changed_by,
+                not_found_code="INVOCATION_PROFILE_NOT_FOUND",
+                not_found_message=f"invocation profile not found: {profile_uuid}",
+                db_connect=db_connection,
+                update_fields={
+                    "step_path": step_path,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_output_tokens": max_output_tokens,
+                    "reasoning_effort": reasoning_effort,
+                    "context_window_budget": context_window_budget,
+                    "timeout": timeout,
+                    "retry_policy": retry_policy,
+                    "concurrency": concurrency,
+                    "rate_hint": rate_hint,
+                    "response_format": response_format,
+                    "response_schema": response_schema,
+                    "max_tool_iterations": max_tool_iterations,
+                    "per_call_timeout": per_call_timeout,
+                    "execution_mode": execution_mode,
+                    "token_budget": token_budget,
+                    "cost_budget": cost_budget,
+                    "dialogue_chain_ref": validate_uuid(dialogue_chain_ref) if dialogue_chain_ref is not None else None,
+                    "active": active,
+                },
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "invocation_profile_update requires at least one mutable field to patch",
+                ),
+            )
         except Exception as exc:
             return map_exception(exc)

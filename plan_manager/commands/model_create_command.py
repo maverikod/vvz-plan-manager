@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
 from plan_manager.commands.model_command_metadata import model_metadata
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
@@ -79,18 +80,19 @@ class ModelCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                model = create_model(
-                    conn,
-                    name=name,
-                    provider_uuid=validate_uuid(provider_uuid),
-                    level=level,
-                    execution_mode=execution_mode,
-                    created_by=created_by,
-                    context_window=context_window,
-                    cost_class=cost_class,
-                    availability=availability,
-                )
-                return SuccessResult(data=model.to_payload())
+            return perform_runtime_create(
+                create_record=create_model,
+                db_connect=db_connection,
+                create_fields={
+                    "name": name,
+                    "provider_uuid": validate_uuid(provider_uuid),
+                    "level": level,
+                    "execution_mode": execution_mode,
+                    "created_by": created_by,
+                    "context_window": context_window,
+                    "cost_class": cost_class,
+                    "availability": availability,
+                },
+            )
         except Exception as exc:
             return map_exception(exc)

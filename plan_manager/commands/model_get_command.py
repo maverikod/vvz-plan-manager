@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.commands.model_command_metadata import model_metadata
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.model_store import get_model
 
@@ -26,20 +30,11 @@ class ModelGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "model_uuid": {"description": "The model_uuid identifier of the model record.", "type": "string"},
-            },
-            "required": ["model_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("model_uuid", "The model_uuid identifier of the model record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "model_uuid": {"description": "The model_uuid identifier of the model record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("model_uuid", "The model_uuid identifier of the model record.")
         return_value = {"description": "The Model record.", "type": "object"}
         examples = [
             {"description": "Fetch a model by its uuid.", "command": {"model_uuid": "d6d6d6d6-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class ModelGetCommand(Command):
 
     async def execute(self, model_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(model_uuid)
-                model = get_model(conn, parsed_uuid)
-                if model is None:
-                    raise DomainCommandError("MODEL_NOT_FOUND", f"model not found: {model_uuid}")
-                return SuccessResult(data=model.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=model_uuid,
+                get_record=get_model,
+                not_found_code="MODEL_NOT_FOUND",
+                not_found_message=f"model not found: {model_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

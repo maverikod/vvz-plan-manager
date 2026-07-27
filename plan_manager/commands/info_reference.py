@@ -148,6 +148,11 @@ def context_block_capabilities() -> dict[str, Any]:
                 "mutates_plan_truth": False,
                 "summary": "Return one stored ContextBlock by block_id.",
             },
+            "block_rebuild": {
+                "mutates_plan_truth": False,
+                "stores_derived_record": True,
+                "summary": "Rebuild stored ContextBlock rows in batch against the current working state and return summary rows only.",
+            },
             "block_list": {
                 "mutates_plan_truth": False,
                 "summary": "List stored ContextBlock summaries by plan, node, kind, revision, or cascade.",

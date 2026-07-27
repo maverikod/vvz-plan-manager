@@ -6,6 +6,7 @@ from plan_manager.domain.relation import RELATION_TYPES
 from plan_manager.domain.step import Step
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
+from plan_manager.views.dependency_graph import resolve_dependency_target
 
 
 def _path(tree: GateTree, step: Step) -> str:
@@ -101,29 +102,22 @@ def check_uniqueness_priority(tree: GateTree, steps: list[Step]) -> list[Finding
 
 
 def check_references_depends_on(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """Resolve depends_on entries to sibling steps.
+    """Resolve depends_on entries to reachable plan steps.
 
-    ``depends_on`` is an ordering edge between siblings (same level, same
-    parent), so its resolution universe is the full plan tree, not the
-    scoped subset. Resolving against ``steps`` would make a branch-scoped
-    run falsely report a sibling target as unresolved (the sibling is not
-    in the branch triplet), yielding a scope-dependent verdict for one
-    revision. Report only on ``steps`` but resolve against ``tree.steps``.
+    The resolution universe is the full plan tree, not the scoped subset.
+    Report only on ``steps`` but resolve against ``tree.steps`` so a
+    branch-scoped run yields the same verdict as a plan-scoped run.
     """
     findings: list[Finding] = []
-    scoped = {
-        (step.level, step.parent_step_uuid, step.step_id)
-        for step in tree.steps.values()
-    }
     for step in steps:
-        for dep_step_id in step.depends_on:
-            if (step.level, step.parent_step_uuid, dep_step_id) not in scoped:
+        for dep_ref in step.depends_on:
+            if resolve_dependency_target(tree.steps, step, dep_ref) is None:
                 findings.append(
                     Finding(
                         check_id="references.depends_on",
                         severity="error",
                         artifact_path=_path(tree, step),
-                        message=f"depends_on target {dep_step_id!r} is unresolved",
+                        message=f"depends_on target {dep_ref!r} is unresolved",
                     )
                 )
     return findings

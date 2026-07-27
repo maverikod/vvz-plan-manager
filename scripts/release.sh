@@ -13,22 +13,31 @@
 # if the embedded payload copy differs byte-for-byte from the source
 # document.
 set -euo pipefail
+export PYTHONPATH="$PWD:$PWD/client${PYTHONPATH:+:$PYTHONPATH}"
+PYTHON="${PWD}/.venv/bin/python"
+REPO_ROOT="${PWD}"
+if [ ! -x "${PYTHON}" ]; then
+  PYTHON="python3"
+fi
 
 echo "== stage: read version =="
-VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+VERSION="$("${PYTHON}" -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
 REPO="${DOCKERHUB_REPO:-vasilyvz/planmgr}"
 echo "version=${VERSION} repo=${REPO}"
 
+echo "== stage: verify release tooling =="
+"${PYTHON}" -c 'import importlib.util, sys; missing = [name for name in ("build", "twine") if importlib.util.find_spec(name) is None]; missing and sys.exit("missing release tooling in selected Python environment: " + ", ".join(missing) + ". install with pip install -e '\''.[dev]'\''")'
+
 echo "== stage: run test suite =="
-python3 -m pytest -q
+"${PYTHON}" -m pytest -q
 
 echo "== stage: render documentation =="
-ADAPTER_VERSION="$(python3 -c 'import tomllib;deps=tomllib.load(open("pyproject.toml","rb"))["project"]["dependencies"];print([d for d in deps if d.startswith("mcp-proxy-adapter")][0])')"
+ADAPTER_VERSION="$("${PYTHON}" -c 'import tomllib;deps=tomllib.load(open("pyproject.toml","rb"))["project"]["dependencies"];print([d for d in deps if d.startswith("mcp-proxy-adapter")][0])')"
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p plan_manager/_build build/doc
 
 echo "-- writing build_info.json --"
-python3 -c "import json; json.dump({'product': 'plan_manager', 'package_version': '${VERSION}', 'adapter_version': '${ADAPTER_VERSION}', 'build_date': '${BUILD_DATE}', 'image_tag': '${VERSION}'}, open('plan_manager/_build/build_info.json', 'w'))"
+"${PYTHON}" -c "import json; json.dump({'product': 'plan_manager', 'package_version': '${VERSION}', 'adapter_version': '${ADAPTER_VERSION}', 'build_date': '${BUILD_DATE}', 'image_tag': '${VERSION}'}, open('plan_manager/_build/build_info.json', 'w'))"
 
 echo "-- copying operator documentation payload --"
 cp docs/operator/operator_doc.md plan_manager/_build/operator_doc.md
@@ -55,6 +64,7 @@ mkdir -p build/deb/DEBIAN
 mkdir -p build/deb/lib/systemd/system
 mkdir -p build/deb/etc/default
 mkdir -p build/deb/etc/planmgr
+mkdir -p build/deb/usr/lib/planmgr
 mkdir -p build/deb/usr/share/man/man1
 mkdir -p build/deb/usr/share/info
 
@@ -65,6 +75,8 @@ cp packaging/deb/postinst build/deb/DEBIAN/postinst
 cp packaging/deb/prerm build/deb/DEBIAN/prerm
 cp packaging/deb/postrm build/deb/DEBIAN/postrm
 chmod 755 build/deb/DEBIAN/postinst build/deb/DEBIAN/prerm build/deb/DEBIAN/postrm
+cp packaging/lib/planmgr_merge_operator_env.py build/deb/usr/lib/planmgr/planmgr_merge_operator_env.py
+chmod 755 build/deb/usr/lib/planmgr/planmgr_merge_operator_env.py
 
 echo "-- staging service unit and configuration templates --"
 # NOTE: TLS material (mtls-certs) is deliberately NOT bundled into the deb.
@@ -72,7 +84,8 @@ echo "-- staging service unit and configuration templates --"
 # directly into /etc/planmgr/secrets on the target host; the installer never
 # carries them. See packaging/deb/postinst, which only verifies their presence.
 cp packaging/systemd/planmgr.service build/deb/lib/systemd/system/planmgr.service
-cp packaging/etc/default/planmgr build/deb/etc/default/planmgr
+sed "s/^PLANMGR_IMAGE_VERSION=.*/PLANMGR_IMAGE_VERSION=${VERSION}/" \
+  packaging/etc/default/planmgr > build/deb/etc/default/planmgr
 cp packaging/etc/planmgr/config.json.template build/deb/etc/planmgr/config.json.template
 
 echo "-- staging rendered documentation --"
@@ -83,25 +96,30 @@ echo "-- building .deb --"
 dpkg-deb --build --root-owner-group build/deb "build/planmgr_${VERSION}_all.deb"
 
 echo "== stage: publish client to PyPI =="
-CLIENT_VERSION="$(python3 -c 'import tomllib;print(tomllib.load(open("client/pyproject.toml","rb"))["project"]["version"])')"
+CLIENT_VERSION="${VERSION}"
 echo "client_version=${CLIENT_VERSION}"
-
-echo "-- version lockstep check --"
-if [ "${CLIENT_VERSION}" != "${VERSION}" ]; then
-  echo "version mismatch: root pyproject.toml=${VERSION} client/pyproject.toml=${CLIENT_VERSION}" >&2
-  exit 1
-fi
 
 echo "-- cleaning stale client/dist artifacts --"
 mkdir -p client/dist
 find client/dist -type f ! -name "plan_manager_client-${VERSION}*" -delete
 
 echo "-- building client wheel+sdist --"
-.venv/bin/python -m build --wheel --sdist client/
+CLIENT_BUILD_CWD="$(mktemp -d)"
+trap 'rm -rf "${CLIENT_BUILD_CWD}"' EXIT
+(
+  cd "${CLIENT_BUILD_CWD}"
+  PYTHONPATH="" "${PYTHON}" -m build --wheel --sdist \
+    --outdir "${REPO_ROOT}/client/dist" "${REPO_ROOT}/client"
+)
+rm -rf "${CLIENT_BUILD_CWD}"
+trap - EXIT
+
+echo "-- checking client distributions --"
+"${PYTHON}" -m twine check "client/dist/plan_manager_client-${VERSION}"*
 
 echo "-- publishing client to PyPI --"
 CLIENT_UPLOAD_LOG="$(mktemp)"
-if .venv/bin/python -m twine upload "client/dist/plan_manager_client-${VERSION}"* 2>&1 | tee "${CLIENT_UPLOAD_LOG}"; then
+if "${PYTHON}" -m twine upload --verbose "client/dist/plan_manager_client-${VERSION}"* 2>&1 | tee "${CLIENT_UPLOAD_LOG}"; then
   echo "client published: plan-manager-client==${VERSION}"
 else
   if grep -qi "File already exists" "${CLIENT_UPLOAD_LOG}"; then

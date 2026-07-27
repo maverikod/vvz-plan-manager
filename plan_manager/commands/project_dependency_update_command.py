@@ -7,13 +7,17 @@ from typing import Any, ClassVar
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_record_command_helpers import (
+    perform_guarded_runtime_update,
+    require_mutable_patch,
+)
 from plan_manager.domain.project_dependency import DEPENDENCY_TYPES
-from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.project_dependency_store import get_project_dependency, update_project_dependency
+
 
 class ProjectDependencyUpdateCommand(Command):
     name: ClassVar[str] = "project_dependency_update"
@@ -87,25 +91,25 @@ class ProjectDependencyUpdateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                resolve_plan(conn, plan)
-                dep_uuid = validate_uuid(dependency_uuid)
-                existing = get_project_dependency(conn, dep_uuid)
-                if existing is None:
-                    raise DomainCommandError(
-                        "PROJECT_DEPENDENCY_NOT_FOUND",
-                        f"project dependency not found: {dependency_uuid}",
-                    )
-                if dependency_type is None and version_constraint is None and active is None:
-                    raise RuntimeValidationError("project_dependency_update requires at least one mutable field to patch")
-                record = update_project_dependency(
-                    conn,
-                    dep_uuid,
-                    changed_by=actor,
-                    dependency_type=dependency_type,
-                    version_constraint=version_constraint,
-                    active=active,
-                )
-                return SuccessResult(data={"project_dependency": record.to_payload()})
+            return perform_guarded_runtime_update(
+                raw_entity_id=dependency_uuid,
+                get_record=get_project_dependency,
+                update_record=update_project_dependency,
+                changed_by=actor,
+                not_found_code="PROJECT_DEPENDENCY_NOT_FOUND",
+                not_found_message=f"project dependency not found: {dependency_uuid}",
+                db_connect=db_connection,
+                resolve_scope=lambda conn: resolve_plan(conn, plan),
+                update_fields={
+                    "dependency_type": dependency_type,
+                    "version_constraint": version_constraint,
+                    "active": active,
+                },
+                pre_update=lambda conn, existing, update_fields: require_mutable_patch(
+                    update_fields,
+                    "project_dependency_update requires at least one mutable field to patch",
+                ),
+                build_result_data=lambda record: {"project_dependency": record.to_payload()},
+            )
         except Exception as exc:
             return map_exception(exc)

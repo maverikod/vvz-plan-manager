@@ -46,6 +46,10 @@ class ContextGateCommandsMixin:
         """Return one stored context block by UUID, its 'blocks'/'content' entries paginated (bounded default 50, max 200 per page; small blocks return unchanged in one call)."""
         return await self._call("block_get", params)
 
+    async def block_rebuild(self, **params: Any) -> Any:
+        """Rebuild stored context blocks in batch against the current working state and return summary-only rows with a total/limit/offset envelope."""
+        return await self._call("block_rebuild", params)
+
     async def block_list(self, **params: Any) -> Any:
         """List a paginated page of stored context block records for a plan."""
         return await self._call("block_list", params)

@@ -99,8 +99,8 @@ class StepDependencyRemoveCommand(Command):
                 p = resolve_plan(conn, plan)
                 nodes = load_steps(conn, p.uuid)
                 target = resolve_target(nodes, step_id)
-                bare = _resolve_for_remove(nodes, target, depends_on)
                 current = list(target.depends_on)
+                bare = _resolve_for_remove(nodes, target, depends_on, current)
                 already_absent = bare not in current
                 if already_absent:
                     new = current

@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
 from plan_manager.commands.toolset_command_metadata import toolset_metadata
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.toolset_store import create_toolset
@@ -61,13 +62,14 @@ class ToolsetCreateCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                toolset = create_toolset(
-                    conn,
-                    name=name,
-                    created_by=created_by,
-                    description=description,
-                )
-                return SuccessResult(data=toolset.to_payload())
+            return perform_runtime_create(
+                create_record=create_toolset,
+                db_connect=db_connection,
+                create_fields={
+                    "name": name,
+                    "created_by": created_by,
+                    "description": description,
+                },
+            )
         except Exception as exc:
             return map_exception(exc)

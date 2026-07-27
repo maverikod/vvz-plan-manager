@@ -14,6 +14,11 @@ from plan_manager.verify.gate_context import (
     check_context_coverage_specific_subset,
 )
 from plan_manager.verify.gate_data import artifact_path_of, load_tree, scope_steps
+from plan_manager.verify.gate_objects import (
+    check_object_concepts_not_covered,
+    check_object_multiple_modules,
+    check_object_multiple_owner_keys,
+)
 from plan_manager.verify.gate_refs import (
     check_references_concepts,
     check_references_depends_on,
@@ -123,6 +128,23 @@ GATE_CHECK_SEMANTICS: dict[str, str] = {
         "implemented by at least one GS step's own relations field; flags "
         "a relation not covered by any GS step, or a GS-declared relation "
         "with no matching row in the relation table ('extra')."
+    ),
+    "coverage.object_multiple_owner_keys": (
+        "An object name declared by atomic steps must map to exactly one "
+        "owner key (module plus tactical-step path). The gate flags the "
+        "participating atomic steps when the same object name is defined "
+        "under more than one owner key."
+    ),
+    "coverage.object_multiple_modules": (
+        "An object name declared by atomic steps must stay within one "
+        "module. The gate flags the participating atomic steps when the "
+        "same object name drifts across multiple target-file-derived modules."
+    ),
+    "coverage.object_concepts_not_covered": (
+        "Every declared object's concept set must be a subset of the union "
+        "of the concept sets on the atomic steps that declare it. The gate "
+        "flags participating atomic steps when an object declaration names "
+        "concepts not covered by those atomic-step concept sets."
     ),
     "references.depends_on": (
         "Every step's depends_on entries must resolve to a sibling step_id "
@@ -306,6 +328,22 @@ def run_gate(
                 group_findings.extend(
                     check_coverage_gs(conn, plan_uuid, branch.gs.step_id)
                 )
+            group_findings.extend(
+                check_object_multiple_owner_keys(conn, plan_uuid, tree, steps)
+            )
+            group_findings.extend(
+                check_object_multiple_modules(conn, plan_uuid, tree, steps)
+            )
+            group_findings.extend(
+                check_object_concepts_not_covered(conn, plan_uuid, tree, steps)
+            )
+            group_check_ids.extend(
+                [
+                    "coverage.object_multiple_owner_keys",
+                    "coverage.object_multiple_modules",
+                    "coverage.object_concepts_not_covered",
+                ]
+            )
         elif group == "embedded_code":
             group_findings.extend(check_embedded_code_parses(tree, steps))
         elif group == "context_coverage":

@@ -10,8 +10,9 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.commands.project_dependency_command_metadata import project_dependency_metadata, BASE_PARAMETERS
+from plan_manager.commands.runtime_record_command_helpers import perform_runtime_create
+from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.project_dependency_store import create_project_dependency
 
@@ -118,19 +119,49 @@ class ProjectDependencyAddCommand(Command):
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                p = resolve_plan(conn, plan)
-                record = create_project_dependency(
-                    conn,
-                    dependent_project_id=validate_uuid(dependent_project_id),
-                    depends_on_project_id=validate_uuid(depends_on_project_id),
+            return perform_runtime_create(
+                create_record=create_project_dependency,
+                db_connect=db_connection,
+                prepare_create_fields=lambda conn: _prepare_project_dependency_create_fields(
+                    conn=conn,
+                    plan=plan,
+                    dependent_project_id=dependent_project_id,
+                    depends_on_project_id=depends_on_project_id,
                     dependency_type=dependency_type,
                     discovery_source=discovery_source,
-                    created_by=actor,
-                    confidence=confidence,
+                    actor=actor,
                     version_constraint=version_constraint,
+                    confidence=confidence,
                     active=active,
-                )
-                return SuccessResult(data={"project_dependency": record.to_payload()})
+                ),
+                build_result_data=lambda record: {"project_dependency": record.to_payload()},
+            )
         except Exception as exc:
             return map_exception(exc)
+
+
+def _prepare_project_dependency_create_fields(
+    *,
+    conn: object,
+    plan: str,
+    dependent_project_id: str,
+    depends_on_project_id: str,
+    dependency_type: str,
+    discovery_source: str,
+    actor: str,
+    version_constraint: str | None,
+    confidence: str,
+    active: bool,
+) -> dict[str, Any]:
+    """Resolve plan scope and normalize project_dependency_add UUID inputs."""
+    resolve_plan(conn, plan)
+    return {
+        "dependent_project_id": validate_uuid(dependent_project_id),
+        "depends_on_project_id": validate_uuid(depends_on_project_id),
+        "dependency_type": dependency_type,
+        "discovery_source": discovery_source,
+        "created_by": actor,
+        "confidence": confidence,
+        "version_constraint": version_constraint,
+        "active": active,
+    }

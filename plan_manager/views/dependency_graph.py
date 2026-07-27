@@ -13,20 +13,16 @@ import uuid
 import psycopg
 
 from plan_manager.domain.step import Step
+from plan_manager.views.step_paths import (
+    GraphIntegrityError,
+    parent_path,
+    resolve_dependency_target,
+)
 from plan_manager.views.same_file_order import (
     SameFileOrderAmbiguousError,
     derive_cross_branch_edges,
     same_file_order_conflicts,
 )
-
-
-class GraphIntegrityError(ValueError):
-    """Raised when a step's parent_step_uuid chain is corrupted (a referenced parent is absent).
-
-    A ValueError subclass so existing ``except ValueError`` handlers keep catching it, while
-    plan_manager.commands.errors.map_exception can map it to the GRAPH_CORRUPTED_CHAIN domain
-    code instead of leaking a raw -32603.
-    """
 
 
 def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID, Step]:
@@ -81,36 +77,6 @@ def load_steps(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[uuid.UUID
     return nodes
 
 
-def parent_path(nodes: dict[uuid.UUID, Step], step: Step) -> str:
-    """Compute the parent path string of one step for tie-breaking.
-
-    Args:
-        nodes: All steps of the plan, keyed by uuid.
-        step: The step whose parent path is computed.
-
-    Returns:
-        "" when step.level == 3 (no parent). The parent's step_id when
-        step.level == 4 (e.g. "G-001"). The parent-of-parent's step_id
-        joined with "/" to the parent's step_id when step.level == 5
-        (e.g. "G-001/T-002").
-
-    Raises:
-        ValueError: If step.level is 4 or 5 and step.parent_step_uuid is
-            missing from nodes. The message names step.step_id.
-    """
-    if step.level == 3:
-        return ""
-    parent = nodes.get(step.parent_step_uuid)
-    if parent is None:
-        raise GraphIntegrityError(f"parent of step {step.step_id} not found in nodes")
-    if step.level == 4:
-        return parent.step_id
-    grandparent = nodes.get(parent.parent_step_uuid)
-    if grandparent is None:
-        raise GraphIntegrityError(f"parent of step {step.step_id} not found in nodes")
-    return f"{grandparent.step_id}/{parent.step_id}"
-
-
 def tie_break_key(nodes: dict[uuid.UUID, Step], node_uuid: uuid.UUID) -> tuple[int, str, str]:
     """Compute the normative ascending tie-break key of one node.
 
@@ -139,22 +105,13 @@ def build_edges(
     edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
 
     for dependent_uuid, dependent in nodes.items():
-        for dep_step_id in dependent.depends_on:
-            match = None
-            for candidate_uuid, candidate in nodes.items():
-                if (
-                    candidate.plan_uuid == dependent.plan_uuid
-                    and candidate.parent_step_uuid == dependent.parent_step_uuid
-                    and candidate.level == dependent.level
-                    and candidate.step_id == dep_step_id
-                ):
-                    match = candidate_uuid
-                    break
-            if match is None:
+        for dep_ref in dependent.depends_on:
+            target = resolve_dependency_target(nodes, dependent, dep_ref)
+            if target is None:
                 raise ValueError(
-                    f"step {dependent.step_id} depends_on unresolved sibling {dep_step_id}"
+                    f"step {dependent.step_id} depends_on unresolved target {dep_ref}"
                 )
-            edges.add((match, dependent_uuid))
+            edges.add((target.uuid, dependent_uuid))
 
     by_parent_file: dict[tuple[str, uuid.UUID | None], list[uuid.UUID]] = {}
     by_file: dict[str, list[uuid.UUID]] = {}
@@ -289,9 +246,27 @@ def waves(
             new node while unassigned nodes remain.
     """
     resolver = nodes if key_nodes is None else key_nodes
-    prereqs_of: dict[uuid.UUID, set[uuid.UUID]] = {u: set() for u in nodes}
+    explicit_prereqs_of: dict[uuid.UUID, set[uuid.UUID]] = {u: set() for u in nodes}
     for prereq_uuid, dependent_uuid in edges:
-        prereqs_of[dependent_uuid].add(prereq_uuid)
+        explicit_prereqs_of[dependent_uuid].add(prereq_uuid)
+
+    # graph_parallel_map ranges over the full tree, but step_dependency is
+    # sibling-scoped. A descendant therefore cannot restate an ancestor's
+    # declared depends_on edge at its own level, so every node inherits the
+    # explicit prerequisite set of its ancestor chain when we compute waves.
+    effective_prereqs_of: dict[uuid.UUID, set[uuid.UUID]] = {}
+
+    def _effective_prereqs(node_uuid: uuid.UUID) -> set[uuid.UUID]:
+        cached = effective_prereqs_of.get(node_uuid)
+        if cached is not None:
+            return cached
+        inherited = set(explicit_prereqs_of[node_uuid])
+        parent_uuid = nodes[node_uuid].parent_step_uuid
+        if parent_uuid in nodes:
+            inherited.update(_effective_prereqs(parent_uuid))
+        inherited.discard(node_uuid)
+        effective_prereqs_of[node_uuid] = inherited
+        return inherited
 
     assigned: set[uuid.UUID] = set()
     result: list[list[uuid.UUID]] = []
@@ -299,7 +274,7 @@ def waves(
 
     while unassigned:
         wave = [
-            u for u in unassigned if prereqs_of[u].issubset(assigned)
+            u for u in unassigned if _effective_prereqs(u).issubset(assigned)
         ]
         if not wave:
             raise ValueError("cycle detected")

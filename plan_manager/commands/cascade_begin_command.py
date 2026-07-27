@@ -3,6 +3,7 @@
 from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from plan_manager.storage.runtime_audit_store import record_runtime_change
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.runtime.context import db_connection
@@ -89,6 +90,19 @@ class CascadeBeginCommand(Command):
                 assert reread is not None and reread.uuid == rec.uuid, (
                     f"cascade {rec.uuid} for plan {p.name} did not verify "
                     "by re-read"
+                )
+                record_runtime_change(
+                    conn,
+                    plan_uuid=p.uuid,
+                    entity_type="plan",
+                    entity_id=p.uuid,
+                    action="cascade_begin",
+                    changed_by="api",
+                    changed_fields={
+                        "cascade_uuid": str(rec.uuid),
+                        "base_revision_uuid": str(rec.base_revision_uuid),
+                        "ref_name": rec.name,
+                    },
                 )
                 return SuccessResult(
                     data={

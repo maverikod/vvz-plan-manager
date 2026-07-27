@@ -7,9 +7,13 @@ from typing import Any, ClassVar
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.commands.errors import map_exception
+from plan_manager.commands.runtime_record_command_helpers import (
+    get_command_metadata_params,
+    get_command_schema,
+    perform_runtime_get,
+)
 from plan_manager.commands.toolset_command_metadata import toolset_metadata
-from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.toolset_store import get_toolset
 
@@ -26,20 +30,11 @@ class ToolsetGetCommand(Command):
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "toolset_uuid": {"description": "The toolset_uuid identifier of the toolset record.", "type": "string"},
-            },
-            "required": ["toolset_uuid"],
-            "additionalProperties": False,
-        }
+        return get_command_schema("toolset_uuid", "The toolset_uuid identifier of the toolset record.")
 
     @classmethod
     def metadata(cls) -> dict[str, Any]:
-        parameters: dict[str, Any] = {
-            "toolset_uuid": {"description": "The toolset_uuid identifier of the toolset record.", "type": "string", "required": True},
-        }
+        parameters = get_command_metadata_params("toolset_uuid", "The toolset_uuid identifier of the toolset record.")
         return_value = {"description": "The Toolset record.", "type": "object"}
         examples = [
             {"description": "Fetch a toolset by its uuid.", "command": {"toolset_uuid": "c7c7c7c7-0000-0000-0000-000000000000"}},
@@ -53,11 +48,12 @@ class ToolsetGetCommand(Command):
 
     async def execute(self, toolset_uuid: str, context: object | None = None) -> SuccessResult | ErrorResult:
         try:
-            with db_connection() as conn:
-                parsed_uuid = validate_uuid(toolset_uuid)
-                toolset = get_toolset(conn, parsed_uuid)
-                if toolset is None:
-                    raise DomainCommandError("TOOLSET_NOT_FOUND", f"toolset not found: {toolset_uuid}")
-                return SuccessResult(data=toolset.to_payload())
+            return perform_runtime_get(
+                raw_entity_id=toolset_uuid,
+                get_record=get_toolset,
+                not_found_code="TOOLSET_NOT_FOUND",
+                not_found_message=f"toolset not found: {toolset_uuid}",
+                db_connect=db_connection,
+            )
         except Exception as exc:
             return map_exception(exc)

@@ -66,6 +66,46 @@ class RuntimeCommandsMixin:
         """Promote an existing TODO item into a cascade request for a normative plan change."""
         return await self._call("todo_promote_to_cascade_request", params)
 
+    async def wish_create(self, **params: Any) -> Any:
+        """Create a new runtime wish item."""
+        return await self._call("wish_create", params)
+
+    async def wish_get(self, **params: Any) -> Any:
+        """Fetch a single runtime wish item by identifier."""
+        return await self._call("wish_get", params)
+
+    async def wish_list(self, **params: Any) -> Any:
+        """List runtime wish items with filtering and pagination."""
+        return await self._call("wish_list", params)
+
+    async def wish_update(self, **params: Any) -> Any:
+        """Update mutable fields of a runtime wish item."""
+        return await self._call("wish_update", params)
+
+    async def wish_delete(self, **params: Any) -> Any:
+        """Delete a runtime wish item: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
+        return await self._call("wish_delete", params)
+
+    async def calendar_entry_create(self, **params: Any) -> Any:
+        """Create a calendar-based work entry spanning one or more calendar days."""
+        return await self._call("calendar_entry_create", params)
+
+    async def calendar_entry_get(self, **params: Any) -> Any:
+        """Fetch one calendar-based work entry by identifier."""
+        return await self._call("calendar_entry_get", params)
+
+    async def calendar_entry_list(self, **params: Any) -> Any:
+        """List calendar-based work entries with filtering and pagination."""
+        return await self._call("calendar_entry_list", params)
+
+    async def calendar_entry_update(self, **params: Any) -> Any:
+        """Update mutable fields of a calendar-based work entry."""
+        return await self._call("calendar_entry_update", params)
+
+    async def calendar_entry_delete(self, **params: Any) -> Any:
+        """Delete a calendar-based work entry: soft by default, hard=true available, dry_run previews."""
+        return await self._call("calendar_entry_delete", params)
+
     async def runtime_link_add(self, **params: Any) -> Any:
         """Create a typed link between two runtime records, each independently a bug or a todo."""
         return await self._call("runtime_link_add", params)
