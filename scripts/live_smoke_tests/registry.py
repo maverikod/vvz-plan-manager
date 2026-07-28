@@ -67,6 +67,16 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "run_r30_parallel_map_subtree_closure",
         "graph_parallel_map strict subtree closure regression (todo 19391f0b)",
     ),
+    LiveSmokeTestSpec(
+        "r31",
+        "run_r31_block_rebuild_open_cascade",
+        "block_rebuild open-cascade working-state regression (bug e3060750)",
+    ),
+    LiveSmokeTestSpec(
+        "r32",
+        "run_r32_unfreeze_audit_names_cascade",
+        "plan_unfreeze audit cascade-provenance regression (bug 74ba4313)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

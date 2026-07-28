@@ -5483,6 +5483,259 @@ async def run_r30_parallel_map_subtree_closure(client: Any) -> list[CheckResult]
     return results
 
 
+R31_PRE_FIX_SKIP_REASON = (
+    "server predates bug e3060750's fix -- block_rebuild resolves the "
+    "committed head even while a cascade is open (summaries carry "
+    "cascade_uuid=null yet is_current=true) -- redeploy pending"
+)
+
+
+async def run_r31_block_rebuild_open_cascade(client: Any) -> list[CheckResult]:
+    """Bug e3060750: block_rebuild during an open cascade used to rebuild
+    against the COMMITTED head (cascade_uuid=null, committed revision) yet
+    report is_current=true, so the gate immediately rejected the rebuilt
+    blocks as stale. Fixed by defaulting the command to the plan's live
+    working state (open cascade tip when a cascade is open).
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create ->
+    context_common/step_create G -> T (so G has a child and a common
+    block exists) -> block_list to capture the stored common block id ->
+    cascade_begin -> concept_add (in-cascade truth advance, stales the
+    block) -> block_rebuild(block_ids=[id]), asserting the summary row
+    carries the OPEN cascade's uuid with is_current=true. Pre-fix
+    detection: cascade_uuid=null with is_current=true is the exact filed
+    signature and SKIPs naming bug e3060750. Cleanup: cascade_abort, then
+    plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_open = False
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r31-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R31_e3060750_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R31_e3060750_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R31_e3060750_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R31_e3060750_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        if not ok:
+            results.append(CheckResult("4", "R31_e3060750_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+        # Recompile AFTER the T exists so a current common block for
+        # (G, child_level=4) is stored at the pre-cascade head.
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R31_e3060750_context_common(G,level4,post-T)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "kind": "common", "limit": 10})
+        rows = res.get("blocks") if ok and isinstance(res, dict) else None
+        if rows is None and ok and isinstance(res, dict):
+            rows = res.get("items")
+        block_id = None
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("node_path") == g_id:
+                    block_id = row.get("block_id") or row.get("uuid")
+                    break
+            if block_id is None and rows:
+                first = rows[0]
+                block_id = first.get("block_id") or first.get("uuid") if isinstance(first, dict) else None
+        if not ok or not block_id:
+            results.append(CheckResult("4", "R31_e3060750_block_list", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R31_e3060750_seed_block_found", STATUS_PASS, f"block={block_id}"))
+
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R31_e3060750_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        open_cascade_uuid = res["cascade_uuid"]
+        cascade_open = True
+
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": open_cascade_uuid, "concept_id": "C-001",
+                "name": "LiveSmokeR31Concept", "definition": "R31 scratch concept (bug e3060750).",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R31_e3060750_concept_add", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "block_rebuild", {"plan": plan_uuid, "block_ids": [str(block_id)], "limit": 5})
+        rebuilt_rows = res.get("blocks") if ok and isinstance(res, dict) else None
+        row = rebuilt_rows[0] if isinstance(rebuilt_rows, list) and rebuilt_rows else None
+        if not ok or not isinstance(row, dict):
+            results.append(CheckResult("4", "R31_e3060750_block_rebuild", STATUS_FAIL, str(res)))
+            return results
+        rebuilt_cascade = row.get("cascade_uuid")
+        is_current = row.get("is_current")
+        if rebuilt_cascade == open_cascade_uuid and is_current is True:
+            results.append(
+                CheckResult(
+                    "4", "R31_e3060750_rebuild_targets_open_cascade", STATUS_PASS,
+                    f"cascade_uuid={rebuilt_cascade}",
+                )
+            )
+        elif rebuilt_cascade in (None, "") and is_current is True:
+            results.append(
+                CheckResult(
+                    "4", "R31_e3060750_rebuild_targets_open_cascade", STATUS_SKIP,
+                    R31_PRE_FIX_SKIP_REASON,
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R31_e3060750_rebuild_targets_open_cascade", STATUS_FAIL,
+                    f"cascade_uuid={rebuilt_cascade!r} is_current={is_current!r} (open cascade {open_cascade_uuid})",
+                )
+            )
+    finally:
+        if cascade_open:
+            ok, res = await call(client, "cascade_abort", {"plan": plan_uuid})
+            results.append(CheckResult("4", "R31_e3060750_cascade_abort_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R31_e3060750_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
+R32_PRE_FIX_SKIP_REASON = (
+    "server predates bug 74ba4313's fix -- the plan_unfreeze audit record "
+    "does not name the opened cascade_uuid, so cascade provenance is "
+    "unverifiable from audit_list -- redeploy pending"
+)
+
+
+async def run_r32_unfreeze_audit_names_cascade(client: Any) -> list[CheckResult]:
+    """Bug 74ba4313: cascade provenance must be verifiable from audit_list.
+    cascade_begin/commit/abort already write audited records; the gap was
+    the unfreeze door: plan_unfreeze audited BEFORE the cascade existed,
+    so its record could not name the opened cascade_uuid, leaving the
+    begin side of an unfreeze-opened cascade's chain unverifiable.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> G/T/A
+    chain -> step_transition(whole_plan -> frozen, require_green=false)
+    -> plan_unfreeze(changed_by, reason) capturing the returned
+    cascade_uuid -> audit_list(plan, action=plan_unfreeze), asserting the
+    newest record's changed_fields.cascade_uuid equals the returned one.
+    Pre-fix detection: the field absent from changed_fields SKIPs naming
+    bug 74ba4313. Cleanup: cascade_abort, plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_open = False
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r32-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R32_74ba4313_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R32_74ba4313_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R32_74ba4313_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R32_74ba4313_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+        if not ok or not t_uuid:
+            results.append(CheckResult("4", "R32_74ba4313_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_uuid, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R32_74ba4313_context_common(T,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_uuid})
+        if not ok:
+            results.append(CheckResult("4", "R32_74ba4313_step_create(A)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_transition",
+            {"plan": plan_uuid, "scope": "whole_plan", "to_status": "frozen", "require_green": False},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R32_74ba4313_freeze_whole_plan", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R32_74ba4313_frozen_repro_built", STATUS_PASS, f"G={g_id}"))
+
+        ok, res = await call(
+            client, "plan_unfreeze",
+            {"plan": plan_uuid, "changed_by": "live-smoke", "reason": "R32 provenance probe (bug 74ba4313)"},
+        )
+        opened_cascade = res.get("cascade_uuid") if ok and isinstance(res, dict) else None
+        if not ok or not opened_cascade:
+            results.append(CheckResult("4", "R32_74ba4313_plan_unfreeze", STATUS_FAIL, str(res)))
+            return results
+        cascade_open = True
+
+        ok, res = await call(
+            client, "audit_list",
+            {"plan": plan_uuid, "action": "plan_unfreeze", "limit": 1},
+        )
+        items = res.get("items") if ok and isinstance(res, dict) else None
+        record = items[0] if isinstance(items, list) and items else None
+        if not ok or not isinstance(record, dict):
+            results.append(CheckResult("4", "R32_74ba4313_audit_list", STATUS_FAIL, str(res)))
+            return results
+        changed_fields = record.get("changed_fields")
+        changed_fields = changed_fields if isinstance(changed_fields, dict) else {}
+        if changed_fields.get("cascade_uuid") == opened_cascade:
+            results.append(
+                CheckResult(
+                    "4", "R32_74ba4313_unfreeze_audit_names_cascade", STATUS_PASS,
+                    f"cascade_uuid={opened_cascade}",
+                )
+            )
+        elif "cascade_uuid" not in changed_fields:
+            results.append(
+                CheckResult(
+                    "4", "R32_74ba4313_unfreeze_audit_names_cascade", STATUS_SKIP,
+                    R32_PRE_FIX_SKIP_REASON,
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R32_74ba4313_unfreeze_audit_names_cascade", STATUS_FAIL,
+                    f"audit cascade_uuid={changed_fields.get('cascade_uuid')!r} != opened {opened_cascade}",
+                )
+            )
+    finally:
+        if cascade_open:
+            ok, res = await call(client, "cascade_abort", {"plan": plan_uuid})
+            results.append(CheckResult("4", "R32_74ba4313_cascade_abort_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R32_74ba4313_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

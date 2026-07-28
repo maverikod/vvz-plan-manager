@@ -3373,10 +3373,25 @@ def test_run_r30_is_registered_for_pipeline_dispatch():
     assert spec.needs_project is False
 
 
-def test_run_r19_through_r30_registry_order_is_stable():
+def test_run_r31_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r31")
+    assert spec.function_name == "run_r31_block_rebuild_open_cascade"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+
+
+def test_run_r32_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r32")
+    assert spec.function_name == "run_r32_unfreeze_audit_names_cascade"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+
+
+def test_run_r19_through_r32_registry_order_is_stable():
     ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
-    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30"}]
-    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30"]]
+    expected_tail = ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "r32"]
+    tail = [key for key in ordered_keys if key in set(expected_tail)]
+    positions = [tail.index(marker) for marker in expected_tail]
     assert positions == sorted(positions)
 
 
