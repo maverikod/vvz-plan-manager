@@ -26,8 +26,9 @@ def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
     finding count summed across all checks in the report, leaving the
     cascade open and the plan unchanged. When the gate report is green,
     resolves the cascade's ref to its tip revision, advances the plan head
-    to that revision, marks the cascade record committed, deletes the
-    cascade ref, and returns the gate verdict. The per-plan lock is always
+    to that revision, promotes the tip's cascade-tagged context blocks to
+    head blocks (bug 33a10275), marks the cascade record committed, deletes
+    the cascade ref, and returns the gate verdict. The per-plan lock is always
     released before returning or raising.
 
     :param conn: open psycopg 3 database connection.
@@ -47,8 +48,15 @@ def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
             raise CommitRefusedError(
                 f"commit refused: mechanical gate not green ({finding_count} findings)"
             )
+        # Deferred import: views.context_blocks reaches commands.errors, which
+        # imports CommitRefusedError from this module (cycle at import time).
+        from plan_manager.views.context_blocks import promote_cascade_blocks_to_head
+
         tip = get_ref(conn, plan_uuid, rec.name)
         set_head_revision(conn, plan_uuid, tip)
+        # Bug 33a10275: the tip's cascade-tagged context blocks ARE the new
+        # head's derived data; re-tag them so the head does not open red.
+        promote_cascade_blocks_to_head(conn, plan_uuid, rec.uuid, tip)
         close_cascade(conn, rec.uuid, "committed")
         delete_ref(conn, plan_uuid, rec.name)
         return verdict

@@ -661,6 +661,33 @@ def store_context_block(
     )
 
 
+def promote_cascade_blocks_to_head(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    cascade_uuid: uuid.UUID,
+    tip_revision_uuid: uuid.UUID,
+) -> int:
+    """Re-tag a committed cascade's tip-revision blocks as head blocks (bug 33a10275).
+
+    commit_cascade publishes the cascade tip revision AS the new head
+    (same revision uuid, identical plan truth), so every context block
+    compiled at that tip under the cascade is byte-for-byte the correct
+    derived data for the new head. Currency filters, however, require
+    cascade_uuid IS NULL once no cascade is open, so without this
+    promotion a green cascade gate commits to a head whose blocks all
+    read as stale. Blocks compiled at OLDER cascade revisions keep their
+    tag and correctly stay stale.
+
+    Returns the number of promoted rows.
+    """
+    result = conn.execute(
+        "UPDATE context_block SET cascade_uuid = NULL "
+        "WHERE plan_uuid = %s AND cascade_uuid = %s AND revision_uuid = %s",
+        (plan_uuid, cascade_uuid, tip_revision_uuid),
+    )
+    return result.rowcount
+
+
 def get_context_block(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,
