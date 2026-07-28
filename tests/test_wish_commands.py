@@ -139,3 +139,39 @@ def test_wish_delete_dry_run_reports_reference_blockers(monkeypatch) -> None:
     assert result["success"] is True
     assert result["data"]["blocked"] is True
     assert result["data"]["references"] == {"calendar_entry.wish_uuid": 2}
+
+
+def test_info_capabilities_include_runtime_work_layer():
+    from plan_manager.commands.info_reference import runtime_work_layer_capabilities
+
+    capabilities = runtime_work_layer_capabilities()
+    assert set(capabilities["wish"]["commands"]) == {
+        "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
+    }
+    assert set(capabilities["calendar"]["commands"]) == {
+        "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
+        "calendar_entry_update", "calendar_entry_delete",
+    }
+    assert capabilities["wish"]["statuses"] == [
+        "proposed", "triaged", "planned", "in_progress", "delivered", "rejected", "cancelled",
+    ]
+    assert capabilities["calendar"]["statuses"] == ["planned", "in_progress", "done", "cancelled"]
+
+
+def test_info_command_wires_runtime_work_layer_capabilities():
+    import plan_manager.commands.info_command as info_mod
+
+    assert info_mod.runtime_work_layer_capabilities is not None
+    import inspect
+
+    source = inspect.getsource(info_mod)
+    assert '"runtime_work_layer": runtime_work_layer_capabilities()' in source
+
+
+def test_info_metadata_documents_runtime_work_layer():
+    from plan_manager.commands.info_command import InfoCommand
+
+    metadata = InfoCommand.metadata()
+    assert "runtime_work_layer" in metadata["detailed_description"]
+    assert "CalendarEntry" in metadata["detailed_description"]
+    assert "wish desires and calendar-entry" in metadata["return_value"]["success"]["data"]["capabilities"]

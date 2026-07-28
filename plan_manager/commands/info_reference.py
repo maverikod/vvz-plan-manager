@@ -1319,3 +1319,89 @@ def runtime_write_invariants() -> dict[str, Any]:
             "INVALID_RUNTIME_STATUS_TRANSITION": "A requested status value is not a legal value or transition for the target runtime entity's status vocabulary.",
         },
     }
+
+
+def runtime_work_layer_capabilities() -> dict[str, Any]:
+    """Return machine-readable notes for the runtime work layer (wish + calendar)."""
+    return {
+        "purpose": (
+            "Runtime work layer: WishItem records a feature DESIRE awaiting an "
+            "acceptance decision (an idea, not committed work, so it never "
+            "pollutes todo_queue), and CalendarEntry schedules a dated work "
+            "window over one or more inclusive calendar days, optionally "
+            "linked to the wish it realizes and anchored to any runtime or "
+            "plan entity. Both are runtime overlay state, never frozen plan "
+            "truth."
+        ),
+        "wish": {
+            "commands": {
+                "wish_create": {"mutates": True, "notes": "Primary anchor uses the shared runtime anchor vocabulary."},
+                "wish_get": {"mutates": False},
+                "wish_list": {
+                    "mutates": False,
+                    "notes": (
+                        "Uniform filtering/pagination; the project filter is "
+                        "transitive (direct project anchors plus wishes whose "
+                        "anchor plan belongs to the project); active_only "
+                        "drops delivered/rejected/cancelled; unanchored_only "
+                        "selects free-floating ideas."
+                    ),
+                },
+                "wish_update": {"mutates": True, "notes": "Guarded field and status updates."},
+                "wish_delete": {"mutates": True, "notes": "Soft by default; hard delete is integrity-gated."},
+            },
+            "statuses": ["proposed", "triaged", "planned", "in_progress", "delivered", "rejected", "cancelled"],
+            "terminal_statuses": ["delivered", "rejected", "cancelled"],
+            "kinds": ["feature", "ux", "automation", "integration", "reporting", "tooling", "other"],
+            "priority_nice": "-20 (highest) to 19 (background); ranks accepted wishes.",
+            "lifecycle_note": (
+                "proposed -> triaged -> planned -> in_progress -> delivered is "
+                "the delivery path; rejected/cancelled are the decline paths. "
+                "A wish becomes WORK only by authoring todos/plans from it; "
+                "the wish itself records the desire and its outcome."
+            ),
+        },
+        "calendar": {
+            "commands": {
+                "calendar_entry_create": {
+                    "mutates": True,
+                    "notes": (
+                        "Requires title, description, status, inclusive "
+                        "start_date/end_date (YYYY-MM-DD), created_by, and a "
+                        "primary anchor; wish links the realized desire."
+                    ),
+                },
+                "calendar_entry_get": {"mutates": False},
+                "calendar_entry_list": {
+                    "mutates": False,
+                    "notes": (
+                        "Day-window filtering via day_from/day_to (an entry "
+                        "matches when its inclusive span intersects the "
+                        "window), plus wish/status and the uniform runtime "
+                        "filters; reverse lookup of scheduled dates for an "
+                        "entity goes through the anchor filters."
+                    ),
+                },
+                "calendar_entry_update": {"mutates": True},
+                "calendar_entry_delete": {"mutates": True, "notes": "Soft by default; hard delete is integrity-gated."},
+            },
+            "statuses": ["planned", "in_progress", "done", "cancelled"],
+            "date_semantics": (
+                "start_date and end_date are inclusive calendar-day bounds; "
+                "multi-day windows are valid while end_date >= start_date. "
+                "Dates are plain calendar days (YYYY-MM-DD), not instants."
+            ),
+            "anchor_note": (
+                "One primary anchor per entry over the shared runtime anchor "
+                "vocabulary (none/project/file/plan/revision/step/"
+                "execution_attempt/review_result/bug/bug_fix/todo), validated "
+                "for existence at write time."
+            ),
+        },
+        "read_surfaces": ["wish_get", "wish_list", "calendar_entry_get", "calendar_entry_list"],
+        "invariants": [
+            "Wishes and calendar entries never appear in todo_queue.",
+            "Every mutation writes a runtime audit record (audit_list).",
+            "Deletion follows the shared soft/hard posture with referential-integrity gating.",
+        ],
+    }
