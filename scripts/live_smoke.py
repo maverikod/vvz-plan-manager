@@ -5094,6 +5094,154 @@ async def run_r27_runtime_work_layer_lifecycle(
     return results
 
 
+R28_PRE_FIX_SKIP_REASON = (
+    "server predates bug 1e13649f's fix -- bug_delete(hard=true) on a bug "
+    "whose source_plan_uuid anchors a hard-deleted plan raises -32603 "
+    "(insert on runtime_audit_log violates FK "
+    "runtime_audit_log_plan_uuid_fkey) -- redeploy pending"
+)
+
+# Must match plan_manager.storage.runtime_audit_store.DANGLING_PLAN_UUID_FIELD
+# (this script talks to the server over the wire only -- it never imports
+# server internals -- so the key name is duplicated here, not imported).
+R28_DANGLING_PLAN_UUID_FIELD = "_dangling_plan_uuid"
+
+
+def _looks_like_dangling_plan_anchor_fk_violation(diagnostic_text: str) -> bool:
+    """True iff a command-call failure looks like bug 1e13649f's runtime_audit_log_plan_uuid_fkey violation (a runtime audit write anchored to a plan that no longer exists), rather than any other error incidentally similar.
+
+    Narrow match: requires the exact FK constraint name from the violation
+    message to appear in the diagnostic text.
+    """
+    return "runtime_audit_log_plan_uuid_fkey" in diagnostic_text
+
+
+async def run_r28_bug_delete_dangling_plan_anchor(client: Any) -> list[CheckResult]:
+    """Bug 1e13649f: bug_delete (soft and hard paths, per the bug report)
+    on a bug whose source_plan_uuid anchors a plan that was hard-deleted
+    out from under it used to fail with -32603 (insert on
+    runtime_audit_log violates FK runtime_audit_log_plan_uuid_fkey).
+    bug_report.source_plan_uuid carries no FK of its own (plan_delete does
+    not cascade to it), so a dangling anchor is a legal, reachable state,
+    but the NEW audit row bug_delete's hard path writes for its own
+    hard_delete action was rejected by runtime_audit_log's own plan_uuid
+    FK. Fixed at the shared audit layer (record_runtime_change, the single
+    write path every plan-anchored runtime mutation funnels through): a
+    dangling plan_uuid now falls back to an unanchored (NULL) audit row
+    with the original plan uuid preserved in changed_fields, so the
+    deletion always succeeds and the audit trail is never silently
+    dropped.
+
+    Recipe (the bug's own live repro): plan_create -> bug_create
+    (source_type=plan, anchored to that plan) -> plan_delete(hard=true)
+    (the bug's source_plan_uuid is now dangling) -> bug_delete(hard=true),
+    asserting SUCCESS (not the historical FK error) -> audit_list(entity_
+    type=bug_report, entity_id=<bug>, action=hard_delete), asserting
+    exactly one record with plan_uuid=None and the original (now-deleted)
+    plan uuid preserved under changed_fields[R28_DANGLING_PLAN_UUID_FIELD].
+
+    Pre-fix detection: bug_delete(hard=true) fails with the exact FK
+    violation text this bug names; that failure is the version probe and
+    SKIPs this check naming bug 1e13649f, rather than failing the
+    pipeline against a not-yet-deployed fix.
+
+    Self-contained top-level try/finally: the anchor plan is deliberately
+    hard-deleted as PART of the recipe (that dangling state is what is
+    under test), so finally only has cleanup left to do when a step
+    before or including the fixed bug_delete call failed and left the bug
+    (or, if plan_create succeeded but bug_create did not, the plan)
+    behind.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r28-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R28_1e13649f_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": unique_suffix("r28-bug"),
+                "short_description": "R28 dangling-plan-anchor scratch bug",
+                "detailed_description": "R28: bug_delete(hard) after its anchor plan is hard-deleted (bug 1e13649f).",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke",
+                "created_by": "live-smoke", "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R28_1e13649f_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R28_1e13649f_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+        plan_gone_ok = ok and isinstance(res, dict)
+        results.append(
+            CheckResult(
+                "4", "R28_1e13649f_plan_delete(hard)_dangles_bug_anchor", STATUS_PASS if plan_gone_ok else STATUS_FAIL,
+                "" if plan_gone_ok else str(res),
+            )
+        )
+        if not plan_gone_ok:
+            return results
+        # the plan row is gone now; finally must not try to delete it again
+        deleted_plan_uuid = plan_uuid
+        plan_uuid = None
+
+        ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+        if not ok:
+            pre_fix = _looks_like_dangling_plan_anchor_fk_violation(str(res))
+            results.append(
+                CheckResult(
+                    "4", "R28_1e13649f_bug_delete(hard)_dangling_anchor", STATUS_SKIP if pre_fix else STATUS_FAIL,
+                    R28_PRE_FIX_SKIP_REASON if pre_fix else str(res),
+                )
+            )
+            return results
+        hard_ok = isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == bug_uuid
+        results.append(
+            CheckResult(
+                "4", "R28_1e13649f_bug_delete(hard)_dangling_anchor", STATUS_PASS if hard_ok else STATUS_FAIL,
+                "" if hard_ok else str(res),
+            )
+        )
+        if not hard_ok:
+            return results
+        deleted_bug_uuid = bug_uuid
+        bug_uuid = None  # already gone; nothing left for finally to clean up
+
+        ok, res = await call(
+            client, "audit_list",
+            {"entity_type": "bug_report", "entity_id": deleted_bug_uuid, "action": "hard_delete", "limit": 5},
+        )
+        items = res.get("items") if ok and isinstance(res, dict) else None
+        record = items[0] if isinstance(items, list) and len(items) == 1 else None
+        audit_ok = (
+            record is not None
+            and record.get("plan_uuid") is None
+            and isinstance(record.get("changed_fields"), dict)
+            and record["changed_fields"].get(R28_DANGLING_PLAN_UUID_FIELD) == deleted_plan_uuid
+        )
+        results.append(
+            CheckResult(
+                "4", "R28_1e13649f_audit_row_null_plan_preserves_dangling_uuid", STATUS_PASS if audit_ok else STATUS_FAIL,
+                "" if audit_ok else str(res),
+            )
+        )
+    finally:
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            results.append(CheckResult("4", "R28_1e13649f_bug_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R28_1e13649f_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

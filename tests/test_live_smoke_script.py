@@ -3300,7 +3300,7 @@ def test_run_r27_full_success_every_check_passes():
 
 
 # --------------------------------------------------------------------------
-# R20-R27 (wave W2/W3 regression checks) + the R12 gate-findings-pagination
+# R20-R28 (wave W2/W3 regression checks) + the R12 gate-findings-pagination
 # extension: dead-code wiring/structure guards, matching the convention
 # every check from R10 through R13 established (R14-R19 stopped adding
 # dedicated per-check ScriptedClient suites but the wiring-guard convention
@@ -3352,11 +3352,30 @@ def test_run_r27_is_registered_for_pipeline_dispatch():
     assert spec.needs_project is True
 
 
-def test_run_r19_through_r27_registry_order_is_stable():
+def test_run_r28_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r28")
+    assert spec.function_name == "run_r28_bug_delete_dangling_plan_anchor"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+
+
+def test_run_r19_through_r28_registry_order_is_stable():
     ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
-    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27"}]
-    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27"]]
+    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28"}]
+    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28"]]
     assert positions == sorted(positions)
+
+
+def test_looks_like_dangling_plan_anchor_fk_violation_matches_exact_constraint_name():
+    """R28's pre-fix probe (bug 1e13649f) must distinguish the genuine
+    runtime_audit_log_plan_uuid_fkey violation from any other bug_delete
+    failure that happens to mention plans or foreign keys in passing."""
+    assert ls._looks_like_dangling_plan_anchor_fk_violation(
+        'insert or update on table "runtime_audit_log" violates foreign key '
+        'constraint "runtime_audit_log_plan_uuid_fkey"'
+    )
+    assert not ls._looks_like_dangling_plan_anchor_fk_violation("bug not found: 11111111-1111-1111-1111-111111111111")
+    assert not ls._looks_like_dangling_plan_anchor_fk_violation("cannot delete bug ...: inbound references exist")
 
 
 def test_run_r12_gate_findings_pagination_extension_present_in_source():

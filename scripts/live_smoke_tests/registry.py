@@ -52,6 +52,11 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         needs_catalog=True,
         needs_project=True,
     ),
+    LiveSmokeTestSpec(
+        "r28",
+        "run_r28_bug_delete_dangling_plan_anchor",
+        "bug_delete dangling plan-anchor audit regression (bug 1e13649f)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)
