@@ -41,12 +41,24 @@ class ScoringConfig:
     trust_floor: float = 0.2
     embedding_url: str | None = None
     embedding_timeout: float = 60.0
+    # Bug 13cae630: raw concept-basis cosine tops out well below 1.0 for
+    # correctly authored content (observed plan-wide range 0.09..0.39), so
+    # the uncalibrated estimator made the green band arithmetically
+    # unreachable. The affine calibration band maps this realistic cosine
+    # range onto [0, 1].
+    embedding_cal_floor: float = 0.05
+    embedding_cal_ceiling: float = 0.45
 
     def __post_init__(self) -> None:
         if self.aggregation not in ("minimum", "fraction_above_threshold"):
             raise ValueError(
                 "aggregation must be 'minimum' or 'fraction_above_threshold', "
                 f"got {self.aggregation!r}"
+            )
+        if not self.embedding_cal_floor < self.embedding_cal_ceiling:
+            raise ValueError(
+                "embedding_cal_floor must be strictly below embedding_cal_ceiling, "
+                f"got {self.embedding_cal_floor!r} >= {self.embedding_cal_ceiling!r}"
             )
 
 

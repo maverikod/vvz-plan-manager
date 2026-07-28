@@ -11,6 +11,8 @@ from plan_manager.scoring.embedding import (
 from plan_manager.scoring.embedding_batch import embed_texts, embedding_health
 from plan_manager.scoring.estimators import (
     branch_text,
+    calibrate_cosine,
+    completeness_estimator,
     coverage_diagnostics,
     coverage_estimator,
     declared_concepts,
@@ -146,14 +148,16 @@ def _score_one(
         conn, branch, concept_rows, plan_nodes
     )
     weights["references"] = 1.0
+    # Bug 13cae630: specificity discriminates; calibrated cosine reaches green.
+    estimator_vector["completeness"] = completeness_estimator(branch)
+    weights["completeness"] = 1.0
 
     pair_values: dict[str, float] = {}
 
     embedding_available = embedding_state == READINESS_READY
     if embedding_available:
-        pair_values["embedding"] = embedding_estimator(
-            branch, concept_rows, required, config.concept_weight, vectors
-        )
+        raw = embedding_estimator(branch, concept_rows, required, config.concept_weight, vectors)
+        pair_values["embedding"] = calibrate_cosine(raw, config.embedding_cal_floor, config.embedding_cal_ceiling)
 
     sim_vote = simulation_vote(model_output, branch.atomic.fields.get("prompt", ""))
     if sim_vote is not None:

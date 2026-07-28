@@ -210,3 +210,58 @@ def embedding_estimator(
     if not any(c_required) or not any(c_actual):
         return 0.0
     return max(0.0, _cosine(c_required, c_actual))
+
+
+def calibrate_cosine(value: float, floor: float, ceiling: float) -> float:
+    """Affinely map a raw cosine onto [0, 1] over the calibration band.
+
+    Bug 13cae630: the concept-basis cosine realistically ranges far below
+    1.0 for correctly authored content (observed 0.09..0.39 plan-wide), so
+    consumed raw it capped the SemanticIndex below the green threshold.
+    Values at or below ``floor`` map to 0.0, at or above ``ceiling`` to
+    1.0, linearly in between. Monotone, so it never reorders branches.
+    """
+    if value <= floor:
+        return 0.0
+    if value >= ceiling:
+        return 1.0
+    return (value - floor) / (ceiling - floor)
+
+
+def completeness_estimator(branch: Branch) -> float:
+    """Deterministic operational-completeness estimator (bug 13cae630).
+
+    The mechanical gate already guarantees the presence of the required
+    fields, so this estimator scores the checkable signals the gate does
+    NOT enforce -- exactly the discriminators on which the reporter's
+    controlled pairs showed the embedding-only index ranking skeleton
+    steps above complete ones:
+
+    * automated verification: fields["verification"]["type"] is set and is
+      not the step_create default "manual";
+    * targeted verification: verification carries non-empty "target" and
+      "expected" (the default is empty strings);
+    * declared objects: the atomic declares a non-empty fields["objects"]
+      list.
+
+    Returns the mean of the three binary signals. Language-independent by
+    construction, so it also dilutes the lexical-echo bias of the
+    embedding estimator on mixed-language plans.
+    """
+    fields = branch.atomic.fields if branch.atomic is not None else {}
+    verification = fields.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+
+    v_type = verification.get("type")
+    automated = 1.0 if isinstance(v_type, str) and v_type.strip() and v_type.strip() != "manual" else 0.0
+
+    target = verification.get("target")
+    expected = verification.get("expected")
+    targeted = 1.0 if (
+        isinstance(target, str) and target.strip() and isinstance(expected, str) and expected.strip()
+    ) else 0.0
+
+    objects_declared = fields.get("objects")
+    has_objects = 1.0 if isinstance(objects_declared, list) and objects_declared else 0.0
+
+    return (automated + targeted + has_objects) / 3.0
