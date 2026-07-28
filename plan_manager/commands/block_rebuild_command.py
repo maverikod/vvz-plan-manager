@@ -18,6 +18,8 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.domain.runtime_validation import validate_uuid
 from plan_manager.runtime.context import db_connection
 from plan_manager.views.context_blocks import (
+    ContextRevision,
+    current_working_state,
     get_context_block,
     rebuild_context_block,
     resolve_context_revision,
@@ -45,6 +47,15 @@ class BlockRebuildCommand(Command):
                     "items": {"type": "string"},
                     "description": "Stored context block UUIDs to rebuild against the current working state.",
                 },
+                "cascade_uuid": {
+                    "type": "string",
+                    "description": (
+                        "Optional open-cascade identifier to pin explicitly. When omitted, "
+                        "the plan's LIVE working state is used: the open cascade's working "
+                        "tip when a cascade is open (bug e3060750), the committed head "
+                        "otherwise."
+                    ),
+                },
                 **pagination_schema_properties(),
             },
             "required": ["plan", "block_ids"],
@@ -61,6 +72,15 @@ class BlockRebuildCommand(Command):
                     "description": "Stored context block UUIDs to rebuild against the current working state.",
                     "type": "array",
                     "required": True,
+                },
+                "cascade_uuid": {
+                    "description": (
+                        "Optional open-cascade identifier to pin explicitly. When omitted, the "
+                        "plan's LIVE working state is used: the open cascade's working tip when "
+                        "a cascade is open (bug e3060750), the committed head otherwise."
+                    ),
+                    "type": "string",
+                    "required": False,
                 },
                 **pagination_metadata_params(),
             },
@@ -112,6 +132,7 @@ class BlockRebuildCommand(Command):
         self,
         plan: str,
         block_ids: list[str],
+        cascade_uuid: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
@@ -120,7 +141,16 @@ class BlockRebuildCommand(Command):
             pagination = parse_pagination({"limit": limit, "offset": offset})
             with db_connection() as conn:
                 p = resolve_plan(conn, plan)
-                current_revision = resolve_context_revision(conn, p)
+                if cascade_uuid is not None:
+                    current_revision = resolve_context_revision(conn, p, cascade_uuid=cascade_uuid)
+                else:
+                    # Bug e3060750: bare resolve_context_revision returns the
+                    # committed head even while a cascade is open, so rebuilt
+                    # blocks carried head/None identity, read is_current=true
+                    # against themselves, and the gate immediately rejected
+                    # them as stale. Default to the LIVE working state.
+                    working_revision, working_cascade = current_working_state(conn, p)
+                    current_revision = ContextRevision(working_revision, working_cascade)
                 rebuilt_common_by_source = {}
                 summaries = []
                 for raw_block_id in block_ids:
