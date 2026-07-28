@@ -6,6 +6,7 @@ import pytest
 from plan_manager.commands.errors import DomainCommandError
 from plan_manager.commands.step_update_command import (
     StepUpdateCommand,
+    _validate_step_fields,
     _validate_concept_bindings,
     _validate_relations_field,
 )
@@ -64,6 +65,28 @@ def test_step_update_execute_rejects_empty_patch_with_domain_code() -> None:
     result = asyncio.run(StepUpdateCommand().execute(plan="p", step_id="G-001"))
 
     assert result.to_dict()["error"]["data"]["domain_code"] == "INVALID_STEP_FIELD_SHAPE"
+
+
+def test_step_update_rejects_legacy_object_declaration_shape() -> None:
+    with pytest.raises(DomainCommandError) as excinfo:
+        _validate_step_fields(5, {"objects": ["Widget"]})
+
+    assert excinfo.value.code == "INVALID_STEP_FIELD_SHAPE"
+    assert excinfo.value.details["field"] == "fields"
+    assert excinfo.value.details["problems"] == [
+        {
+            "field_name": "objects",
+            "index": 0,
+            "message": "objects[0] must be an object",
+        }
+    ]
+
+
+def test_step_update_accepts_canonical_object_declaration_shape() -> None:
+    _validate_step_fields(
+        5,
+        {"objects": [{"name": "Widget", "concepts": ["C-001"]}]},
+    )
 
 
 class _Rows:

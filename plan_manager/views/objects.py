@@ -10,6 +10,8 @@ import uuid
 
 import psycopg
 
+from plan_manager.domain.step_objects import normalize_as_object_declarations
+
 
 def module_of(target_file: str) -> str:
     """Derive the classification module of an object from its declaring file.
@@ -106,7 +108,9 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
         target_file = (as_fields or {}).get("target_file")
         module = module_of(target_file) if target_file else ""
         declaring_concepts = set(as_concepts) if as_concepts is not None else set()
-        declarations = (as_fields or {}).get("objects", [])
+        declarations, _problems = normalize_as_object_declarations(
+            as_fields or {}, allow_legacy_strings=True
+        )
         for declaration in declarations:
             name = declaration["name"]
             bucket = accum.setdefault(
@@ -224,4 +228,3 @@ def object_findings(inventory: dict[str, dict]) -> list[dict]:
                 }
             )
     return findings
-

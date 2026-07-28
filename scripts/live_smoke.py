@@ -2183,12 +2183,14 @@ async def run_r7_agent_config_lifecycle(client: Any, catalog_names: frozenset[st
       3. toolset_create -> toolset_get -> toolset_list -> toolset_update ->
          toolset_member_add(toolset, tool) -- the tool is attached WHILE
          still live.
-      4. tool_delete: deliberately SOFT. The tool is still referenced by the
-         live toolset membership just created; hard mode is gated by the
-         universal deletion rule's inbound-reference integrity check, while
-         soft delete carries no such gate.
-      5. toolset_member_remove (detach) -> toolset_delete(hard) -- safe now
-         that the membership has been removed.
+      4. tool_delete(dry_run=true): expected SUCCESS preview with
+         blocked=true and references {"toolset_membership.tool_uuid": 1}.
+         The tool is still referenced by the live toolset membership just
+         created, and the universal deletion rule reports that block in the
+         dry-run payload instead of raising DELETE_BLOCKED.
+      5. toolset_member_remove (detach) -> tool_delete(soft default) ->
+         toolset_delete(hard) -- the real soft delete only runs after the
+         blocking membership has been removed.
       6. role_create -> role_get -> role_list -> role_update ->
          role_delete(hard) -- a Role (C-003) row is a distinct stored entity
          from the RuntimeRole enum string the resolve commands key on
@@ -2329,18 +2331,52 @@ async def run_r7_agent_config_lifecycle(client: Any, catalog_names: frozenset[st
             )
         )
 
-        # --- tool_delete: deliberately SOFT (see docstring point 4). ---
-        ok, res = await call(client, "tool_delete", {"tool_uuid": tool_uuid, "changed_by": "live-smoke"})
-        soft_ok = ok and isinstance(res, dict) and res.get("mode") == "soft"
-        results.append(CheckResult("4", "R7_tool_delete_soft", STATUS_PASS if soft_ok else STATUS_FAIL, "" if soft_ok else str(res)))
-        if ok:
-            tool_uuid = None  # naturally deleted; the finally block must not double-delete
+        # --- tool_delete dry-run: expected SUCCESS preview with blocked=true
+        # while the live membership still points at the tool (see docstring
+        # point 4). ---
+        ok, res = await call(
+            client,
+            "tool_delete",
+            {"tool_uuid": tool_uuid, "changed_by": "live-smoke", "dry_run": True},
+        )
+        blocked_preview = (
+            ok
+            and isinstance(res, dict)
+            and res.get("dry_run") is True
+            and res.get("mode") == "soft"
+            and res.get("blocked") is True
+            and isinstance(res.get("references"), dict)
+            and res["references"].get("toolset_membership.tool_uuid") == 1
+        )
+        results.append(
+            CheckResult(
+                "4",
+                "R7_tool_delete_dry_run_blocked",
+                STATUS_PASS if blocked_preview else STATUS_FAIL,
+                "" if blocked_preview else f"ok={ok} res={res!r}",
+            )
+        )
 
         if membership_uuid:
             ok, res = await call(client, "toolset_member_remove", {"membership_uuid": membership_uuid, "changed_by": "live-smoke"})
             results.append(CheckResult("4", "R7_toolset_member_remove", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
             if ok:
                 membership_uuid = None
+
+        # --- tool_delete: real soft delete after the blocking membership
+        # has been detached (see docstring point 5). ---
+        ok, res = await call(client, "tool_delete", {"tool_uuid": tool_uuid, "changed_by": "live-smoke"})
+        soft_ok = ok and isinstance(res, dict) and res.get("mode") == "soft"
+        results.append(
+            CheckResult(
+                "4",
+                "R7_tool_delete_soft_after_detach",
+                STATUS_PASS if soft_ok else STATUS_FAIL,
+                "" if soft_ok else str(res),
+            )
+        )
+        if ok:
+            tool_uuid = None  # naturally deleted; the finally block must not double-delete
 
         ok, res = await call(client, "toolset_delete", {"toolset_uuid": toolset_uuid, "changed_by": "live-smoke", "hard": True})
         hard_ok = ok and isinstance(res, dict) and res.get("mode") == "hard"

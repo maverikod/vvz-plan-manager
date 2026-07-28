@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list", action="store_true", help="List available named checks and exit.")
     parser.add_argument("--base-url", help="Base URL for the optional live-smoke check.")
     parser.add_argument("--expect-version", help="Expected server version for the optional live-smoke check.")
+    parser.add_argument("--cert", help="Client certificate path for the optional live-smoke check.")
+    parser.add_argument("--key", help="Client private key path for the optional live-smoke check.")
     parser.add_argument("--ca", help="CA bundle path for the optional live-smoke check.")
     parser.add_argument(
         "--json",
@@ -34,6 +36,10 @@ def _live_smoke_argv(args: argparse.Namespace) -> tuple[str, ...] | None:
     argv: list[str] = [sys.executable, "scripts/live_smoke.py", "--base-url", args.base_url]
     if args.expect_version:
         argv.extend(["--expect-version", args.expect_version])
+    if args.cert:
+        argv.extend(["--cert", args.cert])
+    if args.key:
+        argv.extend(["--key", args.key])
     if args.ca:
         argv.extend(["--ca", args.ca])
     if args.json:

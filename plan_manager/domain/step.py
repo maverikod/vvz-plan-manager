@@ -119,7 +119,6 @@ def validate_ts_inputs_outputs(fields: Mapping[str, Any]) -> list[dict[str, Any]
                 )
     return problems
 
-
 class StepValidationError(ValueError):
     """Raised when a Step instance fails one or more validate_step checks.
 

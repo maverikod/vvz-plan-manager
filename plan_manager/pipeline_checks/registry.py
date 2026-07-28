@@ -61,6 +61,16 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
         ),
     ),
     PipelineCheckSpec(
+        name="object-declaration-shape",
+        description="Run the level-5 object declaration shape regression check.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_6625a6eb_object_declaration_shape.py",
+        ),
+    ),
+    PipelineCheckSpec(
         name="release-client-build",
         description="Run the release-script regression check for isolated client wheel/sdist builds.",
         argv=(
@@ -100,6 +110,28 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_metadata_vocabulary_contract.py",
             "tests/test_info_command_inclusion_contract.py",
             "client/tests/test_client_server_api_sync.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="pipeline-cli",
+        description="Run the pipeline CLI regression checks, including live-smoke argument forwarding.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_pipeline_cli.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="live-smoke-r7",
+        description="Run the R7 live-smoke regression checks for the agent-config lifecycle.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_live_smoke_script.py",
+            "-k",
+            "run_r7",
         ),
     ),
     PipelineCheckSpec(

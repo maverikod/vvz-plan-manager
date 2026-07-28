@@ -61,6 +61,42 @@ def test_pipeline_live_smoke_requires_base_url() -> None:
         raise AssertionError("pipeline live-smoke without --base-url must stop")
 
 
+def test_pipeline_live_smoke_forwards_mtls_client_files() -> None:
+    parser = pipeline_cli.build_parser()
+    args = parser.parse_args(
+        [
+            "live-smoke",
+            "--base-url",
+            "https://192.168.254.26:8080",
+            "--expect-version",
+            "0.1.79",
+            "--cert",
+            "mtls-certs/client.crt",
+            "--key",
+            "mtls-certs/client.key",
+            "--ca",
+            "build/planmgr-live-ca.crt",
+            "--json",
+        ]
+    )
+
+    assert pipeline_cli._live_smoke_argv(args) == (
+        pipeline_cli.sys.executable,
+        "scripts/live_smoke.py",
+        "--base-url",
+        "https://192.168.254.26:8080",
+        "--expect-version",
+        "0.1.79",
+        "--cert",
+        "mtls-certs/client.crt",
+        "--key",
+        "mtls-certs/client.key",
+        "--ca",
+        "build/planmgr-live-ca.crt",
+        "--json",
+    )
+
+
 def test_run_check_exports_repo_and_client_to_pythonpath(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

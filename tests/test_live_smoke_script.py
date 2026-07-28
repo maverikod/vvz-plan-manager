@@ -1705,7 +1705,18 @@ def _r7_success_responses() -> dict[str, Any]:
         "toolset_list": _ok({"toolsets": [{"uuid": "toolset-1"}], "total": 1, "limit": 5, "offset": 0}),
         "toolset_update": _ok({"uuid": "toolset-1", "description": "updated by live_smoke.py R7"}),
         "toolset_member_add": _ok({"uuid": "membership-1", "toolset_uuid": "toolset-1", "tool_uuid": "tool-1", "position": 0}),
-        "tool_delete": _ok({"dry_run": False, "mode": "soft", "tool": {"uuid": "tool-1"}}),
+        "tool_delete": _sequence(
+            _ok(
+                {
+                    "dry_run": True,
+                    "would_delete": "tool-1",
+                    "mode": "soft",
+                    "blocked": True,
+                    "references": {"toolset_membership.tool_uuid": 1},
+                }
+            ),
+            _ok({"dry_run": False, "mode": "soft", "tool": {"uuid": "tool-1"}}),
+        ),
         "toolset_member_remove": _ok({"uuid": "membership-1", "deleted_at": "2026-07-23T00:00:00Z"}),
         "toolset_delete": _ok({"dry_run": False, "mode": "hard", "deleted_uuid": "toolset-1"}),
         "role_create": _ok({"uuid": "role-1"}),
@@ -1788,21 +1799,35 @@ def test_run_r7_full_success_every_check_passes():
 
 
 def test_run_r7_tool_delete_is_soft_never_hard():
-    """tool_delete is deliberately soft (the tool is still referenced by the
-    live toolset membership at that point in the recipe) -- hard=true is
-    never passed."""
+    """R7 first probes tool_delete with dry_run=true while the live
+    toolset membership still points at the tool, then performs the real
+    soft delete only after the membership has been detached. hard=true is
+    never passed in either call."""
     client = _ScriptedClient(_r7_success_responses())
 
     asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
 
     tool_delete_calls = [params for name, params in client.calls if name == "tool_delete"]
-    assert len(tool_delete_calls) == 1
+    assert len(tool_delete_calls) == 2
+    assert tool_delete_calls[0]["dry_run"] is True
     assert tool_delete_calls[0].get("hard") is not True
+    assert tool_delete_calls[1].get("hard") is not True
+    assert "dry_run" not in tool_delete_calls[1]
+
+
+def test_run_r7_dry_run_delete_uses_blocked_preview_contract():
+    client = _ScriptedClient(_r7_success_responses())
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    result = next(r for r in results if r.name == "R7_tool_delete_dry_run_blocked")
+    assert result.status == ls.STATUS_PASS
 
 
 def test_run_r7_membership_lifecycle_ordering():
-    """toolset_member_add happens while the tool is still live; tool_delete
-    (soft) follows; the membership is detached before the toolset itself is
+    """toolset_member_add happens while the tool is still live; the first
+    tool_delete call is only a blocking dry-run preview; the membership is
+    detached before the real soft delete and before the toolset itself is
     hard-deleted."""
     client = _ScriptedClient(_r7_success_responses())
 
@@ -1810,8 +1835,23 @@ def test_run_r7_membership_lifecycle_ordering():
 
     names = [name for name, _ in client.calls]
     assert names.index("toolset_member_add") < names.index("tool_delete")
-    assert names.index("tool_delete") < names.index("toolset_member_remove")
-    assert names.index("toolset_member_remove") < names.index("toolset_delete")
+    first_tool_delete = names.index("tool_delete")
+    second_tool_delete = names.index("tool_delete", first_tool_delete + 1)
+    assert first_tool_delete < names.index("toolset_member_remove")
+    assert names.index("toolset_member_remove") < second_tool_delete
+    assert second_tool_delete < names.index("toolset_delete")
+
+
+def test_run_r7_tool_delete_results_match_delete_contract():
+    """R7's delete sub-sequence must first prove the live membership blocks
+    deletion, then soft-delete successfully once the membership is gone."""
+    client = _ScriptedClient(_r7_success_responses())
+
+    results = asyncio.run(ls.run_r7_agent_config_lifecycle(client, ls.R7_REQUIRED_COMMANDS))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R7_tool_delete_dry_run_blocked"].status == ls.STATUS_PASS
+    assert by_name["R7_tool_delete_soft_after_detach"].status == ls.STATUS_PASS
 
 
 def test_run_r7_model_deleted_before_its_provider():

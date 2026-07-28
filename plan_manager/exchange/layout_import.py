@@ -7,6 +7,7 @@ import yaml
 
 from plan_manager.cascade.write import step_snapshot
 from plan_manager.domain.step import validate_ts_inputs_outputs
+from plan_manager.domain.step_objects import validate_as_objects
 from plan_manager.domain.step_store import create_step
 
 _DIR_PATTERN = re.compile(r"^([GT])-(\d{3})-[a-z0-9-]+$")
@@ -64,7 +65,7 @@ def validate_as_file(as_path: Path) -> list[str]:
         return [
             f"{as_path}: step_id {data['step_id']!r} does not match filename {declared_id!r}"
         ]
-    return []
+    return [f"{as_path}: {problem['message']}" for problem in validate_as_objects(data)]
 
 
 def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: str, level: int, parent_step_uuid):
@@ -88,6 +89,13 @@ def _create_step_from_descriptor(conn, plan_uuid, descriptor_path: Path, name: s
         if problems:
             raise ValueError(
                 f"{descriptor_path}: invalid TS inputs/outputs item shape: "
+                + "; ".join(problem["message"] for problem in problems)
+            )
+    if level == 5:
+        problems = validate_as_objects(fields)
+        if problems:
+            raise ValueError(
+                f"{descriptor_path}: invalid AS objects item shape: "
                 + "; ".join(problem["message"] for problem in problems)
             )
     step = create_step(

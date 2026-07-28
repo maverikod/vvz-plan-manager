@@ -55,6 +55,16 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "values are what the plan_validate mechanical gate's "
             "parse.inputs_outputs check reports for any pre-existing "
             "invalid state (bug 26fa21a5)."
+            " For a level-5 (AS) step, fields.objects is a list of JSON "
+            "objects, never bare strings: each item is {name, concepts} "
+            "where name is a non-empty string and concepts is a list of "
+            "concept_id strings like C-001. step_update validates the "
+            "complete merged objects list BEFORE any write: a malformed item "
+            "(such as a bare string, a missing name, or a non-list concepts "
+            "value) is rejected atomically with INVALID_STEP_FIELD_SHAPE. "
+            "The object inventory read-path still tolerates pre-existing "
+            "legacy string entries from old plans by coercing them in memory "
+            "until the stored data is migrated (bug 6625a6eb)."
         ),
         "parameters": {
             "plan": {
@@ -171,6 +181,32 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                     "check reports for any pre-existing invalid state."
                 ),
             },
+            {
+                "description": "VALID: patch a level-5 (AS) step's object declarations with canonical items.",
+                "command": {
+                    "plan": "plan_manager",
+                    "step_id": "A-001",
+                    "fields": {
+                        "objects": [
+                            {"name": "Widget", "concepts": ["C-001", "C-002"]}
+                        ]
+                    },
+                },
+                "explanation": "Each objects item is an object with a non-empty name and a concepts list of concept ids; stored as given.",
+            },
+            {
+                "description": "INVALID (do not send): legacy bare-string object declarations.",
+                "command": {
+                    "plan": "plan_manager",
+                    "step_id": "A-001",
+                    "fields": {"objects": ["Widget"]},
+                },
+                "explanation": (
+                    "Rejected atomically at write time with INVALID_STEP_FIELD_SHAPE. "
+                    "Legacy string entries are tolerated only when reading old stored "
+                    "plans, not when writing new data."
+                ),
+            },
         ],
         "error_cases": {
             "PLAN_NOT_FOUND": {
@@ -194,9 +230,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "solution": "Call concept_list and retry with existing concept_id values.",
             },
             "INVALID_STEP_FIELD_SHAPE": {
-                "description": "The supplied fields or concepts payload has an invalid shape, such as fields.relations containing strings instead of relation objects, or -- for a level-4 (TS) step -- fields.inputs/fields.outputs containing an item that is not an object with non-empty name/type/description and type one of \"input\"/\"output\".",
+                "description": "The supplied fields or concepts payload has an invalid shape, such as fields.relations containing strings instead of relation objects, a level-4 (TS) fields.inputs/fields.outputs item that is not an object with non-empty name/type/description and type one of \"input\"/\"output\", or a level-5 (AS) fields.objects item that is not an object with non-empty name and a concepts list of concept ids.",
                 "message": "invalid step field shape",
-                "solution": "Use relation objects with type, from_concept, and to_concept; concepts as a list of C-NNN strings; and, for a TS step, inputs/outputs items shaped {name, type, description} with type one of \"input\" or \"output\".",
+                "solution": "Use relation objects with type, from_concept, and to_concept; concepts as a list of C-NNN strings; TS inputs/outputs items shaped {name, type, description} with type one of \"input\" or \"output\"; and AS objects items shaped {name, concepts} with concepts as a list of concept ids.",
             },
             "CASCADE_REQUIRED": {
                 "description": "The target step is not directly mutable and no cascade_uuid was supplied.",
@@ -233,6 +269,9 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "context_common/context_bundle field_schema item_schemas for the same contract. A "
             "malformed item is now rejected atomically at write time (INVALID_STEP_FIELD_SHAPE), "
             "not merely reported later by plan_validate.",
+            "For a level-5 (AS) step, use fields.objects only with objects shaped as {name, concepts}, "
+            "where concepts is a list of concept ids. Legacy bare-string declarations are read only "
+            "for backward compatibility with old stored plans and are rejected on write.",
             "Omit cascade_uuid for direct-mode updates on non-frozen steps; supply it only when working inside an open cascade.",
             "Re-read the step with step_get after the call to confirm the patch was applied as expected.",
         ],
