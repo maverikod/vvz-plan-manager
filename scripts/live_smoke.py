@@ -5353,6 +5353,133 @@ async def run_r29_step_transition_branch_scope_freeze_gate(client: Any) -> list[
     return results
 
 
+R30_PRE_FIX_SKIP_REASON = (
+    "server predates todo 19391f0b's strict subtree closure -- the dependent "
+    "goal's subtree starts in the same wave as (or earlier than) the tail of "
+    "the producer goal's subtree -- redeploy pending"
+)
+
+
+async def run_r30_parallel_map_subtree_closure(client: Any) -> list[CheckResult]:
+    """Todo 19391f0b: graph_parallel_map must schedule a dependent goal's
+    ENTIRE subtree strictly after the LAST node of the producer goal's
+    subtree, not merely after the producer goal's own start wave (the
+    start-barrier semantics bug 85a9d14b's fix shipped in 0.1.84).
+
+    Recipe (throwaway plan, hard-deleted in try/finally): plan_create ->
+    G-001 with T-001 and two atomics serialized by an explicit sibling
+    edge (A-002 depends_on A-001, so the producer subtree spans two
+    waves) -> G-002 with T-001/A-001 -> goal edge G-002 depends_on G-001
+    (both via step_dependency_apply; goals and atomics are siblings, so
+    both edges are legal) -> graph_parallel_map, asserting
+    min(wave over G-002 subtree) > max(wave over G-001 subtree).
+
+    Pre-fix detection: on a server with start-barrier-only semantics the
+    overlap is exactly consumer_start <= producer_tail; that observation
+    SKIPs this check naming todo 19391f0b rather than failing the
+    pipeline against a not-yet-deployed server.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r30-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R30_19391f0b_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        step_uuids: dict[str, str] = {}
+        g_ids: dict[str, str] = {}
+        for g_slug in ("g1", "g2"):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+            if not ok:
+                results.append(CheckResult("4", f"R30_19391f0b_context_common(plan,before {g_slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": g_slug})
+            g_id = _extract_step_id(res) if ok else None
+            if not ok or g_id is None or not isinstance(res, dict) or not res.get("uuid"):
+                results.append(CheckResult("4", f"R30_19391f0b_step_create({g_slug})", STATUS_FAIL, str(res)))
+                return results
+            g_ids[g_slug] = g_id
+            step_uuids[g_slug] = res["uuid"]
+
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+            if not ok:
+                results.append(CheckResult("4", f"R30_19391f0b_context_common({g_slug},level4)", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+            t_id = _extract_step_id(res) if ok else None
+            if not ok or t_id is None:
+                results.append(CheckResult("4", f"R30_19391f0b_step_create({g_slug}/t)", STATUS_FAIL, str(res)))
+                return results
+
+            a_slugs = ("a1", "a2") if g_slug == "g1" else ("a1",)
+            for a_slug in a_slugs:
+                ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+                if not ok:
+                    results.append(CheckResult("4", f"R30_19391f0b_context_common({g_slug}/t,level5)", STATUS_FAIL, str(res)))
+                    return results
+                ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": a_slug, "parent_step_id": t_id})
+                if not ok or not isinstance(res, dict) or not res.get("uuid"):
+                    results.append(CheckResult("4", f"R30_19391f0b_step_create({g_slug}/t/{a_slug})", STATUS_FAIL, str(res)))
+                    return results
+                step_uuids[f"{g_slug}/{a_slug}"] = res["uuid"]
+        results.append(CheckResult("4", "R30_19391f0b_two_goal_repro_built", STATUS_PASS, f"g1={g_ids['g1']} g2={g_ids['g2']}"))
+
+        edges = [
+            {"op": "add", "step_id": step_uuids["g1/a2"], "depends_on": [step_uuids["g1/a1"]]},
+            {"op": "add", "step_id": step_uuids["g2"], "depends_on": [step_uuids["g1"]]},
+        ]
+        ok, res = await call(client, "step_dependency_apply", {"plan": plan_uuid, "changes": edges, "dry_run": False})
+        edges_ok = ok and isinstance(res, dict) and res.get("applied") is True
+        results.append(CheckResult("4", "R30_19391f0b_edges_applied", STATUS_PASS if edges_ok else STATUS_FAIL, "" if edges_ok else str(res)))
+        if not edges_ok:
+            return results
+
+        ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid})
+        wave_rows = res.get("waves") if ok and isinstance(res, dict) else None
+        if not ok or not isinstance(wave_rows, list) or not wave_rows:
+            results.append(CheckResult("4", "R30_19391f0b_graph_parallel_map", STATUS_FAIL, str(res)))
+            return results
+
+        wave_of: dict[str, int] = {}
+        for index, row in enumerate(wave_rows):
+            for path in row:
+                wave_of[path] = index
+        g1_prefix, g2_prefix = g_ids["g1"], g_ids["g2"]
+        producer_waves = [w for path, w in wave_of.items() if path == g1_prefix or path.startswith(g1_prefix + "/")]
+        consumer_waves = [w for path, w in wave_of.items() if path == g2_prefix or path.startswith(g2_prefix + "/")]
+        if len(producer_waves) != 4 or len(consumer_waves) != 3:
+            results.append(
+                CheckResult(
+                    "4", "R30_19391f0b_wave_membership", STATUS_FAIL,
+                    f"expected 4 producer + 3 consumer nodes, got {len(producer_waves)}+{len(consumer_waves)}: {wave_of}",
+                )
+            )
+            return results
+        producer_tail = max(producer_waves)
+        consumer_start = min(consumer_waves)
+        if consumer_start > producer_tail:
+            results.append(
+                CheckResult(
+                    "4", "R30_19391f0b_consumer_after_entire_producer_subtree", STATUS_PASS,
+                    f"producer_tail_wave={producer_tail} consumer_start_wave={consumer_start}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R30_19391f0b_consumer_after_entire_producer_subtree", STATUS_SKIP,
+                    f"{R30_PRE_FIX_SKIP_REASON} (producer_tail={producer_tail} consumer_start={consumer_start})",
+                )
+            )
+    finally:
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R30_19391f0b_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

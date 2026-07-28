@@ -62,6 +62,11 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "run_r29_step_transition_branch_scope_freeze_gate",
         "step_transition branch-scope freeze gate regression (bug 36414056)",
     ),
+    LiveSmokeTestSpec(
+        "r30",
+        "run_r30_parallel_map_subtree_closure",
+        "graph_parallel_map strict subtree closure regression (todo 19391f0b)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

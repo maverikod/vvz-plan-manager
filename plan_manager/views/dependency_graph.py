@@ -228,6 +228,13 @@ def waves(
     unassigned node all of whose prerequisites lie in waves 0..N. Each
     wave is sorted ascending by tie_break_key.
 
+    A prerequisite stands for its ENTIRE subtree (todo 19391f0b): a node
+    whose own or inherited depends_on names step P is scheduled strictly
+    after P and every descendant of P, so a dependent subtree never
+    overlaps the producer subtree it waits on. Ancestor depends_on edges
+    are inherited by every descendant (bug 85a9d14b), since sibling-scoped
+    step_dependency cannot restate them at deeper levels.
+
     Args:
         nodes: The steps to partition, keyed by uuid.
         edges: The edge set as returned by build_edges: each edge is
@@ -250,6 +257,18 @@ def waves(
     for prereq_uuid, dependent_uuid in edges:
         explicit_prereqs_of[dependent_uuid].add(prereq_uuid)
 
+    # Strict subtree closure (todo 19391f0b): a prerequisite step stands for
+    # its ENTIRE subtree. Waiting only for the prerequisite node itself let
+    # the tail of a producer goal's subtree share a wave with the first
+    # steps of the dependent subtree, so a wave-parallel executor could run
+    # a consumer concurrently with the producer step it needs.
+    descendants_of: dict[uuid.UUID, set[uuid.UUID]] = {u: set() for u in nodes}
+    for node_uuid, step in nodes.items():
+        ancestor_uuid = step.parent_step_uuid
+        while ancestor_uuid in descendants_of:
+            descendants_of[ancestor_uuid].add(node_uuid)
+            ancestor_uuid = nodes[ancestor_uuid].parent_step_uuid
+
     # graph_parallel_map ranges over the full tree, but step_dependency is
     # sibling-scoped. A descendant therefore cannot restate an ancestor's
     # declared depends_on edge at its own level, so every node inherits the
@@ -260,7 +279,10 @@ def waves(
         cached = effective_prereqs_of.get(node_uuid)
         if cached is not None:
             return cached
-        inherited = set(explicit_prereqs_of[node_uuid])
+        inherited: set[uuid.UUID] = set()
+        for prereq_uuid in explicit_prereqs_of[node_uuid]:
+            inherited.add(prereq_uuid)
+            inherited.update(descendants_of[prereq_uuid])
         parent_uuid = nodes[node_uuid].parent_step_uuid
         if parent_uuid in nodes:
             inherited.update(_effective_prereqs(parent_uuid))

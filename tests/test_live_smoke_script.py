@@ -3366,10 +3366,17 @@ def test_run_r29_is_registered_for_pipeline_dispatch():
     assert spec.needs_project is False
 
 
-def test_run_r19_through_r29_registry_order_is_stable():
+def test_run_r30_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r30")
+    assert spec.function_name == "run_r30_parallel_map_subtree_closure"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+
+
+def test_run_r19_through_r30_registry_order_is_stable():
     ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
-    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29"}]
-    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29"]]
+    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30"}]
+    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30"]]
     assert positions == sorted(positions)
 
 
