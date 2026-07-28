@@ -5408,18 +5408,21 @@ async def run_r30_parallel_map_subtree_closure(client: Any) -> list[CheckResult]
                 results.append(CheckResult("4", f"R30_19391f0b_context_common({g_slug},level4)", STATUS_FAIL, str(res)))
                 return results
             ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
-            t_id = _extract_step_id(res) if ok else None
-            if not ok or t_id is None:
+            # Both goals' tactical children get the per-parent step_id
+            # T-001, so a bare T-001 reference is AMBIGUOUS_STEP_ID from
+            # the second goal on -- address the T by uuid throughout.
+            t_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+            if not ok or not t_uuid:
                 results.append(CheckResult("4", f"R30_19391f0b_step_create({g_slug}/t)", STATUS_FAIL, str(res)))
                 return results
 
             a_slugs = ("a1", "a2") if g_slug == "g1" else ("a1",)
             for a_slug in a_slugs:
-                ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+                ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_uuid, "child_level": 5})
                 if not ok:
                     results.append(CheckResult("4", f"R30_19391f0b_context_common({g_slug}/t,level5)", STATUS_FAIL, str(res)))
                     return results
-                ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": a_slug, "parent_step_id": t_id})
+                ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": a_slug, "parent_step_id": t_uuid})
                 if not ok or not isinstance(res, dict) or not res.get("uuid"):
                     results.append(CheckResult("4", f"R30_19391f0b_step_create({g_slug}/t/{a_slug})", STATUS_FAIL, str(res)))
                     return results
