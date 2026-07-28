@@ -238,7 +238,12 @@ def test_plan_unfreeze_opens_audited_cascade_on_fully_frozen(monkeypatch) -> Non
     assert calls["audit"]["changed_by"] == "orchestrator"
     assert calls["audit"]["change_reason"] == "reopen for fix"
     assert calls["audit"]["entity_type"] == "plan"
-    assert calls["audit"]["changed_fields"] == {"head_revision_uuid": str(HEAD_REV)}
+    # Bug 74ba4313: the record must name the opened cascade so the begin
+    # side of the provenance chain is verifiable from audit_list.
+    assert calls["audit"]["changed_fields"] == {
+        "head_revision_uuid": str(HEAD_REV),
+        "cascade_uuid": str(calls["cascade"].uuid),
+    }
     assert calls["begin_allow_all_frozen"] is True
 
 

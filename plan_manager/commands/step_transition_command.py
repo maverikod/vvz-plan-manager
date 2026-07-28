@@ -224,6 +224,11 @@ class StepTransitionCommand(Command):
                                 "head_revision_uuid": (
                                     str(p.head_revision_uuid) if p.head_revision_uuid else None
                                 ),
+                                # Bug 74ba4313: name the admitting cascade so the
+                                # unfreeze side of cascade provenance is auditable.
+                                "cascade_uuid": (
+                                    str(parsed_cascade_uuid) if parsed_cascade_uuid else None
+                                ),
                             },
                         )
                     for item in transitioned:

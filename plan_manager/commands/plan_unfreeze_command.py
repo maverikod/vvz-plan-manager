@@ -121,6 +121,15 @@ class PlanUnfreezeCommand(Command):
                         f"plan {p.name} already has an open cascade",
                     )
                 head = p.head_revision_uuid
+                rec = begin_cascade(conn, p.uuid, allow_all_frozen=True)
+                reread = get_open_cascade(conn, p.uuid)
+                assert reread is not None and reread.uuid == rec.uuid, (
+                    f"cascade {rec.uuid} for plan {p.name} did not verify by re-read"
+                )
+                # Bug 74ba4313: the audit record is written AFTER the cascade
+                # exists so it can name the opened cascade_uuid — without it
+                # the begin side of an unfreeze-opened cascade's provenance
+                # chain was unverifiable from audit_list.
                 audit = record_runtime_change(
                     conn,
                     plan_uuid=p.uuid,
@@ -130,13 +139,9 @@ class PlanUnfreezeCommand(Command):
                     changed_by=changed_by,
                     change_reason=reason,
                     changed_fields={
-                        "head_revision_uuid": str(head) if head is not None else None
+                        "head_revision_uuid": str(head) if head is not None else None,
+                        "cascade_uuid": str(rec.uuid),
                     },
-                )
-                rec = begin_cascade(conn, p.uuid, allow_all_frozen=True)
-                reread = get_open_cascade(conn, p.uuid)
-                assert reread is not None and reread.uuid == rec.uuid, (
-                    f"cascade {rec.uuid} for plan {p.name} did not verify by re-read"
                 )
                 next_steps = (
                     "Cascade opened. Run step_transition(plan="

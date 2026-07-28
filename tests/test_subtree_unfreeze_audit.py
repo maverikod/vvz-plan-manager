@@ -116,12 +116,13 @@ def test_scoped_unfreeze_writes_one_subtree_unfreeze_audit_record(monkeypatch) -
     nodes = _frozen_tree()
     calls = _patch_common(monkeypatch, nodes)
 
+    admitting_cascade = uuid.uuid4()
     result = asyncio.run(
         StepTransitionCommand().execute(
             plan="p",
             to_status="draft",
             scope="G-001",
-            cascade_uuid=str(uuid.uuid4()),
+            cascade_uuid=str(admitting_cascade),
             changed_by="orchestrator",
             reason="reopen G-001 to fix a defect",
         )
@@ -140,6 +141,8 @@ def test_scoped_unfreeze_writes_one_subtree_unfreeze_audit_record(monkeypatch) -
     assert audit["changed_fields"]["scope"] == "G-001"
     assert set(audit["changed_fields"]["unfrozen_steps"]) == {"G-001", "T-001", "A-001"}
     assert audit["changed_fields"]["head_revision_uuid"] == str(HEAD_REV)
+    # Bug 74ba4313: the admitting cascade must be named for provenance.
+    assert audit["changed_fields"]["cascade_uuid"] == str(admitting_cascade)
 
 
 # --------------------------------------------------------------------- validation
