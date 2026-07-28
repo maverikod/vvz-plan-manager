@@ -3359,11 +3359,29 @@ def test_run_r28_is_registered_for_pipeline_dispatch():
     assert spec.needs_project is False
 
 
-def test_run_r19_through_r28_registry_order_is_stable():
+def test_run_r29_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r29")
+    assert spec.function_name == "run_r29_step_transition_branch_scope_freeze_gate"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+
+
+def test_run_r19_through_r29_registry_order_is_stable():
     ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
-    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28"}]
-    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28"]]
+    tail = [key for key in ordered_keys if key in {"r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29"}]
+    positions = [tail.index(marker) for marker in ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29"]]
     assert positions == sorted(positions)
+
+
+def test_looks_like_branch_depth_attribute_error_matches_exact_text():
+    """R29's pre-fix probe (bug 36414056) must distinguish the genuine
+    freeze-gate AttributeError from any other step_transition failure that
+    happens to mention branches or attributes in passing."""
+    assert ls._looks_like_branch_depth_attribute_error(
+        "Command execution error: 'Branch' object has no attribute 'depth'"
+    )
+    assert not ls._looks_like_branch_depth_attribute_error("mechanical gate is red for transition scope")
+    assert not ls._looks_like_branch_depth_attribute_error("'BranchScope' object has no attribute 'nonsense'")
 
 
 def test_looks_like_dangling_plan_anchor_fk_violation_matches_exact_constraint_name():

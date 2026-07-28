@@ -5242,6 +5242,117 @@ async def run_r28_bug_delete_dangling_plan_anchor(client: Any) -> list[CheckResu
     return results
 
 
+R29_PRE_FIX_SKIP_REASON = (
+    "server predates bug 36414056's fix -- step_transition(to_status=frozen) "
+    "on a branch scope raises -32603 (\"'Branch' object has no attribute "
+    "'depth'\") before the freeze gate can run -- redeploy pending"
+)
+
+
+def _looks_like_branch_depth_attribute_error(diagnostic_text: str) -> bool:
+    """True iff a command-call failure looks like bug 36414056's crash (the
+    scoped freeze gate handing run_gate a plain Branch view instead of a
+    BranchScope), rather than any other error incidentally similar.
+
+    Narrow match: requires the exact AttributeError text from the violation
+    to appear in the diagnostic text.
+    """
+    return "'Branch' object has no attribute 'depth'" in diagnostic_text
+
+
+async def run_r29_step_transition_branch_scope_freeze_gate(client: Any) -> list[CheckResult]:
+    """Bug 36414056: step_transition(to_status=frozen) on a branch scope
+    (scope=G-NNN) used to crash with -32603 AttributeError ("'Branch'
+    object has no attribute 'depth'") because the scoped freeze gate built
+    a plain views.branch.Branch and handed it to run_gate, which consumes
+    a BranchScope (reads branch.depth for scope labeling and step
+    selection). Fixed by constructing BranchScope(depth="as", ...) at the
+    single call site in step_transition_command._run_transition_gate.
+
+    Recipe (the bug's own live repro on a throwaway plan): plan_create ->
+    context_common/step_create chain G -> T -> A (context_common
+    recompiled before every step_create, per the head-revision currency
+    contract) -> step_transition(scope=G, to_status=frozen,
+    require_green=true), asserting the freeze GATE RUNS: either the
+    transition succeeds (gate green) or the documented GATE_RED domain
+    error comes back -- never the raw AttributeError.
+
+    Pre-fix detection: the exact AttributeError text is the version probe
+    and SKIPs this check naming bug 36414056, rather than failing the
+    pipeline against a not-yet-deployed fix.
+
+    Cleanup: top-level try/finally hard-deletes the throwaway plan.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r29-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R29_36414056_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R29_36414056_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R29_36414056_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R29_36414056_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R29_36414056_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R29_36414056_context_common(T,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R29_36414056_step_create(A)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R29_36414056_repro_chain_created", STATUS_PASS, f"G={g_id} T={t_id}"))
+
+        ok, res = await call(
+            client, "step_transition",
+            {"plan": plan_uuid, "scope": g_id, "to_status": "frozen", "require_green": True},
+        )
+        if ok:
+            # Gate ran and came back green enough to freeze: the crash is gone.
+            results.append(CheckResult("4", "R29_36414056_branch_scope_freeze_gate_runs", STATUS_PASS, "frozen (gate green)"))
+            return results
+        diagnostic = str(res)
+        if _looks_like_branch_depth_attribute_error(diagnostic):
+            results.append(
+                CheckResult(
+                    "4", "R29_36414056_branch_scope_freeze_gate_runs", STATUS_SKIP,
+                    R29_PRE_FIX_SKIP_REASON,
+                )
+            )
+            return results
+        gate_ran = "GATE_RED" in diagnostic or "mechanical gate is red" in diagnostic
+        results.append(
+            CheckResult(
+                "4", "R29_36414056_branch_scope_freeze_gate_runs", STATUS_PASS if gate_ran else STATUS_FAIL,
+                "GATE_RED (gate executed, domain-shaped refusal)" if gate_ran else diagnostic,
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            results.append(CheckResult("4", "R29_36414056_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

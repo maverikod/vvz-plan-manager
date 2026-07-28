@@ -23,7 +23,7 @@ from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 from plan_manager.storage.version_store import get_ref, record_revision
 from plan_manager.verify.gate import run_gate
-from plan_manager.views.branch import Branch
+from plan_manager.views.branch import BranchScope
 from plan_manager.views.dependency_graph import load_steps
 
 
@@ -446,7 +446,9 @@ def _run_transition_gate(
         report, verdict = run_gate(
             conn,
             plan_uuid,
-            branch=Branch(plan_uuid=plan_uuid, gs=gs, ts=ts, atomic=atomic, hrs_slice=[]),
+            # Bug 36414056: run_gate takes a BranchScope; the plain Branch view
+            # has no ``depth`` and crashed the freeze gate with AttributeError.
+            branch=BranchScope(plan_uuid=plan_uuid, depth="as", gs=gs, ts=ts, atomic=atomic, hrs_slice=[]),
         )
         green = green and report.green
         finding_count += _finding_count(report)

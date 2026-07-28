@@ -146,3 +146,49 @@ def test_info_metadata_documents_step_lifecycle_capability() -> None:
     assert "step_lifecycle" in metadata["return_value"]["success"]["example"]["capabilities"]
     assert "step lifecycle transitions" in metadata["detailed_description"]
     assert "step lifecycle transitions" in metadata["best_practices"][2]
+
+
+def test_run_transition_gate_passes_branch_scope_with_depth(monkeypatch) -> None:
+    """Bug 36414056: the scoped freeze gate must hand run_gate a BranchScope.
+
+    The pre-fix code built a plain views.branch.Branch, which has no
+    ``depth`` attribute, so run_gate's scope handling crashed with
+    AttributeError ("'Branch' object has no attribute 'depth'") the moment
+    a branch-path scope was frozen with require_green. This stub enforces
+    the BranchScope contract exactly where gate.py consumes it.
+    """
+    import plan_manager.commands.step_transition_command as mod
+    from plan_manager.views.branch import BranchScope
+
+    nodes = _tree()
+    atomic = next(step for step in nodes.values() if step.level == 5 and step.step_id == "A-001" and nodes[step.parent_step_uuid].parent_step_uuid is not None)
+    seen: list[BranchScope] = []
+
+    class _Check:
+        findings: list = []
+
+    class _Report:
+        green = True
+        checks = [_Check()]
+
+    class _Verdict:
+        revision_uuid = None
+
+    def fake_run_gate(conn, plan_uuid, branch=None, fail_fast=False):
+        assert isinstance(branch, BranchScope)
+        # Touch the attributes gate.py actually reads (gate.py scope labeling
+        # and gate_data.scope_steps) so a regression to the old Branch view
+        # fails here the same way it failed live.
+        assert branch.depth == "as"
+        assert branch.atomic is not None and branch.ts is not None
+        seen.append(branch)
+        return _Report(), _Verdict()
+
+    monkeypatch.setattr(mod, "run_gate", fake_run_gate)
+
+    result = mod._run_transition_gate(None, PLAN_UUID, nodes, [atomic], "G-001/T-001/A-001")
+
+    assert seen, "run_gate was never called for the scoped freeze gate"
+    assert result["green"] is True
+    assert result["checked"] is True
+    assert result["branch_count"] == 1
