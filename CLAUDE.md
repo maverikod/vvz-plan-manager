@@ -1,6 +1,6 @@
 # plan-manager - Claude operating contract
 
-**Prompts template:** `claude-prompts-v1` rev **1.6.3** (2026-07-26)
+**Prompts template:** `claude-prompts-v1` rev **1.6.8** (2026-07-29)
 
 This file is the Claude entrypoint and is loaded automatically at session start.
 Read these files yourself before the first action of a task:
@@ -16,21 +16,38 @@ every relative prompt-package reference against `claude/`.
 ## Project profile
 
 - Project: `plan-manager`
-- Local checkout: `/home/testuser/projects/plan-manager`
+- Local checkout: `/home/vasilyvz/projects/tools/plan_manager`
 - CAS project ID: `f06b7269-cc9c-4293-886b-24984e4033ba`
 - CAS server: `code-analysis-server-vvz`
 
+## Active work profile
+
+`claude/roles/laws.yaml` `variables.file_access` decides where the work happens. Read it
+before the first project read or edit and state the active profile in your opening
+message. Default is `local`.
+
+- `local` — local checkout on branch `local`; every script and every edit runs with
+  local tools. MCP Proxy is used only for code-analysis search and CAS git sync.
+- `cas` — the registered CAS project on branch `cas` through MCP Proxy; local project
+  tools must not be used as a fallback.
+- `local_ide` — the human edits through the IDE; you deliver patches, never edit directly.
+
+Only the user changes this value. Never infer a switch from the task and never switch
+because a tool failed.
+
 ## Operating model
 
-Role files are workflow stages executed by this session, not spawned agents.
-Sequence implementation-heavy work as `researcher` -> `context_former` ->
-`coder` -> `tester` -> `conscience`, and declare the working mode
-(`planning`, `analysis`, `refactoring`) from `claude/modes.yaml`.
+Role files are stage disciplines, not a headcount. Sequence implementation-heavy work
+as `researcher` -> `context_former` -> `coder` -> `tester` -> `conscience`, running the
+stages serially in one session or distributing independent units across parallel agents.
+Declare the working mode (`planning`, `analysis`, `refactoring`) from `claude/modes.yaml`.
 
 ## Claude specifics
 
-- A read-only research subagent may be used for broad search fan-out; `coder`,
-  `tester`, and `conscience` stay in this session.
+- Parallel writing agents are a standard mode: `coder` and `tester` units may run as
+  concurrent agents, each in its own git worktree and branch per `parallel_agent_isolation`,
+  merged only on acceptance. The orchestrator keeps task framing, acceptance, and the
+  `conscience` review. Read-only research agents may also fan out for search.
 - A subagent prompt must restate the laws it needs; subagents do not inherit this file.
 - Keep the plan visible with the task/todo tools on multi-step work, and re-read
   contract files after context compaction instead of recalling them.

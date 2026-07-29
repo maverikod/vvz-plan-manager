@@ -1,17 +1,75 @@
 # plan-manager — standing laws for Claude
 
 variables:
-  workspace_truth: local
+  file_access: local      # local (default) | cas | local_ide. Selects the active work site and
+                          # governs local_mode / cas_mode / local_ide_mode and the
+                          # profile-dependent parts of branch_discipline.
+  local_branch: local
+  cas_branch: cas
+  transfer_branch: main
   verification: required
 
 laws:
+  active_profile_declaration: >-
+    [TRIGGER: first action of any task] `variables.file_access` decides where the work happens
+    and which tools are legitimate; it is not a hint. Read it before the first project read or
+    edit and state the active profile in your opening message. The default is `local`. Only the
+    user changes it — never infer a switch from the shape of a task, and never switch mid-task
+    because a tool failed. If the value is missing or unreadable, stop and ask; do not assume.
   local_workspace_truth: >-
-    The local checkout is the default source of truth. Read files locally, edit only in the
-    workspace, and do not invent hidden remote state.
+    Under the default `local` profile the local checkout is the source of truth. Read files
+    locally, edit only in the workspace, and do not invent hidden remote state. Under `cas` the
+    registered server-side project is the source of truth instead, and this law yields to
+    `cas_mode`.
   branch_discipline: >-
-    Keep a clear working-branch policy for local changes, avoid direct history rewrites on shared
-    branches, and document how verified work is promoted. If the project has no formal branch
-    contract yet, define one here instead of silently omitting the law.
+    There are three branches: `local` is the local working branch, `cas` is the Code Analysis
+    Server working branch, and `main` is transfer-only. Work only on the branch belonging to the
+    active site. Never edit `main` directly and never merge `local` directly with `cas`. Before
+    new work, synchronize `main` into the active working branch. Build, deploy, and run the live
+    acceptance pipeline from the active working branch. Only after deployment and live
+    verification are green, merge that working branch into local `main`. Do not push `main`:
+    report the exact ready commit and wait for the user's explicit confirmation that `main` was
+    pushed. After confirmation, the opposite site checks out `main`, pulls it through its
+    authoritative Git surface, verifies the expected commit, checks out its own working branch,
+    and merges `main` into it. The same sequence is mirrored when work originates on `cas`.
+    Leave each site on its own working branch.
+  parallel_agent_isolation: >-
+    [TRIGGER: launching more than one agent that may modify the repository at the same time]
+    Concurrent agents must never share a working tree or a branch. Give each parallel agent its
+    own git worktree (`git worktree add <path> -b <agent-branch>`) checked out to its own
+    dedicated branch, so their edits, indexes, and builds cannot collide over the shared `.git`.
+    The same branch may not be checked out in two worktrees at once. Each agent works, commits,
+    and verifies ONLY inside its own worktree. Integrate only after the work is ACCEPTED: merge
+    the agent branch into the active working branch (see `branch_discipline`), resolve conflicts
+    in the integration tree, re-run the `pipeline` on the merged result, and only then remove the
+    worktree (`git worktree remove`). A parallel agent whose work is rejected is discarded with
+    its worktree; nothing half-merged is left behind. Parallel writing agents are a standard
+    mode (see `subagent_policy`); this law is the git mechanics that make that mode safe. It
+    does not relax any verification gate — the `tester` and `conscience` gates and the
+    orchestrator's acceptance decision still apply to every merged result.
+  local_mode: >-
+    [active when variables.file_access=local — the default] Project reads, edits, tests, builds,
+    and release preparation use the local checkout on branch `local`. The Code Analysis Server
+    remains authoritative for its registered server-side project and for remote analysis. Commit
+    a coherent, verified task result; do not push. Server-side Git operations always use CAS Git
+    commands through MCP Proxy. HARD RULE (no exceptions): in this profile EVERY script — build,
+    test and deploy runners alike — and every file edit run with LOCAL tools on the local
+    checkout. MCP Proxy in this profile is used ONLY for code-analysis search and for
+    CAS-authoritative git sync: never to execute a build, test or deploy script, never to edit a
+    file, and never through an MCP terminal sandbox or host-exec path. That path is reserved for
+    a genuine CAS capability gap or an authorized real-host incident, not for ordinary work.
+  cas_mode: >-
+    [active when variables.file_access=cas] When the user explicitly selects server-side
+    implementation, all project reads, edits, verification, and Git target the registered CAS
+    project on branch `cas` through MCP Proxy. Local project tools must not be used as a
+    fallback: if the server-side path is unavailable, stop and escalate rather than silently
+    working locally.
+  local_ide_mode: >-
+    [active when variables.file_access=local_ide] Files live locally and are edited by the HUMAN
+    through the IDE. The agent NEVER edits project files directly — it delivers proposed patches
+    or diffs in its reports for the human to apply. Search and analysis still run through CAS via
+    MCP Proxy; local and server state are synchronized with Git. Branch rules follow the `local`
+    clause of `branch_discipline`.
   no_assumption_policy: >-
     Do not claim behavior, architecture intent, or test status without repository evidence.
   inspect_before_edit: >-
@@ -34,13 +92,16 @@ laws:
   bugfix_acceptance_cycle: >-
     [TRIGGER: any bug fix] The mandatory bug-fix algorithm is, in order: (1) REPRODUCE the
     defect on the real failing path; (2) ADD a covering check for that defect to the project's
-    `pipeline` CLI as a named check and confirm it fails before further changes; (3) FIND the
-    root cause in code; (4) PROVE the cause-to-symptom link with concrete evidence; (5) FIX the
-    defect with focused regression coverage; (6) BUMP the project version by exactly +1 before
-    any deployment; (7) DEPLOY via ssh to `root@192.168.254.26` and, if the project ships a
-    client, publish that client to PyPI at the same version; (8) RUN `pipeline` against the real
-    deployed server and SMOKE-TEST the original bug path on the live system. This cycle is
-    mandatory, not advisory. Work is not accepted until every applicable step passes.
+    `pipeline` CLI as a named check and confirm it FAILS — the bug must be visible THROUGH the
+    pipeline — before any code change; (3) FIND the root cause in code; (4) PROVE the
+    cause-to-symptom link with concrete evidence; (5) FIX the defect with focused regression
+    coverage; (6) TEST by running `pipeline` locally and confirm it is GREEN, i.e. the step-(2)
+    check now passes; (7) BUMP the project version by exactly +1 — MANDATORY before any
+    deployment; (8) BUILD the deployable image and package via `build.sh`; (9) DEPLOY via ssh
+    to `root@192.168.254.26` and, if the project ships a client, publish that client to PyPI at the same
+    version; (10) RUN `pipeline` against the real deployed server and SMOKE-TEST the original
+    bug path on the live system. This cycle is mandatory, not advisory. Work is not accepted
+    until every applicable step passes.
   pipeline_cli_contract: >-
     [TRIGGER: any verification, deploy, or server start] The project MUST ship a pipeline
     package that becomes a plain CLI application after `pip install -e .`. The command is named
