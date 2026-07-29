@@ -15,6 +15,8 @@ import psycopg
 from psycopg import sql
 
 from plan_manager.storage.identity import (
+    EXCLUDED_TABLES,
+    ensure_identity_available,
     register_entity_identity,
     resolve_entity_identity,
     unregister_entity_identity,
@@ -418,15 +420,28 @@ class DataclassEntity(EntityRecord):
         columns = tuple(values.keys())
         if not columns:
             raise ValueError("create values must not be empty")
-        if cls.REGISTER_IDENTITY and cls.ID_COLUMN is not None and cls.ID_COLUMN in values:
-            entity_id = values[cls.ID_COLUMN]
-            if isinstance(entity_id, uuid.UUID) and cls.TABLE_NAME is not None:
-                register_entity_identity(
-                    conn,
-                    entity_id=entity_id,
-                    table_name=cls.TABLE_NAME,
-                    entity_type=cls.entity_type(),
-                )
+        # Identity registry participation, in three parts.
+        #
+        # The availability check runs BEFORE the INSERT and the registration
+        # AFTER it, both inside the caller's transaction. That ordering is the
+        # whole point: a duplicate identifier is refused before any row is
+        # written, so the create leaves no partial row, and the registry row is
+        # only created once the entity row it describes actually exists. If
+        # either call raises, the surrounding transaction rolls back the INSERT
+        # with it; nothing here commits.
+        #
+        # EXCLUDED_TABLES short-circuits both calls for the tables documented
+        # as deliberately outside the registry.
+        registers_identity = (
+            cls.REGISTER_IDENTITY
+            and cls.ID_COLUMN is not None
+            and cls.ID_COLUMN in values
+            and isinstance(values.get(cls.ID_COLUMN), uuid.UUID)
+            and cls.TABLE_NAME is not None
+            and cls.TABLE_NAME not in EXCLUDED_TABLES
+        )
+        if registers_identity:
+            ensure_identity_available(conn, values[cls.ID_COLUMN])
         query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             cls._table(),
             sql.SQL(", ").join(sql.Identifier(column) for column in columns),
@@ -435,6 +450,13 @@ class DataclassEntity(EntityRecord):
         if returning:
             query += sql.SQL(" RETURNING {}").format(cls._select_columns_sql())
         cur = conn.execute(query, [values[column] for column in columns])
+        if registers_identity:
+            register_entity_identity(
+                conn,
+                entity_id=values[cls.ID_COLUMN],
+                table_name=cls.TABLE_NAME,
+                entity_type=cls.entity_type(),
+            )
         if not returning:
             return None
         row = cur.fetchone()

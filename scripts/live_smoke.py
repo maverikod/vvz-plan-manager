@@ -516,6 +516,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "project_dependency_confirm": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_remove": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_discover": "runs CA-backed dependency discovery; not exercised in this pass",
+    "project_uuid_reserve": "exercised end to end by its own R-check (reserve/collision/resolve/release with cleanup), not by a generic Tier-2 probe",
     "step_dependency_add": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",

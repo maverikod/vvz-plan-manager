@@ -41,6 +41,8 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "PARAGRAPH_NOT_FOUND",
     "REVISION_NOT_FOUND",
     "SNAPSHOT_NOT_FOUND",
+    # The reservation identified by the supplied project uuid does not exist.
+    "RESERVATION_NOT_FOUND",
     "CASCADE_REQUIRED",
     "CASCADE_CONFLICT",
     "PLAN_NOT_FULLY_FROZEN",

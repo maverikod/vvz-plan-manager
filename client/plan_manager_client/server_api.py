@@ -179,6 +179,7 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "project_dependency_list",
         "project_dependency_discover",
         "project_dependents",
+        "project_uuid_reserve",
         "project_view",
         "command_catalog_dump",
         "graph_dependents",

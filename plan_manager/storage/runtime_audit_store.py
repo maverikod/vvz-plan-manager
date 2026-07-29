@@ -27,10 +27,23 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "cascade_begin",
         "cascade_commit",
         "cascade_abort",
+        "project_uuid_reserve",
+        "project_uuid_release",
         "plan_completed_set",
         "plan_comment_set",
     }
 )
+"""The closed action vocabulary record_runtime_change accepts.
+
+An action outside this set is rejected, so a new mutating surface must
+register its action here before it can write an audit row. The vocabulary is
+append-only: a value is never removed or renamed, because recorded rows keep
+referring to it.
+
+project_uuid_reserve and project_uuid_release are written by the
+project_uuid_reserve command for a namespace reservation and its release
+respectively.
+"""
 
 
 @dataclass(frozen=True)

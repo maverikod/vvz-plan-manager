@@ -337,6 +337,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "project_dependency_add", "project_dependency_remove",
         "project_dependency_list", "project_dependency_discover", "project_dependents",
         "project_dependency_update", "project_dependency_confirm", "project_view",
+        "project_uuid_reserve",
     ],
     "observability": ["command_timing_stats"],
     "verification": ["step_prompt_verify"],
