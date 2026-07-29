@@ -5737,6 +5737,116 @@ async def run_r32_unfreeze_audit_names_cascade(client: Any) -> list[CheckResult]
     return results
 
 
+async def run_r33_project_uuid_reserve_lifecycle(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-6 G-002: the project_uuid_reserve namespace-reservation lifecycle.
+
+    Reserve, release and resolve are the three actions of ONE command,
+    selected by its action parameter; there is no separate
+    project_uuid_resolve or project_uuid_release command.
+
+    Recipe (no plan fixture needed, the reservation is plan-independent):
+    reserve a fresh uuid4 -> reserve the SAME uuid again and require the
+    deterministic DUPLICATE_ID refusal -> resolve and require
+    kind=project_reservation -> release -> resolve again and require
+    RESERVATION_NOT_FOUND, proving the release actually freed the
+    identifier. Cleanup runs in a finally block once the reserve
+    succeeded, so a mid-check assertion failure never leaves a
+    reservation occupying an identifier on the live server.
+    """
+    results: list[CheckResult] = []
+    if "project_uuid_reserve" not in catalog_names:
+        results.append(
+            CheckResult(
+                "4", "R33_project_uuid_reserve", STATUS_SKIP,
+                "server predates project_uuid_reserve",
+            )
+        )
+        return results
+
+    reserved = str(uuid_mod.uuid4())
+    actor = "live-smoke-r33"
+    holding = False
+    try:
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "reserve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "r33-reserve", STATUS_FAIL, str(res)))
+            return results
+        holding = True
+        if res.get("project_uuid") == reserved and res.get("reserved_by") == actor:
+            results.append(CheckResult("4", "r33-reserve", STATUS_PASS, f"reserved {reserved}"))
+        else:
+            results.append(CheckResult("4", "r33-reserve", STATUS_FAIL, f"payload did not echo the reservation: {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "reserve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        # call()/unwrap_envelope surfaces a domain error as a formatted
+        # diagnostic string, so assert on the stable domain_code substring,
+        # the same idiom the other Tier-4 checks use.
+        if (not ok) and "DUPLICATE_ID" in str(res):
+            results.append(CheckResult("4", "r33-collision", STATUS_PASS, "DUPLICATE_ID"))
+        else:
+            results.append(CheckResult("4", "r33-collision", STATUS_FAIL, f"expected DUPLICATE_ID, got ok={ok} {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "resolve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        kind = res.get("kind") if ok and isinstance(res, dict) else None
+        if ok and kind == "project_reservation":
+            results.append(CheckResult("4", "r33-resolve", STATUS_PASS, "kind=project_reservation"))
+        else:
+            results.append(CheckResult("4", "r33-resolve", STATUS_FAIL, f"expected kind=project_reservation, got ok={ok} {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "release", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if ok:
+            holding = False
+            results.append(CheckResult("4", "r33-release", STATUS_PASS, f"released {reserved}"))
+        else:
+            results.append(CheckResult("4", "r33-release", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "resolve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if (not ok) and "RESERVATION_NOT_FOUND" in str(res):
+            results.append(CheckResult("4", "r33-post-release", STATUS_PASS, "RESERVATION_NOT_FOUND"))
+        else:
+            results.append(CheckResult("4", "r33-post-release", STATUS_FAIL, f"expected RESERVATION_NOT_FOUND, got ok={ok} {res!r}"))
+    finally:
+        if holding:
+            ok, res = await call(
+                client,
+                "project_uuid_reserve",
+                {"action": "release", "project_uuid": reserved, "reserved_by": actor},
+            )
+            results.append(
+                CheckResult(
+                    "4", "r33-cleanup", STATUS_PASS if ok else STATUS_FAIL,
+                    "" if ok else str(res),
+                )
+            )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
