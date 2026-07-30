@@ -6108,7 +6108,8 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
         ok, res = await call(
             client, "bug_fix_create",
             {
-                "plan": plan_uuid, "bug_id": bug_uuid, "fix_type": "code",
+                # bug_fix_create takes `bug`; only bug_confirm/bug_delete use bug_id.
+                "plan": plan_uuid, "bug": bug_uuid, "fix_type": "code",
                 "summary": "R35 scratch fix whose created_at must be an ISO string",
                 "author": "live-smoke", "created_by": "live-smoke",
             },
@@ -6183,7 +6184,8 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
         if fix_uuid is not None:
             ok, res = await call(
                 client, "bug_fix_delete",
-                {"fix_id": fix_uuid, "changed_by": "live-smoke", "hard": True},
+                # bug_fix_delete's identifier parameter is `bug_fix`, not fix_id.
+                {"bug_fix": fix_uuid, "changed_by": "live-smoke", "hard": True},
             )
             cleanup_ok = cleanup_ok and ok
         if bug_uuid is not None:
