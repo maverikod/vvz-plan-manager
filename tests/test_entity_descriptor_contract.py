@@ -27,11 +27,11 @@ _GAP_MARKER = "Descriptor gap:"
 _PENDING_DESCRIPTOR_MIGRATION = frozenset(
     {
         # G-003/T-003 — plan-truth and derived stores.
-        "Plan", "Step", "Concept", "Relation", "TodoLink", "WishItem",
+        "Plan", "Step", "Concept", "Relation", "TodoLink",
         "ProjectDependency", "BugReport", "BugFixPropagation", "BugImpact",
         "CascadeRequestRecord", "SrtSnapshotRecord",
         # G-003/T-004 — runtime overlay and agent configuration.
-        "RuntimeLink", "ExecutionAttempt", "ReviewResult",
+        "RuntimeLink", "ReviewResult",
         "Escalation", "EscalationPolicy", "AnswerEnvelope", "StepAssignment",
         "Model", "ModelBinding", "Provider", "Role", "RoleModelBinding",
         "Toolset", "ToolsetMembership", "InvocationProfile",

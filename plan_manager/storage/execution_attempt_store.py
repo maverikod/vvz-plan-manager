@@ -27,9 +27,9 @@ _COLUMNS = (
 )
 
 
-def _row_to_record(row: tuple[Any, ...]) -> ExecutionAttempt:
-    """Map a raw execution_attempt row (in _COLUMNS order) to an ExecutionAttempt record."""
-    data = dict(zip(_COLUMNS, row))
+def _row_to_record(row: tuple[Any, ...] | dict[str, Any]) -> ExecutionAttempt:
+    """Map a raw execution_attempt row (in _COLUMNS order or as dict) to an ExecutionAttempt record."""
+    data = dict(zip(_COLUMNS, row)) if isinstance(row, tuple) else row
     return ExecutionAttempt(
         attempt_uuid=data["uuid"],
         plan_uuid=data["plan_uuid"],
@@ -96,27 +96,48 @@ def create_execution_attempt(
     now = datetime.now(timezone.utc)
     started_at = now if status == "running" else None
 
-    conn.execute(
-        f"INSERT INTO execution_attempt ({', '.join(_COLUMNS)}) "
-        f"VALUES ({', '.join(['%s'] * len(_COLUMNS))})",
-        (
-            new_uuid, plan_uuid, revision_uuid, step_uuid, step_path, todo_uuid,
-            bug_fix_uuid, assigned_binding_uuid, assigned_provider, assigned_model,
-            used_provider, used_model, runtime, vast_instance_id, started_at,
-            None, status, input_context_hash, None, None,
-            None, None, None, None,
-            parent_attempt_uuid, created_by, now, now, None,
-            None, None, None, None, None,
-            None, None,
-        ),
-    )
+    values = {
+        "uuid": new_uuid,
+        "plan_uuid": plan_uuid,
+        "revision_uuid": revision_uuid,
+        "step_uuid": step_uuid,
+        "step_path": step_path,
+        "todo_uuid": todo_uuid,
+        "bug_fix_uuid": bug_fix_uuid,
+        "assigned_binding_uuid": assigned_binding_uuid,
+        "assigned_provider": assigned_provider,
+        "assigned_model": assigned_model,
+        "used_provider": used_provider,
+        "used_model": used_model,
+        "runtime": runtime,
+        "vast_instance_id": vast_instance_id,
+        "started_at": started_at,
+        "finished_at": None,
+        "status": status,
+        "input_context_hash": input_context_hash,
+        "result_summary": None,
+        "changed_files": None,
+        "command_test_results": None,
+        "resource_accounting": None,
+        "error": None,
+        "escalation_reason": None,
+        "parent_attempt_uuid": parent_attempt_uuid,
+        "created_by": created_by,
+        "created_at": now,
+        "updated_at": now,
+        "acct_tokens_in": None,
+        "acct_tokens_out": None,
+        "acct_provider": None,
+        "acct_model": None,
+        "acct_wall_ms": None,
+        "acct_cost_estimate": None,
+        "transcript_ref": None,
+    }
+    row = ExecutionAttempt.crud_create(conn, values, returning=True)
     record_runtime_change(
         conn, plan_uuid=plan_uuid, entity_type="execution_attempt", entity_id=new_uuid,
         action="create", changed_by=created_by,
     )
-    row = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM execution_attempt WHERE uuid = %s", (new_uuid,)
-    ).fetchone()
     return _row_to_record(row)
 
 
@@ -135,82 +156,56 @@ def report_execution_attempt(
     update. Never sets any verified/accepted flag — correctness is recorded separately by a
     ReviewResult (C-016 {7kaw})."""
     now = datetime.now(timezone.utc)
-    set_clauses: list[str] = ["updated_at = %s"]
-    params: list[Any] = [now]
+    values: dict[str, Any] = {"updated_at": now}
 
     if status is not None:
         validate_attempt_status(status)
-        set_clauses.append("status = %s")
-        params.append(status)
+        values["status"] = status
         if is_terminal_status(status):
-            set_clauses.append("finished_at = %s")
-            params.append(now)
+            values["finished_at"] = now
     if used_provider is not None:
-        set_clauses.append("used_provider = %s")
-        params.append(used_provider)
+        values["used_provider"] = used_provider
     if used_model is not None:
-        set_clauses.append("used_model = %s")
-        params.append(used_model)
+        values["used_model"] = used_model
     if result_summary is not None:
-        set_clauses.append("result_summary = %s")
-        params.append(result_summary)
+        values["result_summary"] = result_summary
     if changed_files is not None:
-        set_clauses.append("changed_files = %s")
-        params.append(Jsonb(changed_files))
+        values["changed_files"] = Jsonb(changed_files)
     if command_test_results is not None:
-        set_clauses.append("command_test_results = %s")
-        params.append(Jsonb(command_test_results))
+        values["command_test_results"] = Jsonb(command_test_results)
     if resource_accounting is not None:
         validated_accounting = validate_resource_accounting(resource_accounting)
-        set_clauses.append("resource_accounting = %s")
-        params.append(Jsonb(validated_accounting))
-        set_clauses.append("acct_tokens_in = %s")
-        params.append(validated_accounting["tokens_in"])
-        set_clauses.append("acct_tokens_out = %s")
-        params.append(validated_accounting["tokens_out"])
-        set_clauses.append("acct_provider = %s")
-        params.append(validated_accounting["provider"])
-        set_clauses.append("acct_model = %s")
-        params.append(validated_accounting["model"])
-        set_clauses.append("acct_wall_ms = %s")
-        params.append(validated_accounting["wall_ms"])
-        set_clauses.append("acct_cost_estimate = %s")
-        params.append(validated_accounting["cost_estimate"])
+        values["resource_accounting"] = Jsonb(validated_accounting)
+        values["acct_tokens_in"] = validated_accounting["tokens_in"]
+        values["acct_tokens_out"] = validated_accounting["tokens_out"]
+        values["acct_provider"] = validated_accounting["provider"]
+        values["acct_model"] = validated_accounting["model"]
+        values["acct_wall_ms"] = validated_accounting["wall_ms"]
+        values["acct_cost_estimate"] = validated_accounting["cost_estimate"]
     if error is not None:
-        set_clauses.append("error = %s")
-        params.append(error)
+        values["error"] = error
     if escalation_reason is not None:
-        set_clauses.append("escalation_reason = %s")
-        params.append(escalation_reason)
+        values["escalation_reason"] = escalation_reason
     if input_context_hash is not None:
-        set_clauses.append("input_context_hash = %s")
-        params.append(input_context_hash)
+        values["input_context_hash"] = input_context_hash
     if transcript_ref is not None:
         validated_transcript_ref = validate_transcript_ref(transcript_ref)
-        set_clauses.append("transcript_ref = %s")
-        params.append(validated_transcript_ref)
+        values["transcript_ref"] = validated_transcript_ref
 
-    params.append(attempt_uuid)
-    conn.execute(
-        f"UPDATE execution_attempt SET {', '.join(set_clauses)} WHERE uuid = %s", params
-    )
+    row = ExecutionAttempt.crud_update(conn, attempt_uuid, values, returning=True)
+    if row is None:
+        raise RuntimeValidationError(f"execution attempt not found: {attempt_uuid}")
     record_runtime_change(
         conn, plan_uuid=None, entity_type="execution_attempt", entity_id=attempt_uuid,
         action="update", changed_by=changed_by,
     )
-    row = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM execution_attempt WHERE uuid = %s", (attempt_uuid,)
-    ).fetchone()
-    if row is None:
-        raise RuntimeValidationError(f"execution attempt not found: {attempt_uuid}")
     return _row_to_record(row)
 
 
 def get_execution_attempt(conn: psycopg.Connection, attempt_uuid: uuid.UUID) -> ExecutionAttempt | None:
-    """Return the ExecutionAttempt with the given uuid, or None if no such row exists."""
-    row = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM execution_attempt WHERE uuid = %s", (attempt_uuid,)
-    ).fetchone()
+    """Return the ExecutionAttempt with the given uuid, or None if no such row exists.
+    Includes soft-deleted rows (include_deleted=True) to match historical behavior."""
+    row = ExecutionAttempt.crud_get(conn, attempt_uuid, include_deleted=True)
     return _row_to_record(row) if row is not None else None
 
 
@@ -222,31 +217,24 @@ def list_execution_attempts(
     """List execution_attempt rows filtered by the provided plan_uuid/step_uuid/status/
     parent_attempt_uuid/acct_provider/acct_model; exclude soft-deleted rows unless
     include_deleted is True; order by created_at ascending."""
-    clauses: list[str] = []
-    params: list[Any] = []
+    filters: dict[str, Any] = {}
     if plan_uuid is not None:
-        clauses.append("plan_uuid = %s")
-        params.append(plan_uuid)
+        filters["plan_uuid"] = plan_uuid
     if step_uuid is not None:
-        clauses.append("step_uuid = %s")
-        params.append(step_uuid)
+        filters["step_uuid"] = step_uuid
     if status is not None:
-        clauses.append("status = %s")
-        params.append(status)
+        filters["status"] = status
     if parent_attempt_uuid is not None:
-        clauses.append("parent_attempt_uuid = %s")
-        params.append(parent_attempt_uuid)
+        filters["parent_attempt_uuid"] = parent_attempt_uuid
     if acct_provider is not None:
-        clauses.append("acct_provider = %s")
-        params.append(acct_provider)
+        filters["acct_provider"] = acct_provider
     if acct_model is not None:
-        clauses.append("acct_model = %s")
-        params.append(acct_model)
-    if not include_deleted:
-        clauses.append("deleted_at IS NULL")
+        filters["acct_model"] = acct_model
 
-    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM execution_attempt {where_sql} ORDER BY created_at ASC", params
-    ).fetchall()
+    rows = ExecutionAttempt.crud_list(
+        conn,
+        filters=filters if filters else None,
+        include_deleted=include_deleted,
+        order_by=["created_at"],
+    )
     return [_row_to_record(row) for row in rows]

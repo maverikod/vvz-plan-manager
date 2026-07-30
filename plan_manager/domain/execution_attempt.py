@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from plan_manager.domain.entity import DataclassEntity, ReferenceCheck
 from plan_manager.domain.runtime_validation import RuntimeValidationError
@@ -29,9 +29,47 @@ class ExecutionAttempt(DataclassEntity):
     ENTITY_TYPE = "execution_attempt"
     ENTITY_ID_FIELD = "attempt_uuid"
     TABLE_NAME = "execution_attempt"
+    ID_COLUMN: ClassVar[str] = "uuid"
+    # Columns in CREATE TABLE order (0012) followed by ALTER TABLE ADD columns (0021).
+    COLUMNS: ClassVar[tuple[str, ...]] = (
+        "uuid", "plan_uuid", "revision_uuid", "step_uuid", "step_path", "todo_uuid",
+        "bug_fix_uuid", "assigned_binding_uuid", "assigned_provider", "assigned_model",
+        "used_provider", "used_model", "runtime", "vast_instance_id", "started_at",
+        "finished_at", "status", "input_context_hash", "result_summary", "changed_files",
+        "command_test_results", "resource_accounting", "error", "escalation_reason",
+        "parent_attempt_uuid", "created_by", "created_at", "updated_at", "deleted_at",
+        "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
+        "acct_cost_estimate", "transcript_ref",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE insertable: none
+    # carries a DB default, and the store supplies all three explicitly. Omitting them would
+    # make crud_create reject the store's own payload, because INSERT_COLUMNS is the whitelist
+    # it validates against. deleted_at is excluded so a create cannot mark a row deleted at birth.
+    INSERT_COLUMNS: ClassVar[tuple[str, ...]] = (
+        "uuid", "plan_uuid", "revision_uuid", "step_uuid", "step_path", "todo_uuid",
+        "bug_fix_uuid", "assigned_binding_uuid", "assigned_provider", "assigned_model",
+        "used_provider", "used_model", "runtime", "vast_instance_id", "started_at",
+        "finished_at", "status", "input_context_hash", "result_summary", "changed_files",
+        "command_test_results", "resource_accounting", "error", "escalation_reason",
+        "parent_attempt_uuid", "created_by", "created_at", "updated_at",
+        "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
+        "acct_cost_estimate", "transcript_ref",
+    )
+    # Mutable fields updated by report_execution_attempt. Immutable after creation: uuid,
+    # created_at, created_by. deleted_at is absent on purpose — soft deletion runs through
+    # crud_soft_delete, which writes the soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS: ClassVar[tuple[str, ...]] = (
+        "status", "used_provider", "used_model", "result_summary", "changed_files",
+        "command_test_results", "resource_accounting", "error", "escalation_reason",
+        "input_context_hash", "transcript_ref", "updated_at", "finished_at",
+        "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
+        "acct_cost_estimate",
+    )
+    # No searchable columns for execution_attempt.
+    SEARCH_COLUMNS: ClassVar[tuple[str, ...]] = ()
     # Compact view=summary projection (bug 8a13977d): drops result_summary,
     # command_test_results, resource_accounting, transcript_ref, and error detail.
-    SUMMARY_FIELDS = (
+    SUMMARY_FIELDS: ClassVar[tuple[str, ...]] = (
         "uuid", "plan_uuid", "step_uuid", "status", "used_provider", "used_model", "updated_at",
     )
     HARD_DELETE_REFERENCE_CHECKS = (
