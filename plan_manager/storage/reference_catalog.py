@@ -256,15 +256,11 @@ def validate_catalog_against_schema(conn: psycopg.Connection) -> tuple[list[str]
     return missing, extra
 
 
-def resolve_entity_class(entity_type: str) -> type:
-    """Resolve a user-facing entity type to its DataclassEntity subclass.
+def _entity_classes() -> list[type]:
+    """Every table-backed DataclassEntity subclass, discovered once per call.
 
-    The single sanctioned resolution mechanism for this goal. Every consumer
-    uses it so that two commands cannot drift into two different answers for
-    the same entity type.
-
-    Raises:
-        ValueError: when no subclass claims the type, or when two do.
+    One walk shared by every consumer below, so the resolver and the type
+    enumerations cannot disagree about what exists.
     """
     # Imported lazily: this module must stay free of import cycles and must not
     # touch a database at import time.
@@ -285,20 +281,51 @@ def resolve_entity_class(entity_type: str) -> type:
             found.extend(walk(subclass))
         return found
 
-    matches = [
+    return [
         subclass
         for subclass in walk(DataclassEntity)
-        if getattr(subclass, "ENTITY_TYPE", None) == entity_type
-        and getattr(subclass, "TABLE_NAME", None)
+        if getattr(subclass, "ENTITY_TYPE", None) and getattr(subclass, "TABLE_NAME", None)
+    ]
+
+
+def known_entity_types() -> list[str]:
+    """Sorted user-facing entity types that resolve_entity_class accepts."""
+    return sorted({subclass.ENTITY_TYPE for subclass in _entity_classes()})
+
+
+def purge_capable_entity_types() -> list[str]:
+    """Sorted entity types whose class declares a soft-delete column.
+
+    An entity with SOFT_DELETE_COLUMN=None (concept, relation, step) cannot take
+    part in a two-phase purge at all, so it must never appear in a purge command's
+    enum. Derived from the live registry rather than a hand-kept list, so a new
+    entity is admitted or excluded by its own declaration.
+    """
+    return sorted(
+        {
+            subclass.ENTITY_TYPE
+            for subclass in _entity_classes()
+            if getattr(subclass, "SOFT_DELETE_COLUMN", None) is not None
+        }
+    )
+
+
+def resolve_entity_class(entity_type: str) -> type:
+    """Resolve a user-facing entity type to its DataclassEntity subclass.
+
+    The single sanctioned resolution mechanism for this goal. Every consumer
+    uses it so that two commands cannot drift into two different answers for
+    the same entity type.
+
+    Raises:
+        ValueError: when no subclass claims the type, or when two do.
+    """
+    classes = _entity_classes()
+    matches = [
+        subclass for subclass in classes if getattr(subclass, "ENTITY_TYPE", None) == entity_type
     ]
     if not matches:
-        known = sorted(
-            {
-                subclass.ENTITY_TYPE
-                for subclass in walk(DataclassEntity)
-                if getattr(subclass, "ENTITY_TYPE", None) and getattr(subclass, "TABLE_NAME", None)
-            }
-        )
+        known = sorted({subclass.ENTITY_TYPE for subclass in classes})
         raise ValueError(f"unknown entity type: {entity_type!r}; known types are {known}")
     if len(matches) > 1:
         raise ValueError(

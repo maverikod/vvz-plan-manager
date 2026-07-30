@@ -49,7 +49,7 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # these later additions.
 # Raised by later plans that legitimately add a command:
 #   CR-6 (planmgr-cr6-entity-identity-crud): +1 for project_uuid_reserve.
-_PRE_CR4_INVENTORY_COUNT = 211
+_PRE_CR4_INVENTORY_COUNT = 212
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

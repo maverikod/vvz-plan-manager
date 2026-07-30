@@ -126,5 +126,9 @@ class ContextGateCommandsMixin:
         """List runtime audit log entries newest-first, filterable by actor, action, entity, and time window (read-only, paginated)."""
         return await self._call("audit_list", params)
 
+    async def runtime_purge_batch(self, **params: Any) -> Any:
+        """Purge a batch of already soft-deleted rows of one entity type, reporting per-row removals and reference-blocked refusals."""
+        return await self._call("runtime_purge_batch", params)
+
 
 __all__ = ["ContextGateCommandsMixin"]

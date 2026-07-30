@@ -191,6 +191,8 @@ INVENTORY: tuple[str, ...] = (
     "command_timing_stats",
     # runtime audit (C-010)
     "audit_list",
+    # two-phase deletion, second phase (C-009)
+    "runtime_purge_batch",
     # CR-5a entity CRUD: tool (C-001)
     "tool_create",
     "tool_get",
@@ -246,6 +248,7 @@ MUTATING: frozenset[str] = frozenset({
     "plan_project_set_primary",
     "plan_project_clear_primary",
     "project_uuid_reserve",
+    "runtime_purge_batch",
     "plan_import",
     "export_archive",
     "hrs_import",

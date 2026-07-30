@@ -835,8 +835,9 @@ class DataclassEntity(EntityRecord):
         conn: psycopg.Connection,
         *,
         limit: int = 1000,
+        changed_by: str = "system:purge_batch",
     ) -> dict[str, list[dict[str, Any]]]:
-        return purge_soft_deleted_batch(conn, cls, limit=limit)
+        return purge_soft_deleted_batch(conn, cls, limit=limit, changed_by=changed_by)
 
 
 def find_entity_reference_counts(
@@ -923,8 +924,23 @@ def purge_soft_deleted_batch(
     entity_cls: type[DataclassEntity],
     *,
     limit: int = 1000,
+    changed_by: str = "system:purge_batch",
 ) -> dict[str, list[dict[str, Any]]]:
-    """Centrally purge a batch of rows that were already marked deleted."""
+    """Centrally purge a batch of rows that were already marked deleted.
+
+    This function writes NO audit record of its own. The hard-delete guard is the
+    single audit point: it records one hard_delete row per successful removal and
+    one refusal-flagged row per blocked one. A local write here would produce two
+    audit rows for every purged row, which is the corruption C-009 exists to
+    prevent. What this function contributes instead is attribution — changed_by
+    reaches the guard so its records name the batch actor rather than the generic
+    default.
+
+    There is no batch-marker keyword to pass alongside: the guard's context
+    keywords are plan_uuid and audit_entity_type, neither of which carries a
+    batch tag, and inventing one is not this step's business. The actor string
+    itself is what identifies the batch.
+    """
     if entity_cls.SOFT_DELETE_COLUMN is None:
         raise NotImplementedError(f"{entity_cls.__name__} does not support soft-delete purge")
     id_columns = entity_cls._id_columns()
@@ -952,6 +968,7 @@ def purge_soft_deleted_batch(
                 entity_id,
                 returning=True,
                 require_soft_deleted=True,
+                changed_by=changed_by,
             )
         except EntityReferencedError as exc:
             refused.append({"id": _json_safe(id_payload), "references": dict(exc.references)})

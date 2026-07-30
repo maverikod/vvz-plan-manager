@@ -431,6 +431,7 @@ TIER4_HANDLED: frozenset[str] = frozenset(
 # reason each is unsafe/out-of-scope for a throwaway-entity smoke pass.
 KNOWN_SKIP_REASONS: dict[str, str] = {
     "export_cleanup": "destructive filesystem cleanup of export archives; not exercised against live data",
+    "runtime_purge_batch": "irreversibly purges EVERY soft-deleted row of an entity type, not just this pass's throwaway rows; not safe to exercise against live data",
     "plan_import": "requires a prepared export archive/source payload outside the scope of a throwaway smoke entity",
     "export_upload_save": "requires a prior chunked transfer_id handshake; not exercised in this pass",
     "export_read": "requires a materialized export file produced by plan_export/hrs_export; not exercised in this pass",

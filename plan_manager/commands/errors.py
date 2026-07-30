@@ -51,6 +51,9 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "PLAN_NOT_FULLY_FROZEN",
     "FROZEN_ARTIFACT",
     "DELETE_BLOCKED",
+    # The entity type has no soft-deleted state a batch purge could act on
+    # (its class declares SOFT_DELETE_COLUMN=None).
+    "ENTITY_NOT_PURGEABLE",
     "INVALID_STEP_FIELD_SHAPE",
     "INVALID_LEVEL",
     "INVALID_SCOPE",

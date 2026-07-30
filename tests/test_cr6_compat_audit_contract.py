@@ -16,6 +16,7 @@ import pytest
 
 from plan_manager.commands.errors import DOMAIN_CODES
 from plan_manager.commands.inventory import INVENTORY, MUTATING
+from plan_manager.domain.todo import TodoItem
 from plan_manager.storage.runtime_audit_store import ALLOWED_ACTIONS
 
 # ---------------------------------------------------------------------------
@@ -203,6 +204,41 @@ def test_cr6_mutating_commands_write_a_registered_audit_action(monkeypatch) -> N
                     reserved_by="contract-test",
                 )
             )
+        elif name == "runtime_purge_batch":
+            # Deliberate inversion for this one command: the hard-delete guard
+            # beneath it is the single audit writer, so the command itself must
+            # record NOTHING. A record here would mean every purged row is
+            # audited twice. The guard's own records are covered by
+            # tests/test_hard_delete_guard.py.
+            purged: list[dict] = []
+            command_cls = next(
+                obj
+                for _, obj in inspect.getmembers(module, inspect.isclass)
+                if getattr(obj, "name", None) == name
+            )
+            monkeypatch.setattr(
+                TodoItem,
+                "crud_purge_soft_deleted_batch",
+                classmethod(
+                    lambda cls, conn, **kw: purged.append(kw)
+                    or {"deleted": [], "refused": []}
+                ),
+            )
+            result = asyncio.run(
+                command_cls().execute(
+                    entity_type="todo", changed_by="contract-test", limit=5
+                )
+            )
+            assert getattr(result, "data", {}).get("deleted") == []
+            assert purged == [{"limit": 5, "changed_by": "contract-test"}], (
+                "the command must forward limit and the actor to the entity layer"
+            )
+            assert recorded == [], (
+                "runtime_purge_batch must write no audit record of its own; the "
+                "hard-delete guard is the single writer"
+            )
+            exercised.append(name)
+            continue
         else:
             # A CR-6 mutating command with no exercise recipe here is a gap in
             # this test, not a pass: fail loudly rather than skip silently.
