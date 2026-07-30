@@ -14,12 +14,43 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, check
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
-def _row_to_record(row: tuple | list) -> RuntimeComment:
-    """Convert a database row tuple to RuntimeComment dataclass."""
-    (uuid_val, primary_anchor_type, anchor_project_id, anchor_file_path,
-     anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-     anchor_ref_id, kind, visibility, author, body, resolved,
-     supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at) = row
+def _row_to_record(row: tuple | list | dict) -> RuntimeComment:
+    """Convert a database row (tuple, list, or dict) to RuntimeComment dataclass."""
+    # Handle dict rows returned by crud_* methods
+    if isinstance(row, dict):
+        uuid_val = row["uuid"]
+        primary_anchor_type = row["primary_anchor_type"]
+        anchor_project_id = row["anchor_project_id"]
+        anchor_file_path = row["anchor_file_path"]
+        anchor_plan_uuid = row["anchor_plan_uuid"]
+        anchor_revision_uuid = row["anchor_revision_uuid"]
+        anchor_step_uuid = row["anchor_step_uuid"]
+        anchor_step_path = row["anchor_step_path"]
+        anchor_ref_id = row["anchor_ref_id"]
+        kind = row["kind"]
+        visibility = row["visibility"]
+        author = row["author"]
+        body = row["body"]
+        resolved = row["resolved"]
+        supersedes_comment_uuid = row["supersedes_comment_uuid"]
+        created_by = row["created_by"]
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        deleted_at = row["deleted_at"]
+    else:
+        # Handle tuple/list rows
+        (uuid_val, primary_anchor_type, anchor_project_id, anchor_file_path,
+         anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
+         anchor_ref_id, kind, visibility, author, body, resolved,
+         supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at) = row
+
+    # Convert timestamps to ISO format strings if they are datetime objects
+    if created_at and isinstance(created_at, datetime):
+        created_at = created_at.isoformat()
+    if updated_at and isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+    if deleted_at and isinstance(deleted_at, datetime):
+        deleted_at = deleted_at.isoformat()
 
     return RuntimeComment(
         comment_uuid=uuid_val,
@@ -38,9 +69,9 @@ def _row_to_record(row: tuple | list) -> RuntimeComment:
         resolved=resolved,
         supersedes_comment_uuid=supersedes_comment_uuid,
         created_by=created_by,
-        created_at=created_at.isoformat() if created_at else None,
-        updated_at=updated_at.isoformat() if updated_at else None,
-        deleted_at=deleted_at.isoformat() if deleted_at else None,
+        created_at=created_at,
+        updated_at=updated_at,
+        deleted_at=deleted_at,
     )
 
 
@@ -84,44 +115,29 @@ def add_comment(
     # Flatten anchor to columns
     anchor_cols = anchor_to_columns(anchor)
 
-    # Insert the comment
-    sql = """
-    INSERT INTO runtime_comment
-    (uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-     anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-     anchor_ref_id, kind, visibility, author, body, resolved,
-     supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at)
-    VALUES
-    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    RETURNING uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-              anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-              anchor_ref_id, kind, visibility, author, body, resolved,
-              supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    """
+    # Build values dict for crud_create
+    values = {
+        "uuid": comment_uuid,
+        "primary_anchor_type": anchor_cols["primary_anchor_type"],
+        "anchor_project_id": anchor_cols["anchor_project_id"],
+        "anchor_file_path": anchor_cols["anchor_file_path"],
+        "anchor_plan_uuid": anchor_cols["anchor_plan_uuid"],
+        "anchor_revision_uuid": anchor_cols["anchor_revision_uuid"],
+        "anchor_step_uuid": anchor_cols["anchor_step_uuid"],
+        "anchor_step_path": anchor_cols["anchor_step_path"],
+        "anchor_ref_id": anchor_cols["anchor_ref_id"],
+        "kind": kind,
+        "visibility": visibility,
+        "author": author,
+        "body": body,
+        "resolved": resolved,
+        "supersedes_comment_uuid": supersedes_comment_uuid,
+        "created_by": created_by,
+        "created_at": now,
+        "updated_at": now,
+    }
 
-    params = (
-        comment_uuid,
-        anchor_cols["primary_anchor_type"],
-        anchor_cols["anchor_project_id"],
-        anchor_cols["anchor_file_path"],
-        anchor_cols["anchor_plan_uuid"],
-        anchor_cols["anchor_revision_uuid"],
-        anchor_cols["anchor_step_uuid"],
-        anchor_cols["anchor_step_path"],
-        anchor_cols["anchor_ref_id"],
-        kind,
-        visibility,
-        author,
-        body,
-        resolved,
-        supersedes_comment_uuid,
-        created_by,
-        now,
-        now,
-        None,
-    )
-
-    row = conn.execute(sql, params).fetchone()
+    row = RuntimeComment.crud_create(conn, values)
 
     # Record audit
     record_runtime_change(
@@ -138,16 +154,7 @@ def add_comment(
 
 def get_comment(conn: psycopg.Connection, comment_uuid: uuid.UUID) -> RuntimeComment | None:
     """Retrieve a comment by UUID, or None if not found or soft-deleted."""
-    sql = """
-    SELECT uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-           anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-           anchor_ref_id, kind, visibility, author, body, resolved,
-           supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    FROM runtime_comment
-    WHERE uuid = %s AND deleted_at IS NULL
-    """
-
-    row = conn.execute(sql, (comment_uuid,)).fetchone()
+    row = RuntimeComment.crud_get(conn, comment_uuid, include_deleted=False)
     return _row_to_record(row) if row else None
 
 
@@ -161,41 +168,23 @@ def list_comments(
     include_deleted: bool = False,
 ) -> list[RuntimeComment]:
     """List comments matching the given filters, ordered by creation time."""
-    conditions = []
-    params = []
-
+    # Build filters dict
+    filters = {}
     if anchor_plan_uuid is not None:
-        conditions.append("anchor_plan_uuid = %s")
-        params.append(anchor_plan_uuid)
-
+        filters["anchor_plan_uuid"] = anchor_plan_uuid
     if anchor_step_uuid is not None:
-        conditions.append("anchor_step_uuid = %s")
-        params.append(anchor_step_uuid)
-
+        filters["anchor_step_uuid"] = anchor_step_uuid
     if anchor_ref_id is not None:
-        conditions.append("anchor_ref_id = %s")
-        params.append(anchor_ref_id)
-
+        filters["anchor_ref_id"] = anchor_ref_id
     if visibility is not None:
-        conditions.append("visibility = %s")
-        params.append(visibility)
+        filters["visibility"] = visibility
 
-    if not include_deleted:
-        conditions.append("deleted_at IS NULL")
-
-    where_clause = " AND ".join(conditions) if conditions else "1=1"
-
-    sql = f"""
-    SELECT uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-           anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-           anchor_ref_id, kind, visibility, author, body, resolved,
-           supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    FROM runtime_comment
-    WHERE {where_clause}
-    ORDER BY created_at ASC
-    """
-
-    rows = conn.execute(sql, params).fetchall()
+    rows = RuntimeComment.crud_list(
+        conn,
+        filters=filters,
+        include_deleted=include_deleted,
+        order_by=("created_at",),
+    )
     return [_row_to_record(row) for row in rows]
 
 
@@ -227,6 +216,8 @@ def list_comments_page(
     include_deleted: bool = False,
 ) -> tuple[list[RuntimeComment], int]:
     """List one paginated page of runtime comments plus the total filtered count, entirely in SQL.
+
+    Intentionally not migrated to crud_list: pagination and count-(*) OVER() window logic exceed basic crud_list capabilities.
 
     Every comment_list filter (plan scope, anchor_plan, step, revision, file, kind,
     owner, status, active_only, created_after/before, and the transitive project
@@ -336,44 +327,29 @@ def supersede_comment(
     new_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
 
-    # Insert new comment row, copying all fields except body and uuid
-    sql = """
-    INSERT INTO runtime_comment
-    (uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-     anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-     anchor_ref_id, kind, visibility, author, body, resolved,
-     supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at)
-    VALUES
-    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    RETURNING uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-              anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-              anchor_ref_id, kind, visibility, author, body, resolved,
-              supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    """
+    # Build values dict for crud_create
+    values = {
+        "uuid": new_uuid,
+        "primary_anchor_type": existing.primary_anchor_type,
+        "anchor_project_id": existing.anchor_project_id,
+        "anchor_file_path": existing.anchor_file_path,
+        "anchor_plan_uuid": existing.anchor_plan_uuid,
+        "anchor_revision_uuid": existing.anchor_revision_uuid,
+        "anchor_step_uuid": existing.anchor_step_uuid,
+        "anchor_step_path": existing.anchor_step_path,
+        "anchor_ref_id": existing.anchor_ref_id,
+        "kind": existing.kind,
+        "visibility": existing.visibility,
+        "author": existing.author,
+        "body": new_body,
+        "resolved": existing.resolved,
+        "supersedes_comment_uuid": existing.comment_uuid,  # New comment supersedes the old one
+        "created_by": changed_by,
+        "created_at": now,
+        "updated_at": now,
+    }
 
-    params = (
-        new_uuid,
-        existing.primary_anchor_type,
-        existing.anchor_project_id,
-        existing.anchor_file_path,
-        existing.anchor_plan_uuid,
-        existing.anchor_revision_uuid,
-        existing.anchor_step_uuid,
-        existing.anchor_step_path,
-        existing.anchor_ref_id,
-        existing.kind,
-        existing.visibility,
-        existing.author,
-        new_body,
-        existing.resolved,
-        existing.comment_uuid,  # New comment supersedes the old one
-        changed_by,
-        now,
-        now,
-        None,
-    )
-
-    row = conn.execute(sql, params).fetchone()
+    row = RuntimeComment.crud_create(conn, values)
 
     # Record audit
     record_runtime_change(
@@ -402,17 +378,12 @@ def resolve_comment(
 
     now = datetime.now(timezone.utc)
 
-    sql = """
-    UPDATE runtime_comment
-    SET resolved = true, updated_at = %s
-    WHERE uuid = %s
-    RETURNING uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-              anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-              anchor_ref_id, kind, visibility, author, body, resolved,
-              supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    """
+    values = {
+        "resolved": True,
+        "updated_at": now,
+    }
 
-    row = conn.execute(sql, (now, comment_uuid)).fetchone()
+    row = RuntimeComment.crud_update(conn, comment_uuid, values)
 
     # Record audit
     record_runtime_change(
@@ -441,17 +412,12 @@ def soft_delete_comment(
 
     now = datetime.now(timezone.utc)
 
-    sql = """
-    UPDATE runtime_comment
-    SET deleted_at = %s, updated_at = %s
-    WHERE uuid = %s
-    RETURNING uuid, primary_anchor_type, anchor_project_id, anchor_file_path,
-              anchor_plan_uuid, anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-              anchor_ref_id, kind, visibility, author, body, resolved,
-              supersedes_comment_uuid, created_by, created_at, updated_at, deleted_at
-    """
-
-    row = conn.execute(sql, (now, now, comment_uuid)).fetchone()
+    row = RuntimeComment.crud_soft_delete(
+        conn,
+        comment_uuid,
+        deleted_at=now,
+        updated_at=now,
+    )
 
     # Record audit
     record_runtime_change(

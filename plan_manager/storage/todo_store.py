@@ -13,42 +13,70 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
-def _row_to_record(row: tuple[Any, ...]) -> TodoItem:
-    """Convert a database row to a TodoItem instance.
+def _row_to_record(row: tuple[Any, ...] | dict[str, Any]) -> TodoItem:
+    """Convert a database row (tuple or dict) to a TodoItem instance.
 
-    Row order matches todo_item table column order:
+    Row order matches todo_item table column order when tuple:
     uuid, title, description, kind, status, priority_nice, created_by,
     assigned_to, created_at, updated_at, started_at, resolved_at, due_at,
     primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
     anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
     blocking_reason, execution_result, deleted_at
     """
-    (
-        row_uuid,
-        title,
-        description,
-        kind,
-        status,
-        priority_nice,
-        created_by,
-        assigned_to,
-        created_at,
-        updated_at,
-        started_at,
-        resolved_at,
-        due_at,
-        primary_anchor_type,
-        anchor_project_id,
-        anchor_file_path,
-        anchor_plan_uuid,
-        anchor_revision_uuid,
-        anchor_step_uuid,
-        anchor_step_path,
-        anchor_ref_id,
-        blocking_reason,
-        execution_result,
-        deleted_at,
-    ) = row
+    # Handle dict rows from crud_* methods
+    if isinstance(row, dict):
+        row_uuid = row["uuid"]
+        title = row["title"]
+        description = row["description"]
+        kind = row["kind"]
+        status = row["status"]
+        priority_nice = row["priority_nice"]
+        created_by = row["created_by"]
+        assigned_to = row["assigned_to"]
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        started_at = row["started_at"]
+        resolved_at = row["resolved_at"]
+        due_at = row["due_at"]
+        primary_anchor_type = row["primary_anchor_type"]
+        anchor_project_id = row["anchor_project_id"]
+        anchor_file_path = row["anchor_file_path"]
+        anchor_plan_uuid = row["anchor_plan_uuid"]
+        anchor_revision_uuid = row["anchor_revision_uuid"]
+        anchor_step_uuid = row["anchor_step_uuid"]
+        anchor_step_path = row["anchor_step_path"]
+        anchor_ref_id = row["anchor_ref_id"]
+        blocking_reason = row["blocking_reason"]
+        execution_result = row["execution_result"]
+        deleted_at = row["deleted_at"]
+    else:
+        # Handle tuple rows (legacy path for queries using _get_row)
+        (
+            row_uuid,
+            title,
+            description,
+            kind,
+            status,
+            priority_nice,
+            created_by,
+            assigned_to,
+            created_at,
+            updated_at,
+            started_at,
+            resolved_at,
+            due_at,
+            primary_anchor_type,
+            anchor_project_id,
+            anchor_file_path,
+            anchor_plan_uuid,
+            anchor_revision_uuid,
+            anchor_step_uuid,
+            anchor_step_path,
+            anchor_ref_id,
+            blocking_reason,
+            execution_result,
+            deleted_at,
+        ) = row
 
     return TodoItem(
         todo_uuid=row_uuid if isinstance(row_uuid, uuid.UUID) else uuid.UUID(row_uuid),
@@ -129,51 +157,33 @@ def create_todo(
 
     columns = anchor_to_columns(anchor)
 
-    sql = """
-    INSERT INTO todo_item (
-        uuid, title, description, kind, status, priority_nice, created_by,
-        assigned_to, created_at, updated_at, started_at, resolved_at, due_at,
-        primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
-        anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
-        blocking_reason, execution_result, deleted_at
-    )
-    VALUES (
-        %s, %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s,
-        %s, %s, %s, %s,
-        %s, %s, %s
-    )
-    """
+    values = {
+        "uuid": new_uuid,
+        "title": title,
+        "description": description,
+        "kind": kind,
+        "status": status,
+        "priority_nice": priority_nice,
+        "created_by": created_by,
+        "assigned_to": assigned_to,
+        "created_at": now,
+        "updated_at": now,
+        "started_at": None,
+        "resolved_at": None,
+        "due_at": due_at,
+        "primary_anchor_type": columns["primary_anchor_type"],
+        "anchor_project_id": columns["anchor_project_id"],
+        "anchor_file_path": columns["anchor_file_path"],
+        "anchor_plan_uuid": columns["anchor_plan_uuid"],
+        "anchor_revision_uuid": columns["anchor_revision_uuid"],
+        "anchor_step_uuid": columns["anchor_step_uuid"],
+        "anchor_step_path": columns["anchor_step_path"],
+        "anchor_ref_id": columns["anchor_ref_id"],
+        "blocking_reason": blocking_reason,
+        "execution_result": execution_result,
+    }
 
-    params = (
-        new_uuid,
-        title,
-        description,
-        kind,
-        status,
-        priority_nice,
-        created_by,
-        assigned_to,
-        now,
-        now,
-        None,
-        None,
-        due_at,
-        columns["primary_anchor_type"],
-        columns["anchor_project_id"],
-        columns["anchor_file_path"],
-        columns["anchor_plan_uuid"],
-        columns["anchor_revision_uuid"],
-        columns["anchor_step_uuid"],
-        columns["anchor_step_path"],
-        columns["anchor_ref_id"],
-        blocking_reason,
-        execution_result,
-        None,
-    )
-
-    conn.execute(sql, params)
+    row_dict = TodoItem.crud_create(conn, values)
 
     record_runtime_change(
         conn,
@@ -184,8 +194,7 @@ def create_todo(
         changed_by=created_by,
     )
 
-    fetched = _get_row(conn, new_uuid)
-    return fetched
+    return _row_to_record(row_dict)
 
 
 def get_todo(conn: psycopg.Connection, todo_uuid: uuid.UUID) -> TodoItem | None:
@@ -193,19 +202,8 @@ def get_todo(conn: psycopg.Connection, todo_uuid: uuid.UUID) -> TodoItem | None:
 
     Returns None if the item does not exist or is soft-deleted.
     """
-    sql = """
-    SELECT
-        uuid, title, description, kind, status, priority_nice, created_by,
-        assigned_to, created_at, updated_at, started_at, resolved_at, due_at,
-        primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
-        anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
-        blocking_reason, execution_result, deleted_at
-    FROM todo_item
-    WHERE uuid = %s AND deleted_at IS NULL
-    """
-    result = conn.execute(sql, (todo_uuid,))
-    row = result.fetchone()
-    return _row_to_record(row) if row else None
+    row_dict = TodoItem.crud_get(conn, todo_uuid, include_deleted=False)
+    return _row_to_record(row_dict) if row_dict else None
 
 
 def list_todos(
@@ -220,40 +218,25 @@ def list_todos(
     Excludes soft-deleted items unless include_deleted=True.
     Returns results ordered by created_at ASC.
     """
-    sql = """
-    SELECT
-        uuid, title, description, kind, status, priority_nice, created_by,
-        assigned_to, created_at, updated_at, started_at, resolved_at, due_at,
-        primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
-        anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
-        blocking_reason, execution_result, deleted_at
-    FROM todo_item
-    WHERE 1=1
-    """
-
-    params = []
-
+    filters = {}
     if kind is not None:
-        sql += " AND kind = %s"
-        params.append(kind)
-
+        filters["kind"] = kind
     if status is not None:
-        sql += " AND status = %s"
-        params.append(status)
+        filters["status"] = status
 
-    if not include_deleted:
-        sql += " AND deleted_at IS NULL"
-
-    sql += " ORDER BY created_at ASC"
-
-    result = conn.execute(sql, params)
-    rows = result.fetchall()
+    rows = TodoItem.crud_list(
+        conn,
+        filters=filters if filters else None,
+        include_deleted=include_deleted,
+        order_by=("created_at",),
+    )
     return [_row_to_record(row) for row in rows]
 
 
 # The set of statuses treated as "active" for the active_only filter (todo_list's
 # equivalent of _ACTIVE_STATUSES, owned here now that the filter is SQL-side).
 _ACTIVE_TODO_STATUSES = frozenset({"open", "in_progress", "blocked"})
+
 
 _TODO_SELECT_COLUMNS = """
     uuid, title, description, kind, status, priority_nice, created_by,
@@ -387,47 +370,36 @@ def update_todo(
 
     Only non-None fields are updated. Anchor columns are never modified.
     """
-    updates = []
-    params = []
+    values: dict[str, Any] = {}
 
     if title is not None:
-        updates.append("title = %s")
-        params.append(title)
+        values["title"] = title
 
     if description is not None:
-        updates.append("description = %s")
-        params.append(description)
+        values["description"] = description
 
     if priority_nice is not None:
         validate_nice_priority(priority_nice)
-        updates.append("priority_nice = %s")
-        params.append(priority_nice)
+        values["priority_nice"] = priority_nice
 
     if assigned_to is not None:
-        updates.append("assigned_to = %s")
-        params.append(assigned_to)
+        values["assigned_to"] = assigned_to
 
     if blocking_reason is not None:
-        updates.append("blocking_reason = %s")
-        params.append(blocking_reason)
+        values["blocking_reason"] = blocking_reason
 
     if execution_result is not None:
-        updates.append("execution_result = %s")
-        params.append(execution_result)
+        values["execution_result"] = execution_result
 
     now = datetime.now(timezone.utc)
-    updates.append("updated_at = %s")
-    params.append(now)
+    values["updated_at"] = now
 
-    params.append(todo_uuid)
-
-    sql = f"UPDATE todo_item SET {', '.join(updates)} WHERE uuid = %s"
-    conn.execute(sql, params)
-
-    record_obj = _get_row(conn, todo_uuid)
-    if record_obj is None:
+    row_dict = TodoItem.crud_update(conn, todo_uuid, values)
+    if row_dict is None:
         from plan_manager.commands.errors import DomainCommandError
         raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
+
+    record_obj = _row_to_record(row_dict)
 
     record_runtime_change(
         conn,
@@ -447,17 +419,18 @@ def resolve_todo(
     """Transition a TODO item to 'resolved' status."""
     now = datetime.now(timezone.utc)
 
-    sql = """
-    UPDATE todo_item
-    SET status = %s, resolved_at = %s, updated_at = %s
-    WHERE uuid = %s
-    """
-    conn.execute(sql, ("resolved", now, now, todo_uuid))
+    values = {
+        "status": "resolved",
+        "resolved_at": now,
+        "updated_at": now,
+    }
 
-    record_obj = _get_row(conn, todo_uuid)
-    if record_obj is None:
+    row_dict = TodoItem.crud_update(conn, todo_uuid, values)
+    if row_dict is None:
         from plan_manager.commands.errors import DomainCommandError
         raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
+
+    record_obj = _row_to_record(row_dict)
 
     record_runtime_change(
         conn,
@@ -477,17 +450,17 @@ def close_todo(
     """Transition a TODO item to 'closed' status."""
     now = datetime.now(timezone.utc)
 
-    sql = """
-    UPDATE todo_item
-    SET status = %s, updated_at = %s
-    WHERE uuid = %s
-    """
-    conn.execute(sql, ("closed", now, todo_uuid))
+    values = {
+        "status": "closed",
+        "updated_at": now,
+    }
 
-    record_obj = _get_row(conn, todo_uuid)
-    if record_obj is None:
+    row_dict = TodoItem.crud_update(conn, todo_uuid, values)
+    if row_dict is None:
         from plan_manager.commands.errors import DomainCommandError
         raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
+
+    record_obj = _row_to_record(row_dict)
 
     record_runtime_change(
         conn,
@@ -507,14 +480,14 @@ def soft_delete_todo(
     """Soft-delete a TODO item by setting deleted_at."""
     now = datetime.now(timezone.utc)
 
-    sql = """
-    UPDATE todo_item
-    SET deleted_at = %s, updated_at = %s
-    WHERE uuid = %s
-    """
-    conn.execute(sql, (now, now, todo_uuid))
+    row_dict = TodoItem.crud_soft_delete(
+        conn,
+        todo_uuid,
+        deleted_at=now,
+        updated_at=now,
+    )
 
-    record_obj = _get_row(conn, todo_uuid)
+    record_obj = _row_to_record(row_dict)
 
     record_runtime_change(
         conn,

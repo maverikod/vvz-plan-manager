@@ -45,6 +45,92 @@ class BugFix(DataclassEntity):
     ENTITY_TYPE = "bug_fix"
     ENTITY_ID_FIELD = "fix_uuid"
     TABLE_NAME = "bug_fix"
+    ID_COLUMN = "uuid"
+    # Column order follows the bug_fix CREATE TABLE in migration
+    # 0013_bug_lifecycle_and_impact.sql.
+    COLUMNS = (
+        "uuid",
+        "bug_uuid",
+        "status",
+        "fix_type",
+        "summary",
+        "implementation_notes",
+        "source_project_id",
+        "branch",
+        "commit_hash",
+        "pull_request",
+        "changed_files",
+        "tests",
+        "author",
+        "reviewer",
+        "started_at",
+        "implemented_at",
+        "verified_at",
+        "verification_method",
+        "expected_result",
+        "actual_result",
+        "passed",
+        "revert_info",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    )
+    # Every column except deleted_at, verified_at, actual_result, and passed.
+    # uuid, created_at and updated_at ARE insertable and must stay here: none
+    # of them carries a DB default, and create_bug_fix supplies all three
+    # explicitly in Python. Omitting them would make crud_create reject the
+    # store's own payload, because INSERT_COLUMNS is the whitelist it validates
+    # against. verified_at, actual_result, and passed are excluded because they
+    # are written only by verify_bug_fix, not at creation time. deleted_at is
+    # excluded so a create cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "bug_uuid",
+        "status",
+        "fix_type",
+        "summary",
+        "implementation_notes",
+        "source_project_id",
+        "branch",
+        "commit_hash",
+        "pull_request",
+        "changed_files",
+        "tests",
+        "author",
+        "reviewer",
+        "started_at",
+        "implemented_at",
+        "verification_method",
+        "expected_result",
+        "revert_info",
+        "created_by",
+        "created_at",
+        "updated_at",
+    )
+    # Immutable after creation: uuid, bug_uuid, fix_type, created_at, created_by.
+    # deleted_at is absent on purpose — soft deletion runs through crud_soft_delete,
+    # which writes the soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS = (
+        "status",
+        "summary",
+        "implementation_notes",
+        "branch",
+        "commit_hash",
+        "pull_request",
+        "changed_files",
+        "tests",
+        "reviewer",
+        "started_at",
+        "implemented_at",
+        "verification_method",
+        "expected_result",
+        "actual_result",
+        "passed",
+        "revert_info",
+        "updated_at",
+    )
+    SEARCH_COLUMNS = ("summary", "implementation_notes")
     # Compact view=summary projection (bug 8a13977d): drops implementation_notes,
     # changed_files, tests, expected/actual_result, and revert_info.
     SUMMARY_FIELDS = ("uuid", "bug_uuid", "status", "fix_type", "summary", "author", "updated_at")

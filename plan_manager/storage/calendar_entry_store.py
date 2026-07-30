@@ -21,29 +21,52 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, check
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
-def _row_to_record(row: tuple[Any, ...]) -> CalendarEntry:
-    (
-        row_uuid,
-        title,
-        description,
-        status,
-        start_date,
-        end_date,
-        created_by,
-        assigned_to,
-        wish_uuid,
-        created_at,
-        updated_at,
-        primary_anchor_type,
-        anchor_project_id,
-        anchor_file_path,
-        anchor_plan_uuid,
-        anchor_revision_uuid,
-        anchor_step_uuid,
-        anchor_step_path,
-        anchor_ref_id,
-        deleted_at,
-    ) = row
+def _row_to_record(row: dict[str, Any] | tuple[Any, ...]) -> CalendarEntry:
+    """Convert a database row (dict from crud_* or tuple from raw SQL) to CalendarEntry."""
+    if isinstance(row, dict):
+        row_uuid = row["uuid"]
+        title = row["title"]
+        description = row["description"]
+        status = row["status"]
+        start_date = row["start_date"]
+        end_date = row["end_date"]
+        created_by = row["created_by"]
+        assigned_to = row["assigned_to"]
+        wish_uuid = row["wish_uuid"]
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        primary_anchor_type = row["primary_anchor_type"]
+        anchor_project_id = row["anchor_project_id"]
+        anchor_file_path = row["anchor_file_path"]
+        anchor_plan_uuid = row["anchor_plan_uuid"]
+        anchor_revision_uuid = row["anchor_revision_uuid"]
+        anchor_step_uuid = row["anchor_step_uuid"]
+        anchor_step_path = row["anchor_step_path"]
+        anchor_ref_id = row["anchor_ref_id"]
+        deleted_at = row["deleted_at"]
+    else:
+        (
+            row_uuid,
+            title,
+            description,
+            status,
+            start_date,
+            end_date,
+            created_by,
+            assigned_to,
+            wish_uuid,
+            created_at,
+            updated_at,
+            primary_anchor_type,
+            anchor_project_id,
+            anchor_file_path,
+            anchor_plan_uuid,
+            anchor_revision_uuid,
+            anchor_step_uuid,
+            anchor_step_path,
+            anchor_ref_id,
+            deleted_at,
+        ) = row
     return CalendarEntry(
         calendar_entry_uuid=row_uuid if isinstance(row_uuid, uuid.UUID) else uuid.UUID(row_uuid),
         title=title,
@@ -69,20 +92,9 @@ def _row_to_record(row: tuple[Any, ...]) -> CalendarEntry:
 
 
 def _get_row(conn: psycopg.Connection, calendar_entry_uuid: uuid.UUID) -> CalendarEntry | None:
-    row = conn.execute(
-        """
-        SELECT
-            uuid, title, description, status, start_date, end_date, created_by,
-            assigned_to, wish_uuid, created_at, updated_at, primary_anchor_type,
-            anchor_project_id, anchor_file_path, anchor_plan_uuid,
-            anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-            anchor_ref_id, deleted_at
-        FROM calendar_entry
-        WHERE uuid = %s
-        """,
-        (calendar_entry_uuid,),
-    ).fetchone()
-    return _row_to_record(row) if row else None
+    """Fetch a calendar entry by UUID (including soft-deleted rows)."""
+    row_dict = CalendarEntry.crud_get(conn, calendar_entry_uuid, include_deleted=True)
+    return _row_to_record(row_dict) if row_dict else None
 
 
 def create_calendar_entry(
@@ -107,45 +119,34 @@ def create_calendar_entry(
     entry_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
     columns = anchor_to_columns(anchor)
-    conn.execute(
-        """
-        INSERT INTO calendar_entry (
-            uuid, title, description, status, start_date, end_date, created_by,
-            assigned_to, wish_uuid, created_at, updated_at, primary_anchor_type,
-            anchor_project_id, anchor_file_path, anchor_plan_uuid,
-            anchor_revision_uuid, anchor_step_uuid, anchor_step_path,
-            anchor_ref_id, deleted_at
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            %s, %s, %s,
-            %s, %s, %s,
-            %s, %s
-        )
-        """,
-        (
-            entry_uuid,
-            title,
-            description,
-            status,
-            validate_calendar_date(start_date),
-            validate_calendar_date(end_date),
-            created_by,
-            assigned_to,
-            wish_uuid,
-            now,
-            now,
-            columns["primary_anchor_type"],
-            columns["anchor_project_id"],
-            columns["anchor_file_path"],
-            columns["anchor_plan_uuid"],
-            columns["anchor_revision_uuid"],
-            columns["anchor_step_uuid"],
-            columns["anchor_step_path"],
-            columns["anchor_ref_id"],
-            None,
-        ),
-    )
+
+    values_dict = {
+        "uuid": entry_uuid,
+        "title": title,
+        "description": description,
+        "status": status,
+        "start_date": validate_calendar_date(start_date),
+        "end_date": validate_calendar_date(end_date),
+        "created_by": created_by,
+        "assigned_to": assigned_to,
+        "wish_uuid": wish_uuid,
+        "created_at": now,
+        "updated_at": now,
+        "primary_anchor_type": columns["primary_anchor_type"],
+        "anchor_project_id": columns["anchor_project_id"],
+        "anchor_file_path": columns["anchor_file_path"],
+        "anchor_plan_uuid": columns["anchor_plan_uuid"],
+        "anchor_revision_uuid": columns["anchor_revision_uuid"],
+        "anchor_step_uuid": columns["anchor_step_uuid"],
+        "anchor_step_path": columns["anchor_step_path"],
+        "anchor_ref_id": columns["anchor_ref_id"],
+    }
+
+    row_dict = CalendarEntry.crud_create(conn, values_dict, returning=True)
+    if row_dict is None:
+        raise RuntimeValidationError(f"calendar_entry {entry_uuid} not found after create")
+
+    record = _row_to_record(row_dict)
     record_runtime_change(
         conn,
         plan_uuid=anchor.plan_uuid,
@@ -154,17 +155,12 @@ def create_calendar_entry(
         action="create",
         changed_by=created_by,
     )
-    record = _get_row(conn, entry_uuid)
-    if record is None:
-        raise RuntimeValidationError(f"calendar_entry {entry_uuid} not found after create")
     return record
 
 
 def get_calendar_entry(conn: psycopg.Connection, calendar_entry_uuid: uuid.UUID) -> CalendarEntry | None:
-    record = _get_row(conn, calendar_entry_uuid)
-    if record is None or record.deleted_at is not None:
-        return None
-    return record
+    row_dict = CalendarEntry.crud_get(conn, calendar_entry_uuid, include_deleted=False)
+    return _row_to_record(row_dict) if row_dict else None
 
 
 def list_calendar_entries_page(
@@ -280,40 +276,31 @@ def update_calendar_entry(
     next_end = end_date or current.end_date
     validate_calendar_range(next_start, next_end)
 
-    updates: list[str] = []
-    params: list[Any] = []
+    update_values: dict[str, Any] = {}
     if title is not None:
-        updates.append("title = %s")
-        params.append(title)
+        update_values["title"] = title
     if description is not None:
-        updates.append("description = %s")
-        params.append(description)
+        update_values["description"] = description
     if status is not None:
         validate_calendar_status(status)
-        updates.append("status = %s")
-        params.append(status)
+        update_values["status"] = status
     if start_date is not None:
-        updates.append("start_date = %s")
-        params.append(validate_calendar_date(start_date))
+        update_values["start_date"] = validate_calendar_date(start_date)
     if end_date is not None:
-        updates.append("end_date = %s")
-        params.append(validate_calendar_date(end_date))
+        update_values["end_date"] = validate_calendar_date(end_date)
     if assigned_to is not None:
-        updates.append("assigned_to = %s")
-        params.append(assigned_to)
+        update_values["assigned_to"] = assigned_to
     if wish_uuid is not None:
         check_row_exists(conn, "wish_item", wish_uuid, frozenset({"wish_item"}))
-        updates.append("wish_uuid = %s")
-        params.append(wish_uuid)
+        update_values["wish_uuid"] = wish_uuid
 
     now = datetime.now(timezone.utc)
-    updates.append("updated_at = %s")
-    params.append(now)
-    params.append(calendar_entry_uuid)
-    conn.execute(f"UPDATE calendar_entry SET {', '.join(updates)} WHERE uuid = %s", params)
-    record = _get_row(conn, calendar_entry_uuid)
-    if record is None:
+    update_values["updated_at"] = now
+
+    row_dict = CalendarEntry.crud_update(conn, calendar_entry_uuid, update_values, returning=True)
+    if row_dict is None:
         raise RuntimeValidationError(f"calendar_entry not found after update: {calendar_entry_uuid}")
+    record = _row_to_record(row_dict)
     record_runtime_change(
         conn,
         plan_uuid=record.anchor_plan_uuid,
@@ -332,13 +319,12 @@ def soft_delete_calendar_entry(
     changed_by: str,
 ) -> CalendarEntry:
     now = datetime.now(timezone.utc)
-    conn.execute(
-        "UPDATE calendar_entry SET deleted_at = %s, updated_at = %s WHERE uuid = %s",
-        (now, now, calendar_entry_uuid),
+    row_dict = CalendarEntry.crud_soft_delete(
+        conn, calendar_entry_uuid, deleted_at=now, updated_at=now, returning=True
     )
-    record = _get_row(conn, calendar_entry_uuid)
-    if record is None:
+    if row_dict is None:
         raise RuntimeValidationError(f"calendar_entry not found after soft delete: {calendar_entry_uuid}")
+    record = _row_to_record(row_dict)
     record_runtime_change(
         conn,
         plan_uuid=record.anchor_plan_uuid,

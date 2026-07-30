@@ -27,14 +27,14 @@ _GAP_MARKER = "Descriptor gap:"
 _PENDING_DESCRIPTOR_MIGRATION = frozenset(
     {
         # G-003/T-003 — plan-truth and derived stores.
-        "Plan", "Step", "Concept", "Relation", "TodoItem", "TodoLink", "WishItem",
-        "ProjectDependency", "BugReport", "BugFix", "BugFixPropagation", "BugImpact",
+        "Plan", "Step", "Concept", "Relation", "TodoLink", "WishItem",
+        "ProjectDependency", "BugReport", "BugFixPropagation", "BugImpact",
         "CascadeRequestRecord", "SrtSnapshotRecord",
         # G-003/T-004 — runtime overlay and agent configuration.
-        "RuntimeComment", "RuntimeLink", "ExecutionAttempt", "ReviewResult",
+        "RuntimeLink", "ExecutionAttempt", "ReviewResult",
         "Escalation", "EscalationPolicy", "AnswerEnvelope", "StepAssignment",
         "Model", "ModelBinding", "Provider", "Role", "RoleModelBinding",
-        "Tool", "Toolset", "ToolsetMembership", "InvocationProfile",
+        "Toolset", "ToolsetMembership", "InvocationProfile",
         # Derived store. G-003/T-003's description enumerates cascade_request
         # and srt_snapshot among the derived stores but not context_block, so
         # this entity currently has no migration step of its own. Listed here so

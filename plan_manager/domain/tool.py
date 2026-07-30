@@ -21,6 +21,42 @@ class Tool(DataclassEntity):
     ENTITY_TYPE = "tool"
     ENTITY_ID_FIELD = "tool_uuid"
     TABLE_NAME = "tool"
+    ID_COLUMN = "uuid"
+    # Column order follows the tool CREATE TABLE in migration 0018_agent_config_entities.sql.
+    COLUMNS = (
+        "uuid",
+        "name",
+        "server_id",
+        "command",
+        "pinned_options",
+        "description",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE
+    # insertable and must stay here: none of them carries a DB default, and
+    # create_tool supplies all three explicitly in Python. Omitting them would
+    # make crud_create reject the store's own payload, because INSERT_COLUMNS is
+    # the whitelist it validates against. deleted_at is excluded so a create
+    # cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "name",
+        "server_id",
+        "command",
+        "pinned_options",
+        "description",
+        "created_by",
+        "created_at",
+        "updated_at",
+    )
+    # Immutable after creation: uuid, created_by, name. deleted_at is absent on
+    # purpose — soft deletion runs through crud_soft_delete, which writes the
+    # soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS = ("server_id", "command", "pinned_options", "description", "updated_at")
+    SEARCH_COLUMNS = ("name",)
     # Compact view=summary projection (bug 8a13977d): drops pinned_options and description.
     SUMMARY_FIELDS = ("uuid", "name", "server_id", "command", "updated_at")
 
