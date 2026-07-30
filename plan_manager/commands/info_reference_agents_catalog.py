@@ -296,7 +296,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     "system": ["info", "ops_status", "command_catalog_dump"],
     "audit": ["audit_list"],
     "purge": ["runtime_purge_batch"],
-    "reference": ["reference_inspect"],
+    "reference": ["reference_inspect", "id_resolve"],
     "todo": [
         "todo_create", "todo_get", "todo_list", "todo_update", "todo_reanchor",
         "todo_resolve", "todo_close", "todo_delete", "todo_link_add", "todo_link_remove",

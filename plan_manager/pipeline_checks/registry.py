@@ -228,6 +228,16 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_bug_31ba96d5_soft_delete_owned_column.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="id-resolve",
+        description="Run the partial-identifier resolution suite (id_resolve).",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_id_resolve_command.py",
+        ),
+    ),
 )
 
 

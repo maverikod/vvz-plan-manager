@@ -283,3 +283,87 @@ def test_catalog_entry_is_frozen_and_hashable() -> None:
     assert entry.fk_backed is False
     with pytest.raises(Exception):
         entry.source_table = "z"  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------
+# Bug f7b9cebf: total classification of every uuid reference column.
+#
+# The FK inventory test above can only see columns the DATABASE enforces. A
+# non-FK reference column has no schema-level oracle, so the suite was
+# structurally unable to notice an omission in exactly the population that
+# needs the catalog most — and 37 such columns were missing, including both
+# polymorphic endpoints of runtime_link, which made the deletion guard admit
+# deletions it had to refuse.
+#
+# This check closes that by requiring every uuid column of every registered
+# table to be classified: catalogued as a reference, exempted as an external
+# identifier, or listed as not-yet-classified. A column in none of the three
+# is a gap, not a permission — the ALLOWED_TABLES / EXCLUDED_TABLES discipline
+# applied one level down.
+# --------------------------------------------------------------------------
+
+
+def _uuid_columns_of_registered_tables() -> set[tuple[str, str]]:
+    """Every uuid column of every ALLOWED_TABLES table, excluding its own PK."""
+    from plan_manager.storage.identity import ALLOWED_TABLES
+
+    columns: set[tuple[str, str]] = set()
+    for path in sorted(_MIGRATIONS.glob("*.sql")):
+        text = path.read_text()
+        for match in re.finditer(
+            r'CREATE TABLE (?:IF NOT EXISTS )?"?(\w+)"?\s*\((.*?)\n\);', text, re.S | re.I
+        ):
+            table = match.group(1)
+            if table not in ALLOWED_TABLES:
+                continue
+            for line in match.group(2).split("\n"):
+                inner = re.match(r"^(\w+)\s+uuid\b", line.strip().rstrip(","), re.I)
+                if inner and inner.group(1) != "uuid":
+                    columns.add((table, inner.group(1)))
+        for match in re.finditer(
+            r'ALTER TABLE\s+"?(\w+)"?\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+uuid\b',
+            text,
+            re.I,
+        ):
+            if match.group(1) in ALLOWED_TABLES and match.group(2) != "uuid":
+                columns.add((match.group(1), match.group(2)))
+    return columns
+
+
+def test_every_uuid_column_of_a_registered_table_is_classified() -> None:
+    from plan_manager.storage.reference_catalog import (
+        EXTERNAL_IDENTIFIER_COLUMNS,
+        UNCLASSIFIED_REFERENCE_COLUMNS,
+    )
+
+    columns = _uuid_columns_of_registered_tables()
+    assert columns, "no uuid columns parsed out of the migration chain"
+
+    classified = (
+        set(REFERENCE_CATALOG) | set(EXTERNAL_IDENTIFIER_COLUMNS) | set(UNCLASSIFIED_REFERENCE_COLUMNS)
+    )
+    unclassified = sorted(columns - classified)
+    assert unclassified == [], (
+        "uuid columns in neither REFERENCE_CATALOG, EXTERNAL_IDENTIFIER_COLUMNS nor "
+        f"UNCLASSIFIED_REFERENCE_COLUMNS: {unclassified}"
+    )
+
+
+def test_the_pending_classification_list_only_shrinks() -> None:
+    """A column that got catalogued or exempted must leave the pending list."""
+    from plan_manager.storage.reference_catalog import (
+        EXTERNAL_IDENTIFIER_COLUMNS,
+        UNCLASSIFIED_REFERENCE_COLUMNS,
+    )
+
+    resolved = sorted(
+        set(UNCLASSIFIED_REFERENCE_COLUMNS)
+        & (set(REFERENCE_CATALOG) | set(EXTERNAL_IDENTIFIER_COLUMNS))
+    )
+    assert resolved == [], (
+        "these columns are now classified but still listed as pending; remove them "
+        f"from UNCLASSIFIED_REFERENCE_COLUMNS: {resolved}"
+    )
+
+    stale = sorted(set(UNCLASSIFIED_REFERENCE_COLUMNS) - _uuid_columns_of_registered_tables())
+    assert stale == [], f"pending columns that no longer exist in the schema: {stale}"
