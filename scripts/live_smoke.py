@@ -6157,7 +6157,13 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
             return results
         todo_uuid = res["uuid"]
 
-        ok, res = await call(client, "todo_queue", {"anchor_plan": plan_uuid, "limit": 50})
+        # UNSCOPED deliberately. work_item_from_bug_fix sets no plan_uuid, so a
+        # plan-scoped queue excludes the bug_fix entirely and the mixed comparison
+        # never happens. And presence on the returned PAGE is not required: the
+        # queue is sorted whole and paginated afterwards, so a successful unscoped
+        # call is itself proof that the sort compared this fresh unfinished fix
+        # against every other source without a type error.
+        ok, res = await call(client, "todo_queue", {"limit": 50})
         if not ok:
             if R35_PRE_FIX_SYMPTOM in str(res):
                 results.append(
@@ -6175,27 +6181,25 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
                 )
             return results
 
-        items = res.get("items") if isinstance(res, dict) else None
-        kinds = {
-            row.get("work_kind") for row in items if isinstance(row, dict)
-        } if isinstance(items, list) else set()
-        timestamps_ok = all(
-            isinstance(row.get("created_at"), str)
-            for row in (items or [])
-            if isinstance(row, dict)
-        )
-        if kinds and timestamps_ok:
+        # The payload key is "queue", not "items".
+        items = res.get("queue") if isinstance(res, dict) else None
+        total = res.get("total") if isinstance(res, dict) else None
+        rows = [row for row in (items or []) if isinstance(row, dict)]
+        offenders = [
+            row.get("source_uuid") for row in rows if not isinstance(row.get("created_at"), str)
+        ]
+        if isinstance(items, list) and rows and not offenders:
             results.append(
                 CheckResult(
                     "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_PASS,
-                    f"work_kinds={sorted(k for k in kinds if k)} items={len(items or [])}",
+                    f"queue sorted over {total} item(s); every created_at is an ISO string",
                 )
             )
         else:
             results.append(
                 CheckResult(
                     "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_FAIL,
-                    f"kinds={sorted(k for k in kinds if k)} timestamps_ok={timestamps_ok} {res!r}",
+                    f"rows={len(rows)} total={total} non_string_created_at={offenders} {res!r}",
                 )
             )
     finally:
