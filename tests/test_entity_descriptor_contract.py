@@ -150,8 +150,13 @@ def test_every_subclass_validates_or_declares_a_documented_gap() -> None:
 
     import plan_manager.domain as domain_pkg
     import plan_manager.storage as storage_pkg
+    # views too: ContextBlockRecord is a shipped entity that lives there, and
+    # without this sweep it is only discovered when some unrelated test happens
+    # to import it first — which made the isolated cr6-entity-contract pipeline
+    # check report it as a stale pending entry while the full run passed.
+    import plan_manager.views as views_pkg
 
-    for package in (domain_pkg, storage_pkg):
+    for package in (domain_pkg, storage_pkg, views_pkg):
         for module in pkgutil.iter_modules(package.__path__):
             importlib.import_module(f"{package.__name__}.{module.name}")
 

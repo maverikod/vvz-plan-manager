@@ -160,6 +160,54 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_bug_c3950b83_plan_completed_lock.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="cr6-identity-registry",
+        description="Run the CR-6 identity-registry and project-uuid-reservation suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_identity_registry_full_scope.py",
+            "tests/test_project_uuid_reserve_command.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-entity-contract",
+        description="Run the CR-6 entity-descriptor contract, content-search and store-migration suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_entity_descriptor_contract.py",
+            "tests/test_content_search_layer.py",
+            "tests/test_store_descriptor_migration_plan_truth.py",
+            "tests/test_store_descriptor_migration_overlay.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-deletion-references",
+        description="Run the CR-6 reference-catalog, hard-delete guard, purge and inspection suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_reference_catalog.py",
+            "tests/test_hard_delete_guard.py",
+            "tests/test_runtime_purge_batch_command.py",
+            "tests/test_reference_inspection_command.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-migrations-audit",
+        description="Run the CR-6 migration-discipline and audit-compatibility suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_cr6_migration_discipline_and_cascade_compat.py",
+            "tests/test_cr6_compat_audit_contract.py",
+        ),
+    ),
 )
 
 
