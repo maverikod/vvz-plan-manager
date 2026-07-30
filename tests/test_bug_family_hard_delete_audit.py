@@ -25,7 +25,7 @@ from plan_manager.domain.bug_fix_propagation import BugFixPropagation
 from plan_manager.domain.bug_impact import BugImpact
 from plan_manager.domain.bug_report import BugReport
 from plan_manager.commands.errors import DomainCommandError
-from plan_manager.storage import runtime_hard_delete
+from plan_manager.storage import runtime_audit_store, runtime_hard_delete
 
 
 def _install_audit_spy(monkeypatch) -> list[dict[str, Any]]:
@@ -34,7 +34,8 @@ def _install_audit_spy(monkeypatch) -> list[dict[str, Any]]:
     def _fake_record_runtime_change(conn, **kwargs: Any) -> None:
         calls.append(kwargs)
 
-    monkeypatch.setattr(runtime_hard_delete, "record_runtime_change", _fake_record_runtime_change)
+    monkeypatch.setattr(
+        runtime_audit_store, "record_runtime_change", _fake_record_runtime_change)
     return calls
 
 
@@ -69,16 +70,31 @@ def test_hard_delete_bug_records_hard_delete_audit_with_source_plan_uuid(monkeyp
 
     runtime_hard_delete.hard_delete_bug(conn=object(), bug_uuid=bug_uuid, changed_by="tester")
 
-    assert hard_delete_calls == [{"entity_id": bug_uuid, "returning": False, "require_soft_deleted": False}]
-    assert calls == [
-        {
-            "plan_uuid": plan_uuid,
-            "entity_type": "bug_report",
-            "entity_id": bug_uuid,
-            "action": "hard_delete",
-            "changed_by": "tester",
-        }
-    ]
+    # The wrapper now hands the guard the context the guard cannot derive: the
+    # actor, the plan anchor read from the row, and the historical audit
+    # entity_type. Assert those explicitly rather than pinning an exact kwarg
+    # set, which would break on every future additive keyword.
+    assert len(hard_delete_calls) == 1
+    call = hard_delete_calls[0]
+    assert call["entity_id"] == bug_uuid
+    assert call["returning"] is False
+    assert call["require_soft_deleted"] is False
+    assert call["changed_by"] == "tester"
+    assert call["audit_entity_type"] == "bug_report"
+    # The audit write moved into the central hard-delete guard, which is the
+    # single writer. crud_hard_delete is stubbed here, so the guard never runs
+    # and the wrapper must therefore record NOTHING of its own — that absence is
+    # the contract: one deletion, one audit row.
+    assert calls == [], "the wrapper must not write its own audit row any more"
+    # What the wrapper still owns is the context the guard cannot derive, so
+    # assert it reaches the guard: the plan anchor read from the row and the
+    # historical entity_type that keeps audit_list queries matching.
+    assert len(hard_delete_calls) == 1
+    delegated = hard_delete_calls[0]
+    assert delegated["entity_id"] == bug_uuid
+    assert delegated["plan_uuid"] == plan_uuid
+    assert delegated["audit_entity_type"] == "bug_report"
+    assert delegated["changed_by"] == "tester"
 
 
 def test_hard_delete_bug_impact_not_found_raises_bug_impact_not_found(monkeypatch) -> None:
@@ -101,19 +117,33 @@ def test_hard_delete_bug_impact_records_hard_delete_audit_with_target_plan_uuid(
         "crud_get",
         classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "target_plan_uuid": plan_uuid}),
     )
-    monkeypatch.setattr(BugImpact, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None))
+    hard_delete_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        BugImpact,
+        "crud_hard_delete",
+        classmethod(
+            lambda cls, conn, entity_id, **kw: hard_delete_calls.append(
+                {"entity_id": entity_id, **kw}
+            )
+        ),
+    )
 
     runtime_hard_delete.hard_delete_bug_impact(conn=object(), impact_uuid=impact_uuid, changed_by="tester")
 
-    assert calls == [
-        {
-            "plan_uuid": plan_uuid,
-            "entity_type": "bug_impact",
-            "entity_id": impact_uuid,
-            "action": "hard_delete",
-            "changed_by": "tester",
-        }
-    ]
+    # The audit write moved into the central hard-delete guard, which is the
+    # single writer. crud_hard_delete is stubbed here, so the guard never runs
+    # and the wrapper must therefore record NOTHING of its own — that absence is
+    # the contract: one deletion, one audit row.
+    assert calls == [], "the wrapper must not write its own audit row any more"
+    # What the wrapper still owns is the context the guard cannot derive, so
+    # assert it reaches the guard: the plan anchor read from the row and the
+    # historical entity_type that keeps audit_list queries matching.
+    assert len(hard_delete_calls) == 1
+    delegated = hard_delete_calls[0]
+    assert delegated["entity_id"] == impact_uuid
+    assert delegated["plan_uuid"] == plan_uuid
+    assert delegated["audit_entity_type"] == "bug_impact"
+    assert delegated["changed_by"] == "tester"
 
 
 def test_hard_delete_bug_fix_not_found_raises_bug_fix_not_found(monkeypatch) -> None:
@@ -136,19 +166,33 @@ def test_hard_delete_bug_fix_records_hard_delete_audit_with_none_plan_uuid(monke
     monkeypatch.setattr(
         BugFix, "crud_get", classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "bug_uuid": uuid.uuid4()})
     )
-    monkeypatch.setattr(BugFix, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None))
+    hard_delete_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        BugFix,
+        "crud_hard_delete",
+        classmethod(
+            lambda cls, conn, entity_id, **kw: hard_delete_calls.append(
+                {"entity_id": entity_id, **kw}
+            )
+        ),
+    )
 
     runtime_hard_delete.hard_delete_bug_fix(conn=object(), fix_uuid=fix_uuid, changed_by="tester")
 
-    assert calls == [
-        {
-            "plan_uuid": None,
-            "entity_type": "bug_fix",
-            "entity_id": fix_uuid,
-            "action": "hard_delete",
-            "changed_by": "tester",
-        }
-    ]
+    # The audit write moved into the central hard-delete guard, which is the
+    # single writer. crud_hard_delete is stubbed here, so the guard never runs
+    # and the wrapper must therefore record NOTHING of its own — that absence is
+    # the contract: one deletion, one audit row.
+    assert calls == [], "the wrapper must not write its own audit row any more"
+    # What the wrapper still owns is the context the guard cannot derive, so
+    # assert it reaches the guard: the plan anchor read from the row and the
+    # historical entity_type that keeps audit_list queries matching.
+    assert len(hard_delete_calls) == 1
+    delegated = hard_delete_calls[0]
+    assert delegated["entity_id"] == fix_uuid
+    assert delegated["plan_uuid"] == None
+    assert delegated["audit_entity_type"] == "bug_fix"
+    assert delegated["changed_by"] == "tester"
 
 
 def test_hard_delete_bug_fix_propagation_not_found_raises_bug_propagation_not_found(monkeypatch) -> None:
@@ -173,20 +217,30 @@ def test_hard_delete_bug_fix_propagation_records_hard_delete_audit_with_linked_p
         "crud_get",
         classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "linked_plan_uuid": plan_uuid}),
     )
+    hard_delete_calls: list[dict] = []
     monkeypatch.setattr(
-        BugFixPropagation, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None)
+        BugFixPropagation,
+        "crud_hard_delete",
+        classmethod(
+            lambda cls, conn, entity_id, **kw: hard_delete_calls.append({"entity_id": entity_id, **kw})
+        ),
     )
 
     runtime_hard_delete.hard_delete_bug_fix_propagation(
         conn=object(), propagation_uuid=propagation_uuid, changed_by="tester"
     )
 
-    assert calls == [
-        {
-            "plan_uuid": plan_uuid,
-            "entity_type": "bug_fix_propagation",
-            "entity_id": propagation_uuid,
-            "action": "hard_delete",
-            "changed_by": "tester",
-        }
-    ]
+    # The audit write moved into the central hard-delete guard, which is the
+    # single writer. crud_hard_delete is stubbed here, so the guard never runs
+    # and the wrapper must therefore record NOTHING of its own — that absence is
+    # the contract: one deletion, one audit row.
+    assert calls == [], "the wrapper must not write its own audit row any more"
+    # What the wrapper still owns is the context the guard cannot derive, so
+    # assert it reaches the guard: the plan anchor read from the row and the
+    # historical entity_type that keeps audit_list queries matching.
+    assert len(hard_delete_calls) == 1
+    delegated = hard_delete_calls[0]
+    assert delegated["entity_id"] == propagation_uuid
+    assert delegated["plan_uuid"] == plan_uuid
+    assert delegated["audit_entity_type"] == "bug_fix_propagation"
+    assert delegated["changed_by"] == "tester"

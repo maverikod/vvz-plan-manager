@@ -29,12 +29,35 @@ EntityIdentifier = uuid.UUID | str
 class EntityReferencedError(RuntimeError):
     """Raised when hard deletion is refused because inbound references exist."""
 
-    def __init__(self, entity_type: str, entity_id: Any, references: dict[str, int]) -> None:
+    def __init__(
+        self,
+        entity_type: str,
+        entity_id: Any,
+        references: dict[str, int] | list[dict[str, Any]],
+    ) -> None:
+        """Accept either payload and expose both.
+
+        Historically this carried only per-column counts, which told a caller
+        that something referenced the entity but not WHAT, so the refusal could
+        not be acted on. It now also accepts the referrer list the guard
+        produces and derives the counts from it, so `.references` keeps working
+        for existing consumers while `.referrers` carries the identities.
+        """
         self.entity_type = entity_type
         self.entity_id = entity_id
-        self.references = references
+        if isinstance(references, list):
+            self.referrers: list[dict[str, Any]] = references
+            counts: dict[str, int] = {}
+            for referrer in references:
+                key = f"{referrer.get('table')}.{referrer.get('column')}"
+                counts[key] = counts.get(key, 0) + 1
+            self.references: dict[str, int] = counts
+        else:
+            self.references = references
+            self.referrers = []
         super().__init__(
-            f"ENTITY_REFERENCED: {entity_type} {entity_id!r} has inbound references: {references}"
+            f"ENTITY_REFERENCED: {entity_type} {entity_id!r} has inbound references: "
+            f"{self.references}"
         )
 
 
@@ -786,6 +809,9 @@ class DataclassEntity(EntityRecord):
         *,
         returning: bool = True,
         require_soft_deleted: bool = True,
+        changed_by: str = "system",
+        plan_uuid: Any = None,
+        audit_entity_type: str | None = None,
     ) -> dict[str, Any] | None:
         """Physically delete one already-soft-deleted row.
 
@@ -798,6 +824,9 @@ class DataclassEntity(EntityRecord):
             entity_id,
             returning=returning,
             require_soft_deleted=require_soft_deleted,
+            changed_by=changed_by,
+            plan_uuid=plan_uuid,
+            audit_entity_type=audit_entity_type,
         )
 
     @classmethod
@@ -815,49 +844,23 @@ def find_entity_reference_counts(
     entity_cls: type[DataclassEntity],
     entity_id: Any,
 ) -> dict[str, int]:
-    """Centrally count inbound references that would block physical purge."""
-    id_values = entity_cls._normalize_id(entity_id)
-    current = entity_cls.get_by_id(conn, entity_id, include_deleted=True)
-    if current is not None:
-        id_values = {**current, **id_values}
+    """Count inbound references that would block physical purge.
+
+    Delegates to the guard's lookup surface and folds its referrer list into the
+    historical per-column counts, so the return type is unchanged for callers
+    that only need to know whether anything blocks.
+
+    TABLE_NAME is passed, never _table(): that helper returns a composed SQL
+    identifier, while the catalog is keyed by plain table-name strings. Handing
+    it the identifier would match no catalog entry and silently report zero
+    referrers, turning the guard into a no-op.
+    """
+    from plan_manager.storage.hard_delete_guard import lookup_referrers
+
     counts: dict[str, int] = {}
-    for check in entity_cls._foreign_key_reference_checks(conn, id_values):
-        source_column = check.source_column or next(iter(id_values))
-        value = id_values[source_column]
-        query = sql.SQL("SELECT count(*) FROM {} WHERE {} = %s").format(
-            sql.Identifier(check.table),
-            sql.Identifier(check.column),
-        )
-        row = conn.execute(query, (value,)).fetchone()
-        count = int(row[0]) if row is not None else 0
-        if count:
-            counts[f"{check.table}.{check.column}"] = count
-    for check in CENTRAL_REFERENCE_CHECKS.get(entity_cls.entity_type(), ()) + entity_cls.HARD_DELETE_REFERENCE_CHECKS:
-        source_column = check.source_column or next(iter(id_values))
-        value = id_values[source_column]
-        if check.array:
-            clauses: list[sql.Composable] = [
-                sql.SQL("%s = ANY({})").format(sql.Identifier(check.column))
-            ]
-        else:
-            clauses = [sql.SQL("{} = %s").format(sql.Identifier(check.column))]
-        params: list[Any] = [value]
-        for reference_column, id_column in check.scope_columns:
-            clauses.append(sql.SQL("{} = %s").format(sql.Identifier(reference_column)))
-            params.append(id_values[id_column])
-        for column, literal in check.const_filters:
-            clauses.append(sql.SQL("{} = %s").format(sql.Identifier(column)))
-            params.append(literal)
-        if check.live_column is not None:
-            clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(check.live_column)))
-        query = sql.SQL("SELECT count(*) FROM {} WHERE {}").format(
-            sql.Identifier(check.table),
-            sql.SQL(" AND ").join(clauses),
-        )
-        row = conn.execute(query, params).fetchone()
-        count = int(row[0]) if row is not None else 0
-        if count:
-            counts[f"{check.table}.{check.column}"] = count
+    for referrer in lookup_referrers(conn, entity_cls.TABLE_NAME, entity_id):
+        key = f"{referrer['table']}.{referrer['column']}"
+        counts[key] = counts.get(key, 0) + 1
     return counts
 
 
@@ -887,42 +890,32 @@ def hard_delete_entity(
     *,
     returning: bool = True,
     require_soft_deleted: bool = True,
+    changed_by: str = "system",
+    plan_uuid: Any = None,
+    audit_entity_type: str | None = None,
 ) -> dict[str, Any] | None:
-    """Centrally perform physical deletion for one already-soft-deleted row."""
-    if require_soft_deleted:
-        if entity_cls.SOFT_DELETE_COLUMN is None:
-            raise NotImplementedError(
-                f"{entity_cls.__name__} cannot be purged through soft-delete batch semantics"
-            )
-        current = entity_cls.get_by_id(conn, entity_id, include_deleted=True)
-        if current is None:
-            return None
-        if current.get(entity_cls.SOFT_DELETE_COLUMN) is None:
-            raise EntityNotSoftDeletedError(entity_cls.entity_type(), entity_id)
-    references = find_entity_reference_counts(conn, entity_cls, entity_id)
-    if references:
-        raise EntityReferencedError(entity_cls.entity_type(), entity_id, references)
-    id_values = entity_cls._normalize_id(entity_id)
-    predicate, params = entity_cls._predicate_sql(id_values)
-    query = sql.SQL("DELETE FROM {} WHERE {}").format(entity_cls._table(), predicate)
-    if returning:
-        query += sql.SQL(" RETURNING {}").format(entity_cls._select_columns_sql())
-    cur = conn.execute(query, params)
-    if not returning:
-        if entity_cls.REGISTER_IDENTITY and len(id_values) == 1:
-            only_id = next(iter(id_values.values()))
-            if isinstance(only_id, uuid.UUID):
-                unregister_entity_identity(conn, only_id)
-        return None
-    row = cur.fetchone()
-    if row is None:
-        return None
-    deleted = entity_cls._row_to_dict(cur, row)
-    if entity_cls.REGISTER_IDENTITY and len(id_values) == 1:
-        only_id = next(iter(id_values.values()))
-        if isinstance(only_id, uuid.UUID):
-            unregister_entity_identity(conn, only_id)
-    return deleted
+    """Centrally perform physical deletion for one already-soft-deleted row.
+
+    The admission check, the DELETE and the audit record all live in
+    plan_manager.storage.hard_delete_guard now. This function stays as the
+    entity-layer entry point so no caller changes; changed_by is an additive
+    defaulted keyword so a caller that knows the actor can name it in the audit
+    trail, and every existing caller keeps working untouched.
+    """
+    # Function-level import by construction: the guard imports this module's
+    # error types, so a module-level import here would close the cycle.
+    from plan_manager.storage.hard_delete_guard import guarded_hard_delete
+
+    return guarded_hard_delete(
+        conn,
+        entity_cls,
+        entity_id,
+        changed_by=changed_by,
+        returning=returning,
+        require_soft_deleted=require_soft_deleted,
+        plan_uuid=plan_uuid,
+        audit_entity_type=audit_entity_type,
+    )
 
 
 def purge_soft_deleted_batch(

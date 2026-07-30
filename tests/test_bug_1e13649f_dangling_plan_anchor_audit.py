@@ -223,14 +223,25 @@ def test_bug_delete_hard_path_with_dangling_anchor_falls_back_and_preserves_orig
         "crud_get",
         classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "source_plan_uuid": dangling_plan}),
     )
-    monkeypatch.setattr(BugReport, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None))
+    delegated: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        BugReport,
+        "crud_hard_delete",
+        classmethod(lambda cls, conn, entity_id, **kw: delegated.append({"entity_id": entity_id, **kw})),
+    )
 
     runtime_hard_delete.hard_delete_bug(conn, bug_uuid, changed_by="tester")
 
-    assert len(conn.insert_attempts) == 2
-    assert conn.insert_attempts[0][1] == dangling_plan
-    assert conn.insert_attempts[1][1] is None
-    assert conn.insert_attempts[1][7].obj == {DANGLING_PLAN_UUID_FIELD: str(dangling_plan)}
+    # The audit write itself now happens inside the central hard-delete guard,
+    # which this test stubs out along with the physical deletion. What the
+    # wrapper must still do — and what bug 1e13649f was about — is FORWARD the
+    # dangling plan anchor rather than dropping it, so the recorder gets the
+    # chance to fall back. The fallback itself is covered directly above, against
+    # record_runtime_change, so it is not re-tested through a stub here.
+    assert len(delegated) == 1
+    assert delegated[0]["entity_id"] == bug_uuid
+    assert delegated[0]["plan_uuid"] == dangling_plan
+    assert delegated[0]["audit_entity_type"] == "bug_report"
 
 
 def test_bug_delete_hard_path_with_live_anchor_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -244,12 +255,19 @@ def test_bug_delete_hard_path_with_live_anchor_is_unchanged(monkeypatch: pytest.
         "crud_get",
         classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "source_plan_uuid": live_plan}),
     )
-    monkeypatch.setattr(BugReport, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None))
+    delegated: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        BugReport,
+        "crud_hard_delete",
+        classmethod(lambda cls, conn, entity_id, **kw: delegated.append({"entity_id": entity_id, **kw})),
+    )
 
     runtime_hard_delete.hard_delete_bug(conn, bug_uuid, changed_by="tester")
 
-    assert len(conn.insert_attempts) == 1
-    assert conn.insert_attempts[0][1] == live_plan
+    assert len(delegated) == 1
+    assert delegated[0]["plan_uuid"] == live_plan, (
+        "the live anchor must be forwarded unchanged; the fix must not perturb the normal path"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -293,14 +311,25 @@ def test_todo_hard_delete_with_dangling_anchor_falls_back_and_preserves_original
         "crud_get",
         classmethod(lambda cls, conn, entity_id, **kw: {"uuid": entity_id, "anchor_plan_uuid": dangling_plan}),
     )
-    monkeypatch.setattr(TodoItem, "crud_hard_delete", classmethod(lambda cls, conn, entity_id, **kw: None))
+    delegated: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        TodoItem,
+        "crud_hard_delete",
+        classmethod(lambda cls, conn, entity_id, **kw: delegated.append({"entity_id": entity_id, **kw})),
+    )
 
     runtime_hard_delete.hard_delete_todo(conn, todo_uuid, changed_by="tester")
 
-    assert len(conn.insert_attempts) == 2
-    assert conn.insert_attempts[0][1] == dangling_plan
-    assert conn.insert_attempts[1][1] is None
-    assert conn.insert_attempts[1][7].obj == {DANGLING_PLAN_UUID_FIELD: str(dangling_plan)}
+    # The audit write itself now happens inside the central hard-delete guard,
+    # which this test stubs out along with the physical deletion. What the
+    # wrapper must still do — and what bug 1e13649f was about — is FORWARD the
+    # dangling plan anchor rather than dropping it, so the recorder gets the
+    # chance to fall back. The fallback itself is covered directly above, against
+    # record_runtime_change, so it is not re-tested through a stub here.
+    assert len(delegated) == 1
+    assert delegated[0]["entity_id"] == todo_uuid
+    assert delegated[0]["plan_uuid"] == dangling_plan
+    assert delegated[0]["audit_entity_type"] == "todo"
 
 
 def test_todo_not_found_still_raises_domain_error(monkeypatch: pytest.MonkeyPatch) -> None:
