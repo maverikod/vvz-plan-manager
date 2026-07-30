@@ -6210,6 +6210,187 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
     return results
 
 
+R36_PRE_FIX_SYMPTOM = "unknown update columns"
+
+
+async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
+    """Bug 31ba96d5: soft delete failed for every crud_*-migrated entity.
+
+    `soft_delete_entity` wrote SOFT_DELETE_COLUMN through `crud_update`,
+    whose UPDATE_COLUMNS whitelist deliberately EXCLUDES deleted_at -- the
+    two-phase deletion discipline owns that column, and a caller must go
+    through the delete command rather than backdating or clearing a
+    deletion with a plain update. So the lifecycle's own privileged write
+    was validated against the caller-facing whitelist that forbids exactly
+    the column it must set: -32603 "unknown update columns for Tool:
+    ['deleted_at']".
+
+    Coverage split, so this check is not a duplicate: Tool's live soft
+    delete is already exercised by R7 (where the defect surfaced) and
+    wish/calendar_entry by R27. This check takes the two remaining migrated
+    families whose live soft-delete path nothing else drives -- todo and
+    comment.
+
+    How soft-ness is proven through the real command surface: no shipped
+    command exposes include_deleted, and todo_get/comment_get return
+    nothing for a soft-deleted row, so the marked-deleted state cannot be
+    read back directly. What IS observable is the pair of properties that
+    distinguish soft from hard: after delete(hard=false) the row is hidden
+    from live reads, AND it is still physically present -- proven because a
+    subsequent delete(hard=true) on the same id SUCCEEDS. Had the soft
+    delete removed the row, the hard delete would report NOT_FOUND. Success
+    of the first call alone would prove nothing, since a hard delete would
+    also succeed.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> todo
+    anchored to that plan -> todo_delete(hard=false) -> todo_get must NOT
+    resolve -> todo_delete(hard=true) must succeed, proving the row was
+    still there -> the same three steps for a comment anchored to the plan.
+
+    Pre-fix detection: the soft delete fails with the whitelist error this
+    bug names, which SKIPs naming bug 31ba96d5 rather than failing the
+    pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r36-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r36-todo"),
+                "description": "R36 soft-delete scratch todo",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "todo_delete",
+            {"todo": todo_uuid, "changed_by": "live-smoke", "hard": False},
+        )
+        if not ok:
+            if R36_PRE_FIX_SYMPTOM in str(res):
+                results.append(
+                    CheckResult(
+                        "4", "R36_31ba96d5_todo_soft_delete", STATUS_SKIP,
+                        "server predates bug 31ba96d5's fix -- the soft-delete write is "
+                        "still refused by the caller-facing UPDATE_COLUMNS whitelist -- "
+                        "redeploy pending",
+                    )
+                )
+            else:
+                results.append(CheckResult("4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL, str(res)))
+            return results
+
+        # Hidden from live reads.
+        hidden_ok, hidden_res = await call(client, "todo_get", {"todo": todo_uuid})
+        # Still physically present: a hard delete on the same id must succeed.
+        purge_ok, purge_res = await call(
+            client, "todo_delete",
+            {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+        )
+        if purge_ok:
+            todo_uuid = None  # the row is gone now; finally must not retry
+        if (not hidden_ok) and purge_ok:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_PASS,
+                    "hidden from todo_get yet still purgeable, so the row survived the soft delete",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL,
+                    f"expected hidden-but-present: todo_get ok={hidden_ok} {hidden_res!r}; "
+                    f"hard delete ok={purge_ok} {purge_res!r}",
+                )
+            )
+            return results
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+                "kind": "comment", "visibility": "audit_only", "author": "live-smoke",
+                "body": "R36 soft-delete scratch comment", "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_comment_add", STATUS_FAIL, str(res)))
+            return results
+        comment_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "comment_delete",
+            {"comment": comment_uuid, "changed_by": "live-smoke", "hard": False},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL, str(res)))
+            return results
+
+        hidden_ok, hidden_res = await call(
+            client, "comment_get", {"plan": plan_uuid, "comment_uuid": comment_uuid}
+        )
+        purge_ok, purge_res = await call(
+            client, "comment_delete",
+            {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
+        )
+        if purge_ok:
+            comment_uuid = None
+        if (not hidden_ok) and purge_ok:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_PASS,
+                    "hidden from comment_get yet still purgeable, so the row survived the soft delete",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL,
+                    f"expected hidden-but-present: comment_get ok={hidden_ok} {hidden_res!r}; "
+                    f"hard delete ok={purge_ok} {purge_res!r}",
+                )
+            )
+    finally:
+        cleanup_ok = True
+        if comment_uuid is not None:
+            ok, res = await call(
+                client, "comment_delete",
+                {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

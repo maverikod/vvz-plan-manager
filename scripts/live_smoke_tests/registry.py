@@ -94,6 +94,11 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "run_r35_work_queue_timestamp_types",
         "todo_queue orders a live bug_fix beside other work sources (bug 4375c341)",
     ),
+    LiveSmokeTestSpec(
+        "r36",
+        "run_r36_soft_delete_owned_column",
+        "soft delete hides a row without removing it, for todo and comment (bug 31ba96d5)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

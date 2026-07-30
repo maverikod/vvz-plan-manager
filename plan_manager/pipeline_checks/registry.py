@@ -218,6 +218,16 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_bug_4375c341_work_queue_timestamp_types.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="soft-delete-owned-column",
+        description="Run the soft-delete lifecycle-owned-column regression check (bug 31ba96d5).",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_31ba96d5_soft_delete_owned_column.py",
+        ),
+    ),
 )
 
 

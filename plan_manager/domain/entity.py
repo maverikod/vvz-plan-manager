@@ -691,8 +691,23 @@ class DataclassEntity(EntityRecord):
         values: Mapping[str, Any],
         *,
         returning: bool = True,
+        lifecycle_columns: frozenset[str] = frozenset(),
     ) -> dict[str, Any] | None:
-        allowed = set(cls.UPDATE_COLUMNS or values.keys())
+        """Update one row, restricted to the caller-facing UPDATE_COLUMNS whitelist.
+
+        Args:
+            lifecycle_columns: columns the DELETION LIFECYCLE owns and may write
+                even though UPDATE_COLUMNS excludes them. Bug 31ba96d5: the
+                soft-delete column is deliberately absent from every descriptor's
+                UPDATE_COLUMNS — a caller must go through crud_soft_delete rather
+                than backdating or clearing a deletion with a plain update — so
+                routing the lifecycle's own write through the caller-facing
+                whitelist made it forbid exactly the column it must set. This
+                parameter is the narrow exemption: it admits the named columns and
+                nothing else, so crud_soft_delete does not become an unchecked
+                write path. Callers outside this module must not pass it.
+        """
+        allowed = set(cls.UPDATE_COLUMNS or values.keys()) | set(lifecycle_columns)
         extra = set(values) - allowed
         if extra:
             raise ValueError(f"unknown update columns for {cls.__name__}: {sorted(extra)}")
@@ -874,14 +889,24 @@ def soft_delete_entity(
     updated_at: datetime | None = None,
     returning: bool = True,
 ) -> dict[str, Any] | None:
-    """Centrally mark one entity row for later batch purge."""
+    """Centrally mark one entity row for later batch purge.
+
+    The soft-delete column is lifecycle-owned: it stays out of every descriptor's
+    UPDATE_COLUMNS so a caller cannot clear or backdate a deletion with a plain
+    update, and this function names it explicitly as a lifecycle column instead
+    (bug 31ba96d5). The exemption covers only the two columns written here.
+    """
     if entity_cls.SOFT_DELETE_COLUMN is None:
         raise NotImplementedError(f"{entity_cls.__name__} does not support soft delete")
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {entity_cls.SOFT_DELETE_COLUMN: deleted_at or now}
+    owned = {entity_cls.SOFT_DELETE_COLUMN}
     if entity_cls.UPDATED_AT_COLUMN is not None:
         values[entity_cls.UPDATED_AT_COLUMN] = updated_at or now
-    return entity_cls.crud_update(conn, entity_id, values, returning=returning)
+        owned.add(entity_cls.UPDATED_AT_COLUMN)
+    return entity_cls.crud_update(
+        conn, entity_id, values, returning=returning, lifecycle_columns=frozenset(owned)
+    )
 
 
 def hard_delete_entity(
