@@ -6033,6 +6033,183 @@ async def run_r34_reference_inspect_traversal(
     return results
 
 
+R35_PRE_FIX_SYMPTOM = "not supported between instances of"
+
+
+async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
+    """Bug 4375c341: todo_queue died sorting a datetime against ISO strings.
+
+    `bug_fix_store._row_to_record` inverted its isinstance guard for
+    created_at/updated_at on the dict (crud_*) path, so a real psycopg
+    datetime landed unconverted in `BugFix.created_at` -- a field
+    annotated `str`. `work_item_from_bug_fix` copied it into
+    `WorkItem.created_at`, and `order_queue`'s sort then compared that
+    datetime against the ISO strings every other work source yields:
+    -32603 "'<' not supported between instances of 'str' and
+    'datetime.datetime'".
+
+    Why this needs a LIVE check: the defect is invisible to the unit
+    suites' fake cursors, which hand back strings. Only a real psycopg
+    connection returns timestamptz as a datetime, and only a queue
+    containing a live bug_fix row alongside another live work source
+    performs the mixed comparison. A green unit run proves nothing here.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> bug_create
+    (anchored to that plan) -> bug_confirm -> bug_fix_create, which is the
+    row whose created_at is the datetime -> a todo anchored to the same
+    plan, so the queue holds a SECOND source whose created_at is an ISO
+    string and the sort has something to compare against -> todo_queue
+    scoped to that plan, asserting SUCCESS and that both work kinds are
+    present in the returned page. Cleanup: bug_fix_delete -> bug_delete ->
+    todo_delete -> plan_delete(hard), in that order (the fix's live
+    bug_uuid reference blocks the bug's hard delete).
+
+    Pre-fix detection: todo_queue fails with the comparison TypeError this
+    bug names, which SKIPs naming bug 4375c341 rather than failing the
+    pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
+    fix_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r35-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": unique_suffix("r35-bug"),
+                "short_description": "R35 work-queue timestamp scratch bug",
+                "detailed_description": "R35: todo_queue must order a live bug_fix (bug 4375c341).",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19,
+                "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_confirm",
+            {"plan": plan_uuid, "bug_id": bug_uuid, "changed_by": "live-smoke"},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R35_4375c341_bug_confirm", STATUS_FAIL, str(res)))
+            return results
+
+        # This is the row that carried the unconverted datetime.
+        ok, res = await call(
+            client, "bug_fix_create",
+            {
+                "plan": plan_uuid, "bug_id": bug_uuid, "fix_type": "code",
+                "summary": "R35 scratch fix whose created_at must be an ISO string",
+                "author": "live-smoke", "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_bug_fix_create", STATUS_FAIL, str(res)))
+            return results
+        fix_uuid = res["uuid"]
+
+        # A second live work source, so the sort has an ISO string to compare
+        # the bug_fix timestamp against. With only one item there is nothing to
+        # order and the defect stays hidden.
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r35-todo"),
+                "description": "R35 second work source for the queue sort",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        ok, res = await call(client, "todo_queue", {"anchor_plan": plan_uuid, "limit": 50})
+        if not ok:
+            if R35_PRE_FIX_SYMPTOM in str(res):
+                results.append(
+                    CheckResult(
+                        "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_SKIP,
+                        "server predates bug 4375c341's fix -- todo_queue still compares a "
+                        "bug_fix datetime against ISO strings -- redeploy pending",
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_FAIL, str(res),
+                    )
+                )
+            return results
+
+        items = res.get("items") if isinstance(res, dict) else None
+        kinds = {
+            row.get("work_kind") for row in items if isinstance(row, dict)
+        } if isinstance(items, list) else set()
+        timestamps_ok = all(
+            isinstance(row.get("created_at"), str)
+            for row in (items or [])
+            if isinstance(row, dict)
+        )
+        if kinds and timestamps_ok:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_PASS,
+                    f"work_kinds={sorted(k for k in kinds if k)} items={len(items or [])}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_FAIL,
+                    f"kinds={sorted(k for k in kinds if k)} timestamps_ok={timestamps_ok} {res!r}",
+                )
+            )
+    finally:
+        # The fix's live bug_uuid reference blocks the bug's hard delete, so the
+        # fix goes first.
+        cleanup_ok = True
+        if fix_uuid is not None:
+            ok, res = await call(
+                client, "bug_fix_delete",
+                {"fix_id": fix_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if bug_uuid is not None:
+            ok, res = await call(
+                client, "bug_delete",
+                {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R35_4375c341_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

@@ -43,8 +43,12 @@ def _row_to_record(row: dict[str, Any] | tuple[Any, ...]) -> BugFix:
             passed=row["passed"],
             revert_info=row["revert_info"],
             created_by=row["created_by"],
-            created_at=row["created_at"].isoformat() if isinstance(row["created_at"], str) else row["created_at"],
-            updated_at=row["updated_at"].isoformat() if isinstance(row["updated_at"], str) else row["updated_at"],
+            # Bug 4375c341: the guard used to test for `str`, so a real psycopg
+            # datetime fell through unconverted into a field annotated `str`, and
+            # order_queue later compared it against every other source's ISO
+            # string. Test for `datetime` — the shape every other store here uses.
+            created_at=row["created_at"].isoformat() if isinstance(row["created_at"], datetime) else row["created_at"],
+            updated_at=row["updated_at"].isoformat() if isinstance(row["updated_at"], datetime) else row["updated_at"],
             deleted_at=row["deleted_at"].isoformat() if row["deleted_at"] is not None else None,
         )
     else:

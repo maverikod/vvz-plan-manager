@@ -89,6 +89,11 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "reference_inspect: direct referrers and recursive traversal with cycle safety",
         needs_catalog=True,
     ),
+    LiveSmokeTestSpec(
+        "r35",
+        "run_r35_work_queue_timestamp_types",
+        "todo_queue orders a live bug_fix beside other work sources (bug 4375c341)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

@@ -208,6 +208,16 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_cr6_compat_audit_contract.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="work-queue-timestamps",
+        description="Run the work-queue timestamp-type regression check (bug 4375c341).",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_4375c341_work_queue_timestamp_types.py",
+        ),
+    ),
 )
 
 
