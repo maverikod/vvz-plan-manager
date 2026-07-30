@@ -207,6 +207,20 @@ class DataclassEntity(EntityRecord):
     via ``crud_soft_delete``; physical deletion is restricted to
     ``crud_purge_soft_deleted_batch`` over rows already carrying the soft-delete
     marker.
+
+    Descriptor contract. The ClassVars below declare the store: the table, the
+    identifier column, the readable columns, which of them a create and an
+    update may touch, which carry searchable text, and which mark soft deletion
+    and update time. ``validate_descriptor`` checks a subclass against that
+    contract.
+
+    A descriptor ClassVar left None or empty is allowed, but only as a
+    DOCUMENTED gap: the subclass must say so in its own class docstring with a
+    line of the form ``Descriptor gap: <NAME> unimplemented -- <reason>``. That
+    generalizes the convention CommandMetricRecord, SrtSnapshotRecord and
+    CascadeRequestRecord already follow. An undocumented empty ClassVar is a
+    defect, not an exemption: it silently disables a guarantee the rest of the
+    codebase assumes.
     """
 
     ENTITY_TYPE: ClassVar[str]
@@ -223,6 +237,59 @@ class DataclassEntity(EntityRecord):
     UPDATED_AT_COLUMN: ClassVar[str | None] = "updated_at"
     HARD_DELETE_REFERENCE_CHECKS: ClassVar[tuple[ReferenceCheck, ...]] = ()
     REGISTER_IDENTITY: ClassVar[bool] = True
+
+    @classmethod
+    def validate_descriptor(cls) -> None:
+        """Check this subclass against the declarative store descriptor contract.
+
+        Opt-in: nothing calls this automatically. It is the assertion a
+        descriptor test makes, and the check a store migration runs once while
+        populating a new descriptor.
+
+        Rules, in the order they are checked:
+
+        1. COLUMNS must be non-empty for any entity that declares TABLE_NAME.
+           An entity with no TABLE_NAME may leave COLUMNS empty.
+        2. ID_COLUMN, or every member of ID_COLUMNS, must name a column present
+           in COLUMNS.
+        3. INSERT_COLUMNS must be empty or a subset of COLUMNS.
+        4. UPDATE_COLUMNS must be empty or a subset of COLUMNS.
+        5. SEARCH_COLUMNS must be empty or a subset of COLUMNS.
+        6. SOFT_DELETE_COLUMN, when not None, must be in COLUMNS.
+        7. UPDATED_AT_COLUMN, when not None, must be in COLUMNS.
+
+        Rules 2 through 7 are skipped when COLUMNS is empty, because an
+        unpopulated descriptor is a documented gap rather than a contradiction.
+
+        Raises:
+            ValueError: naming the violated rule and the offending columns.
+        """
+        name = cls.__name__
+        columns = set(cls.COLUMNS)
+
+        if cls.TABLE_NAME is not None and not columns:
+            raise ValueError(
+                f"{name}: COLUMNS must be non-empty when TABLE_NAME is declared "
+                f"(table {cls.TABLE_NAME!r})"
+            )
+        if not columns:
+            return
+
+        id_columns = tuple(cls.ID_COLUMNS) or ((cls.ID_COLUMN,) if cls.ID_COLUMN else ())
+        missing_ids = sorted(c for c in id_columns if c not in columns)
+        if missing_ids:
+            raise ValueError(f"{name}: identifier columns absent from COLUMNS: {missing_ids}")
+
+        for attribute in ("INSERT_COLUMNS", "UPDATE_COLUMNS", "SEARCH_COLUMNS"):
+            declared = tuple(getattr(cls, attribute))
+            extra = sorted(set(declared) - columns)
+            if extra:
+                raise ValueError(f"{name}: {attribute} is not a subset of COLUMNS: {extra}")
+
+        for attribute in ("SOFT_DELETE_COLUMN", "UPDATED_AT_COLUMN"):
+            value = getattr(cls, attribute)
+            if value is not None and value not in columns:
+                raise ValueError(f"{name}: {attribute}={value!r} is absent from COLUMNS")
 
     @classmethod
     def entity_type(cls) -> str:

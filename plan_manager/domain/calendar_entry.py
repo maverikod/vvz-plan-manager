@@ -60,6 +60,79 @@ class CalendarEntry(DataclassEntity):
     ENTITY_TYPE = "calendar_entry"
     ENTITY_ID_FIELD = "calendar_entry_uuid"
     TABLE_NAME = "calendar_entry"
+    ID_COLUMN = "uuid"
+    # Column order follows the calendar_entry CREATE TABLE in migration
+    # 0025_wish_and_calendar_entries.sql.
+    COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "status",
+        "start_date",
+        "end_date",
+        "created_by",
+        "assigned_to",
+        "wish_uuid",
+        "created_at",
+        "updated_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "deleted_at",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE
+    # insertable and must stay here: none of them carries a DB default, and
+    # create_calendar_entry supplies all three explicitly in Python. Omitting
+    # them would make crud_create reject the store's own payload, because
+    # INSERT_COLUMNS is the whitelist it validates against. deleted_at is
+    # excluded so a create cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "status",
+        "start_date",
+        "end_date",
+        "created_by",
+        "assigned_to",
+        "wish_uuid",
+        "created_at",
+        "updated_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+    )
+    # Immutable after creation: uuid, created_at, created_by. deleted_at is
+    # absent on purpose — soft deletion runs through crud_soft_delete, which
+    # writes the soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS = (
+        "title",
+        "description",
+        "status",
+        "start_date",
+        "end_date",
+        "assigned_to",
+        "wish_uuid",
+        "updated_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+    )
     SUMMARY_FIELDS = (
         "uuid",
         "calendar_entry_uuid",
