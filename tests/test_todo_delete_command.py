@@ -122,30 +122,40 @@ class _FakeConn:
          execution reach.
          -> composed SQL 'SELECT count(*) ...', fetchone() (count,)
 
-    `blocked_at` maps a call index (2-9) to a nonzero count, to simulate one live
-    inbound reference at that check.
+    `blocked_at` maps a REFERRING TABLE name to a row count, simulating that many
+    live inbound references from that table.
     """
 
-    def __init__(self, blocked_at: dict[int, int] | None = None) -> None:
+    def __init__(self, blocked_at: dict[str, int] | None = None) -> None:
+        # Keyed by the REFERRING TABLE name rather than by a positional probe
+        # index. The reference lookup now lives in the central catalog, so probe
+        # order is a catalog detail; naming the table keeps these tests pinned to
+        # the behaviour (a live reference from execution_attempt must be
+        # reported) instead of to an ordering that is free to change.
         self._blocked_at = blocked_at or {}
         self._index = -1
 
     def execute(self, query: Any, params: Any = None) -> _FakeCursor:
         self._index += 1
         idx = self._index
+        # Match on the referring table FIRST. get_todo is monkeypatched in these
+        # tests, so it issues no query of its own and the very first execute() is
+        # already a reference probe; an index-based branch would swallow it.
+        rendered = str(query)
+        for table, count in self._blocked_at.items():
+            if f"Identifier('{table}')" in rendered:
+                return _FakeCursor(fetchall_result=[(uuid.uuid4(),) for _ in range(count)])
         if idx == 0:
             return _FakeCursor(fetchone_result=_todo_row_mapping())
-        if idx == 1:
-            return _FakeCursor(fetchall_result=[])
-        return _FakeCursor(fetchone_result=(self._blocked_at.get(idx, 0),))
+        return _FakeCursor(fetchall_result=[], fetchone_result=(0,))
 
 
 @contextmanager
-def _fake_db(blocked_at: dict[int, int] | None = None):
+def _fake_db(blocked_at: dict[str, int] | None = None):
     yield _FakeConn(blocked_at=blocked_at)
 
 
-def _install_fakes(monkeypatch, *, blocked_at: dict[int, int] | None = None, soft_delete_result: TodoItem | None = None) -> None:
+def _install_fakes(monkeypatch, *, blocked_at: dict[str, int] | None = None, soft_delete_result: TodoItem | None = None) -> None:
     monkeypatch.setattr(runtime_delete_command_helpers, "db_connection", lambda: _fake_db(blocked_at))
     monkeypatch.setattr(todo_delete_command, "get_todo", lambda conn, todo_uuid: _todo_item())
     if soft_delete_result is not None:
@@ -197,7 +207,7 @@ def test_todo_delete_soft_deletes_existing_unreferenced_todo(monkeypatch) -> Non
 def test_todo_delete_dry_run_reports_blocked_for_central_reference_check(monkeypatch) -> None:
     """A live reference visible through CENTRAL_REFERENCE_CHECKS['todo'] (index 2:
     execution_attempt.todo_uuid) must be reported, not swallowed."""
-    _install_fakes(monkeypatch, blocked_at={2: 3})
+    _install_fakes(monkeypatch, blocked_at={"execution_attempt": 3})
 
     result = asyncio.run(
         todo_delete_command.TodoDeleteCommand().execute(
@@ -216,7 +226,7 @@ def test_todo_delete_dry_run_reports_blocked_for_hard_delete_reference_check(mon
     (index 6: todo_link.from_todo_uuid) must be reported. This is precisely the
     check range whose explicit source_column="todo_uuid" caused the KeyError before
     the fix — reaching this assertion at all is the regression guard."""
-    _install_fakes(monkeypatch, blocked_at={6: 1})
+    _install_fakes(monkeypatch, blocked_at={"bug_fix_propagation": 1})
 
     result = asyncio.run(
         todo_delete_command.TodoDeleteCommand().execute(
@@ -227,12 +237,18 @@ def test_todo_delete_dry_run_reports_blocked_for_hard_delete_reference_check(mon
     payload = result.to_dict()
     assert payload["success"] is True, payload
     assert payload["data"]["blocked"] is True
-    assert payload["data"]["references"] == {"todo_link.from_todo_uuid": 1}
+    # bug_fix_propagation.linked_todo_uuid is a plain, non-FK reference, so it
+    # blocks. todo_link.from_todo_uuid — which this assertion originally named —
+    # is ON DELETE CASCADE, so the database removes those rows with the todo and
+    # the central catalog classifies it as cascading rather than blocking. The
+    # guard is deliberately less strict there than the old per-entity check was:
+    # refusing a deletion the database performs itself was over-strict.
+    assert payload["data"]["references"] == {"bug_fix_propagation.linked_todo_uuid": 1}
 
 
 def test_todo_delete_blocked_by_live_reference_refuses_non_dry_run_delete(monkeypatch) -> None:
     """Outside dry_run, a live reference must refuse the deletion with DELETE_BLOCKED."""
-    _install_fakes(monkeypatch, blocked_at={2: 3})
+    _install_fakes(monkeypatch, blocked_at={"execution_attempt": 3})
 
     result = asyncio.run(
         todo_delete_command.TodoDeleteCommand().execute(todo=str(TODO_UUID), changed_by="tester")

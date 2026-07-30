@@ -3,7 +3,7 @@
 `../CLAUDE.md` is the entrypoint. This directory contains the project-bound
 Claude contract bundle.
 
-Package version: `v1.6.3`
+Package version: `v1.6.9`
 
 ## Layout
 
@@ -16,7 +16,7 @@ Package version: `v1.6.3`
 ## Project bindings
 
 - Project: `plan-manager`
-- Local checkout: `/home/testuser/projects/plan-manager`
+- Local checkout: `/home/vasilyvz/projects/tools/plan_manager`
 - CAS project ID: `f06b7269-cc9c-4293-886b-24984e4033ba`
 - CAS server: `code-analysis-server-vvz`
 

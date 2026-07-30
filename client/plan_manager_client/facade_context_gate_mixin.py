@@ -126,5 +126,13 @@ class ContextGateCommandsMixin:
         """List runtime audit log entries newest-first, filterable by actor, action, entity, and time window (read-only, paginated)."""
         return await self._call("audit_list", params)
 
+    async def runtime_purge_batch(self, **params: Any) -> Any:
+        """Purge a batch of already soft-deleted rows of one entity type, reporting per-row removals and reference-blocked refusals."""
+        return await self._call("runtime_purge_batch", params)
+
+    async def reference_inspect(self, **params: Any) -> Any:
+        """Inspect the cross-entity reference graph around one entity: which live rows point at it, optionally traversed transitively with cycle detection (read-only, paginated)."""
+        return await self._call("reference_inspect", params)
+
 
 __all__ = ["ContextGateCommandsMixin"]

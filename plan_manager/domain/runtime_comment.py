@@ -63,6 +63,65 @@ class RuntimeComment(DataclassEntity):
     ENTITY_TYPE = "comment"
     ENTITY_ID_FIELD = "comment_uuid"
     TABLE_NAME = "runtime_comment"
+    ID_COLUMN = "uuid"
+    # Column order follows the runtime_comment CREATE TABLE in migration
+    # 0012_runtime_annotations_execution_review.sql.
+    COLUMNS = (
+        "uuid",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "kind",
+        "visibility",
+        "author",
+        "body",
+        "resolved",
+        "supersedes_comment_uuid",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE
+    # insertable and must stay here: none of them carries a DB default, and
+    # add_comment supplies all three explicitly in Python. Omitting them would
+    # make crud_create reject the store's own payload, because INSERT_COLUMNS
+    # is the whitelist it validates against. deleted_at is excluded so a create
+    # cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "kind",
+        "visibility",
+        "author",
+        "body",
+        "resolved",
+        "supersedes_comment_uuid",
+        "created_by",
+        "created_at",
+        "updated_at",
+    )
+    # Updatable columns only. uuid, created_at, created_by are immutable.
+    # deleted_at is absent on purpose — soft deletion runs through
+    # crud_soft_delete, which writes the soft-delete column directly and never
+    # consults this tuple.
+    UPDATE_COLUMNS = (
+        "resolved",
+        "updated_at",
+    )
+    SEARCH_COLUMNS = ("body",)
     # Compact view=summary projection (bug 8a13977d): drops body (the comment text itself).
     SUMMARY_FIELDS = ("uuid", "primary_anchor_type", "anchor_ref_id", "kind", "resolved", "updated_at")
 

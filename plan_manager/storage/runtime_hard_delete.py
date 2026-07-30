@@ -1,4 +1,14 @@
-"""Store-level irreversible (hard) deletion for runtime entities (C-008): thin audited wrappers over DataclassEntity.crud_hard_delete; the inbound-reference admission check lives in the entity base (hard_delete_entity raises EntityReferencedError while live referrers exist)."""
+"""Store-level irreversible (hard) deletion for runtime entities (C-008): thin wrappers over DataclassEntity.crud_hard_delete; the inbound-reference admission check AND the audit write both live in the
+central hard-delete guard now (plan_manager.storage.hard_delete_guard), which
+raises EntityReferencedError while live referrers exist.
+
+These wrappers deliberately no longer write their own audit record. The guard is
+the single writer, so one deletion produces exactly one audit row; keeping a
+local write here would double-count every removal. What each wrapper still owns
+is the entity-specific context the guard cannot derive: the plan anchor column
+differs per entity, and two of these entity_type values are historical table
+names that must not change or existing audit_list queries stop matching.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +22,6 @@ from plan_manager.domain.bug_impact import BugImpact
 from plan_manager.domain.bug_report import BugReport
 from plan_manager.domain.todo import TodoItem
 from plan_manager.domain.runtime_comment import RuntimeComment
-from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
 def hard_delete_todo(
@@ -41,14 +50,16 @@ def hard_delete_todo(
 
         raise DomainCommandError("TODO_NOT_FOUND", f"todo not found: {todo_uuid}")
     plan_uuid = current.get("anchor_plan_uuid")
-    TodoItem.crud_hard_delete(conn, todo_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    TodoItem.crud_hard_delete(
         conn,
-        plan_uuid=plan_uuid,
-        entity_type="todo",
-        entity_id=todo_uuid,
-        action="hard_delete",
+        todo_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=plan_uuid,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="todo",
     )
 
 
@@ -78,14 +89,16 @@ def hard_delete_comment(
 
         raise DomainCommandError("COMMENT_NOT_FOUND", f"comment not found: {comment_uuid}")
     plan_uuid = current.get("anchor_plan_uuid")
-    RuntimeComment.crud_hard_delete(conn, comment_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    RuntimeComment.crud_hard_delete(
         conn,
-        plan_uuid=plan_uuid,
-        entity_type="runtime_comment",
-        entity_id=comment_uuid,
-        action="hard_delete",
+        comment_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=plan_uuid,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="runtime_comment",
     )
 
 
@@ -116,14 +129,16 @@ def hard_delete_bug(
 
         raise DomainCommandError("BUG_NOT_FOUND", f"bug not found: {bug_uuid}")
     plan_uuid = current.get("source_plan_uuid")
-    BugReport.crud_hard_delete(conn, bug_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    BugReport.crud_hard_delete(
         conn,
-        plan_uuid=plan_uuid,
-        entity_type="bug_report",
-        entity_id=bug_uuid,
-        action="hard_delete",
+        bug_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=plan_uuid,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="bug_report",
     )
 
 
@@ -153,14 +168,16 @@ def hard_delete_bug_impact(
 
         raise DomainCommandError("BUG_IMPACT_NOT_FOUND", f"bug impact not found: {impact_uuid}")
     plan_uuid = current.get("target_plan_uuid")
-    BugImpact.crud_hard_delete(conn, impact_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    BugImpact.crud_hard_delete(
         conn,
-        plan_uuid=plan_uuid,
-        entity_type="bug_impact",
-        entity_id=impact_uuid,
-        action="hard_delete",
+        impact_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=plan_uuid,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="bug_impact",
     )
 
 
@@ -192,14 +209,16 @@ def hard_delete_bug_fix(
         from plan_manager.commands.errors import DomainCommandError
 
         raise DomainCommandError("BUG_FIX_NOT_FOUND", f"bug fix not found: {fix_uuid}")
-    BugFix.crud_hard_delete(conn, fix_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    BugFix.crud_hard_delete(
         conn,
-        plan_uuid=None,
-        entity_type="bug_fix",
-        entity_id=fix_uuid,
-        action="hard_delete",
+        fix_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=None,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="bug_fix",
     )
 
 
@@ -230,12 +249,14 @@ def hard_delete_bug_fix_propagation(
 
         raise DomainCommandError("BUG_PROPAGATION_NOT_FOUND", f"bug propagation not found: {propagation_uuid}")
     plan_uuid = current.get("linked_plan_uuid")
-    BugFixPropagation.crud_hard_delete(conn, propagation_uuid, returning=False, require_soft_deleted=False)
-    record_runtime_change(
+    BugFixPropagation.crud_hard_delete(
         conn,
-        plan_uuid=plan_uuid,
-        entity_type="bug_fix_propagation",
-        entity_id=propagation_uuid,
-        action="hard_delete",
+        propagation_uuid,
+        returning=False,
+        require_soft_deleted=False,
         changed_by=changed_by,
+        plan_uuid=plan_uuid,
+        # Historical audit entity_type, kept so audit_list queries
+        # over existing rows keep matching.
+        audit_entity_type="bug_fix_propagation",
     )

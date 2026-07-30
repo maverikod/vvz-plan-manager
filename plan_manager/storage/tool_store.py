@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
-from psycopg.types.json import Jsonb
 
 from plan_manager.domain.runtime_validation import RuntimeValidationError
+from psycopg.types.json import Jsonb
+
 from plan_manager.domain.tool import Tool, validate_pinned_options
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
@@ -47,25 +48,24 @@ def create_tool(
     tool_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO tool "
-        "(uuid, name, server_id, command, pinned_options, description, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    )
-    params = (
-        tool_uuid,
-        name,
-        server_id,
-        command,
-        Jsonb(pinned_options),
-        description,
-        created_by,
-        now,
-        now,
-        None,
-    )
-    conn.execute(sql, params)
+    values = {
+        "uuid": tool_uuid,
+        "name": name,
+        "server_id": server_id,
+        "command": command,
+        # jsonb column: psycopg has no dumper for a bare dict, and crud_create
+        # passes values straight through as bind parameters, so the wrapping
+        # must happen here.
+        "pinned_options": Jsonb(pinned_options),
+        "description": description,
+        "created_by": created_by,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    row = Tool.crud_create(conn, values, returning=True)
+    if row is None:
+        raise RuntimeValidationError(f"tool create failed to return row for uuid={tool_uuid}")
 
     record_runtime_change(
         conn,
@@ -76,18 +76,7 @@ def create_tool(
         changed_by=created_by,
     )
 
-    return Tool(
-        tool_uuid=tool_uuid,
-        name=name,
-        server_id=server_id,
-        command=command,
-        pinned_options=pinned_options,
-        description=description,
-        created_by=created_by,
-        created_at=now,
-        updated_at=now,
-        deleted_at=None,
-    )
+    return _row_to_record(row)
 
 
 def get_tool(conn: psycopg.Connection, tool_uuid: uuid.UUID) -> Tool | None:
@@ -100,11 +89,7 @@ def get_tool(conn: psycopg.Connection, tool_uuid: uuid.UUID) -> Tool | None:
     Returns:
         Tool | None: The tool record, or None if no row exists with that UUID.
     """
-    sql = (
-        "SELECT uuid, name, server_id, command, pinned_options, description, "
-        "created_by, created_at, updated_at, deleted_at FROM tool WHERE uuid = %s"
-    )
-    row = conn.execute(sql, (tool_uuid,)).fetchone()
+    row = Tool.crud_get(conn, tool_uuid, include_deleted=True)
     if row is None:
         return None
     return _row_to_record(row)
@@ -126,25 +111,16 @@ def list_tools(
     Returns:
         list[Tool]: Matching tool records ordered by created_at ascending.
     """
-    conditions: list[str] = []
-    params: list[Any] = []
-
+    filters = None
     if name is not None:
-        conditions.append("name = %s")
-        params.append(name)
+        filters = {"name": name}
 
-    if not include_deleted:
-        conditions.append("deleted_at IS NULL")
-
-    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-    sql = (
-        "SELECT uuid, name, server_id, command, pinned_options, description, "
-        "created_by, created_at, updated_at, deleted_at FROM tool "
-        + where_clause
-        + " ORDER BY created_at ASC"
+    rows = Tool.crud_list(
+        conn,
+        filters=filters,
+        include_deleted=include_deleted,
+        order_by=("created_at",),
     )
-    rows = conn.execute(sql, params).fetchall()
     return [_row_to_record(row) for row in rows]
 
 
@@ -180,39 +156,26 @@ def update_tool(
     if pinned_options is not None:
         validate_pinned_options(pinned_options)
 
-    set_clauses: list[str] = []
-    params: list[Any] = []
+    values: dict[str, Any] = {}
 
     if server_id is not None:
-        set_clauses.append("server_id = %s")
-        params.append(server_id)
+        values["server_id"] = server_id
 
     if command is not None:
-        set_clauses.append("command = %s")
-        params.append(command)
+        values["command"] = command
 
     if pinned_options is not None:
-        set_clauses.append("pinned_options = %s")
-        params.append(Jsonb(pinned_options))
+        values["pinned_options"] = Jsonb(pinned_options)
 
     if description is not None:
-        set_clauses.append("description = %s")
-        params.append(description)
+        values["description"] = description
 
     now = datetime.now(timezone.utc).isoformat()
-    set_clauses.append("updated_at = %s")
-    params.append(now)
-    params.append(tool_uuid)
+    values["updated_at"] = now
 
-    sql = "UPDATE tool SET " + ", ".join(set_clauses) + " WHERE uuid = %s"
-    result = conn.execute(sql, params)
-
-    if result.rowcount == 0:
+    row = Tool.crud_update(conn, tool_uuid, values, returning=True)
+    if row is None:
         raise RuntimeValidationError(f"no tool with uuid={tool_uuid}")
-
-    updated = get_tool(conn, tool_uuid)
-    if updated is None:
-        raise RuntimeValidationError(f"tool with uuid={tool_uuid} not found after update")
 
     record_runtime_change(
         conn,
@@ -223,7 +186,7 @@ def update_tool(
         changed_by=changed_by,
     )
 
-    return updated
+    return _row_to_record(row)
 
 
 def remove_tool(conn: psycopg.Connection, tool_uuid: uuid.UUID, *, changed_by: str) -> Tool:
@@ -240,16 +203,10 @@ def remove_tool(conn: psycopg.Connection, tool_uuid: uuid.UUID, *, changed_by: s
     Raises:
         RuntimeValidationError: If no tool exists with tool_uuid.
     """
-    tool = get_tool(conn, tool_uuid)
-    if tool is None:
-        raise RuntimeValidationError(f"no tool with uuid={tool_uuid}")
+    now = datetime.now(timezone.utc)
 
-    now = datetime.now(timezone.utc).isoformat()
-
-    sql = "UPDATE tool SET deleted_at = %s, updated_at = %s WHERE uuid = %s"
-    result = conn.execute(sql, (now, now, tool_uuid))
-
-    if result.rowcount == 0:
+    row = Tool.crud_soft_delete(conn, tool_uuid, deleted_at=now, updated_at=now, returning=True)
+    if row is None:
         raise RuntimeValidationError(f"no tool with uuid={tool_uuid}")
 
     record_runtime_change(
@@ -261,38 +218,42 @@ def remove_tool(conn: psycopg.Connection, tool_uuid: uuid.UUID, *, changed_by: s
         changed_by=changed_by,
     )
 
-    return Tool(
-        tool_uuid=tool.tool_uuid,
-        name=tool.name,
-        server_id=tool.server_id,
-        command=tool.command,
-        pinned_options=tool.pinned_options,
-        description=tool.description,
-        created_by=tool.created_by,
-        created_at=tool.created_at,
-        updated_at=now,
-        deleted_at=now,
-    )
+    return _row_to_record(row)
 
 
-def _row_to_record(row: tuple[Any, ...]) -> Tool:
+def _row_to_record(row: tuple[Any, ...] | dict[str, Any]) -> Tool:
     """Map a database row to a Tool dataclass instance.
 
+    Accepts either a tuple (from raw execute) or a dict (from crud_* methods).
     Column order: uuid, name, server_id, command, pinned_options, description,
     created_by, created_at, updated_at, deleted_at.
     """
-    (
-        tool_uuid,
-        name,
-        server_id,
-        command,
-        pinned_options,
-        description,
-        created_by,
-        created_at,
-        updated_at,
-        deleted_at,
-    ) = row
+    if isinstance(row, dict):
+        # Handle dict rows from crud_* methods
+        tool_uuid = row["uuid"]
+        name = row["name"]
+        server_id = row["server_id"]
+        command = row["command"]
+        pinned_options = row["pinned_options"]
+        description = row["description"]
+        created_by = row["created_by"]
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        deleted_at = row["deleted_at"]
+    else:
+        # Handle tuple rows from raw execute
+        (
+            tool_uuid,
+            name,
+            server_id,
+            command,
+            pinned_options,
+            description,
+            created_by,
+            created_at,
+            updated_at,
+            deleted_at,
+        ) = row
 
     if created_at is not None and hasattr(created_at, "isoformat"):
         created_at = created_at.isoformat()

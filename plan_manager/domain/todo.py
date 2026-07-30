@@ -42,6 +42,81 @@ class TodoItem(DataclassEntity):
     ENTITY_TYPE = "todo"
     ENTITY_ID_FIELD = "todo_uuid"
     TABLE_NAME = "todo_item"
+    ID_COLUMN = "uuid"
+    # Column order follows the todo_item CREATE TABLE in migration 0010_todo_work_items.sql.
+    COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "kind",
+        "status",
+        "priority_nice",
+        "created_by",
+        "assigned_to",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "resolved_at",
+        "due_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "blocking_reason",
+        "execution_result",
+        "deleted_at",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE
+    # insertable and must stay here: none of them carries a DB default, and
+    # create_todo supplies all three explicitly in Python. Omitting them would
+    # make crud_create reject the store's own payload, because INSERT_COLUMNS
+    # is the whitelist it validates against. deleted_at is excluded so a create
+    # cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "kind",
+        "status",
+        "priority_nice",
+        "created_by",
+        "assigned_to",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "resolved_at",
+        "due_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "blocking_reason",
+        "execution_result",
+    )
+    # Immutable after creation: uuid, created_at, created_by. deleted_at is
+    # absent on purpose — soft deletion runs through crud_soft_delete, which
+    # writes the soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS = (
+        "title",
+        "description",
+        "priority_nice",
+        "assigned_to",
+        "blocking_reason",
+        "execution_result",
+        "updated_at",
+        "status",
+        "started_at",
+        "resolved_at",
+    )
+    SEARCH_COLUMNS = ("title", "description")
     # Compact view=summary projection (bug 8a13977d): identifier, title, the
     # kind/status/priority triad, primary anchor type+ref, and updated_at --
     # dropping description/blocking_reason/execution_result and the unused

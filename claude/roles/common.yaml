@@ -1,6 +1,6 @@
 # plan-manager — common laws for every role stage
 
-template_version: v1.6.3
+template_version: v1.6.9
 
 principles:
   - no assumptions; act on observed repository facts and explicit user intent
@@ -11,7 +11,8 @@ principles:
 
 stage_model:
   note: >-
-    In Claude, these roles are workflow stages executed by one agent, not separate spawned agents.
+    These roles are stage disciplines, not a headcount. They may run serially in one session or
+    be distributed across parallel agents; either way every stage's laws and gates still apply.
   stages:
     orchestrator: task framing, sequencing, user-facing synthesis
     researcher: read-only fact gathering
@@ -22,19 +23,33 @@ stage_model:
 
 subagent_policy:
   default: >-
-    Run every stage in the main session. Claude Code subagents are an optimization, not part
-    of this contract, and they do not inherit the stage the caller was in.
+    Parallel writing agents are a standard mode of work, not an exception. When a task
+    decomposes into independent implementation units, distribute them across concurrent agents;
+    keep the work in a single session when it does not decompose or is small enough that
+    parallelism only adds overhead. Every agent that touches the repository runs under
+    `laws.parallel_agent_isolation` — its own git worktree and branch, merged only on
+    acceptance — and does not inherit the caller's stage or context.
   allowed: >-
-    A read-only Explore or general-purpose subagent may be used for broad fan-out search during
-    the `researcher` stage when only the conclusion is needed, not the file dumps.
+    Concurrent agents may carry `coder` and `tester` work, and read-only Explore or
+    general-purpose agents may fan out for research. Decompose along independent seams so
+    agents do not contend for the same files.
   model_tier: >-
-    Outside `planning` mode, run a subagent at the cheapest tier that can carry its task, and
+    Outside `planning` mode, run each agent at the cheapest tier that can carry its task, and
     treat everything it returns as an unverified claim. See `ops/model-selection.yaml`.
+  orchestrator_retains: >-
+    The orchestrator still owns task framing, decomposition, the acceptance decision, and the
+    final `conscience` review; these are never delegated downward. A parallel agent's output is
+    accepted only after its cited evidence is checked and the `tester` gate passes on the merged
+    result — see `zero_trust_cheap_output` and `verify_before_delivery`.
   forbidden:
-    - delegating the `coder`, `tester`, or `conscience` stage to a subagent
-    - treating a subagent report as verified fact without checking the cited files
+    - treating a parallel agent's report as verified fact without checking the cited files
+    - merging an agent branch before its work is accepted and re-verified on the merge result
   requirement: >-
     A subagent prompt must restate the relevant laws itself; the subagent does not see this file.
+  parallel_isolation: >-
+    Whenever more than one agent works the repository at once, each runs in its own git worktree
+    and branch per `laws.parallel_agent_isolation`, merged only after acceptance. Never run two
+    concurrent agents in the same working tree or on the same branch.
 
 context_discipline:
   - keep the plan visible with the task/todo tools on multi-step work

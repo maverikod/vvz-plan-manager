@@ -47,7 +47,9 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # (its mechanisms never became commands in their own right) remains
 # independently enforced by the fragment scan below, which is unaffected by
 # these later additions.
-_PRE_CR4_INVENTORY_COUNT = 210
+# Raised by later plans that legitimately add a command:
+#   CR-6 (planmgr-cr6-entity-identity-crud): +1 for project_uuid_reserve.
+_PRE_CR4_INVENTORY_COUNT = 213
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

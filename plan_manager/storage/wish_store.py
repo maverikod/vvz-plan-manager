@@ -20,32 +20,58 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, valid
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
-def _row_to_record(row: tuple[Any, ...]) -> WishItem:
-    (
-        row_uuid,
-        title,
-        description,
-        kind,
-        status,
-        priority_nice,
-        created_by,
-        assigned_to,
-        target_release,
-        rationale,
-        created_at,
-        updated_at,
-        decided_at,
-        delivered_at,
-        primary_anchor_type,
-        anchor_project_id,
-        anchor_file_path,
-        anchor_plan_uuid,
-        anchor_revision_uuid,
-        anchor_step_uuid,
-        anchor_step_path,
-        anchor_ref_id,
-        deleted_at,
-    ) = row
+def _row_to_record(row: tuple[Any, ...] | dict[str, Any]) -> WishItem:
+    # Handle both tuple (from list_wishes_page) and dict (from crud_* methods)
+    if isinstance(row, dict):
+        row_uuid = row["uuid"]
+        title = row["title"]
+        description = row["description"]
+        kind = row["kind"]
+        status = row["status"]
+        priority_nice = row["priority_nice"]
+        created_by = row["created_by"]
+        assigned_to = row["assigned_to"]
+        target_release = row["target_release"]
+        rationale = row["rationale"]
+        created_at = row["created_at"]
+        updated_at = row["updated_at"]
+        decided_at = row["decided_at"]
+        delivered_at = row["delivered_at"]
+        primary_anchor_type = row["primary_anchor_type"]
+        anchor_project_id = row["anchor_project_id"]
+        anchor_file_path = row["anchor_file_path"]
+        anchor_plan_uuid = row["anchor_plan_uuid"]
+        anchor_revision_uuid = row["anchor_revision_uuid"]
+        anchor_step_uuid = row["anchor_step_uuid"]
+        anchor_step_path = row["anchor_step_path"]
+        anchor_ref_id = row["anchor_ref_id"]
+        deleted_at = row["deleted_at"]
+    else:
+        (
+            row_uuid,
+            title,
+            description,
+            kind,
+            status,
+            priority_nice,
+            created_by,
+            assigned_to,
+            target_release,
+            rationale,
+            created_at,
+            updated_at,
+            decided_at,
+            delivered_at,
+            primary_anchor_type,
+            anchor_project_id,
+            anchor_file_path,
+            anchor_plan_uuid,
+            anchor_revision_uuid,
+            anchor_step_uuid,
+            anchor_step_path,
+            anchor_ref_id,
+            deleted_at,
+        ) = row
     return WishItem(
         wish_uuid=row_uuid if isinstance(row_uuid, uuid.UUID) else uuid.UUID(row_uuid),
         title=title,
@@ -114,48 +140,36 @@ def create_wish(
     decided_at = now if status in {"rejected", "cancelled"} else None
     delivered_at = now if status == "delivered" else None
     columns = anchor_to_columns(anchor)
-    conn.execute(
-        """
-        INSERT INTO wish_item (
-            uuid, title, description, kind, status, priority_nice, created_by,
-            assigned_to, target_release, rationale, created_at, updated_at,
-            decided_at, delivered_at, primary_anchor_type, anchor_project_id,
-            anchor_file_path, anchor_plan_uuid, anchor_revision_uuid,
-            anchor_step_uuid, anchor_step_path, anchor_ref_id, deleted_at
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            %s, %s, %s, %s,
-            %s, %s, %s,
-            %s, %s, %s, %s
-        )
-        """,
-        (
-            wish_uuid,
-            title,
-            description,
-            kind,
-            status,
-            priority_nice,
-            created_by,
-            assigned_to,
-            target_release,
-            rationale,
-            now,
-            now,
-            decided_at,
-            delivered_at,
-            columns["primary_anchor_type"],
-            columns["anchor_project_id"],
-            columns["anchor_file_path"],
-            columns["anchor_plan_uuid"],
-            columns["anchor_revision_uuid"],
-            columns["anchor_step_uuid"],
-            columns["anchor_step_path"],
-            columns["anchor_ref_id"],
-            None,
-        ),
-    )
+
+    values = {
+        "uuid": wish_uuid,
+        "title": title,
+        "description": description,
+        "kind": kind,
+        "status": status,
+        "priority_nice": priority_nice,
+        "created_by": created_by,
+        "assigned_to": assigned_to,
+        "target_release": target_release,
+        "rationale": rationale,
+        "created_at": now,
+        "updated_at": now,
+        "decided_at": decided_at,
+        "delivered_at": delivered_at,
+        "primary_anchor_type": columns["primary_anchor_type"],
+        "anchor_project_id": columns["anchor_project_id"],
+        "anchor_file_path": columns["anchor_file_path"],
+        "anchor_plan_uuid": columns["anchor_plan_uuid"],
+        "anchor_revision_uuid": columns["anchor_revision_uuid"],
+        "anchor_step_uuid": columns["anchor_step_uuid"],
+        "anchor_step_path": columns["anchor_step_path"],
+        "anchor_ref_id": columns["anchor_ref_id"],
+    }
+
+    row = WishItem.crud_create(conn, values)
+    if row is None:
+        raise RuntimeValidationError(f"wish {wish_uuid} not found after create")
+
     record_runtime_change(
         conn,
         plan_uuid=anchor.plan_uuid,
@@ -164,17 +178,15 @@ def create_wish(
         action="create",
         changed_by=created_by,
     )
-    record = _get_row(conn, wish_uuid)
-    if record is None:
-        raise RuntimeValidationError(f"wish {wish_uuid} not found after create")
-    return record
+
+    return _row_to_record(row)
 
 
 def get_wish(conn: psycopg.Connection, wish_uuid: uuid.UUID) -> WishItem | None:
-    record = _get_row(conn, wish_uuid)
-    if record is None or record.deleted_at is not None:
+    row = WishItem.crud_get(conn, wish_uuid, include_deleted=False)
+    if row is None:
         return None
-    return record
+    return _row_to_record(row)
 
 
 def list_wishes_page(
@@ -197,9 +209,36 @@ def list_wishes_page(
     limit: int = 50,
     offset: int = 0,
     include_deleted: bool = False,
+    search: str | None = None,
+    search_regex: str | None = None,
 ) -> tuple[list[WishItem], int]:
+    """List a page of wishes, optionally narrowed by content search.
+
+    search and search_regex are additive keywords with None defaults, so every
+    pre-existing caller is unaffected. They route to the declared
+    WishItem.SEARCH_COLUMNS (title, description): search matches a substring
+    case-insensitively, search_regex a POSIX regular expression. search wins
+    when both are supplied. Either composes with every attribute filter by AND
+    and with the existing pagination and ordering.
+    """
     where_clauses: list[str] = []
     params: list[Any] = []
+
+    if search is not None or search_regex is not None:
+        if not WishItem.SEARCH_COLUMNS:
+            raise ValueError(
+                "WishItem does not declare SEARCH_COLUMNS; search not available"
+            )
+        if search is not None:
+            operator, value = "ILIKE", f"%{search}%"
+        else:
+            operator, value = "~*", search_regex
+        # One predicate per declared searchable column, OR-ed, then ANDed with
+        # the attribute filters. Column names come from the class descriptor,
+        # never from caller input; the value is always a bind parameter.
+        group = " OR ".join(f"{column} {operator} %s" for column in WishItem.SEARCH_COLUMNS)
+        where_clauses.append(f"({group})")
+        params.extend([value] * len(WishItem.SEARCH_COLUMNS))
 
     if status is not None:
         where_clauses.append("status = %s")
@@ -279,53 +318,42 @@ def update_wish(
     target_release: str | None = None,
     rationale: str | None = None,
 ) -> WishItem:
-    updates: list[str] = []
-    params: list[Any] = []
+    values: dict[str, Any] = {}
 
     if title is not None:
-        updates.append("title = %s")
-        params.append(title)
+        values["title"] = title
     if description is not None:
-        updates.append("description = %s")
-        params.append(description)
+        values["description"] = description
     if kind is not None:
         if kind not in WISH_KINDS:
             raise RuntimeValidationError(f"invalid wish kind: {kind!r}")
-        updates.append("kind = %s")
-        params.append(kind)
+        values["kind"] = kind
     if status is not None:
         if status not in WISH_STATUSES:
             raise RuntimeValidationError(f"invalid wish status: {status!r}")
-        updates.append("status = %s")
-        params.append(status)
+        values["status"] = status
         if status in {"rejected", "cancelled"}:
-            updates.append("decided_at = %s")
-            params.append(datetime.now(timezone.utc))
+            values["decided_at"] = datetime.now(timezone.utc)
         if status == "delivered":
-            updates.append("delivered_at = %s")
-            params.append(datetime.now(timezone.utc))
+            values["delivered_at"] = datetime.now(timezone.utc)
     if priority_nice is not None:
         validate_nice_priority(priority_nice)
-        updates.append("priority_nice = %s")
-        params.append(priority_nice)
+        values["priority_nice"] = priority_nice
     if assigned_to is not None:
-        updates.append("assigned_to = %s")
-        params.append(assigned_to)
+        values["assigned_to"] = assigned_to
     if target_release is not None:
-        updates.append("target_release = %s")
-        params.append(target_release)
+        values["target_release"] = target_release
     if rationale is not None:
-        updates.append("rationale = %s")
-        params.append(rationale)
+        values["rationale"] = rationale
 
     now = datetime.now(timezone.utc)
-    updates.append("updated_at = %s")
-    params.append(now)
-    params.append(wish_uuid)
-    conn.execute(f"UPDATE wish_item SET {', '.join(updates)} WHERE uuid = %s", params)
-    record = _get_row(conn, wish_uuid)
-    if record is None:
+    values["updated_at"] = now
+
+    row = WishItem.crud_update(conn, wish_uuid, values)
+    if row is None:
         raise RuntimeValidationError(f"wish not found after update: {wish_uuid}")
+
+    record = _row_to_record(row)
     record_runtime_change(
         conn,
         plan_uuid=record.anchor_plan_uuid,
@@ -339,10 +367,11 @@ def update_wish(
 
 def soft_delete_wish(conn: psycopg.Connection, wish_uuid: uuid.UUID, *, changed_by: str) -> WishItem:
     now = datetime.now(timezone.utc)
-    conn.execute("UPDATE wish_item SET deleted_at = %s, updated_at = %s WHERE uuid = %s", (now, now, wish_uuid))
-    record = _get_row(conn, wish_uuid)
-    if record is None:
+    row = WishItem.crud_soft_delete(conn, wish_uuid, deleted_at=now, updated_at=now)
+    if row is None:
         raise RuntimeValidationError(f"wish not found after soft delete: {wish_uuid}")
+
+    record = _row_to_record(row)
     record_runtime_change(
         conn,
         plan_uuid=record.anchor_plan_uuid,

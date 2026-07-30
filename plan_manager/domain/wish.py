@@ -49,6 +49,80 @@ class WishItem(DataclassEntity):
     ENTITY_TYPE = "wish"
     ENTITY_ID_FIELD = "wish_uuid"
     TABLE_NAME = "wish_item"
+    ID_COLUMN = "uuid"
+    # Column order follows the wish_item CREATE TABLE in migration
+    # 0025_wish_and_calendar_entries.sql.
+    COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "kind",
+        "status",
+        "priority_nice",
+        "created_by",
+        "assigned_to",
+        "target_release",
+        "rationale",
+        "created_at",
+        "updated_at",
+        "decided_at",
+        "delivered_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+        "deleted_at",
+    )
+    # Every column except deleted_at. uuid, created_at and updated_at ARE
+    # insertable and must stay here: none of them carries a DB default, and
+    # create_wish supplies all three explicitly in Python. Omitting them would
+    # make crud_create reject the store's own payload, because INSERT_COLUMNS
+    # is the whitelist crud_create validates against. deleted_at is excluded
+    # so a create cannot mark a row deleted at birth.
+    INSERT_COLUMNS = (
+        "uuid",
+        "title",
+        "description",
+        "kind",
+        "status",
+        "priority_nice",
+        "created_by",
+        "assigned_to",
+        "target_release",
+        "rationale",
+        "created_at",
+        "updated_at",
+        "decided_at",
+        "delivered_at",
+        "primary_anchor_type",
+        "anchor_project_id",
+        "anchor_file_path",
+        "anchor_plan_uuid",
+        "anchor_revision_uuid",
+        "anchor_step_uuid",
+        "anchor_step_path",
+        "anchor_ref_id",
+    )
+    # Immutable after creation: uuid, created_at, created_by. deleted_at is
+    # absent on purpose — soft deletion runs through crud_soft_delete, which
+    # writes the soft-delete column directly and never consults this tuple.
+    UPDATE_COLUMNS = (
+        "title",
+        "description",
+        "kind",
+        "status",
+        "priority_nice",
+        "assigned_to",
+        "target_release",
+        "rationale",
+        "updated_at",
+        "decided_at",
+        "delivered_at",
+    )
     SUMMARY_FIELDS = (
         "uuid",
         "wish_uuid",
@@ -59,6 +133,12 @@ class WishItem(DataclassEntity):
         "assigned_to",
         "updated_at",
     )
+    # The text-bearing content columns of wish_item, per its CREATE TABLE in
+    # migration 0025_wish_and_calendar_entries.sql (both text NOT NULL). Declaring
+    # them here is what makes crud_search's substring and regex modes available
+    # for this entity; an entity with no SEARCH_COLUMNS refuses a search rather
+    # than silently returning every row.
+    SEARCH_COLUMNS = ("title", "description")
     HARD_DELETE_REFERENCE_CHECKS = (
         ReferenceCheck("calendar_entry", "wish_uuid", "uuid", live_column="deleted_at"),
     )

@@ -62,6 +62,14 @@ class WishListCommand(Command):
             "type": "object",
             "properties": {
                 **filter_schema_properties(WISH_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
+                "search": {
+                    "type": "string",
+                    "description": "Substring search over title and description (ILIKE, case-insensitive).",
+                },
+                "search_regex": {
+                    "type": "string",
+                    "description": "POSIX regex search over title and description (~*, case-insensitive).",
+                },
                 **pagination_schema_properties(),
             },
             "required": [],
@@ -72,6 +80,23 @@ class WishListCommand(Command):
     def metadata(cls) -> dict[str, Any]:
         params = {
             **filter_metadata_params(WISH_LIST_FILTER_FIELDS, enum_overrides=_ENUM_OVERRIDES),
+            "search": {
+                "type": "string",
+                "description": (
+                    "Substring search over title and description, case-insensitive. "
+                    "Composes with every attribute filter by AND. Takes precedence "
+                    "when search_regex is also supplied."
+                ),
+                "required": False,
+            },
+            "search_regex": {
+                "type": "string",
+                "description": (
+                    "POSIX regular-expression search over title and description, "
+                    "case-insensitive. Composes with every attribute filter by AND."
+                ),
+                "required": False,
+            },
             **pagination_metadata_params(),
         }
         return wish_metadata(
@@ -102,6 +127,8 @@ class WishListCommand(Command):
         created_before: str | None = None,
         active_only: bool | None = None,
         unanchored_only: bool | None = None,
+        search: str | None = None,
+        search_regex: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         context: object | None = None,
@@ -150,6 +177,8 @@ class WishListCommand(Command):
                     project_id=scope.project_uuid,
                     limit=pagination.limit,
                     offset=pagination.offset,
+                    search=search,
+                    search_regex=search_regex,
                 )
                 return SuccessResult(
                     data={

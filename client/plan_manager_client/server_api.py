@@ -179,6 +179,7 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "project_dependency_list",
         "project_dependency_discover",
         "project_dependents",
+        "project_uuid_reserve",
         "project_view",
         "command_catalog_dump",
         "graph_dependents",
@@ -186,6 +187,8 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "command_timing_stats",
         "step_prompt_verify",
         "audit_list",
+        "runtime_purge_batch",
+        "reference_inspect",
         # CR-5a entity CRUD: tool (C-001)
         "tool_create",
         "tool_get",

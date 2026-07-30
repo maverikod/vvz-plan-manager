@@ -77,6 +77,28 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "run_r32_unfreeze_audit_names_cascade",
         "plan_unfreeze audit cascade-provenance regression (bug 74ba4313)",
     ),
+    LiveSmokeTestSpec(
+        "r33",
+        "run_r33_project_uuid_reserve_lifecycle",
+        "project_uuid_reserve lifecycle: reserve, collision, resolve, release, cleanup",
+        needs_catalog=True,
+    ),
+    LiveSmokeTestSpec(
+        "r34",
+        "run_r34_reference_inspect_traversal",
+        "reference_inspect: direct referrers and recursive traversal with cycle safety",
+        needs_catalog=True,
+    ),
+    LiveSmokeTestSpec(
+        "r35",
+        "run_r35_work_queue_timestamp_types",
+        "todo_queue orders a live bug_fix beside other work sources (bug 4375c341)",
+    ),
+    LiveSmokeTestSpec(
+        "r36",
+        "run_r36_soft_delete_owned_column",
+        "soft delete hides a row without removing it, for todo and comment (bug 31ba96d5)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

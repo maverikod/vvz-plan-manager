@@ -160,6 +160,74 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_bug_c3950b83_plan_completed_lock.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="cr6-identity-registry",
+        description="Run the CR-6 identity-registry and project-uuid-reservation suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_identity_registry_full_scope.py",
+            "tests/test_project_uuid_reserve_command.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-entity-contract",
+        description="Run the CR-6 entity-descriptor contract, content-search and store-migration suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_entity_descriptor_contract.py",
+            "tests/test_content_search_layer.py",
+            "tests/test_store_descriptor_migration_plan_truth.py",
+            "tests/test_store_descriptor_migration_overlay.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-deletion-references",
+        description="Run the CR-6 reference-catalog, hard-delete guard, purge and inspection suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_reference_catalog.py",
+            "tests/test_hard_delete_guard.py",
+            "tests/test_runtime_purge_batch_command.py",
+            "tests/test_reference_inspection_command.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr6-migrations-audit",
+        description="Run the CR-6 migration-discipline and audit-compatibility suites.",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_cr6_migration_discipline_and_cascade_compat.py",
+            "tests/test_cr6_compat_audit_contract.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="work-queue-timestamps",
+        description="Run the work-queue timestamp-type regression check (bug 4375c341).",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_4375c341_work_queue_timestamp_types.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="soft-delete-owned-column",
+        description="Run the soft-delete lifecycle-owned-column regression check (bug 31ba96d5).",
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_31ba96d5_soft_delete_owned_column.py",
+        ),
+    ),
 )
 
 

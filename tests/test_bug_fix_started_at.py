@@ -8,12 +8,35 @@ from datetime import datetime, timezone
 from plan_manager.storage import bug_fix_store
 
 
+class _Column:
+    """Stands in for a psycopg column description, which is read by .name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+# Column order of the bug_fix SELECT, matching BugFix.COLUMNS. The store now
+# routes through crud_*, which builds a row dict from cursor.description, so the
+# fake has to model that attribute as a real cursor does.
+_BUG_FIX_COLUMNS = (
+    "uuid", "bug_uuid", "status", "fix_type", "summary", "implementation_notes",
+    "source_project_id", "branch", "commit_hash", "pull_request", "changed_files",
+    "tests", "author", "reviewer", "started_at", "implemented_at", "verified_at",
+    "verification_method", "expected_result", "actual_result", "passed",
+    "revert_info", "created_by", "created_at", "updated_at", "deleted_at",
+)
+
+
 class _FakeCursor:
     def __init__(self, row):
         self._row = row
+        self.description = [_Column(name) for name in _BUG_FIX_COLUMNS]
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return [] if self._row is None else [self._row]
 
 
 class _FakeConn:
@@ -68,7 +91,11 @@ def test_update_to_in_progress_stamps_started_at(monkeypatch) -> None:
     )
 
     sql, params = conn.statements[0]
-    assert "started_at = %s" in sql
+    # The store no longer hand-writes this UPDATE: it delegates to
+    # crud_update, which composes the statement from identifiers. So assert
+    # that started_at is part of the update, not that a particular SQL string
+    # was assembled.
+    assert "started_at" in str(sql)
     assert record.started_at is not None
 
 

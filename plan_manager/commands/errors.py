@@ -1,5 +1,8 @@
 """Domain error registry for plan_manager commands (C-026)."""
 
+import uuid
+from typing import Any
+
 import psycopg
 from mcp_proxy_adapter.commands.result import ErrorResult
 
@@ -41,11 +44,16 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "PARAGRAPH_NOT_FOUND",
     "REVISION_NOT_FOUND",
     "SNAPSHOT_NOT_FOUND",
+    # The reservation identified by the supplied project uuid does not exist.
+    "RESERVATION_NOT_FOUND",
     "CASCADE_REQUIRED",
     "CASCADE_CONFLICT",
     "PLAN_NOT_FULLY_FROZEN",
     "FROZEN_ARTIFACT",
     "DELETE_BLOCKED",
+    # The entity type has no soft-deleted state a batch purge could act on
+    # (its class declares SOFT_DELETE_COLUMN=None).
+    "ENTITY_NOT_PURGEABLE",
     "INVALID_STEP_FIELD_SHAPE",
     "INVALID_LEVEL",
     "INVALID_SCOPE",
@@ -166,7 +174,19 @@ def map_exception(exc: Exception) -> ErrorResult:
     if isinstance(exc, PlanCompletedError):
         return domain_error("PLAN_COMPLETED", str(exc), {})
     if isinstance(exc, EntityReferencedError):
-        return domain_error("DELETE_BLOCKED", str(exc), {"references": exc.references})
+        # references keeps the historical per-column counts so existing clients
+        # are unaffected. referrers is the actionable half: a caller can only
+        # detach or delete what it can identify, and counts alone name nothing.
+        # Identifiers are stringified because this payload is serialized to JSON.
+        details: dict[str, Any] = {"references": exc.references}
+        referrers = getattr(exc, "referrers", None)
+        if referrers:
+            details["referrers"] = [
+                {key: (str(value) if isinstance(value, uuid.UUID) else value)
+                 for key, value in referrer.items()}
+                for referrer in referrers
+            ]
+        return domain_error("DELETE_BLOCKED", str(exc), details)
     # Most-specific RuntimeValidationError subclasses must be checked before the generic
     # RuntimeValidationError branch below, so a documented code is reported instead of the
     # generic RUNTIME_VALIDATION_ERROR fallback.

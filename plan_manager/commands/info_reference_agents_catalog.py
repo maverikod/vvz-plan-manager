@@ -295,6 +295,8 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     "srt": ["srt_snapshot_create", "srt_snapshot_list", "srt_diff"],
     "system": ["info", "ops_status", "command_catalog_dump"],
     "audit": ["audit_list"],
+    "purge": ["runtime_purge_batch"],
+    "reference": ["reference_inspect"],
     "todo": [
         "todo_create", "todo_get", "todo_list", "todo_update", "todo_reanchor",
         "todo_resolve", "todo_close", "todo_delete", "todo_link_add", "todo_link_remove",
@@ -337,6 +339,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "project_dependency_add", "project_dependency_remove",
         "project_dependency_list", "project_dependency_discover", "project_dependents",
         "project_dependency_update", "project_dependency_confirm", "project_view",
+        "project_uuid_reserve",
     ],
     "observability": ["command_timing_stats"],
     "verification": ["step_prompt_verify"],

@@ -424,6 +424,11 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
         "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
         "calendar_entry_update", "calendar_entry_delete",
+        # R34 (CR-6 G-004/T-004): the generic reference-graph inspection
+        # command, exercised end-to-end (direct + recursive traversal over a
+        # plan -> todo -> comment fixture) by
+        # run_r34_reference_inspect_traversal below.
+        "reference_inspect",
     }
 )
 
@@ -431,6 +436,7 @@ TIER4_HANDLED: frozenset[str] = frozenset(
 # reason each is unsafe/out-of-scope for a throwaway-entity smoke pass.
 KNOWN_SKIP_REASONS: dict[str, str] = {
     "export_cleanup": "destructive filesystem cleanup of export archives; not exercised against live data",
+    "runtime_purge_batch": "irreversibly purges EVERY soft-deleted row of an entity type, not just this pass's throwaway rows; not safe to exercise against live data",
     "plan_import": "requires a prepared export archive/source payload outside the scope of a throwaway smoke entity",
     "export_upload_save": "requires a prior chunked transfer_id handshake; not exercised in this pass",
     "export_read": "requires a materialized export file produced by plan_export/hrs_export; not exercised in this pass",
@@ -516,6 +522,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "project_dependency_confirm": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_remove": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_discover": "runs CA-backed dependency discovery; not exercised in this pass",
+    "project_uuid_reserve": "exercised end to end by its own R-check (reserve/collision/resolve/release with cleanup), not by a generic Tier-2 probe",
     "step_dependency_add": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
@@ -5733,6 +5740,684 @@ async def run_r32_unfreeze_audit_names_cascade(client: Any) -> list[CheckResult]
         if plan_uuid is not None:
             ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
             results.append(CheckResult("4", "R32_74ba4313_plan_delete(hard)_cleanup", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    return results
+
+
+async def run_r33_project_uuid_reserve_lifecycle(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-6 G-002: the project_uuid_reserve namespace-reservation lifecycle.
+
+    Reserve, release and resolve are the three actions of ONE command,
+    selected by its action parameter; there is no separate
+    project_uuid_resolve or project_uuid_release command.
+
+    Recipe (no plan fixture needed, the reservation is plan-independent):
+    reserve a fresh uuid4 -> reserve the SAME uuid again and require the
+    deterministic DUPLICATE_ID refusal -> resolve and require
+    kind=project_reservation -> release -> resolve again and require
+    RESERVATION_NOT_FOUND, proving the release actually freed the
+    identifier. Cleanup runs in a finally block once the reserve
+    succeeded, so a mid-check assertion failure never leaves a
+    reservation occupying an identifier on the live server.
+    """
+    results: list[CheckResult] = []
+    if "project_uuid_reserve" not in catalog_names:
+        results.append(
+            CheckResult(
+                "4", "R33_project_uuid_reserve", STATUS_SKIP,
+                "server predates project_uuid_reserve",
+            )
+        )
+        return results
+
+    reserved = str(uuid_mod.uuid4())
+    actor = "live-smoke-r33"
+    holding = False
+    try:
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "reserve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "r33-reserve", STATUS_FAIL, str(res)))
+            return results
+        holding = True
+        if res.get("project_uuid") == reserved and res.get("reserved_by") == actor:
+            results.append(CheckResult("4", "r33-reserve", STATUS_PASS, f"reserved {reserved}"))
+        else:
+            results.append(CheckResult("4", "r33-reserve", STATUS_FAIL, f"payload did not echo the reservation: {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "reserve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        # call()/unwrap_envelope surfaces a domain error as a formatted
+        # diagnostic string, so assert on the stable domain_code substring,
+        # the same idiom the other Tier-4 checks use.
+        if (not ok) and "DUPLICATE_ID" in str(res):
+            results.append(CheckResult("4", "r33-collision", STATUS_PASS, "DUPLICATE_ID"))
+        else:
+            results.append(CheckResult("4", "r33-collision", STATUS_FAIL, f"expected DUPLICATE_ID, got ok={ok} {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "resolve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        kind = res.get("kind") if ok and isinstance(res, dict) else None
+        if ok and kind == "project_reservation":
+            results.append(CheckResult("4", "r33-resolve", STATUS_PASS, "kind=project_reservation"))
+        else:
+            results.append(CheckResult("4", "r33-resolve", STATUS_FAIL, f"expected kind=project_reservation, got ok={ok} {res!r}"))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "release", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if ok:
+            holding = False
+            results.append(CheckResult("4", "r33-release", STATUS_PASS, f"released {reserved}"))
+        else:
+            results.append(CheckResult("4", "r33-release", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client,
+            "project_uuid_reserve",
+            {"action": "resolve", "project_uuid": reserved, "reserved_by": actor},
+        )
+        if (not ok) and "RESERVATION_NOT_FOUND" in str(res):
+            results.append(CheckResult("4", "r33-post-release", STATUS_PASS, "RESERVATION_NOT_FOUND"))
+        else:
+            results.append(CheckResult("4", "r33-post-release", STATUS_FAIL, f"expected RESERVATION_NOT_FOUND, got ok={ok} {res!r}"))
+    finally:
+        if holding:
+            ok, res = await call(
+                client,
+                "project_uuid_reserve",
+                {"action": "release", "project_uuid": reserved, "reserved_by": actor},
+            )
+            results.append(
+                CheckResult(
+                    "4", "r33-cleanup", STATUS_PASS if ok else STATUS_FAIL,
+                    "" if ok else str(res),
+                )
+            )
+    return results
+
+
+async def run_r34_reference_inspect_traversal(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-6 G-004/T-004: reference_inspect over the live reference graph.
+
+    Deviation from the step recipe, deliberate: the recipe asked for a
+    second todo LINKED to the first as the second hop, but
+    todo_link.from_todo_uuid is ON DELETE CASCADE, so the catalog
+    classifies it as cascading and reference_inspect (which reports only
+    references that BLOCK a hard delete) would never show it. A comment
+    anchored to the todo IS a blocking referrer
+    (runtime_comment.anchor_ref_id with primary_anchor_type='todo'), so
+    the fixture uses a comment for hop two. Anything else would assert a
+    hop that cannot exist and fail for the wrong reason.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> a todo
+    anchored to that plan (a blocking referrer of the plan via
+    todo_item.anchor_plan_uuid) -> a comment anchored to the todo (a
+    blocking referrer of the todo) -> reference_inspect(plan,
+    recursive=false), asserting the todo appears among direct_referrers
+    with the four-key shape -> reference_inspect(plan, recursive=true,
+    depth_limit=5), asserting the comment is reached through the traversal
+    and the traversal metadata is present.
+
+    Assertions are on payload fields and domain codes, never message prose.
+    """
+    results: list[CheckResult] = []
+    if "reference_inspect" not in catalog_names:
+        results.append(
+            CheckResult(
+                "4", "R34_reference_inspect", STATUS_SKIP,
+                "server predates reference_inspect",
+            )
+        )
+        return results
+
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r34-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-plan-create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r34-todo"),
+                "description": "R34 reference_inspect scratch todo",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-todo-create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "todo", "anchor_ref_id": todo_uuid,
+                "kind": "comment", "visibility": "audit_only", "author": "live-smoke",
+                "body": "R34 reference_inspect second-hop referrer",
+                "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-comment-add", STATUS_FAIL, str(res)))
+            return results
+        comment_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "reference_inspect",
+            {"entity_type": "plan", "entity_id": plan_uuid, "recursive": False},
+        )
+        direct = res.get("direct_referrers") if ok and isinstance(res, dict) else None
+        matched = None
+        if isinstance(direct, list):
+            matched = next(
+                (
+                    row for row in direct
+                    if isinstance(row, dict) and row.get("referrer_id") == todo_uuid
+                ),
+                None,
+            )
+        if matched is None:
+            results.append(
+                CheckResult(
+                    "4", "r34-direct", STATUS_FAIL,
+                    f"the anchored todo is not among direct_referrers: ok={ok} {res!r}",
+                )
+            )
+            return results
+        shape_ok = (
+            matched.get("table") == "todo_item"
+            and matched.get("column") == "anchor_plan_uuid"
+            # referrer_kind, never referrer_type: the key must match the guard's
+            # lookup and the DELETE_BLOCKED payload.
+            and matched.get("referrer_kind") == "todo_item"
+        )
+        results.append(
+            CheckResult(
+                "4", "r34-direct", STATUS_PASS if shape_ok else STATUS_FAIL,
+                f"todo_item.anchor_plan_uuid -> {todo_uuid}" if shape_ok
+                else f"unexpected referrer shape: {matched!r}",
+            )
+        )
+        if not shape_ok:
+            return results
+
+        ok, res = await call(
+            client, "reference_inspect",
+            {
+                "entity_type": "plan", "entity_id": plan_uuid,
+                "recursive": True, "depth_limit": 5,
+            },
+        )
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "r34-recursive", STATUS_FAIL, str(res)))
+            return results
+        traversal = res.get("traversal")
+        items = res.get("items")
+        reached_comment = False
+        if isinstance(items, list):
+            reached_comment = any(
+                isinstance(row, dict) and row.get("referrer_id") == comment_uuid
+                for row in items
+            )
+        metadata_ok = (
+            isinstance(traversal, dict)
+            and "nodes_visited" in traversal
+            and "cycles_detected" in traversal
+            and "edges_traversed" in traversal
+        )
+        if reached_comment and metadata_ok:
+            results.append(
+                CheckResult(
+                    "4", "r34-recursive", STATUS_PASS,
+                    f"nodes_visited={traversal.get('nodes_visited')} "
+                    f"cycles_detected={traversal.get('cycles_detected')}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "r34-recursive", STATUS_FAIL,
+                    f"reached_comment={reached_comment} traversal={traversal!r}",
+                )
+            )
+    finally:
+        # Reverse creation order: the comment blocks the todo's hard delete, and
+        # the todo blocks the plan's.
+        cleanup_ok = True
+        if comment_uuid is not None:
+            ok, res = await call(
+                client, "comment_delete",
+                {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "r34-cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+R35_PRE_FIX_SYMPTOM = "not supported between instances of"
+
+
+async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
+    """Bug 4375c341: todo_queue died sorting a datetime against ISO strings.
+
+    `bug_fix_store._row_to_record` inverted its isinstance guard for
+    created_at/updated_at on the dict (crud_*) path, so a real psycopg
+    datetime landed unconverted in `BugFix.created_at` -- a field
+    annotated `str`. `work_item_from_bug_fix` copied it into
+    `WorkItem.created_at`, and `order_queue`'s sort then compared that
+    datetime against the ISO strings every other work source yields:
+    -32603 "'<' not supported between instances of 'str' and
+    'datetime.datetime'".
+
+    Why this needs a LIVE check: the defect is invisible to the unit
+    suites' fake cursors, which hand back strings. Only a real psycopg
+    connection returns timestamptz as a datetime, and only a queue
+    containing a live bug_fix row alongside another live work source
+    performs the mixed comparison. A green unit run proves nothing here.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> bug_create
+    (anchored to that plan) -> bug_confirm -> bug_fix_create, which is the
+    row whose created_at is the datetime -> a todo anchored to the same
+    plan, so the queue holds a SECOND source whose created_at is an ISO
+    string and the sort has something to compare against -> todo_queue
+    scoped to that plan, asserting SUCCESS and that both work kinds are
+    present in the returned page. Cleanup: bug_fix_delete -> bug_delete ->
+    todo_delete -> plan_delete(hard), in that order (the fix's live
+    bug_uuid reference blocks the bug's hard delete).
+
+    Pre-fix detection: todo_queue fails with the comparison TypeError this
+    bug names, which SKIPs naming bug 4375c341 rather than failing the
+    pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
+    fix_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r35-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": unique_suffix("r35-bug"),
+                "short_description": "R35 work-queue timestamp scratch bug",
+                "detailed_description": "R35: todo_queue must order a live bug_fix (bug 4375c341).",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19,
+                "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "bug_confirm",
+            {"plan": plan_uuid, "bug_id": bug_uuid, "changed_by": "live-smoke"},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R35_4375c341_bug_confirm", STATUS_FAIL, str(res)))
+            return results
+
+        # This is the row that carried the unconverted datetime.
+        ok, res = await call(
+            client, "bug_fix_create",
+            {
+                # bug_fix_create takes `bug`; only bug_confirm/bug_delete use bug_id.
+                "plan": plan_uuid, "bug": bug_uuid, "fix_type": "code",
+                "summary": "R35 scratch fix whose created_at must be an ISO string",
+                "author": "live-smoke", "created_by": "live-smoke",
+            },
+        )
+        # bug_fix_create nests its payload under "bug_fix" rather than returning a
+        # flat record like most create commands (same note as run_tier3_bug_create).
+        fix_payload = res.get("bug_fix") if ok and isinstance(res, dict) else None
+        fix_uuid = fix_payload.get("uuid") if isinstance(fix_payload, dict) else None
+        if not ok or not fix_uuid:
+            results.append(CheckResult("4", "R35_4375c341_bug_fix_create", STATUS_FAIL, str(res)))
+            return results
+        # Direct evidence of the fix at the source: the store must have converted
+        # the row's timestamptz before it ever reached the queue.
+        fix_created_at = fix_payload.get("created_at")
+        if isinstance(fix_created_at, str):
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_bug_fix_created_at_is_iso", STATUS_PASS,
+                    f"created_at={fix_created_at}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_bug_fix_created_at_is_iso", STATUS_FAIL,
+                    f"created_at is {type(fix_created_at).__name__}, not an ISO string: {fix_created_at!r}",
+                )
+            )
+            return results
+
+        # A second live work source, so the sort has an ISO string to compare
+        # the bug_fix timestamp against. With only one item there is nothing to
+        # order and the defect stays hidden.
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r35-todo"),
+                "description": "R35 second work source for the queue sort",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R35_4375c341_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        # UNSCOPED deliberately. work_item_from_bug_fix sets no plan_uuid, so a
+        # plan-scoped queue excludes the bug_fix entirely and the mixed comparison
+        # never happens. And presence on the returned PAGE is not required: the
+        # queue is sorted whole and paginated afterwards, so a successful unscoped
+        # call is itself proof that the sort compared this fresh unfinished fix
+        # against every other source without a type error.
+        ok, res = await call(client, "todo_queue", {"limit": 50})
+        if not ok:
+            if R35_PRE_FIX_SYMPTOM in str(res):
+                results.append(
+                    CheckResult(
+                        "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_SKIP,
+                        "server predates bug 4375c341's fix -- todo_queue still compares a "
+                        "bug_fix datetime against ISO strings -- redeploy pending",
+                    )
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_FAIL, str(res),
+                    )
+                )
+            return results
+
+        # The payload key is "queue", not "items".
+        items = res.get("queue") if isinstance(res, dict) else None
+        total = res.get("total") if isinstance(res, dict) else None
+        rows = [row for row in (items or []) if isinstance(row, dict)]
+        offenders = [
+            row.get("source_uuid") for row in rows if not isinstance(row.get("created_at"), str)
+        ]
+        if isinstance(items, list) and rows and not offenders:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_PASS,
+                    f"queue sorted over {total} item(s); every created_at is an ISO string",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_todo_queue_orders_a_live_bug_fix", STATUS_FAIL,
+                    f"rows={len(rows)} total={total} non_string_created_at={offenders} {res!r}",
+                )
+            )
+    finally:
+        # The fix's live bug_uuid reference blocks the bug's hard delete, so the
+        # fix goes first.
+        cleanup_ok = True
+        if fix_uuid is not None:
+            ok, res = await call(
+                client, "bug_fix_delete",
+                # bug_fix_delete's identifier parameter is `bug_fix`, not fix_id.
+                {"bug_fix": fix_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if bug_uuid is not None:
+            ok, res = await call(
+                client, "bug_delete",
+                {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R35_4375c341_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+R36_PRE_FIX_SYMPTOM = "unknown update columns"
+
+
+async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
+    """Bug 31ba96d5: soft delete failed for every crud_*-migrated entity.
+
+    `soft_delete_entity` wrote SOFT_DELETE_COLUMN through `crud_update`,
+    whose UPDATE_COLUMNS whitelist deliberately EXCLUDES deleted_at -- the
+    two-phase deletion discipline owns that column, and a caller must go
+    through the delete command rather than backdating or clearing a
+    deletion with a plain update. So the lifecycle's own privileged write
+    was validated against the caller-facing whitelist that forbids exactly
+    the column it must set: -32603 "unknown update columns for Tool:
+    ['deleted_at']".
+
+    Coverage split, so this check is not a duplicate: Tool's live soft
+    delete is already exercised by R7 (where the defect surfaced) and
+    wish/calendar_entry by R27. This check takes the two remaining migrated
+    families whose live soft-delete path nothing else drives -- todo and
+    comment.
+
+    What is observable through the real command surface, and what is not:
+    the soft delete SUCCEEDING is the regression itself -- before the fix it
+    failed outright with the whitelist error -- and the row then being
+    hidden from reads is the second half. The row's continued PHYSICAL
+    presence cannot be observed here: no shipped command exposes
+    include_deleted, and both todo_delete and comment_delete read their
+    precondition through a live-only getter (get_todo / get_comment), so a
+    second delete on a soft-deleted id returns NOT_FOUND rather than
+    purging it. The sanctioned second phase is runtime_purge_batch, which
+    this pipeline must not invoke live because it purges EVERY soft-deleted
+    row of a type, not just this pass's.
+
+    Cleanup convention: a soft-deleted throwaway row counts as disposed of,
+    exactly as run_r7_agent_config_lifecycle already treats its
+    soft-deleted tool ("naturally deleted; the finally block must not
+    double-delete"). The finally block therefore hard-deletes only the
+    plan, and does not attempt to purge the two soft-deleted rows.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> todo
+    anchored to that plan -> todo_delete(hard=false) must SUCCEED ->
+    todo_get must no longer resolve -> the same two steps for a comment
+    anchored to the plan.
+
+    Pre-fix detection: the soft delete fails with the whitelist error this
+    bug names, which SKIPs naming bug 31ba96d5 rather than failing the
+    pipeline against a not-yet-deployed fix.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r36-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r36-todo"),
+                "description": "R36 soft-delete scratch todo",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        todo_uuid_soft = todo_uuid
+        ok, res = await call(
+            client, "todo_delete",
+            {"todo": todo_uuid, "changed_by": "live-smoke", "hard": False},
+        )
+        if not ok:
+            if R36_PRE_FIX_SYMPTOM in str(res):
+                results.append(
+                    CheckResult(
+                        "4", "R36_31ba96d5_todo_soft_delete", STATUS_SKIP,
+                        "server predates bug 31ba96d5's fix -- the soft-delete write is "
+                        "still refused by the caller-facing UPDATE_COLUMNS whitelist -- "
+                        "redeploy pending",
+                    )
+                )
+            else:
+                results.append(CheckResult("4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL, str(res)))
+            return results
+
+        # The soft delete succeeded; the row counts as disposed of (R7's
+        # convention), so the finally block must not try to delete it again.
+        todo_uuid = None
+        hidden_ok, hidden_res = await call(client, "todo_get", {"todo": todo_uuid_soft})
+        if not hidden_ok:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_PASS,
+                    "soft delete accepted and the row is hidden from todo_get",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL,
+                    f"a soft-deleted todo must not resolve through todo_get: {hidden_res!r}",
+                )
+            )
+            return results
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+                "kind": "comment", "visibility": "audit_only", "author": "live-smoke",
+                "body": "R36 soft-delete scratch comment", "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R36_31ba96d5_comment_add", STATUS_FAIL, str(res)))
+            return results
+        comment_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "comment_delete",
+            {"comment": comment_uuid, "changed_by": "live-smoke", "hard": False},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL, str(res)))
+            return results
+
+        comment_uuid_soft = comment_uuid
+        comment_uuid = None
+        hidden_ok, hidden_res = await call(
+            client, "comment_get", {"plan": plan_uuid, "comment_uuid": comment_uuid_soft}
+        )
+        if not hidden_ok:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_PASS,
+                    "soft delete accepted and the row is hidden from comment_get",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL,
+                    f"a soft-deleted comment must not resolve through comment_get: {hidden_res!r}",
+                )
+            )
+    finally:
+        # Each uuid is cleared once its row has been soft-deleted, so these two
+        # branches only fire when the check failed BEFORE the soft delete and the
+        # row is still live. A soft-deleted row is not hard-deleted here: the
+        # surface cannot purge one, and R7 already treats that state as disposed
+        # of. plan_delete is unaffected either way -- a soft-deleted referrer does
+        # not block it, since the reference lookup honours deleted_at.
+        cleanup_ok = True
+        if comment_uuid is not None:
+            ok, res = await call(
+                client, "comment_delete",
+                {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
     return results
 
 
