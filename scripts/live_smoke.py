@@ -6114,10 +6114,31 @@ async def run_r35_work_queue_timestamp_types(client: Any) -> list[CheckResult]:
                 "author": "live-smoke", "created_by": "live-smoke",
             },
         )
-        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+        # bug_fix_create nests its payload under "bug_fix" rather than returning a
+        # flat record like most create commands (same note as run_tier3_bug_create).
+        fix_payload = res.get("bug_fix") if ok and isinstance(res, dict) else None
+        fix_uuid = fix_payload.get("uuid") if isinstance(fix_payload, dict) else None
+        if not ok or not fix_uuid:
             results.append(CheckResult("4", "R35_4375c341_bug_fix_create", STATUS_FAIL, str(res)))
             return results
-        fix_uuid = res["uuid"]
+        # Direct evidence of the fix at the source: the store must have converted
+        # the row's timestamptz before it ever reached the queue.
+        fix_created_at = fix_payload.get("created_at")
+        if isinstance(fix_created_at, str):
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_bug_fix_created_at_is_iso", STATUS_PASS,
+                    f"created_at={fix_created_at}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R35_4375c341_bug_fix_created_at_is_iso", STATUS_FAIL,
+                    f"created_at is {type(fix_created_at).__name__}, not an ISO string: {fix_created_at!r}",
+                )
+            )
+            return results
 
         # A second live work source, so the sort has an ISO string to compare
         # the bug_fix timestamp against. With only one item there is nothing to
