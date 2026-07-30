@@ -197,9 +197,36 @@ def list_wishes_page(
     limit: int = 50,
     offset: int = 0,
     include_deleted: bool = False,
+    search: str | None = None,
+    search_regex: str | None = None,
 ) -> tuple[list[WishItem], int]:
+    """List a page of wishes, optionally narrowed by content search.
+
+    search and search_regex are additive keywords with None defaults, so every
+    pre-existing caller is unaffected. They route to the declared
+    WishItem.SEARCH_COLUMNS (title, description): search matches a substring
+    case-insensitively, search_regex a POSIX regular expression. search wins
+    when both are supplied. Either composes with every attribute filter by AND
+    and with the existing pagination and ordering.
+    """
     where_clauses: list[str] = []
     params: list[Any] = []
+
+    if search is not None or search_regex is not None:
+        if not WishItem.SEARCH_COLUMNS:
+            raise ValueError(
+                "WishItem does not declare SEARCH_COLUMNS; search not available"
+            )
+        if search is not None:
+            operator, value = "ILIKE", f"%{search}%"
+        else:
+            operator, value = "~*", search_regex
+        # One predicate per declared searchable column, OR-ed, then ANDed with
+        # the attribute filters. Column names come from the class descriptor,
+        # never from caller input; the value is always a bind parameter.
+        group = " OR ".join(f"{column} {operator} %s" for column in WishItem.SEARCH_COLUMNS)
+        where_clauses.append(f"({group})")
+        params.extend([value] * len(WishItem.SEARCH_COLUMNS))
 
     if status is not None:
         where_clauses.append("status = %s")

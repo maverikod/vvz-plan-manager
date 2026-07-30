@@ -453,6 +453,91 @@ class DataclassEntity(EntityRecord):
         return [cls._row_to_dict(cur, row) for row in cur.fetchall()]
 
     @classmethod
+    def _search_sql(
+        cls, search: str | None, search_regex: str | None
+    ) -> tuple[sql.Composable | None, list[Any]]:
+        """Build the content-search predicate group over declared SEARCH_COLUMNS.
+
+        One predicate per declared column, OR-ed together, so a hit in any
+        searchable column matches. The caller ANDs the group with the uniform
+        attribute filters.
+
+        ``search`` wins when both are given: substring is the cheaper, more
+        predictable mode, and silently running a regex the caller did not
+        prioritize would be worse than ignoring it.
+
+        Returns:
+            (predicate, params), or (None, []) when neither mode is requested.
+
+        Raises:
+            ValueError: when a search is requested and the entity declares no
+                SEARCH_COLUMNS. Returning every row unfiltered would look like
+                "no text matched" while actually meaning "this entity cannot
+                search", which is the more dangerous of the two.
+        """
+        if search is None and search_regex is None:
+            return None, []
+        if not cls.SEARCH_COLUMNS:
+            raise ValueError(
+                f"Entity {cls.__name__} does not declare SEARCH_COLUMNS; search not available"
+            )
+        if search is not None:
+            operator, value = sql.SQL("ILIKE"), f"%{search}%"
+        else:
+            operator, value = sql.SQL("~*"), search_regex
+        predicates = [
+            sql.SQL("{} {} %s").format(sql.Identifier(column), operator)
+            for column in cls.SEARCH_COLUMNS
+        ]
+        return (
+            sql.SQL("({})").format(sql.SQL(" OR ").join(predicates)),
+            [value] * len(predicates),
+        )
+
+    @staticmethod
+    def _snippet(text: str, needle: str, *, window: int = 25) -> str:
+        """A bounded excerpt around the first match, with an ellipsis marker."""
+        lowered, target = text.lower(), needle.lower()
+        position = lowered.find(target)
+        if position < 0:
+            position = 0
+        start = max(0, position - window)
+        end = min(len(text), position + len(needle) + window)
+        excerpt = text[start:end]
+        if start > 0:
+            excerpt = f"...{excerpt}"
+        if end < len(text):
+            excerpt = f"{excerpt}..."
+        return excerpt
+
+    @classmethod
+    def _annotate_match(cls, row: dict[str, Any], search: str | None) -> dict[str, Any]:
+        """Add matched_column and snippet so a hit carries its provenance.
+
+        Without this a caller receives a row and cannot tell which of several
+        searchable columns matched. The matched column is the first declared
+        SEARCH_COLUMN whose value contains the needle; for a regex search the
+        needle is unknown to Python, so the first non-empty searchable column
+        is reported and the snippet is its leading window.
+        """
+        matched_column: str | None = None
+        snippet: str | None = None
+        for column in cls.SEARCH_COLUMNS:
+            value = row.get(column)
+            if not isinstance(value, str) or not value:
+                continue
+            if search is None:
+                matched_column, snippet = column, cls._snippet(value, "")
+                break
+            if search.lower() in value.lower():
+                matched_column, snippet = column, cls._snippet(value, search)
+                break
+        annotated = dict(row)
+        annotated["matched_column"] = matched_column
+        annotated["snippet"] = snippet
+        return annotated
+
+    @classmethod
     def crud_search(
         cls,
         conn: psycopg.Connection,
@@ -462,15 +547,61 @@ class DataclassEntity(EntityRecord):
         order_by: Sequence[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        search: str | None = None,
+        search_regex: str | None = None,
     ) -> list[dict[str, Any]]:
-        return cls.crud_list(
-            conn,
-            filters=filters,
-            include_deleted=include_deleted,
-            order_by=order_by,
-            limit=limit,
-            offset=offset,
+        """List rows, optionally narrowed by content search over SEARCH_COLUMNS.
+
+        With neither ``search`` nor ``search_regex`` this behaves exactly like
+        ``crud_list``, which keeps every existing caller working unchanged.
+
+        ``search`` matches a substring case-insensitively (ILIKE); the caller's
+        value is escaped as a bind parameter, never interpolated.
+        ``search_regex`` matches a POSIX regular expression case-insensitively
+        (``~*``). Either mode composes with ``filters`` by AND.
+
+        Every returned row additionally carries ``matched_column`` and
+        ``snippet``.
+        """
+        search_predicate, search_params = cls._search_sql(search, search_regex)
+        if search_predicate is None:
+            return cls.crud_list(
+                conn,
+                filters=filters,
+                include_deleted=include_deleted,
+                order_by=order_by,
+                limit=limit,
+                offset=offset,
+            )
+
+        clauses, params = cls._filter_sql(filters)
+        clauses.append(search_predicate)
+        params.extend(search_params)
+        if not include_deleted and cls.SOFT_DELETE_COLUMN is not None:
+            clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(cls.SOFT_DELETE_COLUMN)))
+        order = sql.SQL("")
+        if order_by:
+            order = sql.SQL(" ORDER BY {}").format(
+                sql.SQL(", ").join(sql.Identifier(column) for column in order_by)
+            )
+        paging = sql.SQL("")
+        if limit is not None:
+            paging += sql.SQL(" LIMIT %s")
+            params.append(limit)
+        if offset is not None:
+            paging += sql.SQL(" OFFSET %s")
+            params.append(offset)
+        query = sql.SQL("SELECT {} FROM {} WHERE {}{}{}").format(
+            cls._select_columns_sql(),
+            cls._table(),
+            sql.SQL(" AND ").join(clauses),
+            order,
+            paging,
         )
+        cur = conn.execute(query, params)
+        return [
+            cls._annotate_match(cls._row_to_dict(cur, row), search) for row in cur.fetchall()
+        ]
 
     @classmethod
     def crud_create(

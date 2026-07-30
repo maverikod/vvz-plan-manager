@@ -59,6 +59,12 @@ class WishItem(DataclassEntity):
         "assigned_to",
         "updated_at",
     )
+    # The text-bearing content columns of wish_item, per its CREATE TABLE in
+    # migration 0025_wish_and_calendar_entries.sql (both text NOT NULL). Declaring
+    # them here is what makes crud_search's substring and regex modes available
+    # for this entity; an entity with no SEARCH_COLUMNS refuses a search rather
+    # than silently returning every row.
+    SEARCH_COLUMNS = ("title", "description")
     HARD_DELETE_REFERENCE_CHECKS = (
         ReferenceCheck("calendar_entry", "wish_uuid", "uuid", live_column="deleted_at"),
     )
