@@ -1,6 +1,6 @@
 # plan-manager — Claude tooling contract
 
-template_version: v1.6.9
+template_version: v1.6.10
 
 meta:
   workspace: local
