@@ -83,6 +83,12 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "project_uuid_reserve lifecycle: reserve, collision, resolve, release, cleanup",
         needs_catalog=True,
     ),
+    LiveSmokeTestSpec(
+        "r34",
+        "run_r34_reference_inspect_traversal",
+        "reference_inspect: direct referrers and recursive traversal with cycle safety",
+        needs_catalog=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

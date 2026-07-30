@@ -424,6 +424,11 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         "wish_create", "wish_get", "wish_list", "wish_update", "wish_delete",
         "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
         "calendar_entry_update", "calendar_entry_delete",
+        # R34 (CR-6 G-004/T-004): the generic reference-graph inspection
+        # command, exercised end-to-end (direct + recursive traversal over a
+        # plan -> todo -> comment fixture) by
+        # run_r34_reference_inspect_traversal below.
+        "reference_inspect",
     }
 )
 
@@ -5845,6 +5850,186 @@ async def run_r33_project_uuid_reserve_lifecycle(
                     "" if ok else str(res),
                 )
             )
+    return results
+
+
+async def run_r34_reference_inspect_traversal(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-6 G-004/T-004: reference_inspect over the live reference graph.
+
+    Deviation from the step recipe, deliberate: the recipe asked for a
+    second todo LINKED to the first as the second hop, but
+    todo_link.from_todo_uuid is ON DELETE CASCADE, so the catalog
+    classifies it as cascading and reference_inspect (which reports only
+    references that BLOCK a hard delete) would never show it. A comment
+    anchored to the todo IS a blocking referrer
+    (runtime_comment.anchor_ref_id with primary_anchor_type='todo'), so
+    the fixture uses a comment for hop two. Anything else would assert a
+    hop that cannot exist and fail for the wrong reason.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> a todo
+    anchored to that plan (a blocking referrer of the plan via
+    todo_item.anchor_plan_uuid) -> a comment anchored to the todo (a
+    blocking referrer of the todo) -> reference_inspect(plan,
+    recursive=false), asserting the todo appears among direct_referrers
+    with the four-key shape -> reference_inspect(plan, recursive=true,
+    depth_limit=5), asserting the comment is reached through the traversal
+    and the traversal metadata is present.
+
+    Assertions are on payload fields and domain codes, never message prose.
+    """
+    results: list[CheckResult] = []
+    if "reference_inspect" not in catalog_names:
+        results.append(
+            CheckResult(
+                "4", "R34_reference_inspect", STATUS_SKIP,
+                "server predates reference_inspect",
+            )
+        )
+        return results
+
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r34-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-plan-create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r34-todo"),
+                "description": "R34 reference_inspect scratch todo",
+                "kind": "task", "priority_nice": 19, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-todo-create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "todo", "anchor_ref_id": todo_uuid,
+                "kind": "comment", "visibility": "audit_only", "author": "live-smoke",
+                "body": "R34 reference_inspect second-hop referrer",
+                "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "r34-comment-add", STATUS_FAIL, str(res)))
+            return results
+        comment_uuid = res["uuid"]
+
+        ok, res = await call(
+            client, "reference_inspect",
+            {"entity_type": "plan", "entity_id": plan_uuid, "recursive": False},
+        )
+        direct = res.get("direct_referrers") if ok and isinstance(res, dict) else None
+        matched = None
+        if isinstance(direct, list):
+            matched = next(
+                (
+                    row for row in direct
+                    if isinstance(row, dict) and row.get("referrer_id") == todo_uuid
+                ),
+                None,
+            )
+        if matched is None:
+            results.append(
+                CheckResult(
+                    "4", "r34-direct", STATUS_FAIL,
+                    f"the anchored todo is not among direct_referrers: ok={ok} {res!r}",
+                )
+            )
+            return results
+        shape_ok = (
+            matched.get("table") == "todo_item"
+            and matched.get("column") == "anchor_plan_uuid"
+            # referrer_kind, never referrer_type: the key must match the guard's
+            # lookup and the DELETE_BLOCKED payload.
+            and matched.get("referrer_kind") == "todo_item"
+        )
+        results.append(
+            CheckResult(
+                "4", "r34-direct", STATUS_PASS if shape_ok else STATUS_FAIL,
+                f"todo_item.anchor_plan_uuid -> {todo_uuid}" if shape_ok
+                else f"unexpected referrer shape: {matched!r}",
+            )
+        )
+        if not shape_ok:
+            return results
+
+        ok, res = await call(
+            client, "reference_inspect",
+            {
+                "entity_type": "plan", "entity_id": plan_uuid,
+                "recursive": True, "depth_limit": 5,
+            },
+        )
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "r34-recursive", STATUS_FAIL, str(res)))
+            return results
+        traversal = res.get("traversal")
+        items = res.get("items")
+        reached_comment = False
+        if isinstance(items, list):
+            reached_comment = any(
+                isinstance(row, dict) and row.get("referrer_id") == comment_uuid
+                for row in items
+            )
+        metadata_ok = (
+            isinstance(traversal, dict)
+            and "nodes_visited" in traversal
+            and "cycles_detected" in traversal
+            and "edges_traversed" in traversal
+        )
+        if reached_comment and metadata_ok:
+            results.append(
+                CheckResult(
+                    "4", "r34-recursive", STATUS_PASS,
+                    f"nodes_visited={traversal.get('nodes_visited')} "
+                    f"cycles_detected={traversal.get('cycles_detected')}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "r34-recursive", STATUS_FAIL,
+                    f"reached_comment={reached_comment} traversal={traversal!r}",
+                )
+            )
+    finally:
+        # Reverse creation order: the comment blocks the todo's hard delete, and
+        # the todo blocks the plan's.
+        cleanup_ok = True
+        if comment_uuid is not None:
+            ok, res = await call(
+                client, "comment_delete",
+                {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "r34-cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
     return results
 
 

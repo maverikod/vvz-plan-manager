@@ -188,6 +188,7 @@ INVENTORY: tuple[str, ...] = (
     "project_view",
     "command_catalog_dump",
     "graph_dependents",
+    "reference_inspect",
     "command_timing_stats",
     # runtime audit (C-010)
     "audit_list",
