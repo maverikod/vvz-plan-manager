@@ -189,6 +189,7 @@ INVENTORY: tuple[str, ...] = (
     "command_catalog_dump",
     "graph_dependents",
     "reference_inspect",
+    "id_resolve",
     "command_timing_stats",
     # runtime audit (C-010)
     "audit_list",

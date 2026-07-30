@@ -189,6 +189,7 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "audit_list",
         "runtime_purge_batch",
         "reference_inspect",
+        "id_resolve",
         # CR-5a entity CRUD: tool (C-001)
         "tool_create",
         "tool_get",

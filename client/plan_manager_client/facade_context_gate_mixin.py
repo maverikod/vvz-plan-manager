@@ -134,5 +134,9 @@ class ContextGateCommandsMixin:
         """Inspect the cross-entity reference graph around one entity: which live rows point at it, optionally traversed transitively with cycle detection (read-only, paginated)."""
         return await self._call("reference_inspect", params)
 
+    async def id_resolve(self, **params: Any) -> Any:
+        """Resolve a partial identifier (any fragment of a UUID) to the full identifier(s) it matches, with each match's entity type and label (read-only, paginated)."""
+        return await self._call("id_resolve", params)
+
 
 __all__ = ["ContextGateCommandsMixin"]

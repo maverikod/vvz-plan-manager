@@ -222,6 +222,8 @@ def has_failures(results: list[CheckResult]) -> bool:
 # Zero-entity-dependency read-only commands: safe to invoke with a static,
 # always-valid params dict, no throwaway entity required.
 TIER2_STATIC_PARAMS: dict[str, dict[str, Any]] = {
+    # Read-only registry lookup; a literal fragment needs no fixture entity.
+    "id_resolve": {"fragment": "0000", "limit": 1},
     "plan_list": {"limit": 1},
     "todo_list": {"limit": 1},
     "bug_list": {"limit": 1},
