@@ -6258,21 +6258,28 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
     families whose live soft-delete path nothing else drives -- todo and
     comment.
 
-    How soft-ness is proven through the real command surface: no shipped
-    command exposes include_deleted, and todo_get/comment_get return
-    nothing for a soft-deleted row, so the marked-deleted state cannot be
-    read back directly. What IS observable is the pair of properties that
-    distinguish soft from hard: after delete(hard=false) the row is hidden
-    from live reads, AND it is still physically present -- proven because a
-    subsequent delete(hard=true) on the same id SUCCEEDS. Had the soft
-    delete removed the row, the hard delete would report NOT_FOUND. Success
-    of the first call alone would prove nothing, since a hard delete would
-    also succeed.
+    What is observable through the real command surface, and what is not:
+    the soft delete SUCCEEDING is the regression itself -- before the fix it
+    failed outright with the whitelist error -- and the row then being
+    hidden from reads is the second half. The row's continued PHYSICAL
+    presence cannot be observed here: no shipped command exposes
+    include_deleted, and both todo_delete and comment_delete read their
+    precondition through a live-only getter (get_todo / get_comment), so a
+    second delete on a soft-deleted id returns NOT_FOUND rather than
+    purging it. The sanctioned second phase is runtime_purge_batch, which
+    this pipeline must not invoke live because it purges EVERY soft-deleted
+    row of a type, not just this pass's.
+
+    Cleanup convention: a soft-deleted throwaway row counts as disposed of,
+    exactly as run_r7_agent_config_lifecycle already treats its
+    soft-deleted tool ("naturally deleted; the finally block must not
+    double-delete"). The finally block therefore hard-deletes only the
+    plan, and does not attempt to purge the two soft-deleted rows.
 
     Recipe (throwaway plan, try/finally cleanup): plan_create -> todo
-    anchored to that plan -> todo_delete(hard=false) -> todo_get must NOT
-    resolve -> todo_delete(hard=true) must succeed, proving the row was
-    still there -> the same three steps for a comment anchored to the plan.
+    anchored to that plan -> todo_delete(hard=false) must SUCCEED ->
+    todo_get must no longer resolve -> the same two steps for a comment
+    anchored to the plan.
 
     Pre-fix detection: the soft delete fails with the whitelist error this
     bug names, which SKIPs naming bug 31ba96d5 rather than failing the
@@ -6303,6 +6310,7 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
             return results
         todo_uuid = res["uuid"]
 
+        todo_uuid_soft = todo_uuid
         ok, res = await call(
             client, "todo_delete",
             {"todo": todo_uuid, "changed_by": "live-smoke", "hard": False},
@@ -6321,28 +6329,22 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
                 results.append(CheckResult("4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL, str(res)))
             return results
 
-        # Hidden from live reads.
-        hidden_ok, hidden_res = await call(client, "todo_get", {"todo": todo_uuid})
-        # Still physically present: a hard delete on the same id must succeed.
-        purge_ok, purge_res = await call(
-            client, "todo_delete",
-            {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
-        )
-        if purge_ok:
-            todo_uuid = None  # the row is gone now; finally must not retry
-        if (not hidden_ok) and purge_ok:
+        # The soft delete succeeded; the row counts as disposed of (R7's
+        # convention), so the finally block must not try to delete it again.
+        todo_uuid = None
+        hidden_ok, hidden_res = await call(client, "todo_get", {"todo": todo_uuid_soft})
+        if not hidden_ok:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_todo_soft_delete", STATUS_PASS,
-                    "hidden from todo_get yet still purgeable, so the row survived the soft delete",
+                    "soft delete accepted and the row is hidden from todo_get",
                 )
             )
         else:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL,
-                    f"expected hidden-but-present: todo_get ok={hidden_ok} {hidden_res!r}; "
-                    f"hard delete ok={purge_ok} {purge_res!r}",
+                    f"a soft-deleted todo must not resolve through todo_get: {hidden_res!r}",
                 )
             )
             return results
@@ -6368,31 +6370,32 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
             results.append(CheckResult("4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL, str(res)))
             return results
 
+        comment_uuid_soft = comment_uuid
+        comment_uuid = None
         hidden_ok, hidden_res = await call(
-            client, "comment_get", {"plan": plan_uuid, "comment_uuid": comment_uuid}
+            client, "comment_get", {"plan": plan_uuid, "comment_uuid": comment_uuid_soft}
         )
-        purge_ok, purge_res = await call(
-            client, "comment_delete",
-            {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True},
-        )
-        if purge_ok:
-            comment_uuid = None
-        if (not hidden_ok) and purge_ok:
+        if not hidden_ok:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_comment_soft_delete", STATUS_PASS,
-                    "hidden from comment_get yet still purgeable, so the row survived the soft delete",
+                    "soft delete accepted and the row is hidden from comment_get",
                 )
             )
         else:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL,
-                    f"expected hidden-but-present: comment_get ok={hidden_ok} {hidden_res!r}; "
-                    f"hard delete ok={purge_ok} {purge_res!r}",
+                    f"a soft-deleted comment must not resolve through comment_get: {hidden_res!r}",
                 )
             )
     finally:
+        # Each uuid is cleared once its row has been soft-deleted, so these two
+        # branches only fire when the check failed BEFORE the soft delete and the
+        # row is still live. A soft-deleted row is not hard-deleted here: the
+        # surface cannot purge one, and R7 already treats that state as disposed
+        # of. plan_delete is unaffected either way -- a soft-deleted referrer does
+        # not block it, since the reference lookup honours deleted_at.
         cleanup_ok = True
         if comment_uuid is not None:
             ok, res = await call(
