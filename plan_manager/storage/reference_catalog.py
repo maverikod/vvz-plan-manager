@@ -256,6 +256,91 @@ def validate_catalog_against_schema(conn: psycopg.Connection) -> tuple[list[str]
     return missing, extra
 
 
+EXTERNAL_IDENTIFIER_COLUMNS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # External project UUIDs. Projects are supplied by outside systems and
+        # are deliberately NOT local rows, so there is nothing in this database
+        # for these columns to reference and nothing a deletion could orphan.
+        # Cataloguing them would make the guard probe a table that does not exist.
+        ("bug_fix", "source_project_id"),
+        ("bug_impact", "target_project_id"),
+        ("bug_report", "source_project_id"),
+        ("calendar_entry", "anchor_project_id"),
+        ("escalation", "anchor_project_id"),
+        ("project_dependency", "dependent_project_id"),
+        ("project_dependency", "depends_on_project_id"),
+        ("runtime_comment", "anchor_project_id"),
+        ("todo_item", "anchor_project_id"),
+        ("wish_item", "anchor_project_id"),
+    }
+)
+"""uuid columns holding identifiers of things that are NOT rows of this database.
+
+Membership is a documented decision, not an oversight: an external identifier has
+no local target, so it can neither block a deletion nor be orphaned by one.
+"""
+
+UNCLASSIFIED_REFERENCE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # Bug f7b9cebf. Each of these is a uuid column of a registered table that
+        # is NOT in REFERENCE_CATALOG and is NOT an external identifier, so
+        # lookup_referrers issues no probe for it and a deletion referenced only
+        # through it is admitted. Measured 2026-07-30 against shipped 0.1.90:
+        # 113 uuid columns in registered tables, 66 catalogued, 10 external,
+        # these 37 unclassified.
+        #
+        # THIS LIST ONLY SHRINKS. A column leaves it by being catalogued with its
+        # blocking/on_delete/discriminator metadata, or by being exempted with a
+        # written reason. Nothing may be added without classifying it, and the
+        # accompanying tests refuse both a stale entry and one already resolved.
+        #
+        # Classification is not mechanical: each column needs a decision on
+        # whether the reference blocks a hard delete or cascades, what the
+        # discriminator is for a polymorphic column, and whether it is nullable
+        # and therefore clearable. That work is the first goal of the successor
+        # plan, not a mechanical sweep.
+        ("answer_envelope", "anchor_step_uuid"),
+        ("bug_fix_propagation", "linked_cascade_uuid"),
+        ("bug_impact", "target_ref_id"),
+        ("bug_impact", "target_revision_uuid"),
+        ("bug_report", "source_ref_id"),
+        ("bug_report", "source_revision_uuid"),
+        ("calendar_entry", "anchor_plan_uuid"),
+        ("calendar_entry", "anchor_ref_id"),
+        ("calendar_entry", "anchor_revision_uuid"),
+        ("calendar_entry", "anchor_step_uuid"),
+        ("cascade_request", "origin_id"),
+        ("escalation", "anchor_revision_uuid"),
+        ("escalation", "chain_root_uuid"),
+        ("escalation", "forwarded_from_uuid"),
+        ("execution_attempt", "assigned_binding_uuid"),
+        ("execution_attempt", "revision_uuid"),
+        ("invocation_profile", "branch_step_uuid"),
+        ("invocation_profile", "dialogue_chain_ref"),
+        ("invocation_profile", "revision_uuid"),
+        ("invocation_profile", "step_uuid"),
+        ("model_binding", "revision_uuid"),
+        ("review_result", "escalation_target_uuid"),
+        ("review_result", "reviewed_revision_uuid"),
+        ("revision", "node_version_uuids"),
+        ("runtime_audit_log", "entity_id"),
+        ("runtime_comment", "anchor_revision_uuid"),
+        ("runtime_link", "from_entity_uuid"),
+        ("runtime_link", "to_entity_uuid"),
+        ("step_assignment", "branch_step_uuid"),
+        ("step_assignment", "revision_uuid"),
+        ("step_assignment", "step_uuid"),
+        ("todo_item", "anchor_ref_id"),
+        ("todo_item", "anchor_revision_uuid"),
+        ("wish_item", "anchor_plan_uuid"),
+        ("wish_item", "anchor_ref_id"),
+        ("wish_item", "anchor_revision_uuid"),
+        ("wish_item", "anchor_step_uuid"),
+    }
+)
+"""uuid reference columns awaiting classification (bug f7b9cebf). Shrinks only."""
+
+
 def _entity_classes() -> list[type]:
     """Every table-backed DataclassEntity subclass, discovered once per call.
 
