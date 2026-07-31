@@ -1,6 +1,6 @@
 # plan-manager - Codex operating contract
 
-**Prompts template:** `codex-prompts-v1` rev **1.6.2** (2026-07-26)
+**Prompts template:** `codex-prompts-v1` rev **1.6.12** (2026-07-31)
 
 This file is the Codex entrypoint. The root must read these files itself at the
 start of a task:
@@ -15,7 +15,9 @@ relative prompt-package reference against `codex/`.
 ## Project profile
 
 - Project: `plan-manager`
-- Local checkout: `/home/testuser/projects/plan-manager`
+- Local checkout: `/home/vasilyvz/projects/tools/plan_manager`
+- Default file-access profile: `local` (only the user may switch it).
+- Deployment host: `root@192.168.254.26`.
 - CAS project ID: `f06b7269-cc9c-4293-886b-24984e4033ba`
 - CAS server: `code-analysis-server-vvz`
 
