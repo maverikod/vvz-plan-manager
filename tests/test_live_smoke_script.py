@@ -2737,6 +2737,20 @@ _R11_TOOL_SUMMARY_ROW = {
     "command": "do_thing", "updated_at": "2026-07-23T00:00:00+00:00",
 }
 
+_R11_PLAN_SUMMARY_ROW = {
+    "uuid": "plan-1", "name": "my-plan", "status": "draft",
+    "primary_project_id": "project-1", "deleted": False, "completed": False,
+}
+
+_R11_PLAN_FULL_ROW = {
+    **_R11_PLAN_SUMMARY_ROW,
+    "context_budget": 4000,
+    "has_head": False,
+    "project_ids": ["project-1"],
+    "project_count": 1,
+    "comment": None,
+}
+
 
 def _r11_todo_list_dispatch(*, pre_fix: bool):
     def _dispatch(params):
@@ -2754,10 +2768,17 @@ def _r11_todo_list_dispatch(*, pre_fix: bool):
     return _dispatch
 
 
+def _r11_plan_list_dispatch(params):
+    if params.get("view") == "full":
+        return _ok({"plans": [_R11_PLAN_FULL_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+    return _ok({"plans": [_R11_PLAN_SUMMARY_ROW], "total": 1, "limit": params.get("limit", 50), "offset": 0})
+
+
 def _r11_client(*, pre_fix: bool) -> "_ScriptedClient":
     return _ScriptedClient(
         {
             "todo_list": _r11_todo_list_dispatch(pre_fix=pre_fix),
+            "plan_list": _r11_plan_list_dispatch,
             "bug_list": _ok({"bugs": [_R11_BUG_SUMMARY_ROW], "total": 1, "limit": 5, "offset": 0}),
             "tool_list": _ok({"tools": [_R11_TOOL_SUMMARY_ROW], "total": 1, "limit": 5, "offset": 0}),
         }
@@ -2786,6 +2807,9 @@ def test_run_r11_post_fix_server_passes_every_check():
     by_name = {r.name: r for r in results}
     assert by_name["R11_todo_list(view=summary)_row_size"].status == ls.STATUS_PASS
     assert by_name["R11_todo_list(view=summary)_row_fields"].status == ls.STATUS_PASS
+    assert by_name["R11_plan_list(view=summary)_response_fields_and_types"].status == ls.STATUS_PASS
+    assert by_name["R11_plan_list(view=summary)_row_fields_and_types"].status == ls.STATUS_PASS
+    assert by_name["R11_plan_list(view=full)_original_fields_and_types"].status == ls.STATUS_PASS
     assert by_name["R11_bug_list(view=summary)_row_size"].status == ls.STATUS_PASS
     assert by_name["R11_bug_list(view=summary)_row_fields"].status == ls.STATUS_PASS
     assert by_name["R11_tool_list(view=summary)_row_size"].status == ls.STATUS_PASS
@@ -2813,6 +2837,22 @@ def test_run_r11_wrong_summary_shape_fails_not_skips():
 
     by_name = {r.name: r for r in results}
     assert by_name["R11_todo_list(view=summary)_row_fields"].status == ls.STATUS_FAIL
+
+
+def test_run_r11_missing_plan_completed_fails_not_skips() -> None:
+    """The completion field is a strict plan-summary contract field."""
+    client = _r11_client(pre_fix=False)
+    missing_completed = dict(_R11_PLAN_SUMMARY_ROW)
+    del missing_completed["completed"]
+    client._responses["plan_list"] = _sequence(
+        _ok({"plans": [missing_completed], "total": 1, "limit": 5, "offset": 0}),
+        _ok({"plans": [_R11_PLAN_FULL_ROW], "total": 1, "limit": 1, "offset": 0}),
+    )
+
+    results = asyncio.run(ls.run_r11_list_view_projection(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R11_plan_list(view=summary)_row_fields_and_types"].status == ls.STATUS_FAIL
 
 
 def test_run_r11_oversized_row_fails() -> None:

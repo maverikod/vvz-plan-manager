@@ -22,6 +22,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key", help="Client private key path for the optional live-smoke check.")
     parser.add_argument("--ca", help="CA bundle path for the optional live-smoke check.")
     parser.add_argument(
+        "--test",
+        action="append",
+        default=[],
+        metavar="R#",
+        help="Run only this named live-smoke regression (repeatable; requires --base-url).",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Forward JSON output mode to the optional live-smoke check.",
@@ -42,6 +49,8 @@ def _live_smoke_argv(args: argparse.Namespace) -> tuple[str, ...] | None:
         argv.extend(["--key", args.key])
     if args.ca:
         argv.extend(["--ca", args.ca])
+    for test_key in args.test:
+        argv.extend(["--test", test_key])
     if args.json:
         argv.append("--json")
     return tuple(argv)
@@ -65,6 +74,20 @@ def _resolve_checks(args: argparse.Namespace) -> tuple[tuple[str, tuple[str, ...
     return tuple(resolved)
 
 
+def _validate_live_smoke_test_selection(parser: argparse.ArgumentParser, test_keys: Sequence[str]) -> None:
+    """Reject unknown live-smoke selectors without burdening other checks."""
+    if not test_keys:
+        return
+    live_smoke_tests_root = repo_root() / "scripts"
+    if str(live_smoke_tests_root) not in sys.path:
+        sys.path.insert(0, str(live_smoke_tests_root))
+    from live_smoke_tests import LIVE_SMOKE_TEST_KEYS
+
+    unknown = sorted(set(test_keys) - set(LIVE_SMOKE_TEST_KEYS))
+    if unknown:
+        parser.error(f"unknown live-smoke test selector(s): {', '.join(unknown)}")
+
+
 def _run_check(name: str, argv: Sequence[str]) -> int:
     """Run one named check and return its subprocess exit code."""
     root = repo_root()
@@ -83,6 +106,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.test and not args.base_url:
+        parser.error("--test requires --base-url")
+    if args.test and args.check not in (None, "live-smoke"):
+        parser.error("--test is only valid with pipeline live-smoke")
+    _validate_live_smoke_test_selection(parser, args.test)
 
     if args.list:
         for spec in CHECKS:

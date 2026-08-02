@@ -3331,6 +3331,99 @@ async def run_r11_list_view_projection(client: Any) -> list[CheckResult]:
         results.append(CheckResult("4", "R11_todo_list(view=summary)_row_size", STATUS_PASS if not oversized else STATUS_FAIL, "" if not oversized else f"{len(oversized)} row(s) >= {R11_SUMMARY_ROW_BYTE_CEILING} bytes"))
         results.append(CheckResult("4", "R11_todo_list(view=summary)_row_fields", STATUS_PASS if not wrong_shape else STATUS_FAIL, "" if not wrong_shape else f"unexpected shape: {wrong_shape[:1]}"))
 
+    # The plan list is the compact catalog callers use to decide which plan
+    # to inspect next.  Completion is operational state, not free text, so
+    # it belongs in this exact summary projection.  Assert the complete
+    # response contract (including nested row types) here rather than merely
+    # checking that plan_list accepted view=summary.
+    expected_plan_list_response_fields = {"plans", "total", "limit", "offset"}
+    expected_plan_summary_fields = {
+        "uuid", "name", "status", "primary_project_id", "deleted", "completed",
+    }
+    ok, res = await call(client, "plan_list", {"limit": 5, "view": "summary"})
+    plan_list_summary_ok = (
+        ok
+        and isinstance(res, dict)
+        and set(res) == expected_plan_list_response_fields
+        and isinstance(res.get("plans"), list)
+        and type(res.get("total")) is int
+        and type(res.get("limit")) is int
+        and type(res.get("offset")) is int
+    )
+    results.append(
+        CheckResult(
+            "4",
+            "R11_plan_list(view=summary)_response_fields_and_types",
+            STATUS_PASS if plan_list_summary_ok else STATUS_FAIL,
+            "" if plan_list_summary_ok else str(res),
+        )
+    )
+    if plan_list_summary_ok:
+        wrong_plan_rows = [
+            row
+            for row in res["plans"]
+            if not (
+                isinstance(row, dict)
+                and set(row) == expected_plan_summary_fields
+                and type(row.get("uuid")) is str
+                and type(row.get("name")) is str
+                and type(row.get("status")) is str
+                and (row.get("primary_project_id") is None or type(row.get("primary_project_id")) is str)
+                and type(row.get("deleted")) is bool
+                and type(row.get("completed")) is bool
+            )
+        ]
+        results.append(
+            CheckResult(
+                "4",
+                "R11_plan_list(view=summary)_row_fields_and_types",
+                STATUS_PASS if not wrong_plan_rows else STATUS_FAIL,
+                "" if not wrong_plan_rows else f"unexpected shape/type: {wrong_plan_rows[:1]}",
+            )
+        )
+
+    # Summary gained completion state above; the full view must stay the
+    # original complete payload so existing detailed callers are unaffected.
+    expected_plan_full_fields = {
+        "uuid", "name", "status", "context_budget", "has_head", "project_ids",
+        "project_count", "primary_project_id", "deleted", "completed", "comment",
+    }
+    ok, res = await call(client, "plan_list", {"limit": 1, "view": "full"})
+    plan_list_full_ok = (
+        ok
+        and isinstance(res, dict)
+        and set(res) == expected_plan_list_response_fields
+        and isinstance(res.get("plans"), list)
+        and type(res.get("total")) is int
+        and type(res.get("limit")) is int
+        and type(res.get("offset")) is int
+        and all(
+            isinstance(row, dict)
+            and set(row) == expected_plan_full_fields
+            and type(row.get("uuid")) is str
+            and type(row.get("name")) is str
+            and type(row.get("status")) is str
+            and type(row.get("context_budget")) is int
+            and type(row.get("has_head")) is bool
+            and isinstance(row.get("project_ids"), list)
+            and all(type(project_id) is str for project_id in row["project_ids"])
+            and type(row.get("project_count")) is int
+            and (row.get("primary_project_id") is None or type(row.get("primary_project_id")) is str)
+            and type(row.get("deleted")) is bool
+            and type(row.get("completed")) is bool
+            and (row.get("comment") is None or type(row.get("comment")) is str)
+            for row in res["plans"]
+        )
+    )
+    results.append(
+        CheckResult(
+            "4",
+            "R11_plan_list(view=full)_original_fields_and_types",
+            STATUS_PASS if plan_list_full_ok else STATUS_FAIL,
+            "" if plan_list_full_ok else str(res),
+        )
+    )
+
     ok, res = await call(client, "bug_list", {"limit": 5, "view": "summary"})
     bug_summary_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list)
     results.append(CheckResult("4", "R11_bug_list(view=summary)_call", STATUS_PASS if bug_summary_ok else STATUS_FAIL, "" if bug_summary_ok else str(res)))

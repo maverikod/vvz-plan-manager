@@ -19,8 +19,8 @@ from plan_manager.commands.list_projection import parse_view, project_row, view_
 # Compact view=summary projection (bug 8a13977d). plan_list already hand-builds a
 # fairly small row (no to_payload() call here), so this trims the bulkier/derived
 # fields (context_budget, has_head, project_ids, project_count, comment) down to
-# the plan's core identity.
-PLAN_LIST_SUMMARY_FIELDS = ("uuid", "name", "status", "primary_project_id", "deleted")
+# the plan's core identity and completion state.
+PLAN_LIST_SUMMARY_FIELDS = ("uuid", "name", "status", "primary_project_id", "deleted", "completed")
 
 class PlanListCommand(Command):
     """Return a paginated page of the catalog of all plans, read-only."""
@@ -110,7 +110,8 @@ class PlanListCommand(Command):
                 page of dicts with "uuid", "name", "status",
                 "context_budget", "has_head", the bound projects
                 ("project_ids", "project_count", "primary_project_id"), and
-                the soft-deletion flag "deleted", plus "total", "limit", and
+                the soft-deletion flag "deleted", completion state
+                "completed", and "comment", plus "total", "limit", and
                 "offset". On unexpected failure, an ErrorResult produced by
                 map_exception, including INVALID_PAGINATION for an
                 out-of-range limit or offset.

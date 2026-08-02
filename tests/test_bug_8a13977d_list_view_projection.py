@@ -417,9 +417,22 @@ def test_plan_list_summary_projection_is_exact() -> None:
         "deleted": False, "completed": False, "comment": _LONG_TEXT,
     }
     summary = project_row(row, VIEW_SUMMARY, PLAN_LIST_SUMMARY_FIELDS)
-    assert set(summary) == {"uuid", "name", "status", "primary_project_id", "deleted"}
+    assert set(summary) == {"uuid", "name", "status", "primary_project_id", "deleted", "completed"}
+    assert summary["completed"] is False
     full = project_row(row, VIEW_FULL, PLAN_LIST_SUMMARY_FIELDS)
     assert full == row
+
+
+def test_plan_list_metadata_documents_summary_completion_state() -> None:
+    from plan_manager.commands.plan_list_command import PlanListCommand
+
+    metadata = PlanListCommand.metadata()
+    summary_practice = next(
+        item for item in metadata["best_practices"] if item.startswith("view=summary")
+    )
+    assert "completed" in summary_practice
+    assert "drops context_budget, has_head, project_ids, project_count, comment" in summary_practice
+    assert metadata["return_value"]["success"]["example"]["plans"][0]["completed"] is False
 
 
 def test_para_list_summary_projection_is_exact() -> None:

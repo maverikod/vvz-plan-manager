@@ -76,6 +76,10 @@ def test_pipeline_live_smoke_forwards_mtls_client_files() -> None:
             "mtls-certs/client.key",
             "--ca",
             "build/planmgr-live-ca.crt",
+            "--test",
+            "r11",
+            "--test",
+            "r3",
             "--json",
         ]
     )
@@ -93,8 +97,40 @@ def test_pipeline_live_smoke_forwards_mtls_client_files() -> None:
         "mtls-certs/client.key",
         "--ca",
         "build/planmgr-live-ca.crt",
+        "--test",
+        "r11",
+        "--test",
+        "r3",
         "--json",
     )
+
+
+def test_pipeline_live_smoke_test_selector_is_validated_and_requires_live_smoke() -> None:
+    parser = pipeline_cli.build_parser()
+    args = parser.parse_args(
+        [
+            "live-smoke",
+            "--base-url",
+            "https://192.168.254.26:15001",
+            "--test",
+            "r11",
+            "--test",
+            "r3",
+        ]
+    )
+    assert args.test == ["r11", "r3"]
+
+    for invalid_argv in (
+        ["live-smoke", "--base-url", "https://example.test", "--test", "unknown"],
+        ["repo-tests", "--base-url", "https://example.test", "--test", "r11"],
+        ["live-smoke", "--test", "r11"],
+    ):
+        try:
+            pipeline_cli.main(invalid_argv)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"expected CLI validation failure for {invalid_argv}")
 
 
 def test_run_check_exports_repo_and_client_to_pythonpath(monkeypatch) -> None:

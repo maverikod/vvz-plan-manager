@@ -32,7 +32,7 @@ def get_plan_list_metadata(cls: Any) -> dict:
             "identity, name, status, context budget, whether the plan has a "
             "head revision, the analysis projects the plan is bound to (the "
             "full project_ids list, their count, and the primary project "
-            "id), and a deleted flag. By default the catalog omits "
+            "id), deleted flag, and completion state. By default the catalog omits "
             "soft-deleted plans; pass show_deleted=true to include them "
             "(each such row has deleted=true). Soft-deleted plans remain "
             "fully operable and resolvable by uuid or name; they are only "
@@ -63,7 +63,7 @@ def get_plan_list_metadata(cls: Any) -> dict:
                     "plans": (
                         "List of plan rows in the requested page, each with uuid, name, status, "
                         "context_budget, has_head, project_ids, "
-                        "project_count, primary_project_id, and deleted."
+                        "project_count, primary_project_id, deleted, completed, and comment."
                     ),
                     "total": "Count of the full plan catalog before pagination.",
                     "limit": "The limit actually applied.",
@@ -85,6 +85,8 @@ def get_plan_list_metadata(cls: Any) -> dict:
                                 "4acd4be1-d166-417d-81c6-76bf77b4a392"
                             ),
                             "deleted": False,
+                            "completed": False,
+                            "comment": None,
                         }
                     ],
                     "total": 1,
@@ -133,6 +135,6 @@ def get_plan_list_metadata(cls: Any) -> dict:
             "Read each row's primary_project_id and project_ids to see which analysis projects a plan is bound to.",
             "Use show_deleted=true to audit or recover soft-deleted plans; a row with deleted=true was removed from the default catalog by plan_delete.",
             "Compare offset+limit against total to detect additional pages.",
-            "view=summary returns a compact per-row projection (uuid, name, status, primary_project_id, deleted) instead of the full row (drops context_budget, has_head, project_ids, project_count, completed, comment); use plan_status for a single plan's full detail.",
+            "view=summary returns a compact per-row projection (uuid, name, status, primary_project_id, deleted, completed) instead of the full row (drops context_budget, has_head, project_ids, project_count, comment); use plan_status for a single plan's full detail.",
         ],
     }
