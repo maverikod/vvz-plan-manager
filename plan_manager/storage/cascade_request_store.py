@@ -147,25 +147,25 @@ def create_cascade_request(
         )
     request_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO cascade_request "
-        "(uuid, plan_uuid, revision_uuid, target_artifact, target_step_path, "
-        "origin_kind, origin_id, reason, status, created_by, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            request_uuid,
-            plan_uuid,
-            revision_uuid,
-            target_artifact,
-            target_step_path,
-            origin_kind,
-            origin_id,
-            reason,
-            "open",
-            created_by,
-            now,
-            now,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    CascadeRequestRecord.crud_create(
+        conn,
+        {
+            "uuid": request_uuid,
+            "plan_uuid": plan_uuid,
+            "revision_uuid": revision_uuid,
+            "target_artifact": target_artifact,
+            "target_step_path": target_step_path,
+            "origin_kind": origin_kind,
+            "origin_id": origin_id,
+            "reason": reason,
+            "status": "open",
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        },
+        returning=False,
     )
     record_runtime_change(
         conn,

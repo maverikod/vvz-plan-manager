@@ -143,6 +143,13 @@ def delete_step(conn: psycopg.Connection, step_uuid: uuid.UUID) -> None:
                 (new_depends_on, sibling_uuid),
             )
 
+    # CR-7 G-004 compatibility note: this DELETE stays self-composed in this
+    # state. The guarded engine wrapper consults the reference catalog, whose
+    # blocking node_version.entity_uuid entry would refuse every step that has
+    # version history - an observable behaviour change this step forbids. The
+    # child-count check above already enforces the one blocking edge deletion
+    # relied on historically; the set-wise deletion engine of G-006/T-001
+    # adopts this shape together with its version cleanup.
     conn.execute("DELETE FROM step WHERE uuid = %s", (step_uuid,))
 
 

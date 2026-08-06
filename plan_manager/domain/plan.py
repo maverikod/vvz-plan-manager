@@ -1,11 +1,8 @@
 """Plan aggregate: the root domain entity for a development plan.
 
 Implements C-001 (Plan) per docs/plans/2026-07-02-plan-manager/spec.yaml.
-Storage: PostgreSQL table `plan` (columns: uuid, name, status,
-context_budget, head_revision_uuid, project_ids, primary_project_id),
-accessed via psycopg 3 with plain SQL
-(no ORM). DDL for this table is owned by SQL migrations outside this module;
-this module never emits DDL.
+Storage: PostgreSQL table `plan`, accessed via psycopg 3 with plain SQL
+(no ORM); DDL is owned by SQL migrations outside this module.
 """
 
 from dataclasses import dataclass
@@ -85,19 +82,13 @@ class Plan(DataclassEntity):
         head_revision_uuid: Identity of the current head revision in the
             version store (C-018), or None if no revision has been
             recorded yet.
-        deleted_at: Soft-deletion timestamp, or None for a live plan. A
-            soft-deleted plan is hidden from the default plan catalog but
-            otherwise behaves normally and stays resolvable by uuid or
-            name.
-        completed: Plan-level completion lock (bug c3950b83). Defaults to
-            False. When True, every mutating command that resolves its
-            `plan` parameter to this plan via resolve_plan_guarded refuses
-            with PLAN_COMPLETED; only plan_completed_set and
-            plan_comment_set stay reachable. Always directly settable via
-            plan_completed_set regardless of freeze or completion state.
-        comment: Free-form note attached to the plan, or None. Always
-            directly settable via plan_comment_set regardless of freeze or
-            completion state.
+        deleted_at: Soft-deletion timestamp, or None for a live plan; a
+            soft-deleted plan stays resolvable by uuid or name.
+        completed: Plan-level completion lock (bug c3950b83), default False.
+            When True, mutating commands resolving this plan refuse with
+            PLAN_COMPLETED; only plan_completed_set and plan_comment_set
+            stay reachable, both always directly settable.
+        comment: Free-form note attached to the plan, or None.
     """
 
     ENTITY_TYPE = "plan"
@@ -166,11 +157,16 @@ def create_plan(
     if context_budget <= 0:
         raise ValueError("context_budget must be > 0")
     plan_uuid = uuid.uuid4()
-    conn.execute(
-        "INSERT INTO plan (uuid, name, status, context_budget, "
-        "head_revision_uuid, project_ids, primary_project_id, completed, comment) "
-        "VALUES (%s, %s, 'draft', %s, NULL, %s, NULL, false, NULL)",
-        (plan_uuid, name, context_budget, []),
+    # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+    Plan.crud_create(
+        conn,
+        {
+            "uuid": plan_uuid, "name": name, "status": "draft",
+            "context_budget": context_budget, "head_revision_uuid": None,
+            "project_ids": [], "primary_project_id": None,
+            "completed": False, "comment": None,
+        },
+        returning=False,
     )
     return Plan(
         uuid=plan_uuid,
@@ -352,7 +348,12 @@ def hard_delete_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
     Returns:
         None.
     """
-    conn.execute("DELETE FROM plan WHERE uuid = %s", (plan_uuid,))
+    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine
+    # wrapper; ON DELETE CASCADE child cleanup is unchanged DB behaviour.
+    Plan.crud_hard_delete(
+        conn, plan_uuid,
+        require_soft_deleted=False, returning=False, plan_uuid=plan_uuid,
+    )
 
 
 def set_plan_completed(conn: psycopg.Connection, plan_uuid: uuid.UUID, completed: bool) -> None:

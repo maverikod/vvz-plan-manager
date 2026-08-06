@@ -79,39 +79,35 @@ def create_model_binding(
     deleted_at = None
 
     # Insert into database with exact column order
-    sql = (
-        "INSERT INTO model_binding "
-        "(uuid, scope, role, plan_uuid, spec_level, branch_step_uuid, revision_uuid, "
-        "step_uuid, step_path, provider, model, fallback_provider, fallback_model, "
-        "max_retries, timeout, context_budget, active, created_by, created_at, "
-        "updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-        "%s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    ModelBinding.crud_create(
+        conn,
+        {
+            "uuid": binding_uuid,
+            "scope": scope,
+            "role": role,
+            "plan_uuid": plan_uuid,
+            "spec_level": spec_level,
+            "branch_step_uuid": branch_step_uuid,
+            "revision_uuid": revision_uuid,
+            "step_uuid": step_uuid,
+            "step_path": step_path,
+            "provider": provider,
+            "model": model,
+            "fallback_provider": fallback_provider,
+            "fallback_model": fallback_model,
+            "max_retries": max_retries,
+            "timeout": timeout,
+            "context_budget": context_budget,
+            "active": active,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "deleted_at": deleted_at,
+        },
+        returning=False,
     )
-    params = (
-        binding_uuid,
-        scope,
-        role,
-        plan_uuid,
-        spec_level,
-        branch_step_uuid,
-        revision_uuid,
-        step_uuid,
-        step_path,
-        provider,
-        model,
-        fallback_provider,
-        fallback_model,
-        max_retries,
-        timeout,
-        context_budget,
-        active,
-        created_by,
-        created_at,
-        updated_at,
-        deleted_at,
-    )
-    conn.execute(sql, params)
 
     # Record audit trail
     record_runtime_change(

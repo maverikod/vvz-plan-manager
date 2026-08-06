@@ -117,18 +117,19 @@ def record_command_metric(
 
     metric_uuid = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO command_metric "
-        "(uuid, command_name, duration_ms, mode, outcome, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s)",
-        (
-            metric_uuid,
-            command_name,
-            duration_ms,
-            mode,
-            outcome,
-            created_at,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    CommandMetricRecord.crud_create(
+        conn,
+        {
+            "uuid": metric_uuid,
+            "command_name": command_name,
+            "duration_ms": duration_ms,
+            "mode": mode,
+            "outcome": outcome,
+            "created_at": created_at,
+        },
+        returning=False,
     )
     return CommandMetricRecord(
         metric_uuid=metric_uuid,

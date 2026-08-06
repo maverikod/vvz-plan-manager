@@ -49,21 +49,28 @@ def create_review_result(
     verification_commands_wrapped = Jsonb(verification_commands) if verification_commands is not None else None
 
     # INSERT into review_result table
-    sql = """
-    INSERT INTO review_result (
-        uuid, object_type, reviewed_attempt_uuid, reviewed_revision_uuid,
-        reviewer, status, findings, evidence, verification_commands,
-        escalation_target_uuid, created_by, created_at, updated_at, deleted_at
-    ) VALUES (
-        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    ReviewResult.crud_create(
+        conn,
+        {
+            "uuid": new_uuid,
+            "object_type": object_type,
+            "reviewed_attempt_uuid": reviewed_attempt_uuid,
+            "reviewed_revision_uuid": reviewed_revision_uuid,
+            "reviewer": reviewer,
+            "status": status,
+            "findings": findings,
+            "evidence": evidence_wrapped,
+            "verification_commands": verification_commands_wrapped,
+            "escalation_target_uuid": escalation_target_uuid,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "deleted_at": deleted_at,
+        },
+        returning=False,
     )
-    """
-    params = (
-        new_uuid, object_type, reviewed_attempt_uuid, reviewed_revision_uuid,
-        reviewer, status, findings, evidence_wrapped, verification_commands_wrapped,
-        escalation_target_uuid, created_by, created_at, updated_at, deleted_at
-    )
-    conn.execute(sql, params)
 
     # Record audit change
     record_runtime_change(

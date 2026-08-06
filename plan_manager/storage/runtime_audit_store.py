@@ -84,6 +84,10 @@ class RuntimeAuditRecord(DataclassEntity):
     )
     SOFT_DELETE_COLUMN: ClassVar[str | None] = None
     UPDATED_AT_COLUMN: ClassVar[str | None] = None
+    # Identity for audit rows is registered by the DB trigger (see class
+    # docstring); the engine's Python-side registration stays off so the
+    # routed create keeps the exact single-INSERT statement profile.
+    REGISTER_IDENTITY: ClassVar[bool] = False
     # Compact view=summary projection (bug 8a13977d): drops change_reason and
     # changed_fields (the mutation diff payload, which dominates row size).
     SUMMARY_FIELDS: ClassVar[tuple[str, ...]] = (
@@ -138,12 +142,6 @@ def _row_to_record(row: tuple[Any, ...]) -> RuntimeAuditRecord:
     )
 
 
-_INSERT_SQL = (
-    "INSERT INTO runtime_audit_log "
-    "(uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason, "
-    "changed_fields, linked_attempt_id, linked_review_id, created_at) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-)
 
 # changed_fields key used to preserve a dangling plan anchor's original
 # uuid when record_runtime_change falls back to an unanchored (plan_uuid
@@ -210,21 +208,24 @@ def _insert_audit_row(
             savepoint when it wants to recover from this instead of
             aborting the surrounding transaction.
     """
-    conn.execute(
-        _INSERT_SQL,
-        (
-            audit_uuid,
-            plan_uuid,
-            entity_type,
-            entity_id,
-            action,
-            changed_by,
-            change_reason,
-            Jsonb(changed_fields) if changed_fields is not None else None,
-            linked_attempt_id,
-            linked_review_id,
-            created_at,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    RuntimeAuditRecord.crud_create(
+        conn,
+        {
+            "uuid": audit_uuid,
+            "plan_uuid": plan_uuid,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "action": action,
+            "changed_by": changed_by,
+            "change_reason": change_reason,
+            "changed_fields": Jsonb(changed_fields) if changed_fields is not None else None,
+            "linked_attempt_id": linked_attempt_id,
+            "linked_review_id": linked_review_id,
+            "created_at": created_at,
+        },
+        returning=False,
     )
 
 

@@ -33,23 +33,23 @@ def create_role_model_binding(
     updated_at = now.isoformat()
     deleted_at = None
 
-    sql = (
-        "INSERT INTO role_model_binding "
-        "(uuid, role, phase, required_level, active, created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    RoleModelBinding.crud_create(
+        conn,
+        {
+            "uuid": binding_uuid,
+            "role": role,
+            "phase": phase,
+            "required_level": required_level,
+            "active": active,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "deleted_at": deleted_at,
+        },
+        returning=False,
     )
-    params = (
-        binding_uuid,
-        role,
-        phase,
-        required_level,
-        active,
-        created_by,
-        created_at,
-        updated_at,
-        deleted_at,
-    )
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn,

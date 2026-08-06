@@ -71,8 +71,22 @@ def create_todo_link(conn: psycopg.Connection, *, from_todo_uuid: uuid.UUID, to_
     # Step 6: Insert the new link
     new_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
-    sql = "INSERT INTO todo_link (uuid, from_todo_uuid, to_todo_uuid, link_type, created_by, created_at, updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-    conn.execute(sql, (new_uuid, from_todo_uuid, to_todo_uuid, link_type, created_by, now, now, None))
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    TodoLink.crud_create(
+        conn,
+        {
+            "uuid": new_uuid,
+            "from_todo_uuid": from_todo_uuid,
+            "to_todo_uuid": to_todo_uuid,
+            "link_type": link_type,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
+    )
 
     # Step 7: Record audit entry
     record_runtime_change(conn, plan_uuid=None, entity_type="todo_link", entity_id=new_uuid, action="create", changed_by=created_by)

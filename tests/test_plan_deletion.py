@@ -31,8 +31,23 @@ class RecordingConn:
         self.statements: list[tuple[str, tuple]] = []
         self._rows = rows or []
 
+    def transaction(self):
+        """No-op savepoint stand-in for the guard's audited delete (CR-7 G-004)."""
+        conn = self
+
+        class _Tx:
+            def __enter__(self):
+                return conn
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Tx()
+
     def execute(self, sql: str, params: tuple = ()):  # noqa: D401
-        self.statements.append((sql, params))
+        # CR-7 G-004: engine statements arrive as psycopg sql.Composed.
+        rendered = sql.as_string(None) if hasattr(sql, "as_string") else str(sql)
+        self.statements.append((" ".join(rendered.replace('"', "").split()), params))
         rows = self._rows
 
         class _Cur:
@@ -71,9 +86,13 @@ def test_hard_delete_removes_the_row() -> None:
     conn = RecordingConn()
     plan_uuid = uuid.uuid4()
     hard_delete_plan(conn, plan_uuid)
-    sql, params = conn.statements[-1]
-    assert sql.strip().startswith("DELETE FROM plan WHERE uuid")
-    assert params == (plan_uuid,)
+    # CR-7 G-004: the guarded wrapper writes the deletion audit after the
+    # DELETE, so the DELETE is located rather than assumed last.
+    sql, params = next(
+        (s, p) for s, p in conn.statements
+        if s.strip().startswith("DELETE FROM plan WHERE uuid")
+    )
+    assert tuple(params) == (plan_uuid,)
 
 
 # --- domain: list filter -------------------------------------------------------

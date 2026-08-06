@@ -106,8 +106,14 @@ def test_record_runtime_change_writes_unchanged_columns_and_params() -> None:
         changed_fields={"k": "v"},
     )
     # DB columns unchanged
-    assert "(uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason" in captured["sql"]
-    assert "INSERT INTO runtime_audit_log" in captured["sql"]
+    pass  # column-order assertion moved below the Composed rendering
+    # CR-7 G-004: the routed store binds through psycopg sql.Composed;
+    # render it the way psycopg would before asserting on the statement.
+    _sql = captured["sql"]
+    _rendered = (_sql.as_string(None) if hasattr(_sql, "as_string") else str(_sql)).replace('"', "")
+    assert "INSERT INTO runtime_audit_log" in _rendered
+    # DB columns unchanged
+    assert "(uuid, plan_uuid, entity_type, entity_id, action, changed_by, change_reason" in _rendered
     # param positions: entity_type at index 2, entity_id at index 3 (unchanged)
     assert captured["params"][2] == "plan"
     assert captured["params"][3] == entity_id

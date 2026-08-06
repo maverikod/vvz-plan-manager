@@ -45,11 +45,21 @@ def create_role(
     role_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO role (uuid, name, description, created_by, created_at, "
-        "updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Role.crud_create(
+        conn,
+        {
+            "uuid": role_uuid,
+            "name": name,
+            "description": description,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
-    conn.execute(sql, (role_uuid, name, description, created_by, now, now, None))
 
     record_runtime_change(
         conn,

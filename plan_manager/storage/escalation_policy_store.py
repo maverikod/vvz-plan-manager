@@ -84,21 +84,24 @@ def create_escalation_policy(
         deleted_at=None,
     )
     validate_escalation_policy(policy)
-    conn.execute(
-        "INSERT INTO escalation_policy (uuid, schema_version, authority_typology, max_owner_rounds, terminal_parks_wave, owner_timeout_parks, active, created_by, created_at, updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            policy_uuid,
-            resolved_schema_version,
-            Jsonb(list(resolved_authority_typology)),
-            resolved_max_owner_rounds,
-            resolved_terminal_parks_wave,
-            resolved_owner_timeout_parks,
-            active,
-            created_by,
-            now,
-            now,
-            None,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    EscalationPolicy.crud_create(
+        conn,
+        {
+            "uuid": policy_uuid,
+            "schema_version": resolved_schema_version,
+            "authority_typology": Jsonb(list(resolved_authority_typology)),
+            "max_owner_rounds": resolved_max_owner_rounds,
+            "terminal_parks_wave": resolved_terminal_parks_wave,
+            "owner_timeout_parks": resolved_owner_timeout_parks,
+            "active": active,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
     record_runtime_change(
         conn,

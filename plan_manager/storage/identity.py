@@ -160,6 +160,31 @@ another reservation.
 
 ENTITY_KIND = "entity"
 """The entity_identity.kind value for an ordinary registered entity row."""
+_SEAT_CACHE: list = []
+
+
+def _identity_row_seat():
+    """Lazy id+kind-keyed engine seat for the registry's own table (built on
+    first use: domain.entity imports this module, so a module-level import
+    here would close the cycle)."""
+    if not _SEAT_CACHE:
+        from plan_manager.domain.entity import DataclassEntity
+
+        class _EntityIdentityRow(DataclassEntity):
+            ENTITY_TYPE = None
+            TABLE_NAME = "entity_identity"
+            ID_COLUMN = None
+            ID_COLUMNS = ("id", "kind")
+            COLUMNS = ("id", "table_name", "entity_type", "created_at",
+                       "kind", "reserved_by", "note")
+            SOFT_DELETE_COLUMN = None
+            UPDATED_AT_COLUMN = None
+            CREATED_AT_COLUMN = None
+            REGISTER_IDENTITY = False
+            OWNER_ROOT = True  # the registry row IS the identity mechanism
+
+        _SEAT_CACHE.append(_EntityIdentityRow)
+    return _SEAT_CACHE[0]
 
 
 def register_entity_identity(
@@ -172,18 +197,14 @@ def register_entity_identity(
 ) -> None:
     """Record the global UUID-to-table mapping for one entity row.
 
-    TRANSACTION INVARIANT: this function MUST be called inside the same
-    database transaction as the INSERT of the entity row it describes, and it
-    never commits. A registry row that outlives a rolled-back entity INSERT
-    would permanently occupy an identifier that no entity owns, and every
-    later create carrying that identifier would be refused by
-    ensure_identity_available with no way to diagnose the phantom.
-
-    The INSERT keeps ON CONFLICT (id) DO NOTHING so that re-registering an
-    already-registered id is idempotent rather than fatal. That clause is NOT
-    the collision guard: it is silent by design. Callers that must reject a
-    duplicate identifier call ensure_identity_available first.
-    """
+    TRANSACTION INVARIANT: MUST run inside the same transaction as the entity
+    row INSERT it describes, and never commits — a registry row outliving a
+    rolled-back INSERT would permanently occupy an ownerless identifier.
+    ON CONFLICT (id) DO NOTHING keeps re-registration idempotent; it is NOT
+    the collision guard (ensure_identity_available is). CR-7 G-004: that
+    statement is the documented non-guard trigger-path behaviour; the helper
+    gains the mechanism's v4 identifier admission before the write."""
+    ensure_v4_entity_uuid(entity_id)
     conn.execute(
         "INSERT INTO entity_identity (id, table_name, entity_type, created_at) "
         "VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
@@ -194,25 +215,12 @@ def register_entity_identity(
 def ensure_identity_available(conn: psycopg.Connection, entity_id: uuid.UUID) -> None:
     """Refuse an identifier that is already registered for ANY kind.
 
-    This is the single cross-kind collision guard of the identity registry. No
-    store re-implements the check: every create path calls this before
-    inserting its row, inside the same transaction, so that a duplicate
-    identifier fails deterministically and leaves no partial row behind.
-
-    Parameters:
-        conn: psycopg.Connection
-            An open psycopg 3 connection, inside the caller's transaction.
-        entity_id: uuid.UUID
-            The identifier the caller intends to claim.
-
-    Returns:
-        None
-            When the identifier is free.
-
+    The single cross-kind collision guard of the registry: every create path
+    calls this before inserting its row, inside the same transaction.
     Raises:
         plan_manager.storage.errors.DuplicateNameError
-            When the identifier is already registered, for an entity of any
-            kind or for a namespace reservation. The message is deterministic:
+            When the identifier is already registered (any kind, or a
+            namespace reservation); message is deterministic:
             'entity id already registered: {id} (kind={kind}, table={table})'.
     """
     row = conn.execute(
@@ -234,30 +242,20 @@ def reserve_project_uuid(
 ) -> dict[str, Any]:
     """Claim a future external project UUID as a namespace reservation.
 
-    The reservation is recorded in the identity registry under RESERVED_KIND.
-    No local row is created for it anywhere: external project identifiers stay
-    external, and this only prevents a later entity, plan, or reservation from
-    taking the same identifier.
-
-    Raises:
-        plan_manager.storage.errors.DuplicateNameError
-            When the identifier is already taken, via ensure_identity_available.
-    """
+    Recorded under RESERVED_KIND; no local row exists for it. Raises
+    DuplicateNameError via ensure_identity_available when already taken."""
+    ensure_v4_entity_uuid(project_uuid)
     ensure_identity_available(conn, project_uuid)
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO entity_identity "
-        "(id, table_name, entity_type, kind, reserved_by, note, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (
-            project_uuid,
-            "",
-            RESERVED_KIND,
-            RESERVED_KIND,
-            reserved_by,
-            note,
-            created_at,
-        ),
+    # CR-7 G-004 (C-001, C-012): delegated to the unified creation path.
+    _identity_row_seat().crud_create(
+        conn,
+        {
+            "id": project_uuid, "table_name": "", "entity_type": RESERVED_KIND,
+            "kind": RESERVED_KIND, "reserved_by": reserved_by, "note": note,
+            "created_at": created_at,
+        },
+        returning=False,
     )
     return {
         "id": project_uuid,
@@ -272,23 +270,26 @@ def reserve_project_uuid(
 def release_project_reservation(conn: psycopg.Connection, project_uuid: uuid.UUID) -> None:
     """Release a namespace reservation, freeing the identifier again.
 
-    Only a reservation is released. A registered entity identifier is never
-    removed by this function, so a mistyped uuid cannot orphan a live row.
-
-    Raises:
-        plan_manager.storage.errors.NotFoundError
-            When no reservation exists for the given identifier.
-    """
-    row = conn.execute(
-        "DELETE FROM entity_identity WHERE id = %s AND kind = %s RETURNING id",
-        (project_uuid, RESERVED_KIND),
-    ).fetchone()
-    if row is None:
+    Only a reservation is released (never a registered entity identifier).
+    Raises NotFoundError when no reservation exists."""
+    # CR-7 G-004 (C-001, C-012): a caller-initiated registry removal goes
+    # through the deletion guard.
+    deleted = _identity_row_seat().crud_hard_delete(
+        conn,
+        {"id": project_uuid, "kind": RESERVED_KIND},
+        require_soft_deleted=False, returning=True,
+        audit_entity_type="entity_identity",
+    )
+    if deleted is None:
         raise NotFoundError(f"project uuid reservation not found: {project_uuid}")
 
 
 def unregister_entity_identity(conn: psycopg.Connection, entity_id: uuid.UUID) -> None:
-    """Remove one global identity mapping after the entity row is physically deleted."""
+    """Remove one global identity mapping after its entity row is deleted.
+
+    CR-7 G-004: this DELETE is the deletion mechanism's own final step (the
+    guard calls it after a guarded removal), not a caller-initiated registry
+    write, so it stays a direct statement by design."""
     conn.execute("DELETE FROM entity_identity WHERE id = %s", (entity_id,))
 
 

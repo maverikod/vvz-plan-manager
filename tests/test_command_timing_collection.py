@@ -38,8 +38,14 @@ def test_record_command_metric_writes_expected_sql_and_params() -> None:
     )
     assert len(conn.calls) == 1
     sql, params = conn.calls[0]
-    assert "INSERT INTO command_metric" in sql
-    assert "(uuid, command_name, duration_ms, mode, outcome, created_at)" in sql
+    # CR-7 G-004: the routed store binds through psycopg sql.Composed;
+    # render it the way psycopg would before asserting on the statement.
+    rendered = sql.as_string(None) if hasattr(sql, "as_string") else str(sql)
+    assert 'INSERT INTO "command_metric"' in rendered
+    assert (
+        '("uuid", "command_name", "duration_ms", "mode", "outcome", "created_at")'
+        in rendered
+    )
     assert params[1] == "step_get"
     assert params[2] == 12.5
     assert params[3] == "direct"

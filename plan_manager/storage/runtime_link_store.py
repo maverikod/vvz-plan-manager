@@ -67,8 +67,24 @@ def create_runtime_link(
         guard_no_blocking_cycle(edges)
     new_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
-    sql = "INSERT INTO runtime_link (uuid, from_entity_type, from_entity_uuid, to_entity_type, to_entity_uuid, link_type, created_by, created_at, updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    conn.execute(sql, (new_uuid, from_entity_type, from_entity_uuid, to_entity_type, to_entity_uuid, link_type, created_by, now, now, None))
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    RuntimeLink.crud_create(
+        conn,
+        {
+            "uuid": new_uuid,
+            "from_entity_type": from_entity_type,
+            "from_entity_uuid": from_entity_uuid,
+            "to_entity_type": to_entity_type,
+            "to_entity_uuid": to_entity_uuid,
+            "link_type": link_type,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
+    )
     record_runtime_change(conn, plan_uuid=None, entity_type="runtime_link", entity_id=new_uuid, action="create", changed_by=created_by)
     return RuntimeLink(
         link_uuid=new_uuid, from_entity_type=from_entity_type, from_entity_uuid=from_entity_uuid,

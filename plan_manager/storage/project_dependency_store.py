@@ -79,17 +79,25 @@ def create_project_dependency(
 
     dependency_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO project_dependency ("
-        "uuid, dependent_project_id, depends_on_project_id, dependency_type, "
-        "version_constraint, discovery_source, confidence, active, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            dependency_uuid, dependent_project_id, depends_on_project_id, dependency_type,
-            version_constraint, discovery_source, confidence, active,
-            created_by, now, now, None,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    ProjectDependency.crud_create(
+        conn,
+        {
+            "uuid": dependency_uuid,
+            "dependent_project_id": dependent_project_id,
+            "depends_on_project_id": depends_on_project_id,
+            "dependency_type": dependency_type,
+            "version_constraint": version_constraint,
+            "discovery_source": discovery_source,
+            "confidence": confidence,
+            "active": active,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
     record_runtime_change(
         conn, plan_uuid=None, entity_type="project_dependency", entity_id=dependency_uuid,

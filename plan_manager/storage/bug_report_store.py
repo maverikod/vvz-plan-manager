@@ -78,14 +78,36 @@ def create_bug(
     new_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
     evidence_val = Jsonb(evidence) if evidence is not None else None
-    sql = "INSERT INTO bug_report (uuid, title, short_description, detailed_description, expected_behavior, actual_behavior, reproduction, evidence, environment, kind, severity, priority_nice, status, reporter, owner, duplicate_of_uuid, parent_bug_uuid, source_anchor_type, source_project_id, source_file_path, source_plan_uuid, source_revision_uuid, source_step_uuid, source_step_path, source_ref_id, source_command, source_service, confirmed_at, closed_at, reopened_at, created_by, created_at, updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    params = (new_uuid, title, short_description, detailed_description, expected_behavior, actual_behavior,
-        reproduction, evidence_val, environment, kind, severity, priority_nice, status, reporter, owner,
-        duplicate_of_uuid, parent_bug_uuid, source_cols['source_anchor_type'], source_cols['source_project_id'],
-        source_cols['source_file_path'], source_cols['source_plan_uuid'], source_cols['source_revision_uuid'],
-        source_cols['source_step_uuid'], source_cols['source_step_path'], source_cols['source_ref_id'],
-        source_cols['source_command'], source_cols['source_service'], None, None, None, created_by, now, now, None)
-    conn.execute(sql, params)
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    BugReport.crud_create(
+        conn,
+        {
+            "uuid": new_uuid, "title": title, "short_description": short_description,
+            "detailed_description": detailed_description, "expected_behavior": expected_behavior,
+            "actual_behavior": actual_behavior, "reproduction": reproduction,
+            "evidence": evidence_val, "environment": environment, "kind": kind,
+            "severity": severity, "priority_nice": priority_nice, "status": status,
+            "reporter": reporter, "owner": owner, "duplicate_of_uuid": duplicate_of_uuid,
+            "parent_bug_uuid": parent_bug_uuid,
+            "source_anchor_type": source_cols["source_anchor_type"],
+            "source_project_id": source_cols["source_project_id"],
+            "source_file_path": source_cols["source_file_path"],
+            "source_plan_uuid": source_cols["source_plan_uuid"],
+            "source_revision_uuid": source_cols["source_revision_uuid"],
+            "source_step_uuid": source_cols["source_step_uuid"],
+            "source_step_path": source_cols["source_step_path"],
+            "source_ref_id": source_cols["source_ref_id"],
+            "source_command": source_cols["source_command"],
+            "source_service": source_cols["source_service"],
+            # Explicit NULL lifecycle columns keep the compatibility-state
+            # INSERT in full table-column order (SELECT * roundtrip parity).
+            "confirmed_at": None, "closed_at": None, "reopened_at": None,
+            "created_by": created_by, "created_at": now, "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
+    )
     record_runtime_change(conn, plan_uuid=source.plan_uuid, entity_type="bug_report", entity_id=new_uuid,
         action="create", changed_by=created_by)
     return BugReport(bug_uuid=new_uuid, title=title, short_description=short_description,

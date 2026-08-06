@@ -99,9 +99,16 @@ def test_apply_snapshot_restores_binding_flag() -> None:
 
     executed: list[tuple[str, tuple]] = []
 
+    class _Cur:
+        def fetchone(self):
+            return None  # row absent -> restore takes the recovery-create path
+
     class _Conn:
         def execute(self, sql, params):
-            executed.append((sql, params))
+            # CR-7 G-004: routed restore binds through psycopg sql.Composed.
+            rendered = sql.as_string(None) if hasattr(sql, "as_string") else str(sql)
+            executed.append((" ".join(rendered.replace('"', "").split()), tuple(params)))
+            return _Cur()
 
     node = uuid.uuid4()
     base = {
@@ -116,6 +123,7 @@ def test_apply_snapshot_restores_binding_flag() -> None:
     apply_snapshot(_Conn(), node, {**base, "binding": True})
     apply_snapshot(_Conn(), node, base)  # historical snapshot without the flag
 
-    for (sql, params), expected in zip(executed, (False, True, True)):
-        assert "binding = EXCLUDED.binding" in sql
+    inserts = [(sql, params) for sql, params in executed if sql.startswith("INSERT INTO paragraph")]
+    for (sql, params), expected in zip(inserts, (False, True, True)):
+        assert "binding" in sql
         assert params[-1] is expected

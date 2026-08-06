@@ -8,6 +8,69 @@ from psycopg.types.json import Jsonb
 from plan_manager.cascade.record import CascadeError
 from plan_manager.storage.version_ops import diff, state_at
 
+from plan_manager.domain.entity import DataclassEntity
+
+
+class _RestoreSeat(DataclassEntity):
+    """Shared traits of the uuid-keyed restore seats (CR-7 G-004).
+
+    Restore re-creates rows with their ORIGINAL identities, so writes go
+    through the engine's recovery/import admission. Registry entries are
+    retained across a cascade abort by design, so the engine's Python-side
+    registration stays off; ENTITY_TYPE=None keeps the seats out of the
+    catalog's entity-type resolver.
+    """
+
+    ENTITY_TYPE = None
+    ID_COLUMN = "uuid"
+    SOFT_DELETE_COLUMN = None
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    REGISTER_IDENTITY = False
+    OWNER_COLUMN = "plan_uuid"
+
+
+class _StepRestoreRow(_RestoreSeat):
+    TABLE_NAME = "step"
+    COLUMNS = ("uuid", "plan_uuid", "parent_step_uuid", "level", "step_id",
+               "slug", "fields", "depends_on", "concepts", "project_id", "status")
+
+
+class _ConceptRestoreRow(_RestoreSeat):
+    TABLE_NAME = "concept"
+    COLUMNS = ("uuid", "plan_uuid", "concept_id", "name", "definition",
+               "properties", "source_labels")
+
+
+class _RelationRestoreRow(_RestoreSeat):
+    TABLE_NAME = "relation"
+    COLUMNS = ("uuid", "plan_uuid", "from_concept", "to_concept", "type")
+
+
+class _ParagraphRestoreRow(_RestoreSeat):
+    TABLE_NAME = "paragraph"
+    COLUMNS = ("uuid", "plan_uuid", "label", "text", "position", "binding")
+
+
+def _restore_row(conn, seat, node_uuid, values):
+    """Write one snapshot row through the engine (create-or-update).
+
+    The legacy statement was a single upsert; the engine expresses the same
+    outcome as the recovery-flavoured create for an absent row and a plain
+    engine update for a present one.
+    """
+    exists = conn.execute(
+        f'SELECT 1 FROM {seat.TABLE_NAME} WHERE uuid = %s', (node_uuid,)
+    ).fetchone()
+    if exists is None:
+        seat.crud_create(
+            conn, {"uuid": node_uuid, **values},
+            returning=False, recovery_mode=True, admit_original_timestamps=True,
+        )
+    else:
+        seat.crud_update(conn, node_uuid, dict(values), returning=False)
+
+
 
 def node_version_content(conn: psycopg.Connection, version_uuid: uuid.UUID) -> dict:
     """Fetch the content snapshot of a single node version.
@@ -61,101 +124,47 @@ def apply_snapshot(conn: psycopg.Connection, node_uuid: uuid.UUID, snapshot: dic
         "step", "concept", "relation", "paragraph".
     """
     kind = snapshot["kind"]
+    # CR-7 G-004 (C-005, C-012): delegated to the unified engine's
+    # recovery/import path; this module no longer composes INSERT SQL.
     if kind == "step":
-        conn.execute(
-            "INSERT INTO step "
-            "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-            "fields, depends_on, concepts, project_id, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (uuid) DO UPDATE SET "
-            "plan_uuid = EXCLUDED.plan_uuid, "
-            "parent_step_uuid = EXCLUDED.parent_step_uuid, "
-            "level = EXCLUDED.level, "
-            "step_id = EXCLUDED.step_id, "
-            "slug = EXCLUDED.slug, "
-            "fields = EXCLUDED.fields, "
-            "depends_on = EXCLUDED.depends_on, "
-            "concepts = EXCLUDED.concepts, "
-            "project_id = EXCLUDED.project_id, "
-            "status = EXCLUDED.status",
-            (
-                node_uuid,
-                snapshot["plan_uuid"],
-                snapshot["parent_step_uuid"],
-                snapshot["level"],
-                snapshot["step_id"],
-                snapshot["slug"],
-                Jsonb(snapshot["fields"]),
-                snapshot["depends_on"],
-                snapshot["concepts"],
-                snapshot.get("project_id"),
-                snapshot["status"],
-            ),
-        )
+        _restore_row(conn, _StepRestoreRow, node_uuid, {
+            "plan_uuid": snapshot["plan_uuid"],
+            "parent_step_uuid": snapshot["parent_step_uuid"],
+            "level": snapshot["level"],
+            "step_id": snapshot["step_id"],
+            "slug": snapshot["slug"],
+            "fields": Jsonb(snapshot["fields"]),
+            "depends_on": snapshot["depends_on"],
+            "concepts": snapshot["concepts"],
+            "project_id": snapshot.get("project_id"),
+            "status": snapshot["status"],
+        })
     elif kind == "concept":
-        conn.execute(
-            "INSERT INTO concept "
-            "(uuid, plan_uuid, concept_id, name, definition, properties, "
-            "source_labels) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (uuid) DO UPDATE SET "
-            "plan_uuid = EXCLUDED.plan_uuid, "
-            "concept_id = EXCLUDED.concept_id, "
-            "name = EXCLUDED.name, "
-            "definition = EXCLUDED.definition, "
-            "properties = EXCLUDED.properties, "
-            "source_labels = EXCLUDED.source_labels",
-            (
-                node_uuid,
-                snapshot["plan_uuid"],
-                snapshot["concept_id"],
-                snapshot["name"],
-                snapshot["definition"],
-                snapshot["properties"],
-                snapshot["source_labels"],
-            ),
-        )
+        _restore_row(conn, _ConceptRestoreRow, node_uuid, {
+            "plan_uuid": snapshot["plan_uuid"],
+            "concept_id": snapshot["concept_id"],
+            "name": snapshot["name"],
+            "definition": snapshot["definition"],
+            "properties": snapshot["properties"],
+            "source_labels": snapshot["source_labels"],
+        })
     elif kind == "relation":
-        conn.execute(
-            "INSERT INTO relation "
-            "(uuid, plan_uuid, from_concept, to_concept, type) "
-            "VALUES (%s, %s, %s, %s, %s) "
-            "ON CONFLICT (uuid) DO UPDATE SET "
-            "plan_uuid = EXCLUDED.plan_uuid, "
-            "from_concept = EXCLUDED.from_concept, "
-            "to_concept = EXCLUDED.to_concept, "
-            "type = EXCLUDED.type",
-            (
-                node_uuid,
-                snapshot["plan_uuid"],
-                snapshot["from_concept"],
-                snapshot["to_concept"],
-                snapshot["type"],
-            ),
-        )
+        _restore_row(conn, _RelationRestoreRow, node_uuid, {
+            "plan_uuid": snapshot["plan_uuid"],
+            "from_concept": snapshot["from_concept"],
+            "to_concept": snapshot["to_concept"],
+            "type": snapshot["type"],
+        })
     elif kind == "paragraph":
-        # ``binding`` defaults to True for historical snapshots recorded before the flag
-        # existed; carrying it through the upsert makes a wrap/unwrap round-trip restorable
-        # by cascade abort (bug f253b08d).
-        conn.execute(
-            "INSERT INTO paragraph "
-            "(uuid, plan_uuid, label, text, position, binding) "
-            "VALUES (%s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (uuid) DO UPDATE SET "
-            "plan_uuid = EXCLUDED.plan_uuid, "
-            "label = EXCLUDED.label, "
-            "text = EXCLUDED.text, "
-            "position = EXCLUDED.position, "
-            "binding = EXCLUDED.binding",
-            (
-                node_uuid,
-                snapshot["plan_uuid"],
-                snapshot["label"],
-                snapshot["text"],
-                snapshot["position"],
-                snapshot.get("binding", True),
-            ),
-        )
+        # ``binding`` defaults to True for historical snapshots recorded before
+        # the flag existed (bug f253b08d).
+        _restore_row(conn, _ParagraphRestoreRow, node_uuid, {
+            "plan_uuid": snapshot["plan_uuid"],
+            "label": snapshot["label"],
+            "text": snapshot["text"],
+            "position": snapshot["position"],
+            "binding": snapshot.get("binding", True),
+        })
     else:
         raise CascadeError(f"unknown node snapshot kind: {kind!r}")
 
@@ -180,6 +189,12 @@ def delete_node(conn: psycopg.Connection, node_uuid: uuid.UUID, kind: str) -> No
     table = tables.get(kind)
     if table is None:
         raise CascadeError(f"unknown node kind: {kind!r}")
+    # CR-7 G-004 compatibility note: this DELETE stays self-composed in this
+    # state. Restore removes the SET of rows added since the base revision;
+    # the guarded single-row wrapper consults blocking catalog entries
+    # (node_version -> step, relation -> concept) that would refuse a mid-abort
+    # removal and change cascade_abort's observable behaviour. The set-wise
+    # deletion engine of G-006/T-001 adopts this shape.
     conn.execute(f"DELETE FROM {table} WHERE uuid = %s", (node_uuid,))
 
 

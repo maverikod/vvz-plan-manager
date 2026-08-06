@@ -73,25 +73,33 @@ def create_bug_impact(conn: psycopg.Connection, *, bug_uuid: uuid.UUID, target_t
     resolved_at = None
     deleted_at = None
 
-    sql = """
-        INSERT INTO bug_impact (
-            uuid, bug_uuid, target_type, target_project_id, target_file_path,
-            target_plan_uuid, target_revision_uuid, target_step_uuid, target_step_path,
-            target_ref_id, target_identifier, impact_type, status, reason,
-            skip_decided_by, discovery_method, resolution_evidence, created_by,
-            created_at, updated_at, resolved_at, deleted_at
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-        )
-    """
-    params = (
-        impact_uuid, bug_uuid, target_type, target_project_id, target_file_path,
-        target_plan_uuid, target_revision_uuid, target_step_uuid, target_step_path,
-        target_ref_id, target_identifier, impact_type, status, reason,
-        skip_decided_by, discovery_method, None,
-        created_by, created_at, updated_at, resolved_at, deleted_at
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    BugImpact.crud_create(
+        conn,
+        {
+            "uuid": impact_uuid,
+            "bug_uuid": bug_uuid,
+            "target_type": target_type,
+            "target_project_id": target_project_id,
+            "target_file_path": target_file_path,
+            "target_plan_uuid": target_plan_uuid,
+            "target_revision_uuid": target_revision_uuid,
+            "target_step_uuid": target_step_uuid,
+            "target_step_path": target_step_path,
+            "target_ref_id": target_ref_id,
+            "target_identifier": target_identifier,
+            "impact_type": impact_type,
+            "status": status,
+            "reason": reason,
+            "skip_decided_by": skip_decided_by,
+            "discovery_method": discovery_method,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        },
+        returning=False,
     )
-    conn.execute(sql, params)
 
     record_runtime_change(conn, plan_uuid=target_plan_uuid, entity_type="bug_impact",
                          entity_id=impact_uuid, action="create", changed_by=created_by)

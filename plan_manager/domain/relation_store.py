@@ -40,12 +40,19 @@ def insert_relation(
     validate_relation(relation)
     check_relation_endpoints_exist(relation, list_concept_ids(conn, plan_uuid))
     row_uuid = uuid.uuid4()
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO relation (uuid, plan_uuid, from_concept, to_concept, type) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (row_uuid, plan_uuid, relation.from_concept, relation.to_concept, relation.type),
-        )
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Relation.crud_create(
+        conn,
+        {
+            "uuid": row_uuid,
+            "plan_uuid": plan_uuid,
+            "from_concept": relation.from_concept,
+            "to_concept": relation.to_concept,
+            "type": relation.type,
+        },
+        returning=False,
+    )
     return row_uuid
 
 
@@ -111,12 +118,20 @@ def remove_relation(
     if row is None:
         raise ValueError("relation not found")
     row_uuid = row[0]
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM relation WHERE plan_uuid = %s AND from_concept = %s "
-            "AND to_concept = %s AND type = %s",
-            (plan_uuid, from_concept, to_concept, type),
-        )
+    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine
+    # wrapper (the relation's composite identity is its natural predicate).
+    Relation.crud_hard_delete(
+        conn,
+        {
+            "plan_uuid": plan_uuid,
+            "from_concept": from_concept,
+            "to_concept": to_concept,
+            "type": type,
+        },
+        require_soft_deleted=False,
+        returning=False,
+        plan_uuid=plan_uuid,
+    )
     return row_uuid
 
 

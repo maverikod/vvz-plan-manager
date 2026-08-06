@@ -15,6 +15,24 @@ import psycopg
 from plan_manager.domain.concept import Concept, validate_concept, check_concept_id_unique
 
 
+class _ConceptRowByUuid(Concept):
+    """Uuid-keyed deletion seat for the concept table (CR-7 G-004).
+
+    The guard's catalog probes for concept are keyed by concept_id (the
+    scoped reference key), while the physical row is deleted by its uuid.
+    remove_concept consults the guard's read surface with the concept_id
+    first, then hands the uuid to the guarded engine delete; this subclass
+    only narrows the identity predicate to the uuid column.
+    """
+
+    # Not a user-facing entity type of its own: ENTITY_TYPE=None keeps this
+    # seat out of the catalog's entity-type resolver ("concept" stays claimed
+    # by exactly one class); the guard call names the audit type explicitly.
+    ENTITY_TYPE = None
+    ID_COLUMN = "uuid"
+    ID_COLUMNS = ()
+
+
 def list_concept_ids(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> list[str]:
     """List all concept_id values stored for one plan, ordered by concept_id.
 
@@ -58,20 +76,21 @@ def insert_concept(
     validate_concept(concept)
     check_concept_id_unique(concept.concept_id, list_concept_ids(conn, plan_uuid))
     row_uuid = uuid.uuid4()
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO concept (uuid, plan_uuid, concept_id, name, definition, "
-            "properties, source_labels) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (
-                row_uuid,
-                plan_uuid,
-                concept.concept_id,
-                concept.name,
-                concept.definition,
-                concept.properties,
-                concept.source_labels,
-            ),
-        )
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Concept.crud_create(
+        conn,
+        {
+            "uuid": row_uuid,
+            "plan_uuid": plan_uuid,
+            "concept_id": concept.concept_id,
+            "name": concept.name,
+            "definition": concept.definition,
+            "properties": concept.properties,
+            "source_labels": concept.source_labels,
+        },
+        returning=False,
+    )
     return row_uuid
 
 
@@ -218,9 +237,31 @@ def remove_concept(
     existing = get_concept(conn, plan_uuid, concept_id)
     if existing is None:
         raise ValueError(f"concept not found: {concept_id}")
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM concept WHERE plan_uuid = %s AND concept_id = %s",
-            (plan_uuid, concept_id),
-        )
+    # CR-7 G-004 (C-005, C-012): the deletion guard is consulted on every
+    # concept removal (bug da06315d: a concept still referenced by relations
+    # is refused). The catalog keys concept references by concept_id, so the
+    # guard's read surface is probed with that key; the physical delete then
+    # goes through the guarded engine wrapper on the row's uuid.
+    from plan_manager.domain.entity import EntityReferencedError
+    from plan_manager.storage.hard_delete_guard import lookup_referrers
+
+    referrers = [
+        ref
+        for ref in lookup_referrers(conn, "concept", concept_id)
+        if not (ref["table"] == "relation" and plan_uuid is None)
+    ]
+    if referrers:
+        raise EntityReferencedError("concept", concept_id, referrers)
+    row = conn.execute(
+        "SELECT uuid FROM concept WHERE plan_uuid = %s AND concept_id = %s",
+        (plan_uuid, concept_id),
+    ).fetchone()
+    _ConceptRowByUuid.crud_hard_delete(
+        conn,
+        row[0],
+        require_soft_deleted=False,
+        returning=False,
+        plan_uuid=plan_uuid,
+        audit_entity_type="concept",
+    )
     return existing

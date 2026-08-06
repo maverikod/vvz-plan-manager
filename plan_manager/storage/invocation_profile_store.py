@@ -125,30 +125,45 @@ def create_invocation_profile(
     profile_uuid = uuid.uuid4()
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO invocation_profile "
-        "(uuid, scope, role, plan_uuid, spec_level, branch_step_uuid, revision_uuid, "
-        "step_uuid, step_path, temperature, top_p, max_output_tokens, reasoning_effort, "
-        "context_window_budget, timeout, retry_policy, concurrency, rate_hint, "
-        "response_format, response_schema, max_tool_iterations, per_call_timeout, "
-        "execution_mode, token_budget, cost_budget, dialogue_chain_ref, active, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-        "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    InvocationProfile.crud_create(
+        conn,
+        {
+            "uuid": profile_uuid,
+            "scope": scope,
+            "role": role,
+            "plan_uuid": plan_uuid,
+            "spec_level": spec_level,
+            "branch_step_uuid": branch_step_uuid,
+            "revision_uuid": revision_uuid,
+            "step_uuid": step_uuid,
+            "step_path": step_path,
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_output_tokens": max_output_tokens,
+            "reasoning_effort": reasoning_effort,
+            "context_window_budget": context_window_budget,
+            "timeout": timeout,
+            "retry_policy": Jsonb(retry_policy) if retry_policy is not None else None,
+            "concurrency": concurrency,
+            "rate_hint": Jsonb(rate_hint) if rate_hint is not None else None,
+            "response_format": response_format,
+            "response_schema": Jsonb(response_schema) if response_schema is not None else None,
+            "max_tool_iterations": max_tool_iterations,
+            "per_call_timeout": per_call_timeout,
+            "execution_mode": execution_mode,
+            "token_budget": token_budget,
+            "cost_budget": cost_budget,
+            "dialogue_chain_ref": dialogue_chain_ref,
+            "active": active,
+            "created_by": created_by,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "deleted_at": None,
+        },
+        returning=False,
     )
-    params = (
-        profile_uuid, scope, role, plan_uuid, spec_level, branch_step_uuid, revision_uuid,
-        step_uuid, step_path, temperature, top_p, max_output_tokens, reasoning_effort,
-        context_window_budget, timeout,
-        Jsonb(retry_policy) if retry_policy is not None else None,
-        concurrency,
-        Jsonb(rate_hint) if rate_hint is not None else None,
-        response_format,
-        Jsonb(response_schema) if response_schema is not None else None,
-        max_tool_iterations, per_call_timeout, execution_mode, token_budget, cost_budget,
-        dialogue_chain_ref, active, created_by, now_iso, now_iso, None,
-    )
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn, plan_uuid=plan_uuid, entity_type="invocation_profile", entity_id=profile_uuid,

@@ -55,26 +55,25 @@ def create_provider(
     provider_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO provider "
-        "(uuid, name, type, rented_hardware, status, billing_notes, quota_notes, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Provider.crud_create(
+        conn,
+        {
+            "uuid": provider_uuid,
+            "name": name,
+            "type": type,
+            "rented_hardware": rented_hardware,
+            "status": status,
+            "billing_notes": billing_notes,
+            "quota_notes": quota_notes,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
-    params = (
-        provider_uuid,
-        name,
-        type,
-        rented_hardware,
-        status,
-        billing_notes,
-        quota_notes,
-        created_by,
-        now,
-        now,
-        None,
-    )
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn,

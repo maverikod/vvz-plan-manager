@@ -24,11 +24,21 @@ def create_toolset(
     toolset_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO toolset (uuid, name, description, created_by, created_at, "
-        "updated_at, deleted_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Toolset.crud_create(
+        conn,
+        {
+            "uuid": toolset_uuid,
+            "name": name,
+            "description": description,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
-    conn.execute(sql, (toolset_uuid, name, description, created_by, now, now, None))
 
     record_runtime_change(
         conn,
@@ -176,14 +186,21 @@ def add_toolset_member(
     membership_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO toolset_membership (uuid, toolset_uuid, tool_uuid, position, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-    )
-    conn.execute(
-        sql,
-        (membership_uuid, toolset_uuid, tool_uuid, position, created_by, now, now, None),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    ToolsetMembership.crud_create(
+        conn,
+        {
+            "uuid": membership_uuid,
+            "toolset_uuid": toolset_uuid,
+            "tool_uuid": tool_uuid,
+            "position": position,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
 
     record_runtime_change(

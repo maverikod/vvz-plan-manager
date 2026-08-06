@@ -101,22 +101,22 @@ def insert_srt_snapshot(
 
     snapshot_uuid = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO srt_snapshot "
-        "(uuid, plan_uuid, revision_uuid, algorithm_version, summarizer_version, "
-        "embedding_model, tree_hash, tree_content, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            snapshot_uuid,
-            plan_uuid,
-            revision_uuid,
-            algorithm_version,
-            summarizer_version,
-            embedding_model,
-            tree_hash,
-            Jsonb(tree_content),
-            created_at,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    SrtSnapshotRecord.crud_create(
+        conn,
+        {
+            "uuid": snapshot_uuid,
+            "plan_uuid": plan_uuid,
+            "revision_uuid": revision_uuid,
+            "algorithm_version": algorithm_version,
+            "summarizer_version": summarizer_version,
+            "embedding_model": embedding_model,
+            "tree_hash": tree_hash,
+            "tree_content": Jsonb(tree_content),
+            "created_at": created_at,
+        },
+        returning=False,
     )
     return SrtSnapshotRecord(
         snapshot_uuid=snapshot_uuid,

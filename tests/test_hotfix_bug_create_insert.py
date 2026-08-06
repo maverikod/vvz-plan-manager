@@ -33,11 +33,14 @@ class _FakeConn:
 
     def execute(self, sql, params=()):
         params = tuple(params)
-        placeholders = sql.count("%s")
+        # CR-7 G-004: the routed store binds through psycopg sql.Composed;
+        # render it the way psycopg would before the parity check.
+        rendered = sql.as_string(None) if hasattr(sql, "as_string") else str(sql)
+        placeholders = rendered.count("%s")
         assert placeholders == len(params), (
             f"the query has {placeholders} placeholders but {len(params)} parameters were passed"
         )
-        normalized = " ".join(sql.split()).upper()
+        normalized = " ".join(rendered.replace('"', "").split()).upper()
         if normalized.startswith("INSERT INTO BUG_REPORT"):
             self._bug_row = params
             return _Cursor(None)

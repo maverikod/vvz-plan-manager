@@ -59,28 +59,26 @@ def create_model(
     model_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc).isoformat()
 
-    sql = (
-        "INSERT INTO model "
-        "(uuid, name, provider_uuid, level, context_window, cost_class, "
-        "availability, execution_mode, created_by, created_at, updated_at, "
-        "deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Model.crud_create(
+        conn,
+        {
+            "uuid": model_uuid,
+            "name": name,
+            "provider_uuid": provider_uuid,
+            "level": level,
+            "context_window": context_window,
+            "cost_class": cost_class,
+            "availability": availability,
+            "execution_mode": execution_mode,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        },
+        returning=False,
     )
-    params = (
-        model_uuid,
-        name,
-        provider_uuid,
-        level,
-        context_window,
-        cost_class,
-        availability,
-        execution_mode,
-        created_by,
-        now,
-        now,
-        None,
-    )
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn,

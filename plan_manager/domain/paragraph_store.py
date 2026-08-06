@@ -14,6 +14,27 @@ from dataclasses import dataclass
 import psycopg
 
 from plan_manager.domain.paragraph import Paragraph
+from plan_manager.domain.entity import DataclassEntity
+
+
+class _ParagraphRow(DataclassEntity):
+    """Table-bound write seat for paragraph rows (CR-7 G-004).
+
+    The Paragraph domain class deliberately stays table-unbound
+    (TABLE_NAME=None); this seat routes the store's row writes through the
+    unified engine. ENTITY_TYPE=None keeps it out of the catalog's
+    entity-type resolver; guard calls name the audit type explicitly.
+    """
+
+    ENTITY_TYPE = None
+    TABLE_NAME = "paragraph"
+    ID_COLUMN = "uuid"
+    COLUMNS = ("uuid", "plan_uuid", "label", "text", "position", "binding")
+    SOFT_DELETE_COLUMN = None
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_COLUMN = "plan_uuid"
+
 
 
 @dataclass
@@ -45,6 +66,10 @@ def delete_paragraphs(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
     Returns:
         None.
     """
+    # CR-7 G-004 compatibility note: this is a SET deletion (the plan's whole
+    # paragraph collection is replaced in one statement). The single-row engine
+    # wrapper cannot express it; the set-wise purge engine of G-006/T-001 owns
+    # this shape and adopts it there.
     with conn.cursor() as cur:
         cur.execute("DELETE FROM paragraph WHERE plan_uuid = %s", (plan_uuid,))
 
@@ -77,12 +102,18 @@ def insert_paragraphs(
         if paragraph.label is None:
             raise ValueError("paragraph has no label")
         row_uuid = uuid.uuid4()
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO paragraph (uuid, plan_uuid, label, text, position) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (row_uuid, plan_uuid, paragraph.label, paragraph.text, paragraph.position),
-            )
+        # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+        _ParagraphRow.crud_create(
+            conn,
+            {
+                "uuid": row_uuid,
+                "plan_uuid": plan_uuid,
+                "label": paragraph.label,
+                "text": paragraph.text,
+                "position": paragraph.position,
+            },
+            returning=False,
+        )
         row_uuids.append(row_uuid)
     return row_uuids
 
@@ -186,12 +217,19 @@ def insert_paragraph_at(
         The generated paragraph row UUID.
     """
     row_uuid = uuid.uuid4()
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO paragraph (uuid, plan_uuid, label, text, position, binding) "
-            "VALUES (%s, %s, %s, %s, %s, TRUE)",
-            (row_uuid, plan_uuid, label, text, position),
-        )
+    # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+    _ParagraphRow.crud_create(
+        conn,
+        {
+            "uuid": row_uuid,
+            "plan_uuid": plan_uuid,
+            "label": label,
+            "text": text,
+            "position": position,
+            "binding": True,
+        },
+        returning=False,
+    )
     return row_uuid
 
 
@@ -208,8 +246,14 @@ def update_paragraph_text(
 
 def delete_paragraph(conn: psycopg.Connection, row_uuid: uuid.UUID) -> None:
     """Delete one paragraph row by its uuid."""
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM paragraph WHERE uuid = %s", (row_uuid,))
+    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine wrapper.
+    _ParagraphRow.crud_hard_delete(
+        conn,
+        row_uuid,
+        require_soft_deleted=False,
+        returning=False,
+        audit_entity_type="paragraph",
+    )
 
 
 def shift_positions(

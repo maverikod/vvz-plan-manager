@@ -174,7 +174,11 @@ def test_runtime_audit_store_accepts_plan_unfreeze_action() -> None:
         changed_fields={"head_revision_uuid": str(HEAD_REV)},
     )
     assert rec.action == "plan_unfreeze"
-    assert "INSERT INTO runtime_audit_log" in captured["sql"]
+    # CR-7 G-004: the routed store binds through psycopg sql.Composed;
+    # render it the way psycopg would before asserting on the statement.
+    _sql = captured["sql"]
+    _rendered = (_sql.as_string(None) if hasattr(_sql, "as_string") else str(_sql)).replace('"', "")
+    assert "INSERT INTO runtime_audit_log" in _rendered
 
 
 # ------------------------------------------------------- plan_unfreeze command

@@ -57,21 +57,28 @@ def create_bug_fix_propagation(conn: psycopg.Connection, *, bug_fix_uuid: uuid.U
     propagation_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
 
-    sql = (
-        "INSERT INTO bug_fix_propagation "
-        "(uuid, bug_fix_uuid, impact_uuid, target_type, target_identifier, "
-        "action, status, assigned_to, linked_todo_uuid, linked_plan_uuid, "
-        "linked_cascade_uuid, started_at, finished_at, evidence, verification_result, "
-        "created_by, created_at, updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    BugFixPropagation.crud_create(
+        conn,
+        {
+            "uuid": propagation_uuid,
+            "bug_fix_uuid": bug_fix_uuid,
+            "impact_uuid": impact_uuid,
+            "target_type": target_type,
+            "target_identifier": target_identifier,
+            "action": action,
+            "status": status,
+            "assigned_to": assigned_to,
+            "linked_todo_uuid": linked_todo_uuid,
+            "linked_plan_uuid": linked_plan_uuid,
+            "linked_cascade_uuid": linked_cascade_uuid,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        },
+        returning=False,
     )
-    params = (
-        propagation_uuid, bug_fix_uuid, impact_uuid, target_type, target_identifier,
-        action, status, assigned_to, linked_todo_uuid, linked_plan_uuid,
-        linked_cascade_uuid, None, None, None, None,
-        created_by, now, now, None
-    )
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn,

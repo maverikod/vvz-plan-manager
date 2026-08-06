@@ -73,32 +73,30 @@ def create_step_assignment(
     deleted_at = None
 
     # Insert into database with exact column order
-    sql = (
-        "INSERT INTO step_assignment "
-        "(uuid, scope, role, plan_uuid, spec_level, branch_step_uuid, revision_uuid, "
-        "step_uuid, step_path, assigned_role, toolset_uuid, active, created_by, created_at, "
-        "updated_at, deleted_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    StepAssignment.crud_create(
+        conn,
+        {
+            "uuid": assignment_uuid,
+            "scope": scope,
+            "role": role,
+            "plan_uuid": plan_uuid,
+            "spec_level": spec_level,
+            "branch_step_uuid": branch_step_uuid,
+            "revision_uuid": revision_uuid,
+            "step_uuid": step_uuid,
+            "step_path": step_path,
+            "assigned_role": assigned_role,
+            "toolset_uuid": toolset_uuid,
+            "active": active,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "deleted_at": deleted_at,
+        },
+        returning=False,
     )
-    params = (
-        assignment_uuid,
-        scope,
-        role,
-        plan_uuid,
-        spec_level,
-        branch_step_uuid,
-        revision_uuid,
-        step_uuid,
-        step_path,
-        assigned_role,
-        toolset_uuid,
-        active,
-        created_by,
-        created_at,
-        updated_at,
-        deleted_at,
-    )
-    conn.execute(sql, params)
 
     # Record audit trail
     record_runtime_change(

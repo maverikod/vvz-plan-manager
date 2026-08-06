@@ -7,7 +7,7 @@ import psycopg
 from plan_manager.domain.escalation import Escalation, ESCALATION_STATUSES, validate_escalation_status
 from plan_manager.domain.primary_anchor import PrimaryAnchor, validate_anchor, anchor_to_columns, anchor_from_columns
 from plan_manager.domain.runtime_validation import RuntimeValidationError
-from plan_manager.storage.escalation_routing_store import ROUTING_INSERT_COLUMNS, routing_insert_params, routing_from_row
+from plan_manager.storage.escalation_routing_store import ROUTING_INSERT_COLUMNS, routing_from_row
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
@@ -85,56 +85,40 @@ def create_escalation(conn: psycopg.Connection, *, anchor: PrimaryAnchor, reason
     # Flatten anchor to column dict
     anchor_columns = anchor_to_columns(anchor)
 
-    # INSERT into escalation table with exact column order
-    sql = """
-    INSERT INTO escalation (
-        uuid, primary_anchor_type, anchor_project_id, anchor_file_path, anchor_plan_uuid,
-        anchor_revision_uuid, anchor_step_uuid, anchor_step_path, anchor_ref_id,
-        reason, from_level, to_level, status, resolution, resolved_by, resolved_at,
-        created_by, created_at, updated_at, deleted_at,
-        addressee_level, addressee_role, forwarded_from_uuid, chain_root_uuid,
-        sweep_priority, blocks_subtree
-    ) VALUES (
-        %s, %s, %s, %s, %s,
-        %s, %s, %s, %s,
-        %s, %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s,
-        %s, %s, %s, %s,
-        %s, %s
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    Escalation.crud_create(
+        conn,
+        {
+            "uuid": escalation_uuid,
+            "primary_anchor_type": anchor_columns["primary_anchor_type"],
+            "anchor_project_id": anchor_columns["anchor_project_id"],
+            "anchor_file_path": anchor_columns["anchor_file_path"],
+            "anchor_plan_uuid": anchor_columns["anchor_plan_uuid"],
+            "anchor_revision_uuid": anchor_columns["anchor_revision_uuid"],
+            "anchor_step_uuid": anchor_columns["anchor_step_uuid"],
+            "anchor_step_path": anchor_columns["anchor_step_path"],
+            "anchor_ref_id": anchor_columns["anchor_ref_id"],
+            "reason": reason,
+            "from_level": from_level,
+            "to_level": to_level,
+            "status": status,
+            "resolution": resolution,
+            "resolved_by": resolved_by,
+            "resolved_at": resolved_at,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "deleted_at": deleted_at,
+            "addressee_level": addressee_level,
+            "addressee_role": addressee_role,
+            "forwarded_from_uuid": forwarded_from_uuid,
+            "chain_root_uuid": chain_root_uuid,
+            "sweep_priority": sweep_priority,
+            "blocks_subtree": blocks_subtree,
+        },
+        returning=False,
     )
-    """
-
-    params = (
-        escalation_uuid,
-        anchor_columns["primary_anchor_type"],
-        anchor_columns["anchor_project_id"],
-        anchor_columns["anchor_file_path"],
-        anchor_columns["anchor_plan_uuid"],
-        anchor_columns["anchor_revision_uuid"],
-        anchor_columns["anchor_step_uuid"],
-        anchor_columns["anchor_step_path"],
-        anchor_columns["anchor_ref_id"],
-        reason,
-        from_level,
-        to_level,
-        status,
-        resolution,
-        resolved_by,
-        resolved_at,
-        created_by,
-        created_at,
-        updated_at,
-        deleted_at,
-    ) + routing_insert_params(
-        addressee_level=addressee_level,
-        addressee_role=addressee_role,
-        forwarded_from_uuid=forwarded_from_uuid,
-        chain_root_uuid=chain_root_uuid,
-        sweep_priority=sweep_priority,
-        blocks_subtree=blocks_subtree,
-    )
-
-    conn.execute(sql, params)
 
     # Record runtime change
     record_runtime_change(

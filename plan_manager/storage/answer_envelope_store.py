@@ -48,31 +48,24 @@ def create_answer_envelope(
     now = datetime.now(timezone.utc)
     created_at = updated_at = now
 
-    sql = """
-    INSERT INTO answer_envelope (
-        uuid, kind, schema_version, payload, anchor_plan_uuid, anchor_step_uuid,
-        attempt_uuid, created_by, created_at, updated_at, deleted_at
-    ) VALUES (
-        %s, %s, %s, %s, %s, %s,
-        %s, %s, %s, %s, %s
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    AnswerEnvelope.crud_create(
+        conn,
+        {
+            "uuid": envelope_uuid,
+            "kind": kind,
+            "schema_version": schema_version,
+            "payload": Jsonb(payload),
+            "anchor_plan_uuid": anchor_plan_uuid,
+            "anchor_step_uuid": anchor_step_uuid,
+            "attempt_uuid": attempt_uuid,
+            "created_by": created_by,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        },
+        returning=False,
     )
-    """
-
-    params = (
-        envelope_uuid,
-        kind,
-        schema_version,
-        Jsonb(payload),
-        anchor_plan_uuid,
-        anchor_step_uuid,
-        attempt_uuid,
-        created_by,
-        created_at,
-        updated_at,
-        None,
-    )
-
-    conn.execute(sql, params)
 
     record_runtime_change(
         conn,

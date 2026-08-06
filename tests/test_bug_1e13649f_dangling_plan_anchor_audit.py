@@ -79,7 +79,9 @@ class _FKViolatingConn:
 
     def execute(self, sql: str, params: tuple[Any, ...]) -> None:
         """Record every statement; raise ForeignKeyViolation for a dangling-anchor runtime_audit_log INSERT, matching live Postgres behavior."""
-        if sql.strip().startswith("INSERT INTO runtime_audit_log"):
+        # CR-7 G-004: the routed store binds through psycopg sql.Composed.
+        rendered = (sql.as_string(None) if hasattr(sql, "as_string") else str(sql)).replace('"', "")
+        if rendered.strip().startswith("INSERT INTO runtime_audit_log"):
             self.insert_attempts.append(params)
             plan_uuid = params[1]
             if plan_uuid is not None and plan_uuid in self.dangling_plan_uuids:

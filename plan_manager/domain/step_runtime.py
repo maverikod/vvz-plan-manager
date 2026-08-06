@@ -15,6 +15,28 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from plan_manager.domain.entity import DataclassEntity
+
+
+class _StepRuntimeRow(DataclassEntity):
+    """Descriptor-only seat for the step_runtime attribute bag (CR-7 G-004).
+
+    The table is keyed by step_uuid rather than an identity of its own (it is
+    in the registry's EXCLUDED_TABLES), so the engine's Python-side identity
+    registration stays off; the class exists to route the row INSERT through
+    the unified creation path.
+    """
+
+    ENTITY_TYPE = "step_runtime"
+    TABLE_NAME = "step_runtime"
+    ID_COLUMN = "step_uuid"
+    COLUMNS = ("step_uuid", "plan_uuid", "data")
+    SOFT_DELETE_COLUMN = None
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    REGISTER_IDENTITY = False
+    OWNER_COLUMN = "step_uuid"  # the attribute bag is owned by its step
+
 
 EMPTY_RUNTIME_RECORD: dict[str, Any] = {
     "activations": [],
@@ -119,11 +141,24 @@ def ensure_runtime_row(
     step_uuid: uuid.UUID,
 ) -> None:
     """Ensure an empty runtime row exists for one step."""
-    conn.execute(
-        "INSERT INTO step_runtime (step_uuid, plan_uuid, data) "
-        "VALUES (%s, %s, %s) ON CONFLICT (step_uuid) DO NOTHING",
-        (step_uuid, plan_uuid, Jsonb(empty_runtime_record())),
-    )
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    # The legacy ON CONFLICT DO NOTHING idempotence is kept as an explicit
+    # existence check before the engine create.
+    row = conn.execute(
+        "SELECT 1 FROM step_runtime WHERE step_uuid = %s",
+        (step_uuid,),
+    ).fetchone()
+    if row is None:
+        _StepRuntimeRow.crud_create(
+            conn,
+            {
+                "step_uuid": step_uuid,
+                "plan_uuid": plan_uuid,
+                "data": Jsonb(empty_runtime_record()),
+            },
+            returning=False,
+        )
 
 
 def get_runtime_record(

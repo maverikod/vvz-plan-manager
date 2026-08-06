@@ -8,6 +8,43 @@ from psycopg.types.json import Jsonb
 from plan_manager.storage.canonical import content_hash
 from plan_manager.domain.plan import set_head_revision
 
+from plan_manager.domain.entity import DataclassEntity
+
+
+class _VersionSeat(DataclassEntity):
+    """Shared traits of the version-store write seats (CR-7 G-004).
+
+    These tables' identities are registered by DB triggers, so the engine's
+    Python-side registration stays off and the routed writes keep the exact
+    single-INSERT statement profile. ENTITY_TYPE=None keeps the seats out of
+    the catalog's entity-type resolver.
+    """
+
+    ENTITY_TYPE = None
+    SOFT_DELETE_COLUMN = None
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    REGISTER_IDENTITY = False
+    OWNER_COLUMN = "plan_uuid"
+
+
+class _NodeVersionRow(_VersionSeat):
+    TABLE_NAME = "node_version"
+    COLUMNS = ("uuid", "plan_uuid", "entity_uuid", "hash", "content")
+
+
+class _RevisionRow(_VersionSeat):
+    TABLE_NAME = "revision"
+    COLUMNS = ("uuid", "plan_uuid", "parent_uuid", "author", "message", "created_at", "node_version_uuids")
+
+
+class _RefRow(_VersionSeat):
+    TABLE_NAME = "ref"
+    COLUMNS = ("uuid", "plan_uuid", "name", "revision_uuid")
+    ID_COLUMN = None
+    ID_COLUMNS = ("plan_uuid", "name")
+
+
 
 class VersionStoreError(ValueError):
     """Raised when a version-store lookup (e.g. a ref or revision) is not found."""
@@ -42,10 +79,14 @@ def insert_node_version(
     if row is not None:
         return row[0]
     new_uuid = uuid.uuid4()
-    conn.execute(
-        "INSERT INTO node_version (uuid, plan_uuid, entity_uuid, hash, content) "
-        "VALUES (%s, %s, %s, %s, %s)",
-        (new_uuid, plan_uuid, entity_uuid, hash_value, Jsonb(content)),
+    # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+    _NodeVersionRow.crud_create(
+        conn,
+        {
+            "uuid": new_uuid, "plan_uuid": plan_uuid, "entity_uuid": entity_uuid,
+            "hash": hash_value, "content": Jsonb(content),
+        },
+        returning=False,
     )
     return new_uuid
 
@@ -72,10 +113,15 @@ def insert_revision(
     """
     new_uuid = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO revision (uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (new_uuid, plan_uuid, parent_uuid, author, message, created_at, node_version_uuids),
+    # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+    _RevisionRow.crud_create(
+        conn,
+        {
+            "uuid": new_uuid, "plan_uuid": plan_uuid, "parent_uuid": parent_uuid,
+            "author": author, "message": message, "created_at": created_at,
+            "node_version_uuids": node_version_uuids,
+        },
+        returning=False,
     )
     return new_uuid
 
@@ -95,9 +141,11 @@ def create_ref(
     :return: uuid of the newly inserted ref row.
     """
     new_uuid = uuid.uuid4()
-    conn.execute(
-        "INSERT INTO ref (uuid, plan_uuid, name, revision_uuid) VALUES (%s, %s, %s, %s)",
-        (new_uuid, plan_uuid, name, revision_uuid),
+    # CR-7 G-004 (C-005, C-012): delegated to the unified creation path.
+    _RefRow.crud_create(
+        conn,
+        {"uuid": new_uuid, "plan_uuid": plan_uuid, "name": name, "revision_uuid": revision_uuid},
+        returning=False,
     )
     return new_uuid
 
@@ -110,7 +158,13 @@ def delete_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> Non
     :param name: name of the ref to delete.
     :return: None.
     """
-    conn.execute("DELETE FROM ref WHERE plan_uuid = %s AND name = %s", (plan_uuid, name))
+    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine wrapper.
+    _RefRow.crud_hard_delete(
+        conn,
+        {"plan_uuid": plan_uuid, "name": name},
+        require_soft_deleted=False, returning=False,
+        plan_uuid=plan_uuid, audit_entity_type="ref",
+    )
 
 
 def get_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> uuid.UUID:

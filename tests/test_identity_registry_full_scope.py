@@ -40,6 +40,16 @@ class _FakeCursor:
     def fetchone(self):
         return self._row
 
+    @property
+    def description(self):
+        # CR-7 G-004: the guarded delete's RETURNING path names columns from
+        # the cursor description; a single-id row is all these tests replay.
+        class _Col:
+            def __init__(self, name):
+                self.name = name
+
+        return [_Col("id")]
+
 
 class _FakeConn:
     """Records every executed statement and replays scripted rows."""
@@ -49,7 +59,9 @@ class _FakeConn:
         self._rows = list(rows or [])
 
     def execute(self, sql, params=()):
-        self.executed.append((" ".join(str(sql).split()), tuple(params)))
+        # CR-7 G-004: routed registry writes bind through psycopg sql.Composed.
+        rendered = sql.as_string(None) if hasattr(sql, "as_string") else str(sql)
+        self.executed.append((" ".join(rendered.replace('"', "").split()), tuple(params)))
         row = self._rows.pop(0) if self._rows else None
         return _FakeCursor(row)
 
