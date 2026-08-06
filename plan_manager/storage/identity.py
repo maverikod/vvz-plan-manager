@@ -385,7 +385,11 @@ def resolve_scoped_name(
 # CR-7 G-001/T-001/A-001 helper surface. The v4 validation rule and the
 # registry audit/rebuild helpers live in identity_audit (the 400-line
 # file budget of this module forced the split); they remain importable
-# from here as the contract surface.
+# from here as the contract surface. G-002/T-001/A-005: the admission
+# collaborator (storage/admission.ensure_ref) exposes the SAME single
+# implementation - exactly one identifier rule exists; this re-export and
+# the collaborator surface are thin aliases over it, and callers keep
+# working through either name until the G-004 cutover rewires them.
 from plan_manager.storage.identity_audit import (  # noqa: E402,F401
     PRIMARY_KEY_COLUMNS,
     audit_registry,

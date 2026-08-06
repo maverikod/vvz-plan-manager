@@ -7,7 +7,6 @@ from typing import Any
 
 from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.runtime_validation import RuntimeValidationError
-from plan_manager.domain.runtime_integrity import detect_cycle
 from plan_manager.domain.external_project_reference import is_valid_external_project_id
 from plan_manager.commands.errors import DomainCommandError
 
@@ -108,9 +107,18 @@ def guard_discovery_not_silently_confirmed(discovery_source: str, confidence: st
 
 
 def guard_no_dependency_cycle(edges: list[tuple[str, str]]) -> None:
+    """Refuse a cycle-closing dependency edge - delegated to the collaborator.
+
+    CR-7 G-002/T-001/A-004: the verdict and the cycle path come from the
+    admission collaborator's single check; PROJECT_DEPENDENCY_CYCLE stays
+    the public wire alias mapped onto that shared verdict, not a second
+    traversal. Message shape is unchanged for live clients.
+    """
+    from plan_manager.storage.admission import AdmissionCycleError, ensure_edges_acyclic
+
     try:
-        detect_cycle(edges)
-    except RuntimeValidationError as exc:
+        ensure_edges_acyclic(edges)
+    except AdmissionCycleError as exc:
         raise DomainCommandError("PROJECT_DEPENDENCY_CYCLE", str(exc)) from exc
 
 

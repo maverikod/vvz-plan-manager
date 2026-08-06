@@ -14,44 +14,28 @@ class LinkCycleError(RuntimeValidationError):
 
 
 def detect_cycle(edges: list[tuple[str, str]]) -> None:
-    """Detect cycles in a directed graph via depth-first search.
+    """Detect cycles in a directed graph - delegated to the admission collaborator.
 
-    Treats edges as a directed graph of (from, to) pairs and raises
-    RuntimeValidationError if the graph contains a cycle. This function is used
-    by callers for BOTH blocking-link cycles AND project-dependency cycles, and
-    imports no downstream vocabulary — the caller supplies the concrete edge list.
+    CR-7 G-002/T-001/A-003: this module no longer carries its own graph
+    traversal. The verdict and the cycle path come from the collaborator's
+    single check (plan_manager.storage.admission.ensure_edges_acyclic) and
+    its one shared cycle code; LinkCycleError stays the public wire alias
+    (LINK_CYCLE at the command boundary) mapped onto that verdict, preserving
+    the exact historic message shape.
 
     Parameters:
         edges: A list of directed (from_node, to_node) string-identifier pairs.
 
     Raises:
-        RuntimeValidationError: When a cycle is found, with the cycle's node
-            sequence in the message.
+        RuntimeValidationError: (as LinkCycleError) when a cycle is found,
+            with the cycle's node sequence in the message.
     """
-    graph: dict[str, list[str]] = {}
-    for src, dst in edges:
-        graph.setdefault(src, []).append(dst)
-        graph.setdefault(dst, [])
+    from plan_manager.storage.admission import AdmissionCycleError, ensure_edges_acyclic
 
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {node: WHITE for node in graph}
-
-    def visit(node: str, path: list[str]) -> None:
-        color[node] = GRAY
-        path.append(node)
-        for neighbor in graph.get(node, []):
-            if color[neighbor] == GRAY:
-                cycle_start = path.index(neighbor)
-                cycle = path[cycle_start:] + [neighbor]
-                raise LinkCycleError(f"cycle detected: {' -> '.join(cycle)}")
-            if color[neighbor] == WHITE:
-                visit(neighbor, path)
-        path.pop()
-        color[node] = BLACK
-
-    for node in list(graph):
-        if color[node] == WHITE:
-            visit(node, [])
+    try:
+        ensure_edges_acyclic(edges)
+    except AdmissionCycleError as exc:
+        raise LinkCycleError(str(exc)) from exc
 
 
 def ensure_no_duplicate(existing: set[tuple], candidate: tuple) -> None:

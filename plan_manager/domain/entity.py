@@ -14,10 +14,15 @@ from typing import Any, ClassVar
 import psycopg
 from psycopg import sql
 
+# CR-7 G-002/T-001/A-002: admission checks route through the collaborator's
+# single entry points (storage/admission); the registry MECHANICS (register/
+# resolve/unregister and the exclusion set) stay with the identity helpers.
+from plan_manager.storage.admission import (
+    ensure_available as ensure_identity_available,
+    ensure_ref as ensure_v4_entity_uuid,
+)
 from plan_manager.storage.identity import (
     EXCLUDED_TABLES,
-    ensure_identity_available,
-    ensure_v4_entity_uuid,
     register_entity_identity,
     resolve_entity_identity,
     unregister_entity_identity,
