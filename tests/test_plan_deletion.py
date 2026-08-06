@@ -86,12 +86,36 @@ def test_hard_delete_removes_the_row() -> None:
     conn = RecordingConn()
     plan_uuid = uuid.uuid4()
     hard_delete_plan(conn, plan_uuid)
-    # CR-7 G-004: the guarded wrapper writes the deletion audit after the
-    # DELETE, so the DELETE is located rather than assumed last.
-    sql, params = next(
-        (s, p) for s, p in conn.statements
-        if s.strip().startswith("DELETE FROM plan WHERE uuid")
-    )
+    # CR-7 G-004 compatibility note: hard_delete_plan is the raw, self-
+    # composed DELETE (see plan.py) rather than the guarded engine wrapper,
+    # so exactly one statement is issued -- no catalog probe, no audit
+    # INSERT -- and the DELETE is the plain, unguarded statement.
+    assert len(conn.statements) == 1
+    sql, params = conn.statements[0]
+    assert sql.strip() == "DELETE FROM plan WHERE uuid = %s"
+    assert tuple(params) == (plan_uuid,)
+
+
+def test_hard_delete_not_refused_by_live_referrers_bug_ac4e1ae7() -> None:
+    """Regression for bug ac4e1ae7: routing hard_delete_plan through the
+    guarded engine wrapper (commit 544ddae) made its catalog probe refuse
+    to delete a plan with a live runtime referrer (e.g. bug_report.
+    source_plan_uuid), which broke the R28 live contract (bug 1e13649f):
+    hard delete must succeed regardless of live referrers, since children
+    go via ON DELETE CASCADE and the audit path tolerates the resulting
+    dangling anchor. A conn primed to report a referrer row on any SELECT
+    must never actually be probed -- the fake never receives a SELECT
+    because hard_delete_plan issues only the plain DELETE.
+    """
+    conn = RecordingConn(rows=[(uuid.uuid4(),)])  # would "find" a referrer if probed
+    plan_uuid = uuid.uuid4()
+    hard_delete_plan(conn, plan_uuid)  # must not raise / must not be refused
+    assert len(conn.statements) == 1
+    sql, params = conn.statements[0]
+    assert sql.strip().startswith("DELETE FROM plan WHERE uuid")
+    assert "SELECT" not in sql
+    assert "bug_report" not in sql
+    assert "INSERT" not in sql
     assert tuple(params) == (plan_uuid,)
 
 

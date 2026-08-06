@@ -348,12 +348,13 @@ def hard_delete_plan(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> None:
     Returns:
         None.
     """
-    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine
-    # wrapper; ON DELETE CASCADE child cleanup is unchanged DB behaviour.
-    Plan.crud_hard_delete(
-        conn, plan_uuid,
-        require_soft_deleted=False, returning=False, plan_uuid=plan_uuid,
-    )
+    # CR-7 G-004 compatibility note: this DELETE stays self-composed here.
+    # The guarded engine's catalog probe refuses a plan with a live
+    # referrer (e.g. bug_report.source_plan_uuid), changing plan_delete's
+    # observable behaviour. R28 (bug 1e13649f): hard delete succeeds
+    # regardless -- cascading via ON DELETE CASCADE, audit tolerating the
+    # dangling anchor -- the shape G-006/T-001's set-wise engine adopts.
+    conn.execute("DELETE FROM plan WHERE uuid = %s", (plan_uuid,))
 
 
 def set_plan_completed(conn: psycopg.Connection, plan_uuid: uuid.UUID, completed: bool) -> None:
