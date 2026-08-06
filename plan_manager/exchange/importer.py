@@ -7,6 +7,10 @@ source of truth; export never round-trips through import.
 """
 
 import pathlib
+import uuid
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from typing import Any
 
 import yaml
 
@@ -14,6 +18,7 @@ from plan_manager.cascade.write import cascade_write
 from plan_manager.commands.errors import DomainCommandError
 from plan_manager.domain.concept import Concept
 from plan_manager.domain.concept_store import insert_concept, list_concepts
+from plan_manager.domain.entity import DataclassEntity
 from plan_manager.domain.labeling import assign_missing_labels
 from plan_manager.domain.paragraph import parse
 from plan_manager.domain.paragraph_store import delete_paragraphs, insert_paragraphs
@@ -21,11 +26,16 @@ from plan_manager.domain.plan import create_plan, get_plan
 from plan_manager.domain.project_binding import validate_plan_projects
 from plan_manager.domain.relation import Relation
 from plan_manager.domain.relation_store import insert_relation, list_relations
+from plan_manager.exchange import canonical_form as cf
 from plan_manager.exchange.layout_import import (
     import_steps,
     validate_as_file,
     validate_descriptor_dir,
 )
+from plan_manager.storage.errors import NotFoundError
+from plan_manager.storage.identity import register_entity_identity, resolve_entity_identity
+from plan_manager.storage.reference_catalog import resolve_entity_class
+from plan_manager.storage.relation_index_store import replace_index
 from plan_manager.storage.version_store import record_revision
 from plan_manager.views.dependency_graph import load_steps
 
@@ -305,3 +315,86 @@ def import_plan(conn, source_root, author: str):
         )
 
     return plan.uuid
+
+
+# CR-7 G-005/T-001/A-002: canonical-form import with identity preservation.
+_CANONICAL_IMPORT_SEATS: dict[type, type] = {}
+_SEAT_COPIED_ATTRS = ("TABLE_NAME", "COLUMNS", "SOFT_DELETE_COLUMN", "CREATED_AT_COLUMN", "UPDATED_AT_COLUMN", "OWNER_COLUMN", "OWNER_ROOT", "OWNER_GAP")
+
+
+def _canonical_import_seat(entity_cls: type) -> type:
+    """Cached ref-addressable seat (mirrors cascade/restore.py's _RestoreSeat): ID_COLUMN is the ref, not a composite business key."""
+    if entity_cls in _CANONICAL_IMPORT_SEATS:
+        return _CANONICAL_IMPORT_SEATS[entity_cls]
+    namespace = {attr: getattr(entity_cls, attr) for attr in _SEAT_COPIED_ATTRS}
+    namespace.update(ENTITY_TYPE=None, ID_COLUMN=cf._entity_ref_column(entity_cls), ID_COLUMNS=(),
+                      INSERT_COLUMNS=(), UPDATE_COLUMNS=(), REGISTER_IDENTITY=False, ENGINE_MANAGED_TIMESTAMPS=False)
+    seat = type(f"_CanonicalImportSeat_{entity_cls.__name__}", (DataclassEntity,), namespace)
+    _CANONICAL_IMPORT_SEATS[entity_cls] = seat
+    return seat
+
+def _as_uuid(value: Any) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(value)
+
+def _identity_state(conn, entity_cls: type, seat: type, ref: uuid.UUID, entity_kind: str) -> str:
+    """"absent"/"same_kind"/"cross_kind": registry-tracked via resolve_entity_identity, else row-level via the seat (e.g. step_runtime)."""
+    if entity_cls.REGISTER_IDENTITY:
+        try:
+            existing = resolve_entity_identity(conn, ref)
+        except NotFoundError:
+            return "absent"
+        return "same_kind" if existing["entity_type"] == entity_kind else "cross_kind"
+    return "same_kind" if seat.crud_get(conn, ref) is not None else "absent"
+
+def _canonical_row_values(entity_cls: type, record: Mapping[str, Any]) -> dict[str, Any]:
+    """Rehydrate one JSON-safe canonical record into typed column values; properties pass opaque."""
+    ref_column = cf._entity_ref_column(entity_cls)
+    values: dict[str, Any] = dict(record.get("properties") or {})
+    values[ref_column] = record["ref"]
+    if entity_cls.OWNER_COLUMN is not None:
+        owner = record["owner"]
+        values[entity_cls.OWNER_COLUMN] = uuid.UUID(owner) if isinstance(owner, str) else owner
+    if entity_cls.SOFT_DELETE_COLUMN is not None:
+        # markdel's original deletion instant is unrecoverable by design (canonical_form's own
+        # documented loss); marked -> a fresh stamp, unmarked -> NULL.
+        values[entity_cls.SOFT_DELETE_COLUMN] = datetime.now(timezone.utc) if record["markdel"] else None
+    for column, key in ((entity_cls.CREATED_AT_COLUMN, "created_at"), (entity_cls.UPDATED_AT_COLUMN, "updated_at")):
+        if column is not None:
+            value = record[key]
+            values[column] = datetime.fromisoformat(value) if isinstance(value, str) else value
+    return values
+
+
+def import_canonical_document(conn, document: Mapping[str, Any]) -> dict:
+    """Import a canonical-form document with identity preservation, as one schema-and-data transfer
+    inside the caller's own transaction (never committed here: any exception rolls back everything
+    written). ABSENT ref: recovery/import admission, ref+timestamps preserved. SAME-kind ref: cleared
+    and replaced via one crud_update. ANOTHER-kind ref: aborts immediately. Checksum precedes any
+    write. Relations are written last via relation_index_store.replace_index."""
+    if not cf.verify_document(document):
+        raise ValueError("canonical document checksum verification failed; refusing to write")
+    created = replaced = 0
+    for record in document.get("entities", ()):
+        entity_kind = record["entity_kind"]
+        entity_cls = resolve_entity_class(entity_kind)
+        seat = _canonical_import_seat(entity_cls)
+        ref = _as_uuid(record["ref"])
+        state = _identity_state(conn, entity_cls, seat, ref, entity_kind)
+        if state == "cross_kind":
+            raise ValueError(f"identity conflict on import: ref {ref} is already registered under a "
+                              f"different entity kind than {entity_kind!r}; aborting the import")
+        values = _canonical_row_values(entity_cls, record)
+        if state == "absent":
+            seat.crud_create(conn, values, returning=False, recovery_mode=True, admit_original_timestamps=True)
+            if entity_cls.REGISTER_IDENTITY:
+                register_entity_identity(conn, entity_id=ref, table_name=entity_cls.TABLE_NAME,
+                                          entity_type=entity_kind, created_at=values.get(entity_cls.CREATED_AT_COLUMN))
+            created += 1
+        else:  # same_kind: clear and replace every non-identity column.
+            update_values = {c: v for c, v in values.items() if c != seat.ID_COLUMN}
+            seat.crud_update(conn, ref, update_values, returning=False)
+            replaced += 1
+    triples = [(_as_uuid(t["source_ref"]), _as_uuid(t["target_ref"]), _as_uuid(t["field_ref"]))
+               for t in document.get("relations", ())]
+    written = replace_index(conn, triples)
+    return {"entities_created": created, "entities_replaced": replaced, "relations_written": written}
