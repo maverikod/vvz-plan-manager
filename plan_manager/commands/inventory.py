@@ -190,6 +190,7 @@ INVENTORY: tuple[str, ...] = (
     "graph_dependents",
     "reference_inspect",
     "id_resolve",
+    "reference_repair",
     "command_timing_stats",
     # runtime audit (C-010)
     "audit_list",
@@ -251,6 +252,11 @@ MUTATING: frozenset[str] = frozenset({
     "plan_project_clear_primary",
     "project_uuid_reserve",
     "runtime_purge_batch",
+    # reference_repair's clear and delete_carriers operations write (delete_carriers
+    # delegates to the same set-wise purge engine runtime_purge_batch uses); find
+    # is read-only, but the command as a whole is mutation-capable, matching how
+    # runtime_purge_batch is classified above.
+    "reference_repair",
     "plan_import",
     "export_archive",
     "hrs_import",

@@ -49,7 +49,9 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 # these later additions.
 # Raised by later plans that legitimately add a command:
 #   CR-6 (planmgr-cr6-entity-identity-crud): +1 for project_uuid_reserve.
-_PRE_CR4_INVENTORY_COUNT = 214
+#   CR-7 (G-006/T-002/A-002): +1 for reference_repair (repair-store command
+#   surface: find/clear/delete_carriers over reference_repair_store).
+_PRE_CR4_INVENTORY_COUNT = 215
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

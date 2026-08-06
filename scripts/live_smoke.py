@@ -448,6 +448,13 @@ TIER4_HANDLED: frozenset[str] = frozenset(
 KNOWN_SKIP_REASONS: dict[str, str] = {
     "export_cleanup": "destructive filesystem cleanup of export archives; not exercised against live data",
     "runtime_purge_batch": "irreversibly purges EVERY soft-deleted row of an entity type, not just this pass's throwaway rows; not safe to exercise against live data",
+    # CR-7 G-006/T-002/A-002: find is read-only and safe, but clear directly
+    # nulls an arbitrary catalogued reference column (not scoped to this
+    # pass's own throwaway rows) and delete_carriers(dry_run=false) delegates
+    # to the same irreversible set-wise purge engine runtime_purge_batch
+    # uses -- one command bundling a safe and two unsafe operations, so the
+    # whole command is skipped rather than only partially probed.
+    "reference_repair": "clear mutates arbitrary catalogued reference columns and delete_carriers(dry_run=false) irreversibly removes entities via the set-wise purge engine, not scoped to this pass's own throwaway rows; not safe to exercise generically against live data",
     # plan_import/export_read/hrs_export/plan_export: R38 (CR-7 G-005/T-002/
     # A-002) now exercises the whole export/import round trip end-to-end --
     # see TIER4_HANDLED and run_r38_export_import_round_trip below.

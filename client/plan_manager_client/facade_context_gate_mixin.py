@@ -138,5 +138,9 @@ class ContextGateCommandsMixin:
         """Resolve a partial identifier (any fragment of a UUID) to the full identifier(s) it matches, with each match's entity type and label (read-only, paginated)."""
         return await self._call("id_resolve", params)
 
+    async def reference_repair(self, **params: Any) -> Any:
+        """Find dangling scalar UUID references (read-only), clear a statically-nullable one, or remove the carrier of one that cannot be cleared (dry_run=true by default for the destructive path)."""
+        return await self._call("reference_repair", params)
+
 
 __all__ = ["ContextGateCommandsMixin"]

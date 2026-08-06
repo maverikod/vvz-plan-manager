@@ -54,6 +54,9 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     # The entity type has no soft-deleted state a batch purge could act on
     # (its class declares SOFT_DELETE_COLUMN=None).
     "ENTITY_NOT_PURGEABLE",
+    # reference_repair's clear op refused: the column's nullability verdict
+    # (NOT_NULLABLE or UNKNOWN) means it may not be nulled.
+    "REFERENCE_NOT_CLEARABLE",
     "INVALID_STEP_FIELD_SHAPE",
     "INVALID_LEVEL",
     "INVALID_SCOPE",
