@@ -1,17 +1,43 @@
-"""Command: purge a batch of already soft-deleted rows for one entity type.
+"""Command: hard-delete the fixed-point-closed set of marked entities.
 
-Second phase of the two-phase deletion contract (C-009). The first phase marks a
-row deleted; this one removes it physically, but only where nothing still refers
-to it. Rows that are still referenced come back in ``refused`` rather than
-failing the batch, so one blocked row never hides the progress made on the rest.
+CR-7 G-006/T-001/A-002 reverses this command's earlier per-entity-type,
+report-one-and-continue shape (see docs/delivery for the CR-7 governance
+record filed at G-008) onto the set-wise engine landed by the sibling step
+A-001 (``storage.runtime_hard_delete.hard_delete_marked_set``).
 
-This command writes NO audit record of its own. The hard-delete guard beneath it
-is the single audit point and records one row per removal and one per refusal;
-a write here would audit every purged row twice.
+The shipped shape this replaces purged one entity type at a time
+(``entity.purge_soft_deleted_batch``, driven by ``crud_purge_soft_deleted_batch``):
+each already-marked row was admitted for physical removal by checking only its
+LIVE inbound references, and a row that was still referenced came back in a
+per-row ``refused`` list while the batch continued with the rest. That
+admission check never looked at referrers that were themselves already
+marked -- so a marked-but-not-yet-purged referrer never blocked anything, and
+if that referrer was not purged in the very same run (a different entity
+type, or simply not yet reached), it was left pointing at a row the purge had
+just removed: a dangling reference the purge itself manufactured, with no
+later pass that ever cleans it up, because nothing about a successful
+removal is recorded as "still owes a followup".
+
+hard_delete_marked_set closes this hole by deciding on the WHOLE set before
+touching a single row: the starting set (explicit identifiers, or -- by
+default -- every entity currently marked across every soft-delete-capable
+type) is expanded to its fixed point of marked referrers, and only removed
+atomically if every referrer of the closed set is itself a member. If any
+referrer outside the set remains, it is necessarily unmarked (a marked one
+would already have been folded in), and the WHOLE operation is refused --
+nothing is removed, not even the members that had no blocking referrer of
+their own. There is no more per-row ``refused`` list: one call either
+removes its whole computed set or removes nothing, and a refusal names every
+external unmarked referrer that blocked it.
+
+This command writes NO audit record of its own. The hard-delete guard beneath
+the engine is the single audit point and records one row per removal; a write
+here would audit every removed row twice.
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, ClassVar
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -19,24 +45,64 @@ from mcp_proxy_adapter.core.errors import InvalidParamsError
 
 from plan_manager.commands.base_command import Command
 from plan_manager.commands.errors import DomainCommandError, map_exception
+from plan_manager.domain.entity import EntityNotSoftDeletedError, EntityReferencedError
 from plan_manager.runtime.context import db_connection
-from plan_manager.storage.reference_catalog import (
-    purge_capable_entity_types,
-    resolve_entity_class,
-)
+from plan_manager.storage.errors import NotFoundError
+from plan_manager.storage.identity import resolve_entity_identities_batch
+from plan_manager.storage.reference_catalog import purge_capable_entity_types, resolve_entity_class
+from plan_manager.storage.runtime_hard_delete import hard_delete_marked_set
 
-_DEFAULT_LIMIT = 1000
-_MAX_LIMIT = 10000
+
+def _describe_blocking_referrers(
+    conn: Any, exc: EntityReferencedError
+) -> list[dict[str, Any]]:
+    """Resolve each blocking referrer's entity_type so the refusal names WHAT blocked it.
+
+    Called only on the refusal path: hard_delete_marked_set raises before
+    removing anything, so every blocking id named here is still a live row
+    the identity registry can resolve. entity_type stands in for "table" in
+    this payload -- project convention names entities by ENTITY_TYPE, never
+    the raw table name, everywhere else on this command surface.
+    """
+    referrer_ids = [referrer["referrer_id"] for referrer in exc.referrers]
+    resolved = resolve_entity_identities_batch(conn, referrer_ids)
+    described = []
+    for referrer in exc.referrers:
+        referrer_id = referrer["referrer_id"]
+        info = resolved.get(referrer_id)
+        described.append(
+            {
+                "entity_type": info["entity_type"] if info is not None else None,
+                "id": str(referrer_id),
+                # field_ref: the relation index's own opaque property key: it
+                # identifies WHICH field on the referrer points at the closed
+                # set, but is not itself a human-readable column name (see
+                # storage.reference_catalog.reference_field).
+                "field_ref": str(referrer.get("column")),
+            }
+        )
+    return described
+
+
+def _refusal_message(described: list[dict[str, Any]]) -> str:
+    names = ", ".join(f"{item['entity_type'] or 'unknown'}:{item['id']}" for item in described)
+    return (
+        f"hard delete refused: {len(described)} external unmarked referrer(s) still "
+        f"reference the requested set, so the whole operation is refused and nothing "
+        f"was removed -- {names}"
+    )
 
 
 class RuntimePurgeBatchCommand(Command):
-    """Physically remove a batch of soft-deleted rows of one entity type."""
+    """Irreversibly remove the fixed-point-closed set of marked entities, atomically."""
 
     name: ClassVar[str] = "runtime_purge_batch"
-    version: ClassVar[str] = "1.0.0"
+    version: ClassVar[str] = "2.0.0"
     descr: ClassVar[str] = (
-        "Purge a batch of already soft-deleted rows of one entity type, "
-        "reporting per-row removals and reference-blocked refusals."
+        "Hard-delete the fixed-point-closed set of marked (soft-deleted) entities -- "
+        "explicit identifiers, or every marked entity by default -- atomically: the "
+        "whole computed set is removed, or the whole operation is refused and nothing "
+        "is removed."
     )
     category: ClassVar[str] = "runtime"
     author: ClassVar[str] = "Vasiliy Zdanovskiy"
@@ -49,45 +115,52 @@ class RuntimePurgeBatchCommand(Command):
         return {
             "type": "object",
             "properties": {
+                "identifiers": {
+                    "type": "array",
+                    "items": {"type": "string", "format": "uuid"},
+                    "description": (
+                        "Explicit starting set of already-marked (soft-deleted) entity "
+                        "identifiers, of ANY soft-delete-capable entity type in one "
+                        "call -- the engine underneath is cross-kind. Every id here "
+                        "must already be marked; the fixed-point closure then pulls in "
+                        "every marked referrer automatically. Omit (or pass null) to "
+                        "default to every entity currently marked across every "
+                        "soft-delete-capable type -- hard_delete_marked_set's own "
+                        "default."
+                    ),
+                },
                 "entity_type": {
                     "type": "string",
                     "description": (
-                        "Entity type to purge. This is the ENTITY_TYPE, never the table "
-                        "name: 'comment', not 'runtime_comment'; 'todo', not 'todo_item'."
+                        "Optional, informational only: the engine is cross-kind and "
+                        "this never filters or scopes identifiers -- it only pre-checks "
+                        "that the named type is capable of being purged at all "
+                        "(declares a soft-delete column), before any lookup runs. This "
+                        "is the ENTITY_TYPE, never the table name."
                     ),
-                    # Derived from the live entity registry, so an entity that
-                    # gains or loses soft-delete support changes this enum by its
-                    # own declaration and no hand-kept list can drift from it.
                     "enum": purge_capable_entity_types(),
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum rows to consider in this batch.",
-                    "minimum": 1,
-                    "maximum": _MAX_LIMIT,
-                    "default": _DEFAULT_LIMIT,
                 },
                 "changed_by": {
                     "type": "string",
-                    "description": "Actor recorded on every audit record the purge produces.",
+                    "description": "Actor recorded on the audit trail of every row removed.",
                 },
             },
-            "required": ["entity_type", "changed_by"],
+            "required": ["changed_by"],
             "additionalProperties": False,
         }
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Validate the entity type, the actor, and the batch limit.
+        """Validate the identifiers array shape, entity_type, and the actor.
 
         Raises:
-            InvalidParamsError: if entity_type names no entity, names one that
-                declares SOFT_DELETE_COLUMN=None, changed_by is empty, or limit
-                is outside the documented range.
+            InvalidParamsError: if identifiers is present but not an array of
+                UUID strings, entity_type names an entity that declares
+                SOFT_DELETE_COLUMN=None, or changed_by is empty.
         """
-        # Checked BEFORE the base validator: the schema enum already excludes
-        # non-purgeable types, so the base would reject 'concept' with a generic
-        # enum message that never says why. The specific reason is the useful
-        # one, and it must survive.
+        # Checked BEFORE the base validator, matching this command's earlier
+        # convention: the schema enum already excludes non-purgeable types, so
+        # the base would reject an out-of-enum value with a generic message
+        # that never says why. The specific reason is the useful one.
         entity_type = params.get("entity_type")
         if isinstance(entity_type, str):
             try:
@@ -97,55 +170,68 @@ class RuntimePurgeBatchCommand(Command):
             if entity_cls is not None and getattr(entity_cls, "SOFT_DELETE_COLUMN", None) is None:
                 raise InvalidParamsError(
                     f"entity type {entity_type!r} declares SOFT_DELETE_COLUMN=None, so it has "
-                    "no soft-deleted state to purge; it can only be deleted directly."
+                    "no soft-deleted state and can never be part of a marked-set purge."
                 )
         params = super().validate_params(params)
-        entity_type = params.get("entity_type")
-        try:
-            resolve_entity_class(str(entity_type))
-        except ValueError as exc:
-            raise InvalidParamsError(str(exc)) from exc
+        identifiers = params.get("identifiers")
+        if identifiers is not None:
+            if not isinstance(identifiers, list):
+                raise InvalidParamsError(f"identifiers must be an array, got {identifiers!r}.")
+            for item in identifiers:
+                if not isinstance(item, str):
+                    raise InvalidParamsError(
+                        f"identifiers must be an array of UUID strings, got {item!r}."
+                    )
+                try:
+                    uuid.UUID(item)
+                except ValueError as exc:
+                    raise InvalidParamsError(
+                        f"identifiers entry is not a valid UUID: {item!r}."
+                    ) from exc
         changed_by = params.get("changed_by")
         if not isinstance(changed_by, str) or not changed_by.strip():
             raise InvalidParamsError("changed_by must be a non-empty string.")
-        limit = params.get("limit", _DEFAULT_LIMIT)
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise InvalidParamsError(f"limit must be an integer, got {limit!r}.")
-        if not 1 <= limit <= _MAX_LIMIT:
-            raise InvalidParamsError(f"limit must be between 1 and {_MAX_LIMIT}, got {limit}.")
         return params
 
     async def execute(
         self,
-        entity_type: str,
         changed_by: str,
-        limit: int = _DEFAULT_LIMIT,
+        identifiers: list[str] | None = None,
+        entity_type: str | None = None,
         context: object | None = None,
     ) -> SuccessResult | ErrorResult:
         try:
-            entity_cls = resolve_entity_class(str(entity_type))
             # Re-checked here, not only in validate_params: execute() is a public
-            # entry point that internal callers and tests invoke directly, and a
-            # DomainCommandError raised from validate_params would escape the
-            # adapter's run() unmapped. This is the path that yields the
-            # documented ENTITY_NOT_PURGEABLE code.
-            if getattr(entity_cls, "SOFT_DELETE_COLUMN", None) is None:
-                raise DomainCommandError(
-                    "ENTITY_NOT_PURGEABLE",
-                    f"entity type {entity_type!r} declares SOFT_DELETE_COLUMN=None, so it "
-                    "has no soft-deleted state to purge",
-                )
-            with db_connection() as conn:
-                outcome = entity_cls.crud_purge_soft_deleted_batch(
-                    conn, limit=limit, changed_by=changed_by
-                )
-            return SuccessResult(
-                data={
-                    "entity_type": entity_type,
-                    "deleted": outcome.get("deleted", []),
-                    "refused": outcome.get("refused", []),
-                }
+            # entry point that internal callers and tests invoke directly (same
+            # reasoning this command has always used for this exact check).
+            if entity_type is not None:
+                entity_cls = resolve_entity_class(str(entity_type))
+                if getattr(entity_cls, "SOFT_DELETE_COLUMN", None) is None:
+                    raise DomainCommandError(
+                        "ENTITY_NOT_PURGEABLE",
+                        f"entity type {entity_type!r} declares SOFT_DELETE_COLUMN=None, so it "
+                        "has no soft-deleted state and can never be part of a marked-set purge",
+                    )
+            entity_ids = (
+                [uuid.UUID(item) for item in identifiers] if identifiers is not None else None
             )
+            with db_connection() as conn:
+                try:
+                    outcome = hard_delete_marked_set(conn, entity_ids, changed_by=changed_by)
+                except (NotFoundError, EntityNotSoftDeletedError) as exc:
+                    # An explicit identifier that names no registered entity, or
+                    # names one that is not currently marked: only an
+                    # already-marked row may seed the fixed point.
+                    raise DomainCommandError("RUNTIME_VALIDATION_ERROR", str(exc)) from exc
+                except EntityReferencedError as exc:
+                    described = _describe_blocking_referrers(conn, exc)
+                    raise DomainCommandError(
+                        "DELETE_BLOCKED",
+                        _refusal_message(described),
+                        {"blocking_referrers": described, "removed": []},
+                    ) from exc
+            removed = [str(entity_id) for entity_id in outcome.get("removed", [])]
+            return SuccessResult(data={"removed": removed, "removed_count": len(removed)})
         except Exception as exc:
             return map_exception(exc)
 
@@ -159,44 +245,80 @@ class RuntimePurgeBatchCommand(Command):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "Completes the two-phase deletion contract. Rows already marked deleted are "
-                "removed physically, one at a time, each admitted only after the central "
-                "reference guard confirms nothing live still points at it. A row that is still "
-                "referenced is reported in refused with the referring column counts and the "
-                "batch continues, so one blocked row never masks the rows that were removed. "
-                "Every removal and every refusal is audited once, by the guard; this command "
-                "adds no audit record of its own."
+                "CR-7 G-006/T-001/A-002: this command reverses its earlier "
+                "per-entity-type, report-one-and-continue purge onto the set-wise "
+                "hard-delete engine (storage.runtime_hard_delete.hard_delete_marked_set, "
+                "sibling step A-001). The shape it replaced "
+                "(entity.purge_soft_deleted_batch, per entity type) admitted a row "
+                "for physical removal by checking only its LIVE inbound references; a "
+                "referrer that was itself already marked (soft-deleted) never blocked "
+                "anything, and if that marked referrer was not purged in the very same "
+                "run, it was left pointing at a row that no longer existed -- a "
+                "dangling reference the purge itself manufactured, with no later pass "
+                "that ever cleans it up. This command now computes the full fixed "
+                "point of marked referrers first (via the relation index, not the "
+                "live-only FK catalogue) and only then decides: if every referrer of "
+                "the closed set is itself a member, the WHOLE set is removed "
+                "atomically; if any referrer outside the set remains -- necessarily "
+                "unmarked, since a marked one would already have been folded in -- the "
+                "WHOLE operation is refused and nothing is removed. There is no more "
+                "per-row refused list: one call either removes everything in its "
+                "computed set or removes nothing, and a refusal names every external "
+                "unmarked referrer that blocked it. entity_type no longer scopes "
+                "anything: the engine is cross-kind by construction (a single call "
+                "may close over and remove a mix of entity types), so a per-call "
+                "type filter would only misleadingly narrow the STARTING set while "
+                "the closure could still cross type boundaries regardless. It is kept "
+                "purely as an optional pre-flight sanity check (still capable of the "
+                "documented ENTITY_NOT_PURGEABLE refusal), never as a filter; "
+                "identifiers (any mix of types, or omitted for every marked entity) "
+                "is the only real scoping knob. limit is gone entirely: the atomic "
+                "whole-set-or-nothing contract has no partial-batch concept to bound."
             ),
             "parameters": {
+                "identifiers": {
+                    "type": "array",
+                    "description": (
+                        "Explicit starting identifiers, of any soft-delete-capable "
+                        "entity type -- the engine is cross-kind, so a single call may "
+                        "close over and remove a mix of entity types in one pass. "
+                        "Every one must already be marked (soft-deleted); an id that "
+                        "is not refuses the call before any referrer is even looked "
+                        "up. Omitted or null defaults to every entity currently "
+                        "marked across every soft-delete-capable type -- "
+                        "hard_delete_marked_set's own default, so 'purge everything "
+                        "that is due' is the default call, not an opt-in."
+                    ),
+                    "required": False,
+                },
                 "entity_type": {
                     "type": "string",
                     "description": (
-                        "The ENTITY_TYPE to purge, never the table name. Only types whose "
-                        "class declares a soft-delete column are accepted."
+                        "Optional and informational only: never filters or scopes "
+                        "identifiers (the engine is cross-kind), only pre-checks "
+                        "up front that the named type can be purged at all."
                     ),
-                    "required": True,
+                    "required": False,
                 },
                 "changed_by": {
                     "type": "string",
-                    "description": "Actor identity recorded on each audit record.",
+                    "description": "Actor identity recorded on the audit trail of every row removed.",
                     "required": True,
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": f"Batch size, 1..{_MAX_LIMIT}. Defaults to {_DEFAULT_LIMIT}.",
-                    "required": False,
                 },
             },
             "return_value": {
                 "success": {
-                    "description": "Per-row outcomes for the batch.",
+                    "description": (
+                        "The fixed-point-closed set that was actually removed, "
+                        "atomically. Never partial: every id here was removed, in "
+                        "referrer-before-target order."
+                    ),
                     "data": {
-                        "entity_type": "The entity type that was purged.",
-                        "deleted": "List of the removed row payloads.",
-                        "refused": (
-                            "List of {id, references} objects for rows a live reference "
-                            "still blocks. Identifiers are stringified."
+                        "removed": (
+                            "Stringified uuids of every row removed, ordered so a "
+                            "referrer always precedes the target it referenced."
                         ),
+                        "removed_count": "len(removed) -- for a caller that only needs the count.",
                     },
                 },
                 "error": {
@@ -207,52 +329,94 @@ class RuntimePurgeBatchCommand(Command):
             },
             "usage_examples": [
                 {
-                    "description": "Purge up to 100 soft-deleted todos.",
-                    "command": {
-                        "entity_type": "todo",
-                        "changed_by": "orchestrator",
-                        "limit": 100,
-                    },
+                    "description": "Purge every currently marked entity across every type (the default).",
+                    "command": {"changed_by": "sweeper"},
                 },
                 {
-                    "description": "Purge soft-deleted comments with the default batch size.",
-                    "command": {"entity_type": "comment", "changed_by": "orchestrator"},
+                    "description": (
+                        "Purge one explicit, already-marked todo, plus whatever "
+                        "marked referrers close over it."
+                    ),
+                    "command": {
+                        "identifiers": ["11111111-1111-1111-1111-111111111111"],
+                        "changed_by": "orchestrator",
+                    },
                 },
             ],
             "error_cases": {
                 "ENTITY_NOT_PURGEABLE": {
                     "description": (
-                        "entity_type names an entity whose class declares "
-                        "SOFT_DELETE_COLUMN=None (concept, relation, step) and therefore has "
-                        "no soft-deleted state a purge could act on. An entity_type naming no "
-                        "entity at all is rejected earlier, by the schema enum."
+                        "entity_type was supplied and names an entity whose class "
+                        "declares SOFT_DELETE_COLUMN=None (concept, relation, step), "
+                        "so it can never carry a marked (soft-deleted) state and can "
+                        "never take part in this command's fixed-point purge. Purely "
+                        "an optional up-front sanity check: entity_type never scopes "
+                        "identifiers, so leaving it out never avoids this class of "
+                        "mistake for an identifier of that type -- it just skips the "
+                        "early, named refusal in favor of whatever hard_delete_marked_set "
+                        "itself raises."
                     ),
                     "message": (
                         "entity type {entity_type} declares SOFT_DELETE_COLUMN=None, so it "
-                        "has no soft-deleted state to purge"
+                        "has no soft-deleted state and can never be part of a marked-set purge"
                     ),
                     "solution": (
-                        "Pick an entity type from the schema enum; delete a non-soft-deletable "
-                        "entity through its own delete command instead."
+                        "Omit entity_type, or pass one whose class supports soft "
+                        "delete; delete a non-soft-deletable entity through its own "
+                        "delete command instead."
+                    ),
+                },
+                "DELETE_BLOCKED": {
+                    "description": (
+                        "The fixed-point closure of the requested set still has at "
+                        "least one referrer outside the set that is not itself "
+                        "marked. This replaces the old per-row 'refused' list: the "
+                        "refusal covers the WHOLE call and nothing was removed, not "
+                        "even the members of the set that had no blocking referrer of "
+                        "their own. details.blocking_referrers names every blocking "
+                        "referrer by entity_type and id."
+                    ),
+                    "message": (
+                        "hard delete refused: N external unmarked referrer(s) still "
+                        "reference the requested set, so the whole operation is "
+                        "refused and nothing was removed -- entity_type:id, ..."
+                    ),
+                    "solution": (
+                        "Soft-delete every named blocking referrer first (or purge it, "
+                        "if it is itself due), then retry the identical call; a "
+                        "referrer that is marked before the retry is swept into the "
+                        "fixed point automatically."
                     ),
                 },
                 "RUNTIME_VALIDATION_ERROR": {
                     "description": (
-                        "A runtime write failed a shared runtime validation check, for example "
-                        "an actor identity that does not satisfy the audit trail's contract."
+                        "A runtime write failed a shared runtime validation check. "
+                        "For this command specifically: an explicit identifier in "
+                        "identifiers that names no registered entity at all, or "
+                        "names one that is not currently marked (soft-deleted) -- "
+                        "only an already-marked row may seed the fixed point."
                     ),
                     "message": "runtime validation failed: {details}",
-                    "solution": "Correct the offending field and retry.",
+                    "solution": (
+                        "Drop identifiers that do not resolve to a registered entity; "
+                        "soft-delete a live row before naming it here, or omit it and "
+                        "let it be swept in by the default call once it is marked."
+                    ),
                 },
             },
             "best_practices": [
-                "Batch purge is idempotent: a second run over the same entity type finds nothing "
-                "left to remove and is a no-op, so it is safe to schedule repeatedly.",
-                "Read refused rather than treating a non-empty result as failure. A refusal names "
-                "the referring column, so detaching or purging that referrer first lets the next "
-                "run succeed.",
-                "Pass a distinctive changed_by per caller; it is the only thing that distinguishes "
-                "one purge run from another in the audit trail.",
-                "Keep limit modest on a busy database: the whole batch runs in one transaction.",
+                "The default call (identifiers omitted) is idempotent: with nothing "
+                "currently marked it removes an empty set, so it is safe to schedule "
+                "repeatedly.",
+                "A DELETE_BLOCKED refusal removes nothing at all, not even the "
+                "members of the requested set with no blocking referrer of their "
+                "own; read details.blocking_referrers, clear every one, then retry "
+                "the identical call.",
+                "Pass a distinctive changed_by per caller; it is the only thing that "
+                "distinguishes one purge run from another in the audit trail.",
+                "Prefer the default call (identifiers omitted) over naming "
+                "identifiers explicitly unless a narrower starting set is actually "
+                "required: the default already covers every entity due for removal "
+                "and needs no enumeration.",
             ],
         }

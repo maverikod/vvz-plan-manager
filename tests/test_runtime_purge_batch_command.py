@@ -1,8 +1,18 @@
-"""runtime_purge_batch command and batch-purge attribution suite (CR-6 G-004/T-003).
+"""runtime_purge_batch command suite.
 
-Fakes and mocks only — no live database. Covers both A-001 (the actor threaded
-through purge_soft_deleted_batch into the guard, with no second audit write) and
-A-002/A-003 (the command, its schema, and its registration).
+CR-6 G-004/T-003 originally shipped this command driving
+entity.purge_soft_deleted_batch (per entity type, report-one-and-continue).
+CR-7 G-006/T-001/A-002 reverses the command onto the set-wise engine landed by
+sibling step A-001 (storage.runtime_hard_delete.hard_delete_marked_set): every
+test below that exercises the COMMAND (schema, metadata, validate_params,
+execute) is rewritten for that reversal, each edit commented "G-006/T-001/A-002".
+
+The lower A-001(CR-6) suite at the bottom -- test_purge_batch_* -- exercises
+entity.purge_soft_deleted_batch and TodoItem.crud_purge_soft_deleted_batch
+directly, not through the command. That mechanism is untouched by this step
+(this command no longer calls it, but the function itself still exists,
+unmodified, in domain/entity.py) and those tests are left as accurate
+coverage of it.
 """
 
 from __future__ import annotations
@@ -12,7 +22,6 @@ import json
 import uuid
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from mcp_proxy_adapter.core.errors import InvalidParamsError, ValidationError
@@ -22,11 +31,13 @@ from plan_manager.commands.errors import DOMAIN_CODES
 from plan_manager.commands.inventory import INVENTORY, MUTATING
 from plan_manager.commands.runtime_purge_batch_command import RuntimePurgeBatchCommand
 from plan_manager.domain import entity as entity_module
-from plan_manager.domain.entity import EntityReferencedError, purge_soft_deleted_batch
+from plan_manager.domain.entity import (
+    EntityNotSoftDeletedError,
+    EntityReferencedError,
+    purge_soft_deleted_batch,
+)
 from plan_manager.domain.todo import TodoItem
-from plan_manager.storage import reference_catalog
-
-_NON_PURGEABLE = ["concept", "relation", "step"]
+from plan_manager.storage.errors import NotFoundError
 
 
 @contextmanager
@@ -65,48 +76,58 @@ def _run(**params: Any) -> Any:
 
 
 def test_schema_sanity() -> None:
+    # G-006/T-001/A-002: limit is gone (the whole-set-or-nothing contract has
+    # no partial-batch concept to bound); identifiers is the new, optional,
+    # scoping parameter; entity_type survives only as an optional,
+    # non-scoping pre-flight sanity check (see test_metadata_sanity).
     schema = RuntimePurgeBatchCommand.get_schema()
     properties = schema["properties"]
 
-    enum = properties["entity_type"]["enum"]
-    assert enum, "the entity_type enum is empty"
-    for excluded in _NON_PURGEABLE:
-        assert excluded not in enum, (
-            f"{excluded} declares SOFT_DELETE_COLUMN=None and must not be offered for purge"
-        )
-    # The value is the ENTITY_TYPE, never the table name.
-    assert "comment" in enum and "runtime_comment" not in enum
-    assert "todo" in enum and "todo_item" not in enum
+    assert "limit" not in properties
 
-    limit = properties["limit"]
-    assert limit["type"] == "integer"
-    assert limit["minimum"] == 1
-    assert limit["maximum"] == 10000
-    assert limit["default"] == 1000
+    identifiers = properties["identifiers"]
+    assert identifiers["type"] == "array"
+    assert identifiers["items"] == {"type": "string", "format": "uuid"}
+
+    assert "entity_type" in properties
+    assert "runtime_purge_batch" == RuntimePurgeBatchCommand.name  # sanity: same command
 
     assert properties["changed_by"]["type"] == "string"
-    assert set(schema["required"]) == {"entity_type", "changed_by"}
+    assert set(schema["required"]) == {"changed_by"}
     assert schema["additionalProperties"] is False
 
 
 def test_metadata_sanity() -> None:
+    # G-006/T-001/A-002: the parameter set, return shape and advertised error
+    # codes all follow the reversal onto hard_delete_marked_set.
     metadata = RuntimePurgeBatchCommand.metadata()
-    assert set(metadata["parameters"]) == {"entity_type", "changed_by", "limit"}
-    assert "deleted" in metadata["return_value"]["success"]["data"]
-    assert "refused" in metadata["return_value"]["success"]["data"]
+    assert set(metadata["parameters"]) == {"identifiers", "entity_type", "changed_by"}
+    assert metadata["parameters"]["identifiers"]["required"] is False
+    assert metadata["parameters"]["entity_type"]["required"] is False
+    assert metadata["parameters"]["changed_by"]["required"] is True
+
+    assert "removed" in metadata["return_value"]["success"]["data"]
+    assert "removed_count" in metadata["return_value"]["success"]["data"]
+    # The old per-row shape must not survive into the documented contract.
+    assert "deleted" not in metadata["return_value"]["success"]["data"]
+    assert "refused" not in metadata["return_value"]["success"]["data"]
 
     error_cases = metadata["error_cases"]
-    assert "ENTITY_NOT_PURGEABLE" in error_cases, (
-        "the non-soft-delete refusal must be advertised"
+    assert "DELETE_BLOCKED" in error_cases, (
+        "the whole-operation refusal must be advertised"
     )
-    assert "SOFT_DELETE_COLUMN=None" in error_cases["ENTITY_NOT_PURGEABLE"]["description"]
+    assert "RUNTIME_VALIDATION_ERROR" in error_cases
+    assert "ENTITY_NOT_PURGEABLE" in error_cases, (
+        "entity_type survives as an optional pre-flight check, so its refusal "
+        "code must stay reachable and advertised"
+    )
     for code, case in error_cases.items():
         assert code in DOMAIN_CODES, f"{code} is advertised but not a registered domain code"
         # Repository convention: description plus solution, never 'fix' or 'hint'.
         assert "description" in case and "solution" in case, f"{code} breaks the error_cases shape"
     assert any(
         "idempotent" in practice for practice in metadata["best_practices"]
-    ), "the idempotence of a repeated batch purge must be documented"
+    ), "the idempotence of the default (identifiers-omitted) call must be documented"
 
 
 def test_command_is_registered_as_mutating() -> None:
@@ -117,112 +138,108 @@ def test_command_is_registered_as_mutating() -> None:
 # ---------------------------------------------------------------- validate_params
 
 
-@pytest.mark.parametrize("entity_type", _NON_PURGEABLE)
-def test_validate_params_refuses_unsupported_entity_type(entity_type: str) -> None:
-    with pytest.raises((InvalidParamsError, ValidationError)) as excinfo:
-        RuntimePurgeBatchCommand().validate_params(
-            {"entity_type": entity_type, "changed_by": "tester"}
-        )
-    # The generic enum rejection would never say why; the specific reason must
-    # reach the caller.
-    assert "SOFT_DELETE_COLUMN=None" in str(excinfo.value)
-
-
-@pytest.mark.parametrize("limit", [0, 10001])
-def test_validate_params_bounds_the_limit(limit: int) -> None:
+def test_validate_params_refuses_a_non_array_identifiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # G-006/T-001/A-002: identifiers replaces entity_type as the scoping param.
     with pytest.raises((InvalidParamsError, ValidationError)):
         RuntimePurgeBatchCommand().validate_params(
-            {"entity_type": "todo", "changed_by": "tester", "limit": limit}
+            {"identifiers": "not-an-array", "changed_by": "tester"}
         )
+
+
+def test_validate_params_refuses_a_malformed_identifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises((InvalidParamsError, ValidationError)) as excinfo:
+        RuntimePurgeBatchCommand().validate_params(
+            {"identifiers": ["not-a-uuid"], "changed_by": "tester"}
+        )
+    assert "not-a-uuid" in str(excinfo.value)
+
+
+def test_validate_params_accepts_a_well_formed_identifier_list() -> None:
+    params = RuntimePurgeBatchCommand().validate_params(
+        {"identifiers": [str(uuid.uuid4()), str(uuid.uuid4())], "changed_by": "tester"}
+    )
+    assert len(params["identifiers"]) == 2
 
 
 def test_validate_params_refuses_an_empty_actor() -> None:
     with pytest.raises((InvalidParamsError, ValidationError)):
+        RuntimePurgeBatchCommand().validate_params({"changed_by": "   "})
+
+
+@pytest.mark.parametrize("entity_type", ["concept", "relation", "step"])
+def test_validate_params_refuses_a_non_purgeable_entity_type(entity_type: str) -> None:
+    # G-006/T-001/A-002: entity_type survives only as an optional pre-flight
+    # sanity check, not a scope filter -- but the check itself is unchanged.
+    with pytest.raises((InvalidParamsError, ValidationError)) as excinfo:
         RuntimePurgeBatchCommand().validate_params(
-            {"entity_type": "todo", "changed_by": "   "}
+            {"entity_type": entity_type, "changed_by": "tester"}
         )
+    assert "SOFT_DELETE_COLUMN=None" in str(excinfo.value)
 
 
-# ---------------------------------------------------------------- resolution
+def test_execute_maps_a_non_purgeable_entity_type_to_a_domain_code() -> None:
+    """execute() re-checks entity_type independently of validate_params.
 
-
-@pytest.mark.parametrize("entity_type", ["comment", "todo"])
-def test_entity_type_resolved_through_shared_helper(
-    monkeypatch: pytest.MonkeyPatch, entity_type: str
-) -> None:
-    """The command must not carry a private type -> class mapping.
-
-    Two independent resolvers would drift and answer differently for the same
-    entity type, which is exactly the class of defect bugs e52daeab and 113a7888
-    came from.
+    Same reasoning this command has always used for this check: execute() is
+    a public entry point internal callers and tests invoke directly, and a
+    DomainCommandError raised from validate_params would escape the adapter's
+    run() unmapped.
     """
-    resolver = MagicMock(return_value=_purging_class({"deleted": [], "refused": []}))
-    monkeypatch.setattr(module, "resolve_entity_class", resolver)
-
-    _run(entity_type=entity_type, changed_by="tester")
-
-    assert resolver.call_args_list, "the shared resolver was never called"
-    # The ENTITY_TYPE spelling must reach the resolver untouched — not silently
-    # rewritten into a table name on the way.
-    assert resolver.call_args_list[0].args[0] == entity_type
-
-
-def test_shared_resolver_is_the_catalog_helper() -> None:
-    """The name the command imports is the catalog's, not a local copy."""
-    assert module.resolve_entity_class is reference_catalog.resolve_entity_class
+    result = _run(entity_type="concept", changed_by="tester")
+    assert result.details["domain_code"] == "ENTITY_NOT_PURGEABLE"
 
 
 # ---------------------------------------------------------------- execute
 
 
-def _purging_class(outcome: dict[str, Any], recorder: list[dict[str, Any]] | None = None) -> type:
-    """A stand-in entity class whose batch purge returns a canned outcome."""
-
-    class _Purgeable:
-        SOFT_DELETE_COLUMN = "deleted_at"
-
-        @classmethod
-        def crud_purge_soft_deleted_batch(cls, conn: Any, **kwargs: Any) -> dict[str, Any]:
-            if recorder is not None:
-                recorder.append(kwargs)
-            return outcome
-
-    return _Purgeable
-
-
-def test_execute_purge_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_default_call_forwards_none_and_reports_the_fixed_point_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G-006/T-001/A-002 default-set coverage: identifiers omitted must forward
+    # entity_ids=None, which is hard_delete_marked_set's own "every marked
+    # entity across every type" default -- not a command-level re-derivation.
     first, second = uuid.uuid4(), uuid.uuid4()
     forwarded: list[dict[str, Any]] = []
+
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        forwarded.append({"entity_ids": entity_ids, "changed_by": changed_by})
+        return {"removed": [first, second]}
+
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
+
+    result = _run(changed_by="sweeper")
+
+    assert forwarded == [{"entity_ids": None, "changed_by": "sweeper"}]
+    assert result.data == {
+        "removed": [str(first), str(second)],
+        "removed_count": 2,
+    }
+
+
+def test_execute_forwards_explicit_identifiers_as_uuids(monkeypatch: pytest.MonkeyPatch) -> None:
+    given = uuid.uuid4()
+    forwarded: list[dict[str, Any]] = []
+
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        forwarded.append({"entity_ids": entity_ids, "changed_by": changed_by})
+        return {"removed": [given]}
+
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
+
+    result = _run(identifiers=[str(given)], changed_by="orchestrator")
+
+    assert forwarded == [{"entity_ids": [given], "changed_by": "orchestrator"}]
+    assert result.data == {"removed": [str(given)], "removed_count": 1}
+
+
+def test_execute_idempotent_default_with_nothing_marked(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        module,
-        "resolve_entity_class",
-        lambda entity_type: _purging_class(
-            {"deleted": [{"uuid": str(first)}, {"uuid": str(second)}], "refused": []}, forwarded
-        ),
+        module, "hard_delete_marked_set", lambda conn, entity_ids, *, changed_by: {"removed": []}
     )
 
-    result = _run(entity_type="todo", changed_by="tester", limit=50)
+    result = _run(changed_by="sweeper")
 
-    assert result.data["entity_type"] == "todo"
-    assert result.data["deleted"] == [{"uuid": str(first)}, {"uuid": str(second)}]
-    assert result.data["refused"] == []
-    assert forwarded == [{"limit": 50, "changed_by": "tester"}]
-
-
-def test_execute_refused_by_references(monkeypatch: pytest.MonkeyPatch) -> None:
-    refusal = {"id": {"uuid": str(uuid.uuid4())}, "references": {"execution_attempt.todo_uuid": 2}}
-    monkeypatch.setattr(
-        module,
-        "resolve_entity_class",
-        lambda entity_type: _purging_class({"deleted": [], "refused": [refusal]}),
-    )
-
-    result = _run(entity_type="todo", changed_by="tester")
-
-    # Verbatim: a refusal names the referring column, which is the only thing
-    # that tells a caller what to detach before the next run.
-    assert result.data["refused"] == [refusal]
-    assert result.data["deleted"] == []
+    assert result.data == {"removed": [], "removed_count": 0}
 
 
 def test_execute_writes_no_audit_of_its_own(
@@ -230,68 +247,133 @@ def test_execute_writes_no_audit_of_its_own(
 ) -> None:
     monkeypatch.setattr(
         module,
-        "resolve_entity_class",
-        lambda entity_type: _purging_class(
-            {"deleted": [{"uuid": "a"}, {"uuid": "b"}], "refused": []}
-        ),
+        "hard_delete_marked_set",
+        lambda conn, entity_ids, *, changed_by: {"removed": [uuid.uuid4(), uuid.uuid4()]},
     )
 
-    _run(entity_type="todo", changed_by="tester")
+    _run(changed_by="tester")
 
     assert audit_calls == [], (
-        "the command wrote its own audit record; the hard-delete guard beneath it is "
-        "the single writer, so this would audit every purged row twice"
+        "the command wrote its own audit record; the hard-delete guard beneath the "
+        "engine is the single writer, so this would audit every removed row twice"
     )
 
 
-def test_execute_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        module,
-        "resolve_entity_class",
-        lambda entity_type: _purging_class({"deleted": [], "refused": []}),
-    )
-
-    result = _run(entity_type="todo", changed_by="tester")
-
-    assert result.data["deleted"] == []
-    assert result.data["refused"] == []
-
-
-def test_limit_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-    forwarded: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        module,
-        "resolve_entity_class",
-        lambda entity_type: _purging_class({"deleted": [], "refused": []}, forwarded),
-    )
-
-    _run(entity_type="todo", changed_by="tester", limit=7)
-    assert forwarded[0]["limit"] == 7
-
-    _run(entity_type="todo", changed_by="tester")
-    assert forwarded[1]["limit"] == 1000, "the documented default must be the one applied"
-
-
-def test_execute_maps_a_non_purgeable_type_to_a_domain_code(
+def test_execute_maps_an_unregistered_explicit_identifier_to_runtime_validation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """execute() is a public entry point, so it guards independently.
+    # G-006/T-001/A-002: an explicit id the identity registry has never seen.
+    missing = uuid.uuid4()
 
-    A DomainCommandError raised from validate_params would escape the adapter's
-    run() unmapped, so this is the path that produces the documented code.
-    """
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        raise NotFoundError(f"entity identity not found: {missing}")
 
-    class _NotPurgeable:
-        SOFT_DELETE_COLUMN = None
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
 
-    monkeypatch.setattr(module, "resolve_entity_class", lambda entity_type: _NotPurgeable)
+    result = _run(identifiers=[str(missing)], changed_by="tester")
 
-    result = _run(entity_type="concept", changed_by="tester")
-
-    assert result.details["domain_code"] == "ENTITY_NOT_PURGEABLE"
+    assert result.details["domain_code"] == "RUNTIME_VALIDATION_ERROR"
+    assert str(missing) in result.message
 
 
-# ------------------------------------------------- A-001: actor reaches the guard
+def test_execute_maps_an_unmarked_explicit_identifier_to_runtime_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G-006/T-001/A-002: an explicit id that exists but is not (yet) marked --
+    # only an already-marked row may seed the fixed point.
+    live = uuid.uuid4()
+
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        raise EntityNotSoftDeletedError("todo", live)
+
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
+
+    result = _run(identifiers=[str(live)], changed_by="tester")
+
+    assert result.details["domain_code"] == "RUNTIME_VALIDATION_ERROR"
+
+
+def test_execute_refusal_names_every_blocking_referrer_and_removes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # G-006/T-001/A-002 refusal-path coverage: this is the frozen step's
+    # central contract change. The mechanism's EntityReferencedError is
+    # mapped into a WHOLE-operation DELETE_BLOCKED refusal that names every
+    # external unmarked referrer by entity_type+id, and the response makes
+    # explicit that nothing was removed -- there is no partial "deleted" list
+    # any more, unlike the old report-one-and-continue shape.
+    working_set_member = uuid.uuid4()
+    blocking_referrer = uuid.uuid4()
+    field_ref = uuid.uuid4()
+
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        raise EntityReferencedError(
+            "hard_delete_marked_set",
+            [working_set_member],
+            [
+                {
+                    "table": None,
+                    "column": field_ref,
+                    "referrer_id": blocking_referrer,
+                    "referrer_kind": "relation_index",
+                }
+            ],
+        )
+
+    def _fake_resolver(conn: Any, ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, Any]]:
+        assert list(ids) == [blocking_referrer]
+        return {blocking_referrer: {"entity_type": "bug", "table_name": "bug_report"}}
+
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
+    monkeypatch.setattr(module, "resolve_entity_identities_batch", _fake_resolver)
+
+    result = _run(identifiers=[str(working_set_member)], changed_by="tester")
+
+    assert result.details["domain_code"] == "DELETE_BLOCKED"
+    assert result.details["blocking_referrers"] == [
+        {"entity_type": "bug", "id": str(blocking_referrer), "field_ref": str(field_ref)}
+    ]
+    # Nothing removed is stated explicitly, not merely implied by absence.
+    assert result.details["removed"] == []
+    # The referrer is named in the human-readable message too, not only tucked
+    # away in details.
+    assert "bug" in result.message and str(blocking_referrer) in result.message
+
+
+def test_execute_refusal_reports_unresolvable_referrer_entity_type_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocking referrer id the identity registry cannot resolve is still named by id."""
+    blocking_referrer = uuid.uuid4()
+
+    def _fake_engine(conn: Any, entity_ids: Any, *, changed_by: str) -> dict[str, Any]:
+        raise EntityReferencedError(
+            "hard_delete_marked_set",
+            [],
+            [
+                {
+                    "table": None,
+                    "column": uuid.uuid4(),
+                    "referrer_id": blocking_referrer,
+                    "referrer_kind": "relation_index",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(module, "hard_delete_marked_set", _fake_engine)
+    monkeypatch.setattr(module, "resolve_entity_identities_batch", lambda conn, ids: {})
+
+    result = _run(changed_by="tester")
+
+    assert result.details["blocking_referrers"][0]["entity_type"] is None
+    assert result.details["blocking_referrers"][0]["id"] == str(blocking_referrer)
+
+
+# ------------------------------------------------- CR-6 A-001: actor reaches the guard
+#
+# Unchanged by G-006/T-001/A-002: this exercises entity.purge_soft_deleted_batch
+# and TodoItem.crud_purge_soft_deleted_batch directly, not through the command
+# (see the module docstring). That mechanism is untouched by this step.
 
 
 class _Column:

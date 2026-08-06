@@ -16,7 +16,6 @@ import pytest
 
 from plan_manager.commands.errors import DOMAIN_CODES
 from plan_manager.commands.inventory import INVENTORY, MUTATING
-from plan_manager.domain.todo import TodoItem
 from plan_manager.storage.runtime_audit_store import ALLOWED_ACTIONS
 
 # ---------------------------------------------------------------------------
@@ -210,28 +209,35 @@ def test_cr6_mutating_commands_write_a_registered_audit_action(monkeypatch) -> N
             # record NOTHING. A record here would mean every purged row is
             # audited twice. The guard's own records are covered by
             # tests/test_hard_delete_guard.py.
+            #
+            # G-006/T-001/A-002: reversed onto the set-wise engine
+            # (hard_delete_marked_set) -- this branch is updated to the new
+            # call shape (identifiers/changed_by, no more entity_type/limit
+            # scoping) and the new removed/removed_count response, per the
+            # rewrite in tests/test_runtime_purge_batch_command.py.
             purged: list[dict] = []
             command_cls = next(
                 obj
                 for _, obj in inspect.getmembers(module, inspect.isclass)
                 if getattr(obj, "name", None) == name
             )
+            given = uuid.uuid4()
             monkeypatch.setattr(
-                TodoItem,
-                "crud_purge_soft_deleted_batch",
-                classmethod(
-                    lambda cls, conn, **kw: purged.append(kw)
-                    or {"deleted": [], "refused": []}
+                module,
+                "hard_delete_marked_set",
+                lambda conn, entity_ids, *, changed_by: (
+                    purged.append({"entity_ids": entity_ids, "changed_by": changed_by})
+                    or {"removed": [given]}
                 ),
             )
             result = asyncio.run(
                 command_cls().execute(
-                    entity_type="todo", changed_by="contract-test", limit=5
+                    identifiers=[str(given)], changed_by="contract-test"
                 )
             )
-            assert getattr(result, "data", {}).get("deleted") == []
-            assert purged == [{"limit": 5, "changed_by": "contract-test"}], (
-                "the command must forward limit and the actor to the entity layer"
+            assert getattr(result, "data", {}).get("removed") == [str(given)]
+            assert purged == [{"entity_ids": [given], "changed_by": "contract-test"}], (
+                "the command must forward identifiers and the actor to the engine"
             )
             assert recorded == [], (
                 "runtime_purge_batch must write no audit record of its own; the "
