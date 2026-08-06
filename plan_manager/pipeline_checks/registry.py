@@ -240,6 +240,21 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
         ),
     ),
     PipelineCheckSpec(
+        name="cr7-roundtrip",
+        description=(
+            "Run the CR-7 G-005/T-002/A-001 canonical round-trip fidelity suite "
+            "(todo 09a4d9af closure evidence): export/import/re-export byte and "
+            "semantic equality, identity preservation, same-kind replacement, "
+            "cross-kind conflict abort, and the exact excluded-content list."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/exchange/test_cr7_roundtrip.py",
+        ),
+    ),
+    PipelineCheckSpec(
         name="cr7-no-out-of-mechanism-write",
         description=(
             "Mechanically assert CR-7 G-004: no INSERT/DELETE statement targets a "
