@@ -185,6 +185,18 @@ REFERENCE_CATALOG: dict[tuple[str, str], CatalogEntry] = _entries(
     CatalogEntry("context_block", "common_block_uuid", "context_block", fk_backed=True,
                  on_delete="NO ACTION"),
     CatalogEntry("context_block", "cascade_uuid", "cascade", fk_backed=True, on_delete="NO ACTION"),
+    # ---- CR-7 closed enumerations (0028) -----------------------------------
+    # A value row belongs to its enumeration; the FK blocks deleting an
+    # enumeration that still carries values. Mutation of either table is
+    # code-and-schema admission only (enumeration_store).
+    CatalogEntry("enumeration_value", "enumeration_ref", "enumeration",
+                 target_column="ref", fk_backed=True, on_delete="NO ACTION"),
+    # ---- CR-7 derived relation index (0027) --------------------------------
+    # A stored triple names its field record; the FK keeps the protected
+    # catalogue row alive while any triple uses it. Both tables are derived
+    # records outside the identity registry (see EXCLUDED_TABLES).
+    CatalogEntry("relation_index", "field_ref", "reference_field",
+                 target_column="field_ref", fk_backed=True, on_delete="NO ACTION"),
 )
 
 
@@ -431,3 +443,110 @@ def table_name_for_entity_type(entity_type: str) -> str:
     """
     table_name: Any = resolve_entity_class(entity_type).TABLE_NAME
     return str(table_name)
+
+
+# --------------------------------------------------------------------------
+# CR-7 G-001/T-002/A-001: the reference-field catalogue (C-004).
+#
+# One immutable field UUID per source property name, plus a predefined flag.
+# The catalogue does not constrain the target entity kind and never
+# classifies UUID columns in advance: a field record is ensured when a
+# relation first arises, inside the same CRUD transaction, and it outlives
+# the relations that used it so a rebuild reuses the same field ref for the
+# property name it rediscovers. What counts as a reference at all is the
+# registry-membership criterion owned by the identity helpers; this
+# catalogue only names the property.
+#
+# Deletion admission is three-tiered by design: ordinary CRUD cannot delete
+# a field record at all; schema-update admission may delete a non-predefined
+# record; a predefined record is undeletable.
+# --------------------------------------------------------------------------
+
+
+def ensure_reference_field(
+    conn: psycopg.Connection, property_name: str, *, predefined: bool = False
+) -> Any:
+    """Return the immutable field ref for a property, creating it if absent.
+
+    Safe to call inside the caller's CRUD transaction when a relation first
+    arises: the insert is idempotent per property name, and a concurrent
+    ensure converges on the single stored ref. The predefined flag is only
+    ever set at creation; ensuring an existing field never mutates it.
+    """
+    if not property_name or not property_name.strip():
+        raise ValueError("property_name must be a non-empty string")
+    from plan_manager.storage.identity import ensure_v4_entity_uuid
+
+    row = conn.execute(
+        "SELECT field_ref FROM reference_field WHERE property_name = %s",
+        (property_name,),
+    ).fetchone()
+    if row is not None:
+        return row[0]
+    field_ref = ensure_v4_entity_uuid(None)
+    conn.execute(
+        "INSERT INTO reference_field (field_ref, property_name, predefined) "
+        "VALUES (%s, %s, %s) ON CONFLICT (property_name) DO NOTHING",
+        (field_ref, property_name, predefined),
+    )
+    row = conn.execute(
+        "SELECT field_ref FROM reference_field WHERE property_name = %s",
+        (property_name,),
+    ).fetchone()
+    return row[0] if row is not None else field_ref
+
+
+def get_reference_field(
+    conn: psycopg.Connection, property_name: str
+) -> dict[str, Any] | None:
+    """Return {"field_ref", "property_name", "predefined"} or None."""
+    row = conn.execute(
+        "SELECT field_ref, property_name, predefined "
+        "FROM reference_field WHERE property_name = %s",
+        (property_name,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"field_ref": row[0], "property_name": row[1], "predefined": row[2]}
+
+
+def list_reference_fields(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Every stored field record, ordered by property name."""
+    rows = conn.execute(
+        "SELECT field_ref, property_name, predefined "
+        "FROM reference_field ORDER BY property_name",
+        (),
+    ).fetchall()
+    return [
+        {"field_ref": row[0], "property_name": row[1], "predefined": row[2]}
+        for row in rows
+    ]
+
+
+def delete_reference_field(
+    conn: psycopg.Connection, property_name: str, *, schema_update: bool = False
+) -> None:
+    """Delete one field record under the three-tier admission.
+
+    Raises:
+        PermissionError: without schema_update (ordinary CRUD may never
+            delete a field record), or when the record is predefined
+            (undeletable under any admission).
+        KeyError: when no record exists for the property name.
+    """
+    if not schema_update:
+        raise PermissionError(
+            "ordinary CRUD cannot delete a reference-field record; "
+            "field deletion is a schema-update admission"
+        )
+    record = get_reference_field(conn, property_name)
+    if record is None:
+        raise KeyError(f"reference field not found: {property_name!r}")
+    if record["predefined"]:
+        raise PermissionError(
+            f"predefined reference field is undeletable: {property_name!r}"
+        )
+    conn.execute(
+        "DELETE FROM reference_field WHERE property_name = %s AND predefined = FALSE",
+        (property_name,),
+    )

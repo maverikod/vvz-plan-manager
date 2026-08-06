@@ -86,6 +86,10 @@ ALLOWED_TABLES = frozenset(
         "toolset_membership",
         "invocation_profile",
         "step_assignment",
+        # CR-7 closed-enumeration storage (G-001/T-003): enumeration and value
+        # records are entities with immutable ref identities of their own.
+        "enumeration",
+        "enumeration_value",
     }
 )
 
@@ -105,6 +109,16 @@ EXCLUDED_TABLES: dict[str, str] = {
     "entity_identity": (
         "The registry itself. Registering the registry in the registry would "
         "be circular."
+    ),
+    "reference_field": (
+        "CR-7 protected field catalogue (0027): a field record is catalogue "
+        "metadata keyed by property name, ensured by CRUD and deletable only "
+        "under schema-update admission; it is not a referenceable entity."
+    ),
+    "relation_index": (
+        "CR-7 derived relation index (0027): immutable source-target-field "
+        "triples projected from canonical columns; atomically replaceable by "
+        "rebuild and therefore never an identity-bearing entity table."
     ),
 }
 """Tables deliberately outside the identity registry, each with its reason.
@@ -346,39 +360,14 @@ def resolve_scoped_name(
 ) -> uuid.UUID:
     """Resolve a human-readable scoped name to its immutable entity UUID.
 
-    Parameters:
-        conn: psycopg.Connection
-            An open psycopg 3 connection, as returned by
-            plan_manager.storage.connection.connect.
-        table: str
-            The table to query. Must be a member of SCOPED_NAME_TABLES;
-            otherwise ValueError is raised before any query is
-            executed. That set is deliberately narrower than
-            ALLOWED_TABLES: this query filters on plan_uuid, which the
-            runtime-overlay and agent-configuration tables do not have.
-        plan_uuid: uuid.UUID
-            The UUID of the owning plan; scopes the name lookup to one
-            plan.
-        name_column: str
-            The column holding the human-readable scoped name (e.g.
-            "concept_id" for concepts, "step_id" for steps, "label" for
-            paragraphs, "name" for plans). Must be a member of
-            ALLOWED_NAME_COLUMNS; otherwise ValueError is raised before
-            any query is executed.
-        name: str
-            The scoped name value to look up.
-
-    Returns:
-        uuid.UUID
-            The uuid column value of the matching row.
+    ``table`` must be in SCOPED_NAME_TABLES and ``name_column`` in
+    ALLOWED_NAME_COLUMNS; both are checked BEFORE any value reaches string
+    interpolation, else ValueError. The lookup is scoped to ``plan_uuid``
+    (e.g. concept_id/step_id/label/name) and returns the row's uuid.
 
     Raises:
-        ValueError: if table is not in SCOPED_NAME_TABLES, or name_column
-            is not in ALLOWED_NAME_COLUMNS. Raised before any SQL is
-            executed, before any allowlist-failing value reaches string
-            interpolation.
-        plan_manager.storage.errors.NotFoundError: if no row matches
-            plan_uuid and name in the given table/name_column.
+        ValueError: on an allowlist miss, before any SQL executes.
+        plan_manager.storage.errors.NotFoundError: when no row matches.
     """
     if table not in SCOPED_NAME_TABLES:
         raise ValueError(f"table not allowed: {table!r}")
@@ -391,3 +380,16 @@ def resolve_scoped_name(
             f"{table}.{name_column}={name!r} not found for plan {plan_uuid}"
         )
     return row[0]
+
+
+# CR-7 G-001/T-001/A-001 helper surface. The v4 validation rule and the
+# registry audit/rebuild helpers live in identity_audit (the 400-line
+# file budget of this module forced the split); they remain importable
+# from here as the contract surface.
+from plan_manager.storage.identity_audit import (  # noqa: E402,F401
+    PRIMARY_KEY_COLUMNS,
+    audit_registry,
+    ensure_v4_entity_uuid,
+    remove_extra_identity_if_unreferenced,
+    restore_missing_identities,
+)

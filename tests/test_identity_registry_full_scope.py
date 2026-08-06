@@ -197,9 +197,15 @@ def test_migration_0026_is_idempotent_and_additive() -> None:
     )
 
     backfilled = set(re.findall(r"SELECT uuid, '(\w+)',", body))
-    assert backfilled == ALLOWED_TABLES, (
-        f"backfill does not match the in-scope set; missing={sorted(ALLOWED_TABLES - backfilled)} "
-        f"extra={sorted(backfilled - ALLOWED_TABLES)}"
+    # Tables introduced AFTER 0026 are backfilled by their own migrations
+    # (CR-7 0028 seeds and wires enumeration/enumeration_value), so 0026's
+    # backfill is compared against the in-scope set of its own era.
+    post_0026_tables = frozenset({"enumeration", "enumeration_value"})
+    expected_0026_scope = ALLOWED_TABLES - post_0026_tables
+    assert backfilled == expected_0026_scope, (
+        "backfill does not match the in-scope set; "
+        f"missing={sorted(expected_0026_scope - backfilled)} "
+        f"extra={sorted(backfilled - expected_0026_scope)}"
     )
 
     for alter in re.findall(r"^ALTER TABLE [^\n;]+;", body, re.M):

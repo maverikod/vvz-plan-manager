@@ -17,6 +17,7 @@ from psycopg import sql
 from plan_manager.storage.identity import (
     EXCLUDED_TABLES,
     ensure_identity_available,
+    ensure_v4_entity_uuid,
     register_entity_identity,
     resolve_entity_identity,
     unregister_entity_identity,
@@ -260,6 +261,20 @@ class DataclassEntity(EntityRecord):
     UPDATED_AT_COLUMN: ClassVar[str | None] = "updated_at"
     HARD_DELETE_REFERENCE_CHECKS: ClassVar[tuple[ReferenceCheck, ...]] = ()
     REGISTER_IDENTITY: ClassVar[bool] = True
+    # CR-7 G-001/T-001/A-002: target row-shape declarations of the uniform
+    # entity contract (C-006). MARKDEL_COLUMN names the boolean markdel flag of
+    # the target schema; while it is None the timestamp SOFT_DELETE_COLUMN
+    # remains the compatibility representation of the marked state.
+    MARKDEL_COLUMN: ClassVar[str | None] = None
+    CREATED_AT_COLUMN: ClassVar[str | None] = "created_at"
+    # Engine-managed timestamp policy (C-006): when True, public crud_create
+    # and crud_update refuse caller-supplied created_at/updated_at values and
+    # stamp the columns themselves; only the internal recovery/import
+    # admission (crud_create(recovery_mode=True, admit_original_timestamps=
+    # True)) may restore original timestamps. False keeps the legacy
+    # store-stamped behaviour during the C-012 compatibility state; entities
+    # flip to True as they migrate onto the engine surface.
+    ENGINE_MANAGED_TIMESTAMPS: ClassVar[bool] = False
 
     @classmethod
     def validate_descriptor(cls) -> None:
@@ -633,7 +648,48 @@ class DataclassEntity(EntityRecord):
         values: Mapping[str, Any],
         *,
         returning: bool = True,
+        recovery_mode: bool = False,
+        admit_original_timestamps: bool = False,
     ) -> dict[str, Any] | None:
+        """Insert one row under the uniform admission contract (CR-7 C-001/C-006).
+
+        Ordinary create (recovery_mode=False) requires the known target table
+        not to contain the row and refuses a duplicate identifier through the
+        registry guard. A caller-supplied ref must be a valid version-4 UUID;
+        an invalid value is an error before any write.
+
+        recovery_mode=True is the create-only admission for restoring a
+        MISSING target row (e.g. a retained registry entry whose row was
+        lost): it verifies the target row is absent — recovery never replaces
+        an existing row — and tolerates the already-present registry entry.
+        admit_original_timestamps=True is valid only together with
+        recovery_mode and lets the internal recovery/import path restore
+        original created_at/updated_at values; the public path refuses
+        caller-supplied timestamps whenever ENGINE_MANAGED_TIMESTAMPS is on.
+        """
+        if admit_original_timestamps and not recovery_mode:
+            raise ValueError(
+                "admit_original_timestamps is a recovery/import admission; "
+                "it requires recovery_mode=True"
+            )
+        values = dict(values)
+        if cls.ID_COLUMN is not None and cls.ID_COLUMN in values:
+            supplied = values[cls.ID_COLUMN]
+            if supplied is not None and isinstance(supplied, (uuid.UUID, str)):
+                values[cls.ID_COLUMN] = ensure_v4_entity_uuid(supplied)
+        if cls.ENGINE_MANAGED_TIMESTAMPS and not admit_original_timestamps:
+            stamped_columns = {cls.CREATED_AT_COLUMN, cls.UPDATED_AT_COLUMN} - {None}
+            offending = sorted(set(values) & stamped_columns)
+            if offending:
+                raise ValueError(
+                    f"engine-managed timestamps for {cls.__name__}: "
+                    f"caller-supplied {offending} refused; only the "
+                    "recovery/import path may restore original timestamps"
+                )
+            now = datetime.now(timezone.utc)
+            for column in stamped_columns:
+                if column in (cls.INSERT_COLUMNS or cls.COLUMNS):
+                    values[column] = now
         allowed = set(cls.INSERT_COLUMNS or values.keys())
         extra = set(values) - allowed
         if extra:
@@ -641,6 +697,23 @@ class DataclassEntity(EntityRecord):
         columns = tuple(values.keys())
         if not columns:
             raise ValueError("create values must not be empty")
+        if recovery_mode:
+            if cls.ID_COLUMN is None or cls.ID_COLUMN not in values:
+                raise ValueError(
+                    "recovery_mode requires the original identifier in values"
+                )
+            existing = conn.execute(
+                sql.SQL("SELECT 1 FROM {} WHERE {} = %s").format(
+                    cls._table(), sql.Identifier(cls.ID_COLUMN)
+                ),
+                (values[cls.ID_COLUMN],),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(
+                    f"recovery refused for {cls.__name__}: target row already "
+                    f"exists for {values[cls.ID_COLUMN]}; recovery never "
+                    "replaces an existing row"
+                )
         # Identity registry participation, in three parts.
         #
         # The availability check runs BEFORE the INSERT and the registration
@@ -661,7 +734,11 @@ class DataclassEntity(EntityRecord):
             and cls.TABLE_NAME is not None
             and cls.TABLE_NAME not in EXCLUDED_TABLES
         )
-        if registers_identity:
+        if registers_identity and not recovery_mode:
+            # Ordinary create: a duplicate identifier of ANY kind is refused
+            # before the write. Recovery skips this single check on purpose —
+            # the retained registry entry is exactly what recovery restores
+            # against — while the target-row absence check above still holds.
             ensure_identity_available(conn, values[cls.ID_COLUMN])
         query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             cls._table(),
@@ -707,7 +784,33 @@ class DataclassEntity(EntityRecord):
                 nothing else, so crud_soft_delete does not become an unchecked
                 write path. Callers outside this module must not pass it.
         """
+        # CR-7 C-001: ref is the sole immutable identity — update never changes
+        # it, and there is no recovery_mode on update by design.
+        identity_columns = set(cls._id_columns())
+        immutable = sorted(set(values) & identity_columns)
+        if immutable:
+            raise ValueError(
+                f"identity columns are immutable on {cls.__name__}: {immutable}; "
+                "update never changes ref"
+            )
+        values = dict(values)
+        if cls.ENGINE_MANAGED_TIMESTAMPS:
+            stamped_columns = {cls.CREATED_AT_COLUMN, cls.UPDATED_AT_COLUMN} - {None}
+            offending = sorted((set(values) & stamped_columns) - set(lifecycle_columns))
+            if offending:
+                raise ValueError(
+                    f"engine-managed timestamps for {cls.__name__}: "
+                    f"caller-supplied {offending} refused on update"
+                )
+            if (
+                cls.UPDATED_AT_COLUMN is not None
+                and cls.UPDATED_AT_COLUMN in cls.COLUMNS
+                and cls.UPDATED_AT_COLUMN not in values
+            ):
+                values[cls.UPDATED_AT_COLUMN] = datetime.now(timezone.utc)
         allowed = set(cls.UPDATE_COLUMNS or values.keys()) | set(lifecycle_columns)
+        if cls.ENGINE_MANAGED_TIMESTAMPS and cls.UPDATED_AT_COLUMN is not None:
+            allowed |= {cls.UPDATED_AT_COLUMN}
         extra = set(values) - allowed
         if extra:
             raise ValueError(f"unknown update columns for {cls.__name__}: {sorted(extra)}")

@@ -317,8 +317,12 @@ def _uuid_columns_of_registered_tables() -> set[tuple[str, str]]:
             if table not in ALLOWED_TABLES:
                 continue
             for line in match.group(2).split("\n"):
-                inner = re.match(r"^(\w+)\s+uuid\b", line.strip().rstrip(","), re.I)
-                if inner and inner.group(1) != "uuid":
+                stripped = line.strip().rstrip(",")
+                inner = re.match(r"^(\w+)\s+uuid\b", stripped, re.I)
+                # A table's own primary key is its identity, not a reference:
+                # historically the column is named 'uuid'; the CR-7 uniform
+                # contract names it 'ref' and declares it PRIMARY KEY inline.
+                if inner and inner.group(1) != "uuid" and "PRIMARY KEY" not in stripped.upper():
                     columns.add((table, inner.group(1)))
         for match in re.finditer(
             r'ALTER TABLE\s+"?(\w+)"?\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+uuid\b',
@@ -367,3 +371,91 @@ def test_the_pending_classification_list_only_shrinks() -> None:
 
     stale = sorted(set(UNCLASSIFIED_REFERENCE_COLUMNS) - _uuid_columns_of_registered_tables())
     assert stale == [], f"pending columns that no longer exist in the schema: {stale}"
+
+
+# --------------------------------------------------------------------------
+# CR-7 G-001/T-002/A-001: reference-field catalogue admission tests.
+# Fake connections only; no live PostgreSQL required.
+# --------------------------------------------------------------------------
+
+import uuid as _uuid
+
+from plan_manager.storage.reference_catalog import (
+    delete_reference_field,
+    ensure_reference_field,
+    get_reference_field,
+)
+
+
+class _FieldCursor:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FieldConn:
+    """Replays scripted rows in call order and records every statement."""
+
+    def __init__(self, rows_per_call):
+        self._rows_per_call = list(rows_per_call)
+        self.executed: list[tuple[str, tuple]] = []
+
+    def execute(self, sql, params=()):
+        self.executed.append((" ".join(str(sql).split()), tuple(params)))
+        rows = self._rows_per_call.pop(0) if self._rows_per_call else []
+        return _FieldCursor(rows)
+
+
+def test_ensure_reuses_the_stored_field_ref_for_a_known_property() -> None:
+    stored = _uuid.uuid4()
+    conn = _FieldConn([[(stored,)]])
+    assert ensure_reference_field(conn, "anchor_plan_uuid") == stored
+    assert len(conn.executed) == 1  # a known property costs one SELECT, no write
+
+
+def test_ensure_creates_once_and_converges_on_the_single_stored_ref() -> None:
+    winner = _uuid.uuid4()
+    # SELECT miss -> idempotent INSERT -> re-SELECT returns the winner row.
+    conn = _FieldConn([[], [], [(winner,)]])
+    assert ensure_reference_field(conn, "owner") == winner
+    insert_sql = conn.executed[1][0]
+    assert insert_sql.startswith("INSERT INTO reference_field")
+    assert "ON CONFLICT (property_name) DO NOTHING" in insert_sql
+
+
+def test_ensure_refuses_an_empty_property_name() -> None:
+    with pytest.raises(ValueError):
+        ensure_reference_field(_FieldConn([]), "  ")
+
+
+def test_ordinary_crud_cannot_delete_a_field_record() -> None:
+    conn = _FieldConn([])
+    with pytest.raises(PermissionError, match="schema-update admission"):
+        delete_reference_field(conn, "owner")
+    assert conn.executed == []
+
+
+def test_schema_update_deletes_only_non_predefined_records() -> None:
+    field_ref = _uuid.uuid4()
+    conn = _FieldConn([[(field_ref, "owner", False)], []])
+    delete_reference_field(conn, "owner", schema_update=True)
+    delete_sql = conn.executed[-1][0]
+    assert delete_sql.startswith("DELETE FROM reference_field")
+    assert "predefined = FALSE" in delete_sql
+
+
+def test_predefined_field_records_are_undeletable() -> None:
+    field_ref = _uuid.uuid4()
+    conn = _FieldConn([[(field_ref, "owner", True)]])
+    with pytest.raises(PermissionError, match="undeletable"):
+        delete_reference_field(conn, "owner", schema_update=True)
+    assert not any(sql.startswith("DELETE") for sql, _ in conn.executed)
+
+
+def test_get_returns_none_for_an_unknown_property() -> None:
+    assert get_reference_field(_FieldConn([[]]), "no_such") is None
