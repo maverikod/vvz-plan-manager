@@ -27,6 +27,7 @@ class _ParagraphRow(DataclassEntity):
     """
 
     ENTITY_TYPE = None
+    REGISTER_IDENTITY = False  # Identity for paragraph rows is registered by the DB trigger; the seat carries ENTITY_TYPE=None, so Python-side registration would write entity_type NULL (bug 1cbe201e).
     TABLE_NAME = "paragraph"
     ID_COLUMN = "uuid"
     COLUMNS = ("uuid", "plan_uuid", "label", "text", "position", "binding")
