@@ -10,6 +10,8 @@ from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.domain.plan import get_plan
 from plan_manager.domain.relation_store import list_relations
 from plan_manager.cascade.record import get_open_cascade
+from plan_manager.exchange import canonical_form
+from plan_manager.storage import relation_index_store
 from plan_manager.storage.version_store import get_ref
 from plan_manager.storage.version_ops import checkout_read, state_at
 from plan_manager.views.dependency_graph import load_steps
@@ -302,4 +304,91 @@ def export_working_snapshot(conn, plan_uuid, export_root) -> dict:
         ),
         "cascade_uuid": str(cascade.uuid),
         "snapshot_revision": str(tip),
+    }
+
+
+# --------------------------------------------------------------------------
+# CR-7 G-005/T-001/A-003: whole-database canonical migration transport.
+# Unlike export_plan/export_working_snapshot (one plan's HRS/MRS layout),
+# export_canonical_document is unscoped: every row of every registered,
+# non-excluded entity kind plus every relation_index triple, in
+# canonical_form's target shape (ref/kind/owner/markdel/timestamps/
+# properties + an unordered relation section + version/checksum). That
+# target shape is what lets a schema change (G-007) replay this content
+# instead of a rewrite. "Registered" = canonical_form.registered_entity_
+# classes() at call time -- registry-driven, never a hand-picked subset.
+# --------------------------------------------------------------------------
+
+
+EXCLUDED_CONTENT: tuple[dict[str, str], ...] = (
+    {"kind": "paragraph", "reason": "Paragraph is table-unbound (TABLE_NAME=None); its write seat has ENTITY_TYPE=None, so it never enters the closed registry"},
+    {"kind": "cascade_request", "reason": "derived working state of an in-flight cascade, not committed plan truth"},
+    {"kind": "context_block", "reason": "a cached, rebuildable context-window projection, never a source of truth"},
+    {"kind": "srt_snapshot", "reason": "a cached scoring snapshot, derived and rebuildable, not source content"},
+    {"kind": "runtime_audit", "reason": "table runtime_audit_log: an append-only audit trail of past mutations, not current state"},
+    {"kind": "command_metric", "reason": "append-only command timing telemetry, not domain state"},
+    {"kind": "embedding_cache", "reason": "a content-addressed embedding cache keyed by content_hash, regenerable"},
+    {"kind": "entity_identity", "reason": "the identity registry itself -- a mechanism table, not a domain entity"},
+    {"kind": "enumeration", "reason": "closed-enumeration catalogue metadata (0028); schema-admission-only"},
+    {"kind": "enumeration_value", "reason": "closed-enumeration catalogue metadata (0028); schema-admission-only"},
+    {"kind": "node_version", "reason": "an internal version-control node of the plan history mechanism"},
+    {"kind": "ref", "reason": "an internal version-control ref pointer of the plan history mechanism"},
+    {"kind": "revision", "reason": "an internal version-control revision record of the plan history mechanism"},
+    {"kind": "reference_field", "reason": "the reference-field catalogue backing relation_index triples, derived"},
+    {"kind": "relation_index", "reason": "emitted as this document's own relation-triples section, not as entities"},
+)
+"""Every table/kind this exporter deliberately does not walk, one reason each.
+Nothing is silently dropped: whatever is excluded is named here."""
+
+EXCLUDED_KINDS: frozenset[str] = frozenset(entry["kind"] for entry in EXCLUDED_CONTENT)
+# Five of these (cascade_request, context_block, srt_snapshot, runtime_audit,
+# command_metric) have a real DataclassEntity seat in a storage/views module
+# this exporter never imports; subclass registration is process-global, so a
+# seat loaded elsewhere would still surface in the registry walk. Filtering
+# by entity_kind in collect_canonical_entity_rows makes exclusion unconditional.
+
+
+def collect_canonical_entity_rows(conn) -> list[tuple[type, dict]]:
+    """Every row of every registered, non-excluded entity kind, unscoped."""
+    rows: list[tuple[type, dict]] = []
+    for entity_cls in canonical_form.registered_entity_classes():
+        if entity_cls.ENTITY_TYPE in EXCLUDED_KINDS:
+            continue
+        for row in entity_cls.crud_list(conn, include_marked=True):
+            rows.append((entity_cls, row))
+    return rows
+
+
+def collect_canonical_relation_triples(
+    conn, entity_rows
+) -> list[relation_index_store.Triple]:
+    """Every stored relation_index triple sourced from an exported entity.
+
+    Every triple's source_ref is the referring row's own ref column, so the
+    refs already collected from entity_rows cover every possible source;
+    references_from is relation_index_store's own bulk-read surface.
+    """
+    refs = {
+        row[canonical_form._entity_ref_column(entity_cls)]
+        for entity_cls, row in entity_rows
+    }
+    triples = relation_index_store.references_from(conn, refs)
+    return [
+        (triple["source_ref"], triple["target_ref"], triple["field_ref"])
+        for triple in triples
+    ]
+
+
+def export_canonical_document(conn) -> dict:
+    """Build the whole-database canonical migration-transport document.
+
+    Returns {"document": <canonical_form envelope>, "excluded_content":
+    <list of {"kind", "reason"}>}.
+    """
+    entity_rows = collect_canonical_entity_rows(conn)
+    relation_triples = collect_canonical_relation_triples(conn, entity_rows)
+    document = canonical_form.build_document(entity_rows, relation_triples)
+    return {
+        "document": document,
+        "excluded_content": [dict(entry) for entry in EXCLUDED_CONTENT],
     }
