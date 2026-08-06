@@ -67,7 +67,22 @@ class ContextBlockRecord(DataclassEntity):
     ENTITY_TYPE = "context_block"
     ENTITY_ID_FIELD = "block_id"
     TABLE_NAME = "context_block"
+    # CR-7 G-004 (C-005, C-012): descriptor completed from the migration
+    # chain (0004_context_blocks.sql CREATE TABLE + 0023's added child_ref
+    # column) -- the only source of truth for the DB column set, not this
+    # dataclass's field names (block_id/common_block_id here map to the DB
+    # columns uuid/common_block_uuid).
+    COLUMNS = (
+        "uuid", "plan_uuid", "revision_uuid", "cascade_uuid", "node_path",
+        "child_level", "kind", "common_block_uuid", "scope_concepts",
+        "content", "content_hash", "created_at", "child_ref",
+    )
     SOFT_DELETE_COLUMN = None
+    # The table has no updated_at column; created_at keeps the base
+    # descriptor's default since the table does carry it.
+    UPDATED_AT_COLUMN = None
+    # CR-7 G-003 ownership declaration (C-002): the table carries plan_uuid.
+    OWNER_COLUMN = "plan_uuid"
 
     block_id: uuid.UUID
     plan_uuid: uuid.UUID
@@ -622,27 +637,26 @@ def store_context_block(
 
     block_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
-    conn.execute(
-        "INSERT INTO context_block "
-        "(uuid, plan_uuid, revision_uuid, cascade_uuid, node_path, child_level, "
-        "kind, common_block_uuid, scope_concepts, content, content_hash, created_at, "
-        "child_ref) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            block_id,
-            plan_uuid,
-            context_revision.revision_uuid,
-            context_revision.cascade_uuid,
-            node_path,
-            child_level,
-            kind,
-            common_block_id,
-            scope_concepts,
-            Jsonb(content),
-            hash_value,
-            created_at,
-            child_ref,
-        ),
+    # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+    # engine's creation path; this module no longer composes INSERT SQL.
+    ContextBlockRecord.crud_create(
+        conn,
+        {
+            "uuid": block_id,
+            "plan_uuid": plan_uuid,
+            "revision_uuid": context_revision.revision_uuid,
+            "cascade_uuid": context_revision.cascade_uuid,
+            "node_path": node_path,
+            "child_level": child_level,
+            "kind": kind,
+            "common_block_uuid": common_block_id,
+            "scope_concepts": scope_concepts,
+            "content": Jsonb(content),
+            "content_hash": hash_value,
+            "created_at": created_at,
+            "child_ref": child_ref,
+        },
+        returning=False,
     )
     return ContextBlockRecord(
         block_id=block_id,

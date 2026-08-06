@@ -28,11 +28,10 @@ _PENDING_DESCRIPTOR_MIGRATION = frozenset(
     {
         # Derived stores. CR-7 G-003 completed every domain entity's
         # descriptor; only the derived record stores remain, and G-004's
-        # routing steps own them (cascade_request, srt_snapshot). The
-        # context_block entity has no migration step of its own yet -
-        # listed here so the omission is visible rather than silent.
+        # routing steps own them (cascade_request, srt_snapshot).
+        # ContextBlockRecord's descriptor was completed by the G-004 sweep
+        # completion (todo a01520c9) and is removed from this list.
         "CascadeRequestRecord", "SrtSnapshotRecord",
-        "ContextBlockRecord",
     }
 )
 

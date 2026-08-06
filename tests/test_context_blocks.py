@@ -134,7 +134,18 @@ class _StoreConn:
         self.insert_count = 0
 
     def execute(self, query, params=()):
-        if query.startswith("SELECT uuid, plan_uuid"):
+        # CR-7 G-004: store_context_block's INSERT now arrives through the
+        # unified engine as a psycopg sql.Composed statement (identifiers
+        # quoted); flatten it the same way the other routed-write fakes do,
+        # and the engine's identity-registry admission queries (plain
+        # strings, run around the INSERT) need their own canned replies.
+        rendered = query.as_string(None) if hasattr(query, "as_string") else query
+        flat = " ".join(rendered.replace('"', "").split())
+        if flat.startswith("SELECT kind, table_name FROM entity_identity"):
+            return _Rows([])
+        if flat.startswith("INSERT INTO entity_identity"):
+            return _Rows([])
+        if flat.startswith("SELECT uuid, plan_uuid"):
             matches = [
                 row
                 for row in self.rows
@@ -150,7 +161,7 @@ class _StoreConn:
                 and row[12] == params[9]
             ]
             return _Rows(matches)
-        if query.startswith("INSERT INTO context_block"):
+        if flat.startswith("INSERT INTO context_block"):
             self.insert_count += 1
             (
                 block_id,
@@ -185,7 +196,7 @@ class _StoreConn:
                 )
             )
             return _Rows([])
-        raise AssertionError(query)
+        raise AssertionError(flat)
 
 
 def test_store_context_block_is_idempotent_by_hash() -> None:

@@ -116,24 +116,24 @@ def create_step(
             status="draft",
         )
         validate_step(step)
-        conn.execute(
-            "INSERT INTO step "
-            "(uuid, plan_uuid, parent_step_uuid, level, step_id, slug, "
-            "fields, depends_on, concepts, project_id, status) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                step.uuid,
-                step.plan_uuid,
-                step.parent_step_uuid,
-                step.level,
-                step.step_id,
-                step.slug,
-                Jsonb(step.fields),
-                step.depends_on,
-                step.concepts,
-                step.project_id,
-                step.status,
-            ),
+        # CR-7 G-004 (C-005, C-012): the write is delegated to the unified
+        # engine's creation path; this module no longer composes INSERT SQL.
+        Step.crud_create(
+            conn,
+            {
+                "uuid": step.uuid,
+                "plan_uuid": step.plan_uuid,
+                "parent_step_uuid": step.parent_step_uuid,
+                "level": step.level,
+                "step_id": step.step_id,
+                "slug": step.slug,
+                "fields": Jsonb(step.fields),
+                "depends_on": step.depends_on,
+                "concepts": step.concepts,
+                "project_id": step.project_id,
+                "status": step.status,
+            },
+            returning=False,
         )
         return step
     finally:

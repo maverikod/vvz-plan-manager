@@ -237,18 +237,16 @@ def test_real_tree_reports_the_w05_documented_exceptions() -> None:
 
 
 def test_real_tree_current_sweep_state() -> None:
-    """Truthful mid-sweep snapshot; MUST be emptied when the sweep completes.
+    """Truthful sweep-complete snapshot.
 
-    W05 ("route all 32 write modules") left two direct writes that appear in
+    W05 ("route all 32 write modules") left two direct writes that appeared in
     neither its routed list nor its four documented compatibility exceptions:
-    step_store.create_step and context_blocks.store_context_block. Per G-004's
-    acceptance the pipeline check is therefore RED on this tree -- it drives
-    the remaining removal sweep. When those two writes are routed through the
-    engine (or gain a documented marker), update this set to empty; the check
-    then turns GREEN and this test keeps guarding against new offenders.
+    step_store.create_step and context_blocks.store_context_block. Both are
+    now routed through the unified engine's crud_create (todo a01520c9), so
+    the sweep is complete and this set is empty; the check is GREEN and this
+    test keeps guarding against new offenders.
     """
     offenders, _ = g004_scan()
-    assert {finding.path for finding in offenders} == {
-        "plan_manager/domain/step_store.py",
-        "plan_manager/views/context_blocks.py",
-    }, [f"{finding.path}:{finding.line}: {finding.statement}" for finding in offenders]
+    assert {finding.path for finding in offenders} == set(), [
+        f"{finding.path}:{finding.line}: {finding.statement}" for finding in offenders
+    ]

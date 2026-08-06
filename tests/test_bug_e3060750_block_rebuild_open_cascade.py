@@ -59,6 +59,17 @@ class _StoreConn:
         self.rows: list[list[object]] = []
 
     def execute(self, query, params=()):
+        # CR-7 G-004: store_context_block's INSERT now arrives through the
+        # unified engine as a psycopg sql.Composed statement (identifiers
+        # quoted); flatten it the same way the other routed-write fakes do,
+        # and the engine's identity-registry admission queries (plain
+        # strings, run around the INSERT) need their own canned replies.
+        rendered = query.as_string(None) if hasattr(query, "as_string") else query
+        query = " ".join(rendered.replace('"', "").split())
+        if query.startswith("SELECT kind, table_name FROM entity_identity"):
+            return _Rows([])
+        if query.startswith("INSERT INTO entity_identity"):
+            return _Rows([])
         if query.startswith("SELECT uuid, plan_uuid"):
             if "WHERE plan_uuid = %s AND uuid = %s" in query:
                 plan_uuid, block_id = params
