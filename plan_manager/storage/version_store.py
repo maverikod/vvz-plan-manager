@@ -158,13 +158,13 @@ def delete_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> Non
     :param name: name of the ref to delete.
     :return: None.
     """
-    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine wrapper.
-    _RefRow.crud_hard_delete(
-        conn,
-        {"plan_uuid": plan_uuid, "name": name},
-        require_soft_deleted=False, returning=False,
-        plan_uuid=plan_uuid, audit_entity_type="ref",
-    )
+    # CR-7 G-004 compatibility note: bug 9efa5ec5 - the guarded engine wrapper's
+    # audit write cannot carry ref's composite (plan_uuid, name) identity into
+    # runtime_audit_log.entity_id, which is NOT NULL on live PG and has no
+    # non-UUID representation; routing this DELETE through crud_hard_delete
+    # crashed the whole operation there. Reverted to the raw statement until
+    # the c315ff84 guard rework adds composite-identity audit support.
+    conn.execute("DELETE FROM ref WHERE plan_uuid = %s AND name = %s", (plan_uuid, name))
 
 
 def get_ref(conn: psycopg.Connection, plan_uuid: uuid.UUID, name: str) -> uuid.UUID:

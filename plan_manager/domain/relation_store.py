@@ -118,20 +118,19 @@ def remove_relation(
     if row is None:
         raise ValueError("relation not found")
     row_uuid = row[0]
-    # CR-7 G-004 (C-005, C-012): removal goes through the guarded engine
-    # wrapper (the relation's composite identity is its natural predicate).
-    Relation.crud_hard_delete(
-        conn,
-        {
-            "plan_uuid": plan_uuid,
-            "from_concept": from_concept,
-            "to_concept": to_concept,
-            "type": type,
-        },
-        require_soft_deleted=False,
-        returning=False,
-        plan_uuid=plan_uuid,
-    )
+    # CR-7 G-004 compatibility note: bug 9efa5ec5 - the guarded engine wrapper's
+    # audit write cannot carry relation's composite (plan_uuid, from_concept,
+    # to_concept, type) identity into runtime_audit_log.entity_id, which is
+    # NOT NULL on live PG and has no non-UUID representation; routing this
+    # DELETE through crud_hard_delete crashed the whole operation there.
+    # Reverted to the raw statement until the c315ff84 guard rework adds
+    # composite-identity audit support.
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM relation WHERE plan_uuid = %s AND from_concept = %s "
+            "AND to_concept = %s AND type = %s",
+            (plan_uuid, from_concept, to_concept, type),
+        )
     return row_uuid
 
 

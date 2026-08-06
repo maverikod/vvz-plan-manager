@@ -271,16 +271,16 @@ def release_project_reservation(conn: psycopg.Connection, project_uuid: uuid.UUI
     """Release a namespace reservation, freeing the identifier again.
 
     Only a reservation is released (never a registered entity identifier).
-    Raises NotFoundError when no reservation exists."""
-    # CR-7 G-004 (C-001, C-012): a caller-initiated registry removal goes
-    # through the deletion guard.
-    deleted = _identity_row_seat().crud_hard_delete(
-        conn,
-        {"id": project_uuid, "kind": RESERVED_KIND},
-        require_soft_deleted=False, returning=True,
-        audit_entity_type="entity_identity",
-    )
-    if deleted is None:
+    Raises NotFoundError when no reservation exists.
+    CR-7 G-004 compatibility note: bug 9efa5ec5 - crud_hard_delete's audit
+    cannot carry this composite (id, kind) identity into the NOT-NULL
+    runtime_audit_log.entity_id; reverted to the raw statement until the
+    c315ff84 guard rework adds composite-identity audit support."""
+    row = conn.execute(
+        "DELETE FROM entity_identity WHERE id = %s AND kind = %s RETURNING id",
+        (project_uuid, RESERVED_KIND),
+    ).fetchone()
+    if row is None:
         raise NotFoundError(f"project uuid reservation not found: {project_uuid}")
 
 
