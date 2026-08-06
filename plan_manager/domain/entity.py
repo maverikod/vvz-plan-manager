@@ -487,15 +487,26 @@ class DataclassEntity(EntityRecord):
         *,
         include_deleted: bool = True,
     ) -> dict[str, Any] | None:
+        """Fetch one row by id, regardless of the soft-delete marker.
+
+        CR-7 G-006/T-001/A-003: point reads are the uniform side of the
+        deletion lifecycle on the direct engine surface. A caller invoking
+        crud_get/get_by_id already holds the identifier -- it is resolving a
+        known reference, not browsing a collection -- so hiding a marked row
+        here would turn "marked but still present" into a false NotFound for
+        every such caller (hard_delete_guard's own-row re-fetch,
+        id_resolve_command's ambiguity resolution, every storage module's
+        read path). ``include_deleted`` is kept only for call-site signature
+        compatibility; it no longer changes this method's outcome. The
+        marked-hiding behaviour lives on crud_list/crud_search instead, gated
+        by their ``include_marked`` flag.
+        """
         id_values = cls._normalize_id(entity_id)
         id_predicate, params = cls._predicate_sql(id_values)
-        clauses: list[sql.Composable] = [id_predicate]
-        if not include_deleted and cls.SOFT_DELETE_COLUMN is not None:
-            clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(cls.SOFT_DELETE_COLUMN)))
         query = sql.SQL("SELECT {} FROM {} WHERE {}").format(
             cls._select_columns_sql(),
             cls._table(),
-            sql.SQL(" AND ").join(clauses),
+            id_predicate,
         )
         cur = conn.execute(query, params)
         row = cur.fetchone()
@@ -509,6 +520,7 @@ class DataclassEntity(EntityRecord):
         *,
         include_deleted: bool = True,
     ) -> dict[str, Any] | None:
+        """Alias of crud_get; see its docstring for the CR-7 G-006 point-read contract."""
         return cls.crud_get(conn, entity_id, include_deleted=include_deleted)
 
     @classmethod
@@ -517,13 +529,28 @@ class DataclassEntity(EntityRecord):
         conn: psycopg.Connection,
         *,
         filters: Mapping[str, Any] | None = None,
-        include_deleted: bool = False,
+        include_marked: bool = False,
+        include_deleted: bool | None = None,
         order_by: Sequence[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[dict[str, Any]]:
+        """List rows, hiding soft-deleted ones unless ``include_marked`` is set.
+
+        CR-7 G-006/T-001/A-003: ``include_marked`` is the one common flag the
+        uniform engine surface uses to reveal marked rows on the
+        list/search side (point reads on crud_get/get_by_id are unconditional
+        instead -- see their docstring). ``include_deleted`` is kept as a
+        deprecated alias so existing callers (most storage modules still pass
+        it by that name) keep working unchanged; when given, it wins over the
+        ``include_marked`` default. New callers should prefer
+        ``include_marked``; the alias stays on the direct surface until
+        callers migrate.
+        """
+        if include_deleted is not None:
+            include_marked = include_deleted
         clauses, params = cls._filter_sql(filters)
-        if not include_deleted and cls.SOFT_DELETE_COLUMN is not None:
+        if not include_marked and cls.SOFT_DELETE_COLUMN is not None:
             clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(cls.SOFT_DELETE_COLUMN)))
         where = sql.SQL("")
         if clauses:
@@ -641,7 +668,8 @@ class DataclassEntity(EntityRecord):
         conn: psycopg.Connection,
         *,
         filters: Mapping[str, Any] | None = None,
-        include_deleted: bool = False,
+        include_marked: bool = False,
+        include_deleted: bool | None = None,
         order_by: Sequence[str] | None = None,
         limit: int | None = None,
         offset: int | None = None,
@@ -660,13 +688,19 @@ class DataclassEntity(EntityRecord):
 
         Every returned row additionally carries ``matched_column`` and
         ``snippet``.
+
+        ``include_marked``/``include_deleted`` follow crud_list's CR-7 G-006
+        contract: ``include_marked`` is the common flag, ``include_deleted``
+        is a deprecated alias kept for existing callers and wins when given.
         """
+        if include_deleted is not None:
+            include_marked = include_deleted
         search_predicate, search_params = cls._search_sql(search, search_regex)
         if search_predicate is None:
             return cls.crud_list(
                 conn,
                 filters=filters,
-                include_deleted=include_deleted,
+                include_marked=include_marked,
                 order_by=order_by,
                 limit=limit,
                 offset=offset,
@@ -675,7 +709,7 @@ class DataclassEntity(EntityRecord):
         clauses, params = cls._filter_sql(filters)
         clauses.append(search_predicate)
         params.extend(search_params)
-        if not include_deleted and cls.SOFT_DELETE_COLUMN is not None:
+        if not include_marked and cls.SOFT_DELETE_COLUMN is not None:
             clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(cls.SOFT_DELETE_COLUMN)))
         order = sql.SQL("")
         if order_by:
@@ -935,6 +969,60 @@ class DataclassEntity(EntityRecord):
         )
 
     @classmethod
+    def crud_soft_delete_recursive(
+        cls,
+        conn: psycopg.Connection,
+        entity_id: Any,
+        *,
+        include_children: bool = False,
+        include_related: bool = False,
+        deleted_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Soft-delete this row and, optionally, its owned/related closure.
+
+        CR-7 G-006/T-001/A-003: this is the SEPARATE recursive admission the
+        prompt calls for -- ordinary ``crud_soft_delete``/``crud_delete`` stay
+        explicit-only (mark exactly the row named, nothing else). See
+        ``_walk_recursive_admission`` for the traversal contract shared with
+        ``crud_restore_recursive``.
+        """
+        return _walk_recursive_admission(
+            cls,
+            conn,
+            entity_id,
+            mark=True,
+            include_children=include_children,
+            include_related=include_related,
+            deleted_at=deleted_at,
+            updated_at=updated_at,
+        )
+
+    @classmethod
+    def crud_restore_recursive(
+        cls,
+        conn: psycopg.Connection,
+        entity_id: Any,
+        *,
+        include_children: bool = False,
+        include_related: bool = False,
+        updated_at: datetime | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Restore (clear the soft-delete mark on) this row and, optionally,
+        its owned/related closure. The mirror admission of
+        ``crud_soft_delete_recursive`` -- see ``_walk_recursive_admission``.
+        """
+        return _walk_recursive_admission(
+            cls,
+            conn,
+            entity_id,
+            mark=False,
+            include_children=include_children,
+            include_related=include_related,
+            updated_at=updated_at,
+        )
+
+    @classmethod
     def crud_reference_counts(cls, conn: psycopg.Connection, entity_id: Any) -> dict[str, int]:
         return find_entity_reference_counts(conn, cls, entity_id)
 
@@ -1066,6 +1154,167 @@ def soft_delete_entity(
     return entity_cls.crud_update(
         conn, entity_id, values, returning=returning, lifecycle_columns=frozenset(owned)
     )
+
+
+def restore_entity(
+    entity_cls: type[DataclassEntity],
+    conn: psycopg.Connection,
+    entity_id: Any,
+    *,
+    updated_at: datetime | None = None,
+    returning: bool = True,
+) -> dict[str, Any] | None:
+    """Clear one entity row's soft-delete mark (the mirror of soft_delete_entity).
+
+    CR-7 G-006/T-001/A-003: restore admissions are recursive-only on the
+    direct engine surface (crud_restore_recursive); this module function is
+    the single-row primitive the traversal marks each visited row with. The
+    soft-delete column is lifecycle-owned the same way soft_delete_entity's
+    write is: the exemption covers only the two columns written here.
+    """
+    if entity_cls.SOFT_DELETE_COLUMN is None:
+        raise NotImplementedError(f"{entity_cls.__name__} does not support soft delete")
+    now = datetime.now(timezone.utc)
+    values: dict[str, Any] = {entity_cls.SOFT_DELETE_COLUMN: None}
+    owned = {entity_cls.SOFT_DELETE_COLUMN}
+    if entity_cls.UPDATED_AT_COLUMN is not None:
+        values[entity_cls.UPDATED_AT_COLUMN] = updated_at or now
+        owned.add(entity_cls.UPDATED_AT_COLUMN)
+    return entity_cls.crud_update(
+        conn, entity_id, values, returning=returning, lifecycle_columns=frozenset(owned)
+    )
+
+
+def _walk_recursive_admission(
+    entity_cls: type[DataclassEntity],
+    conn: psycopg.Connection,
+    entity_id: Any,
+    *,
+    mark: bool,
+    include_children: bool,
+    include_related: bool,
+    deleted_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Shared traversal behind crud_soft_delete_recursive/crud_restore_recursive.
+
+    CR-7 G-006/T-001/A-003. Two independent admissions control the closure
+    marked/restored beyond the root row itself:
+
+    * ``include_children`` follows OWNERSHIP (C-002): every OTHER table-backed
+      entity kind that declares ``OWNER_COLUMN`` is probed for rows whose
+      OWNER_COLUMN value equals the current row's id, via
+      ``reference_catalog._entity_classes`` -- the closed registry named by
+      the prompt. A kind declaring OWNER_ROOT or OWNER_GAP carries no
+      OWNER_COLUMN, so it is never probed as a source of children -- the skip
+      is a natural consequence of the declaration, not a special case here.
+    * ``include_related`` follows the relation index (C-003):
+      ``relation_index_store.referrers_of`` reports every stored triple whose
+      target_ref is the current row's id; a triple's source_ref is, by
+      definition, a row that DEPENDS ON the target (it holds a reference to
+      it), which is exactly the "source depends on target" half the prompt
+      asks for -- the reverse direction (rows the current row itself points
+      at) is never followed.
+
+    Both flags apply uniformly at every level of the resulting closure ("the
+    growing set"), and a (table, normalized-id) dedupe guards against cycles
+    (e.g. mutually-referencing rows under include_related, or a row reachable
+    by both an ownership path and a relation path).
+
+    A visited row that declares no SOFT_DELETE_COLUMN cannot be marked or
+    restored (concept, relation and step, among others, opt out of soft
+    delete entirely); it is recorded under "skipped" instead of "marked"/
+    "restored". Traversal still continues from it as long as it carries a
+    single ID_COLUMN -- step is exactly this case: it has no soft-delete
+    column of its own but DOES own step_runtime/step_assignment/
+    execution_attempt rows that must still be reachable. A row with no single
+    ID_COLUMN at all (concept, relation: both are composite-keyed and never
+    registered in the identity registry) cannot be a relation-index target
+    and cannot be matched by another kind's single-column OWNER_COLUMN
+    either, so it is a natural leaf of the walk.
+    """
+    # Local imports: this keeps entity.py free of a module-level dependency on
+    # the identity/relation-index/reference-catalog modules, mirroring the
+    # existing function-level imports elsewhere in this file that exist to
+    # avoid import cycles.
+    from plan_manager.storage.identity import resolve_entity_identities_batch
+    from plan_manager.storage.reference_catalog import _entity_classes, resolve_entity_class
+    from plan_manager.storage.relation_index_store import referrers_of
+
+    touched: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    visited: set[tuple[str | None, tuple[tuple[str, Any], ...]]] = set()
+
+    def _visit(cls: type[DataclassEntity], raw_id: Any) -> None:
+        id_values = cls._normalize_id(raw_id)
+        dedupe_key = (cls.TABLE_NAME, tuple(sorted(id_values.items(), key=lambda kv: kv[0])))
+        if dedupe_key in visited:
+            return
+        visited.add(dedupe_key)
+
+        single_id = id_values.get(cls.ID_COLUMN) if cls.ID_COLUMN is not None else None
+
+        if cls.SOFT_DELETE_COLUMN is None:
+            skipped.append(
+                {
+                    "entity_type": cls.entity_type(),
+                    "table": cls.TABLE_NAME,
+                    "id": _json_safe(id_values),
+                    "reason": "no SOFT_DELETE_COLUMN declared",
+                }
+            )
+        else:
+            if mark:
+                row = soft_delete_entity(
+                    cls, conn, raw_id, deleted_at=deleted_at, updated_at=updated_at, returning=True
+                )
+            else:
+                row = restore_entity(cls, conn, raw_id, updated_at=updated_at, returning=True)
+            touched.append(
+                {"entity_type": cls.entity_type(), "table": cls.TABLE_NAME, "row": row}
+            )
+            if row is None:
+                return  # no such row: nothing to cascade from
+
+        if single_id is None:
+            return  # composite-keyed leaf: no single id to search children/relations by
+
+        if include_children:
+            for child_cls in _entity_classes():
+                owner_column = getattr(child_cls, "OWNER_COLUMN", None)
+                if not owner_column:
+                    continue  # OWNER_ROOT/OWNER_GAP kinds carry no OWNER_COLUMN: skipped naturally
+                children = child_cls.crud_list(
+                    conn, filters={owner_column: single_id}, include_marked=True
+                )
+                for child_row in children:
+                    if child_cls.ID_COLUMN is not None:
+                        child_id = child_row.get(child_cls.ID_COLUMN)
+                    else:
+                        child_id = {
+                            column: child_row.get(column) for column in child_cls._id_columns()
+                        }
+                    if child_id is None:
+                        continue
+                    _visit(child_cls, child_id)
+
+        if include_related:
+            referrers = referrers_of(conn, [single_id])
+            if referrers:
+                source_ids = [referrer["source_ref"] for referrer in referrers]
+                resolved = resolve_entity_identities_batch(conn, source_ids)
+                for source_id in source_ids:
+                    info = resolved.get(source_id)
+                    if info is None:
+                        continue  # stale/unresolvable triple: nothing left to visit
+                    try:
+                        source_cls = resolve_entity_class(info["entity_type"])
+                    except ValueError:
+                        continue  # entity kind no longer resolvable: skip, do not fail the walk
+                    _visit(source_cls, source_id)
+
+    _visit(entity_cls, entity_id)
+    return {"marked" if mark else "restored": touched, "skipped": skipped}
 
 
 def hard_delete_entity(
