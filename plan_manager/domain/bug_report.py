@@ -58,6 +58,20 @@ class BugReport(DataclassEntity):
     ENTITY_TYPE = "bug"
     ENTITY_ID_FIELD = "bug_uuid"
     TABLE_NAME = "bug_report"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "title", "short_description", "detailed_description", "expected_behavior",
+        "actual_behavior", "reproduction", "evidence", "environment", "kind",
+        "severity", "priority_nice", "status", "reporter", "owner",
+        "duplicate_of_uuid", "parent_bug_uuid", "source_anchor_type", "source_project_id", "source_file_path",
+        "source_plan_uuid", "source_revision_uuid", "source_step_uuid", "source_step_path", "source_ref_id",
+        "source_command", "source_service", "confirmed_at", "closed_at", "reopened_at",
+        "created_by", "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_GAP = (
+        "primary anchor is a discriminated family (source_anchor_type), not one "
+        "column; the owner column materializes in the G-007 anchor collapse"
+    )
     # Compact view=summary projection, now bug_list's DEFAULT shape (bugs
     # 7383c8a8/45f0c128, superseding the narrower 8a13977d field set): keeps
     # short_description (the one-line summary field, distinct from the free

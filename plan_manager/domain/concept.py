@@ -43,6 +43,14 @@ class Concept(DataclassEntity):
     ENTITY_TYPE = "concept"
     ENTITY_ID_FIELD = "concept_id"
     TABLE_NAME = "concept"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "plan_uuid", "concept_id", "name", "definition",
+        "properties", "source_labels",
+    )
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_COLUMN = "plan_uuid"
     ID_COLUMN = None
     ID_COLUMNS = ("plan_uuid", "concept_id")
     SOFT_DELETE_COLUMN = None

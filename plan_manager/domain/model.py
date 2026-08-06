@@ -31,6 +31,13 @@ class Model(DataclassEntity):
     ENTITY_TYPE = "model"
     ENTITY_ID_FIELD = "model_uuid"
     TABLE_NAME = "model"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "name", "provider_uuid", "level", "context_window",
+        "cost_class", "availability", "execution_mode", "created_by", "created_at",
+        "updated_at", "deleted_at",
+    )
+    OWNER_ROOT = True  # catalog entity
     # Compact view=summary projection (bug 8a13977d): drops context_window, cost_class, availability.
     SUMMARY_FIELDS = ("uuid", "name", "provider_uuid", "level", "execution_mode", "updated_at")
 

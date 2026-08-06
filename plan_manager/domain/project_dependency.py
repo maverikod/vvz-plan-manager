@@ -45,6 +45,13 @@ class ProjectDependency(DataclassEntity):
     ENTITY_TYPE = "project_dependency"
     ENTITY_ID_FIELD = "dependency_uuid"
     TABLE_NAME = "project_dependency"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "dependent_project_id", "depends_on_project_id", "dependency_type", "version_constraint",
+        "discovery_source", "confidence", "active", "created_by", "created_at",
+        "updated_at", "deleted_at",
+    )
+    OWNER_COLUMN = "dependent_project_id"  # the source project owns its outgoing dependency edge
 
     dependency_uuid: uuid.UUID
     dependent_project_id: uuid.UUID

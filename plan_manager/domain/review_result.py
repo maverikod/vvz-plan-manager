@@ -31,6 +31,17 @@ class ReviewResult(DataclassEntity):
     ENTITY_TYPE = "review_result"
     ENTITY_ID_FIELD = "review_uuid"
     TABLE_NAME = "review_result"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "object_type", "reviewed_attempt_uuid", "reviewed_revision_uuid", "reviewer",
+        "status", "findings", "evidence", "verification_commands", "escalation_target_uuid",
+        "created_by", "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_GAP = (
+        "object_type discriminates reviewed_attempt_uuid vs "
+        "reviewed_revision_uuid; no single owner column until the G-007 anchor "
+        "collapse"
+    )
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "review_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose

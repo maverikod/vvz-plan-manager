@@ -33,31 +33,21 @@ class PlanCompletedError(ValueError):
 def refuse_if_completed(conn: psycopg.Connection, plan_uuid: "uuid.UUID | None") -> None:
     """The single shared completion-lock check (bug c3950b83).
 
-    Every seam that enforces the plan-level completion lock ultimately
-    reduces to this one raw check against a bare plan_uuid:
-
-    - resolve_plan_guarded (commands/resolve.py) checks an already-loaded
-      Plan's `.completed` field directly (no extra query needed) for
-      every command that resolves a `plan` name-or-uuid parameter.
-    - domain.primary_anchor.validate_anchor calls this function for
-      anchor_type "plan"/"step", covering todo_create and the shared
-      anchor path used by comment/execution_attempt/review_result/
-      escalation/bug-source anchors.
-    - plan_manager.commands.plan_completion_guard (the third seam) calls
-      this function after deriving the TRUE owning plan_uuid of an
-      entity addressed by its own UUID (a todo, comment, escalation,
-      execution attempt, model binding, bug, bug fix, bug impact, bug
-      fix propagation, or a runtime/todo link's endpoint) rather than
-      trusting a caller-supplied `plan` parameter that may not actually
-      match the entity being mutated.
+    Every seam that enforces the plan-level completion lock reduces to
+    this one raw check against a bare plan_uuid: resolve_plan_guarded
+    (commands/resolve.py) for every `plan` name-or-uuid parameter;
+    domain.primary_anchor.validate_anchor for "plan"/"step" anchors
+    (todo_create and the shared comment/attempt/review/escalation/bug
+    anchor path); and plan_manager.commands.plan_completion_guard, which
+    first derives the TRUE owning plan_uuid of an entity addressed by
+    its own UUID instead of trusting a caller-supplied `plan` parameter.
 
     Args:
         conn: Open psycopg 3 connection.
         plan_uuid: The plan to check, or None when the addressed entity
             is not plan-bound at all (e.g. a TODO anchored none/project/
-            file, or a system/role-scoped model binding) -- a no-op in
-            that case, by design: an entity that was never plan-bound
-            cannot be locked by any plan's completion.
+            file) -- a no-op in that case, by design: an entity that was
+            never plan-bound cannot be locked by any plan's completion.
 
     Returns:
         None.
@@ -113,6 +103,14 @@ class Plan(DataclassEntity):
     ENTITY_TYPE = "plan"
     ENTITY_ID_FIELD = "uuid"
     TABLE_NAME = "plan"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "name", "status", "context_budget", "head_revision_uuid",
+        "project_ids", "primary_project_id", "deleted_at", "completed", "comment",
+    )
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_ROOT = True  # the plan is a root by design; project bindings stay ordinary typed references
     HARD_DELETE_REFERENCE_CHECKS = (
         ReferenceCheck("todo_item", "anchor_plan_uuid", live_column="deleted_at"),
         ReferenceCheck("model_binding", "plan_uuid", live_column="deleted_at"),

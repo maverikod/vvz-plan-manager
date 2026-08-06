@@ -20,6 +20,15 @@ class RoleModelBinding(DataclassEntity):
     ENTITY_TYPE = "role_model_binding"
     ENTITY_ID_FIELD = "binding_uuid"
     TABLE_NAME = "role_model_binding"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "role", "phase", "required_level", "active",
+        "created_by", "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_GAP = (
+        "role is referenced by name (text), not by entity UUID; no usable owner "
+        "column exists"
+    )
 
     binding_uuid: uuid.UUID
     role: str

@@ -20,6 +20,12 @@ class Toolset(DataclassEntity):
     ENTITY_TYPE = "toolset"
     ENTITY_ID_FIELD = "toolset_uuid"
     TABLE_NAME = "toolset"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "name", "description", "created_by", "created_at",
+        "updated_at", "deleted_at",
+    )
+    OWNER_ROOT = True  # catalog entity
     # Compact view=summary projection (bug 8a13977d): drops description.
     SUMMARY_FIELDS = ("uuid", "name", "updated_at")
 
@@ -54,6 +60,12 @@ class ToolsetMembership(DataclassEntity):
     ENTITY_TYPE = "toolset_membership"
     ENTITY_ID_FIELD = "membership_uuid"
     TABLE_NAME = "toolset_membership"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "toolset_uuid", "tool_uuid", "position", "created_by",
+        "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_COLUMN = "toolset_uuid"
 
     membership_uuid: uuid.UUID
     toolset_uuid: uuid.UUID

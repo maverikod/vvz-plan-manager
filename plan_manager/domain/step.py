@@ -131,6 +131,10 @@ class StepValidationError(ValueError):
 class Step(DataclassEntity):
     """Unified stored entity for plan levels 3, 4, and 5 (C-005).
 
+    Ownership (CR-7 G-003, C-002): OWNER_COLUMN is parent_step_uuid, the
+    natural single-owner edge. The NULL-parent case (a level-3 step)
+    resolves to the plan via plan_uuid.
+
     Attributes:
         uuid: Immutable primary identity of this step.
         plan_uuid: Identity of the plan this step belongs to.
@@ -154,6 +158,15 @@ class Step(DataclassEntity):
     ENTITY_TYPE = "step"
     ENTITY_ID_FIELD = "uuid"
     TABLE_NAME = "step"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "plan_uuid", "parent_step_uuid", "level", "step_id",
+        "slug", "fields", "depends_on", "concepts", "status",
+        "project_id",
+    )
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_COLUMN = "parent_step_uuid"  # NULL parent means a level-3 step owned by its plan via plan_uuid
     SOFT_DELETE_COLUMN = None
     HARD_DELETE_REFERENCE_CHECKS = (
         ReferenceCheck("step", "parent_step_uuid"),

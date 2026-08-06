@@ -24,6 +24,19 @@ class Escalation(DataclassEntity):
     ENTITY_TYPE = "escalation"
     ENTITY_ID_FIELD = "escalation_uuid"
     TABLE_NAME = "escalation"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "primary_anchor_type", "anchor_project_id", "anchor_file_path", "anchor_plan_uuid",
+        "anchor_revision_uuid", "anchor_step_uuid", "anchor_step_path", "anchor_ref_id", "reason",
+        "from_level", "to_level", "status", "resolution", "resolved_by",
+        "resolved_at", "created_by", "created_at", "updated_at", "deleted_at",
+        "addressee_level", "addressee_role", "forwarded_from_uuid", "chain_root_uuid", "sweep_priority",
+        "blocks_subtree",
+    )
+    OWNER_GAP = (
+        "primary anchor is a discriminated family (primary_anchor_type), not one "
+        "column; the owner column materializes in the G-007 anchor collapse"
+    )
     # Compact view=summary projection (bug 8a13977d): drops reason and resolution.
     SUMMARY_FIELDS = (
         "uuid", "primary_anchor_type", "anchor_ref_id", "status",

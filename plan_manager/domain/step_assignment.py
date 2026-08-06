@@ -34,6 +34,14 @@ class StepAssignment(DataclassEntity):
     ENTITY_TYPE = "step_assignment"
     ENTITY_ID_FIELD = "assignment_uuid"
     TABLE_NAME = "step_assignment"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "scope", "role", "plan_uuid", "spec_level",
+        "branch_step_uuid", "revision_uuid", "step_uuid", "step_path", "assigned_role",
+        "toolset_uuid", "active", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_COLUMN = "step_uuid"  # plan-scoped assignments leave step_uuid NULL
 
     assignment_uuid: uuid.UUID
     scope: str

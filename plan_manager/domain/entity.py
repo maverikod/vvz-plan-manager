@@ -280,6 +280,22 @@ class DataclassEntity(EntityRecord):
     # store-stamped behaviour during the C-012 compatibility state; entities
     # flip to True as they migrate onto the engine surface.
     ENGINE_MANAGED_TIMESTAMPS: ClassVar[bool] = False
+    # CR-7 G-003/T-001/A-001: the ownership declaration surface (C-002).
+    # Exactly one of the three states describes a concrete entity:
+    #   OWNER_COLUMN - the EXISTING column that carries the owning entity's
+    #       UUID (chosen from the schema, never added here);
+    #   OWNER_ROOT   - the entity kind is a root by design;
+    #   OWNER_GAP    - a recorded statement that no usable owner column
+    #       exists, so a blank declaration is distinguishable from an
+    #       undecided one.
+    # Declarations only: nothing reads these at runtime until the ownership
+    # mechanics land; the completeness requirement (every entity declares)
+    # is enforced by validate_descriptor(require_ownership=True), which the
+    # cr7-owner-or-root-declared pipeline check turns on once the per-entity
+    # declaration wave has landed.
+    OWNER_COLUMN: ClassVar[str | None] = None
+    OWNER_ROOT: ClassVar[bool] = False
+    OWNER_GAP: ClassVar[str | None] = None
 
     @classmethod
     def validate_descriptor(cls) -> None:
@@ -333,6 +349,46 @@ class DataclassEntity(EntityRecord):
             value = getattr(cls, attribute)
             if value is not None and value not in columns:
                 raise ValueError(f"{name}: {attribute}={value!r} is absent from COLUMNS")
+
+        cls.validate_ownership_declaration()
+
+    @classmethod
+    def validate_ownership_declaration(cls, *, require_ownership: bool = False) -> None:
+        """Check the CR-7 ownership declaration (G-003/T-001/A-001, C-002).
+
+        Consistency is always enforced: a non-None OWNER_COLUMN must name a
+        column present in COLUMNS, OWNER_ROOT excludes OWNER_COLUMN, and a
+        recorded OWNER_GAP excludes both other states. Completeness - every
+        concrete entity declares exactly one state - is enforced only with
+        require_ownership=True, the switch the cr7-owner-or-root-declared
+        pipeline check flips once the per-entity declaration wave has landed.
+
+        Raises:
+            ValueError: naming the violated rule.
+        """
+        name = cls.__name__
+        states = [
+            cls.OWNER_COLUMN is not None,
+            bool(cls.OWNER_ROOT),
+            cls.OWNER_GAP is not None,
+        ]
+        declared = sum(1 for state in states if state)
+        if declared > 1:
+            raise ValueError(
+                f"{name}: OWNER_COLUMN, OWNER_ROOT and OWNER_GAP are mutually "
+                "exclusive; declare exactly one ownership state"
+            )
+        if cls.OWNER_COLUMN is not None and cls.COLUMNS and cls.OWNER_COLUMN not in cls.COLUMNS:
+            raise ValueError(
+                f"{name}: OWNER_COLUMN={cls.OWNER_COLUMN!r} is absent from COLUMNS"
+            )
+        if cls.OWNER_GAP is not None and not str(cls.OWNER_GAP).strip():
+            raise ValueError(f"{name}: OWNER_GAP must be a non-empty statement")
+        if require_ownership and declared == 0:
+            raise ValueError(
+                f"{name}: no ownership state declared; set OWNER_COLUMN, "
+                "OWNER_ROOT or OWNER_GAP (C-002)"
+            )
 
     @classmethod
     def entity_type(cls) -> str:

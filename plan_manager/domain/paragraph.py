@@ -30,6 +30,15 @@ class Paragraph(DataclassEntity):
 
     ENTITY_TYPE = "paragraph"
     TABLE_NAME = None
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "plan_uuid", "label", "text", "position",
+        "binding",
+    )
+    SOFT_DELETE_COLUMN = None
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_COLUMN = "plan_uuid"  # plan truth: a paragraph is owned by its plan
 
     label: Optional[str]
     text: str

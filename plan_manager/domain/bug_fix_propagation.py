@@ -45,6 +45,14 @@ class BugFixPropagation(DataclassEntity):
     ENTITY_TYPE = "bug_fix_propagation"
     ENTITY_ID_FIELD = "propagation_uuid"
     TABLE_NAME = "bug_fix_propagation"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "bug_fix_uuid", "impact_uuid", "target_type", "target_identifier",
+        "action", "status", "assigned_to", "linked_todo_uuid", "linked_plan_uuid",
+        "linked_cascade_uuid", "started_at", "finished_at", "evidence", "verification_result",
+        "created_by", "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_COLUMN = "bug_fix_uuid"
     # Compact view=summary projection (bug 8a13977d): drops evidence and verification_result.
     SUMMARY_FIELDS = ("uuid", "bug_fix_uuid", "impact_uuid", "target_type", "action", "status", "updated_at")
 

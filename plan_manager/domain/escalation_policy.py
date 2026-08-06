@@ -31,6 +31,13 @@ class EscalationPolicy(DataclassEntity):
     ENTITY_TYPE = "escalation_policy"
     ENTITY_ID_FIELD = "policy_uuid"
     TABLE_NAME = "escalation_policy"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "schema_version", "authority_typology", "max_owner_rounds", "terminal_parks_wave",
+        "owner_timeout_parks", "active", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_ROOT = True  # global authority catalog: the table has no anchoring column at all
 
     policy_uuid: uuid.UUID
     schema_version: int

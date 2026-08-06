@@ -25,6 +25,17 @@ class AnswerEnvelope(DataclassEntity):
     ENTITY_TYPE = "answer_envelope"
     ENTITY_ID_FIELD = "envelope_uuid"
     TABLE_NAME = "answer_envelope"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "kind", "schema_version", "payload", "anchor_plan_uuid",
+        "anchor_step_uuid", "attempt_uuid", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_GAP = (
+        "anchor columns (anchor_plan_uuid/anchor_step_uuid/attempt_uuid) form a "
+        "discriminated family; the owner column materializes in the G-007 anchor "
+        "collapse"
+    )
 
     envelope_uuid: uuid.UUID
     kind: str

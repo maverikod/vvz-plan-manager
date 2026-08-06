@@ -42,6 +42,11 @@ class TodoItem(DataclassEntity):
     ENTITY_TYPE = "todo"
     ENTITY_ID_FIELD = "todo_uuid"
     TABLE_NAME = "todo_item"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_GAP = (
+        "primary anchor is a discriminated family (anchor_type), not one column; "
+        "the owner column materializes in the G-007 anchor collapse"
+    )
     ID_COLUMN = "uuid"
     # Column order follows the todo_item CREATE TABLE in migration 0010_todo_work_items.sql.
     COLUMNS = (

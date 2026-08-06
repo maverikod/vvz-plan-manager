@@ -45,6 +45,8 @@ class BugFix(DataclassEntity):
     ENTITY_TYPE = "bug_fix"
     ENTITY_ID_FIELD = "fix_uuid"
     TABLE_NAME = "bug_fix"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_COLUMN = "bug_uuid"
     ID_COLUMN = "uuid"
     # Column order follows the bug_fix CREATE TABLE in migration
     # 0013_bug_lifecycle_and_impact.sql.

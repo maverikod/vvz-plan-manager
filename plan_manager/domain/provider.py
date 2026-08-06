@@ -34,6 +34,13 @@ class Provider(DataclassEntity):
     ENTITY_TYPE = "provider"
     ENTITY_ID_FIELD = "provider_uuid"
     TABLE_NAME = "provider"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "name", "type", "rented_hardware", "status",
+        "billing_notes", "quota_notes", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_ROOT = True  # catalog entity
     # Compact view=summary projection (bug 8a13977d): drops billing_notes and quota_notes.
     SUMMARY_FIELDS = ("uuid", "name", "type", "status", "updated_at")
 

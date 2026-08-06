@@ -29,6 +29,8 @@ class ExecutionAttempt(DataclassEntity):
     ENTITY_TYPE = "execution_attempt"
     ENTITY_ID_FIELD = "attempt_uuid"
     TABLE_NAME = "execution_attempt"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_COLUMN = "step_uuid"  # todo- and bug-fix-driven attempts leave step_uuid NULL (ownerless rows)
     ID_COLUMN: ClassVar[str] = "uuid"
     # Columns in CREATE TABLE order (0012) followed by ALTER TABLE ADD columns (0021).
     COLUMNS: ClassVar[tuple[str, ...]] = (

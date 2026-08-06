@@ -35,6 +35,12 @@ class RuntimeLink(DataclassEntity):
     ENTITY_TYPE = "runtime_link"
     ENTITY_ID_FIELD = "link_uuid"
     TABLE_NAME = "runtime_link"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "from_entity_type", "from_entity_uuid", "to_entity_type", "to_entity_uuid",
+        "link_type", "created_by", "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_COLUMN = "from_entity_uuid"  # a link belongs to its source endpoint; from_entity_type names the kind
 
     link_uuid: uuid.UUID
     from_entity_type: str

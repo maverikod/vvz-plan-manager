@@ -21,6 +21,12 @@ class Role(DataclassEntity):
     ENTITY_TYPE = "role"
     ENTITY_ID_FIELD = "role_uuid"
     TABLE_NAME = "role"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "name", "description", "created_by", "created_at",
+        "updated_at", "deleted_at",
+    )
+    OWNER_ROOT = True  # catalog entity
     # Compact view=summary projection (bug 8a13977d): drops description.
     SUMMARY_FIELDS = ("uuid", "name", "updated_at")
 

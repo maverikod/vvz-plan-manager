@@ -181,3 +181,92 @@ def test_recovery_mode_requires_the_original_identifier() -> None:
         _Probe.crud_create(
             conn, {"title": "x"}, returning=False, recovery_mode=True
         )
+
+
+# --------------------------------------------------------------------------
+# CR-7 G-003/T-001/A-001: ownership declaration surface.
+# --------------------------------------------------------------------------
+
+
+def test_ownership_states_are_mutually_exclusive() -> None:
+    class _Bad(_Probe):
+        ENTITY_TYPE = "cr7_probe_bad_owner"
+        OWNER_COLUMN = "title"
+        OWNER_ROOT = True
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _Bad.validate_ownership_declaration()
+
+
+def test_owner_column_must_exist_in_columns() -> None:
+    class _Bad(_Probe):
+        ENTITY_TYPE = "cr7_probe_missing_owner_col"
+        OWNER_COLUMN = "no_such_column"
+
+    with pytest.raises(ValueError, match="absent from COLUMNS"):
+        _Bad.validate_ownership_declaration()
+
+
+def test_each_single_state_is_accepted() -> None:
+    class _Col(_Probe):
+        ENTITY_TYPE = "cr7_probe_owner_col"
+        OWNER_COLUMN = "title"
+
+    class _Root(_Probe):
+        ENTITY_TYPE = "cr7_probe_owner_root"
+        OWNER_ROOT = True
+
+    class _Gap(_Probe):
+        ENTITY_TYPE = "cr7_probe_owner_gap"
+        OWNER_GAP = "no usable owner column until the G-007 anchor collapse"
+
+    for cls in (_Col, _Root, _Gap):
+        cls.validate_ownership_declaration(require_ownership=True)
+
+
+def test_completeness_is_enforced_only_on_request() -> None:
+    class _Undeclared(_Probe):
+        ENTITY_TYPE = "cr7_probe_owner_undeclared"
+
+    _Undeclared.validate_ownership_declaration()  # consistency only: passes
+    with pytest.raises(ValueError, match="no ownership state declared"):
+        _Undeclared.validate_ownership_declaration(require_ownership=True)
+
+
+def test_gap_must_carry_a_statement() -> None:
+    class _Blank(_Probe):
+        ENTITY_TYPE = "cr7_probe_owner_blank_gap"
+        OWNER_GAP = "   "
+
+    with pytest.raises(ValueError, match="non-empty statement"):
+        _Blank.validate_ownership_declaration()
+
+
+def test_all_shipped_entity_ownership_declarations_are_complete() -> None:
+    """CR-7 G-003/T-001/A-002..A-031: every shipped entity declares its state."""
+    import importlib
+    import pkgutil
+
+    import plan_manager.domain as domain_pkg
+
+    for module in pkgutil.iter_modules(domain_pkg.__path__):
+        importlib.import_module(f"{domain_pkg.__name__}.{module.name}")
+
+    def _subclasses(root):
+        found = []
+        for sub in root.__subclasses__():
+            found.append(sub)
+            found.extend(_subclasses(sub))
+        return found
+
+    declared = 0
+    for cls in _subclasses(DataclassEntity):
+        if (cls.__module__ or "").startswith("tests"):
+            continue
+        if not (cls.__module__ or "").startswith("plan_manager.domain."):
+            continue
+        if cls.__name__ in {"EntityIdentifier"}:
+            continue
+        cls.validate_ownership_declaration(require_ownership=True)
+        declared += 1
+    assert declared >= 31  # 30 per-entity AS targets + ToolsetMembership

@@ -41,6 +41,13 @@ class Relation(DataclassEntity):
     ENTITY_TYPE = "relation"
     ENTITY_ID_FIELDS = ("from_concept", "type", "to_concept")
     TABLE_NAME = "relation"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "plan_uuid", "from_concept", "to_concept", "type",
+    )
+    UPDATED_AT_COLUMN = None
+    CREATED_AT_COLUMN = None
+    OWNER_COLUMN = "plan_uuid"
     ID_COLUMN = None
     ID_COLUMNS = ("plan_uuid", "from_concept", "to_concept", "type")
     SOFT_DELETE_COLUMN = None

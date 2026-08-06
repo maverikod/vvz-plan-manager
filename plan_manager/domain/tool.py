@@ -21,6 +21,8 @@ class Tool(DataclassEntity):
     ENTITY_TYPE = "tool"
     ENTITY_ID_FIELD = "tool_uuid"
     TABLE_NAME = "tool"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_ROOT = True  # catalog entity
     ID_COLUMN = "uuid"
     # Column order follows the tool CREATE TABLE in migration 0018_agent_config_entities.sql.
     COLUMNS = (

@@ -26,19 +26,12 @@ _GAP_MARKER = "Descriptor gap:"
 # docstring with a "Descriptor gap: ..." line instead of living here forever.
 _PENDING_DESCRIPTOR_MIGRATION = frozenset(
     {
-        # G-003/T-003 — plan-truth and derived stores.
-        "Plan", "Step", "Concept", "Relation", "TodoLink",
-        "ProjectDependency", "BugReport", "BugFixPropagation", "BugImpact",
+        # Derived stores. CR-7 G-003 completed every domain entity's
+        # descriptor; only the derived record stores remain, and G-004's
+        # routing steps own them (cascade_request, srt_snapshot). The
+        # context_block entity has no migration step of its own yet -
+        # listed here so the omission is visible rather than silent.
         "CascadeRequestRecord", "SrtSnapshotRecord",
-        # G-003/T-004 — runtime overlay and agent configuration.
-        "RuntimeLink", "ReviewResult",
-        "Escalation", "EscalationPolicy", "AnswerEnvelope", "StepAssignment",
-        "Model", "ModelBinding", "Provider", "Role", "RoleModelBinding",
-        "Toolset", "ToolsetMembership", "InvocationProfile",
-        # Derived store. G-003/T-003's description enumerates cascade_request
-        # and srt_snapshot among the derived stores but not context_block, so
-        # this entity currently has no migration step of its own. Listed here so
-        # the omission is visible rather than silent.
         "ContextBlockRecord",
     }
 )

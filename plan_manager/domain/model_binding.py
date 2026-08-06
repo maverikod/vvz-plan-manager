@@ -43,6 +43,15 @@ class ModelBinding(DataclassEntity):
     ENTITY_TYPE = "model_binding"
     ENTITY_ID_FIELD = "binding_uuid"
     TABLE_NAME = "model_binding"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "scope", "role", "plan_uuid", "spec_level",
+        "branch_step_uuid", "revision_uuid", "step_uuid", "step_path", "provider",
+        "model", "fallback_provider", "fallback_model", "max_retries", "timeout",
+        "context_budget", "active", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_COLUMN = "plan_uuid"  # global-scope bindings leave plan_uuid NULL; step-scoped rows still carry their plan
     # Compact view=summary projection (bug 8a13977d): drops fallback_provider/
     # fallback_model, max_retries, timeout, context_budget.
     SUMMARY_FIELDS = ("uuid", "scope", "role", "plan_uuid", "provider", "model", "active", "updated_at")

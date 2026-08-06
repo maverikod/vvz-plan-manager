@@ -31,6 +31,17 @@ class InvocationProfile(DataclassEntity):
     ENTITY_TYPE = "invocation_profile"
     ENTITY_ID_FIELD = "profile_uuid"
     TABLE_NAME = "invocation_profile"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "scope", "role", "plan_uuid", "spec_level",
+        "branch_step_uuid", "revision_uuid", "step_uuid", "step_path", "temperature",
+        "top_p", "max_output_tokens", "reasoning_effort", "context_window_budget", "timeout",
+        "retry_policy", "concurrency", "rate_hint", "response_format", "response_schema",
+        "max_tool_iterations", "per_call_timeout", "execution_mode", "token_budget", "cost_budget",
+        "dialogue_chain_ref", "active", "created_by", "created_at", "updated_at",
+        "deleted_at",
+    )
+    OWNER_ROOT = True  # catalog entity
     # Compact view=summary projection (bug 8a13977d): drops the tuning fields
     # (temperature, top_p, retry_policy, rate_hint, response_schema, etc.).
     SUMMARY_FIELDS = ("uuid", "scope", "role", "plan_uuid", "step_path", "active", "updated_at")

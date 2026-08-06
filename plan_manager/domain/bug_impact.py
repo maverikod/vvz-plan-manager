@@ -34,6 +34,15 @@ class BugImpact(DataclassEntity):
     ENTITY_TYPE = "bug_impact"
     ENTITY_ID_FIELD = "impact_uuid"
     TABLE_NAME = "bug_impact"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "bug_uuid", "target_type", "target_project_id", "target_file_path",
+        "target_plan_uuid", "target_revision_uuid", "target_step_uuid", "target_step_path", "target_ref_id",
+        "target_identifier", "impact_type", "status", "reason", "skip_decided_by",
+        "discovery_method", "resolution_evidence", "created_by", "created_at", "updated_at",
+        "resolved_at", "deleted_at",
+    )
+    OWNER_COLUMN = "bug_uuid"
     HARD_DELETE_REFERENCE_CHECKS = (
         # source_column is "uuid", not the dataclass field "impact_uuid": find_entity_reference_counts
         # (plan_manager/domain/entity.py) builds id_values from DataclassEntity.get_by_id's row, whose

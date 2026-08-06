@@ -32,6 +32,12 @@ class TodoLink(DataclassEntity):
     ENTITY_TYPE = "todo_link"
     ENTITY_ID_FIELD = "link_uuid"
     TABLE_NAME = "todo_link"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    COLUMNS = (
+        "uuid", "from_todo_uuid", "to_todo_uuid", "link_type", "created_by",
+        "created_at", "updated_at", "deleted_at",
+    )
+    OWNER_COLUMN = "from_todo_uuid"
 
     link_uuid: uuid.UUID
     from_todo_uuid: uuid.UUID

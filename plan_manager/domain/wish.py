@@ -49,6 +49,11 @@ class WishItem(DataclassEntity):
     ENTITY_TYPE = "wish"
     ENTITY_ID_FIELD = "wish_uuid"
     TABLE_NAME = "wish_item"
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_GAP = (
+        "primary anchor is a discriminated family (anchor_type), not one column; "
+        "the owner column materializes in the G-007 anchor collapse"
+    )
     ID_COLUMN = "uuid"
     # Column order follows the wish_item CREATE TABLE in migration
     # 0025_wish_and_calendar_entries.sql.
