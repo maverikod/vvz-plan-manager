@@ -60,7 +60,14 @@ def build_fake_row(entity_cls: type, *, salt: str = "x", marked: bool = False) -
 
 
 def all_entity_classes() -> list[type]:
-    return cf.registered_entity_classes()
+    # Synthetic subclasses defined inside test modules are fixtures for the
+    # negative cases in other tests, not shipped entities. They leak into
+    # __subclasses__ once their test has run, so exclude them by origin
+    # rather than by name.
+    return [
+        cls for cls in cf.registered_entity_classes()
+        if not (cls.__module__ or "").startswith("tests")
+    ]
 
 
 # --------------------------------------------------------------------------
