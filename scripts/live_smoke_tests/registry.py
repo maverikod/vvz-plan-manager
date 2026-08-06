@@ -106,6 +106,16 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "null-removes-key, cross-kind duplicate rejection",
         needs_catalog=True,
     ),
+    LiveSmokeTestSpec(
+        "r38",
+        "run_r38_export_import_round_trip",
+        "CR-7 G-005/T-002/A-002 export/import black-box round trip: plan_export/"
+        "export_read/hrs_export, plan_import into a freed name, re-export, and "
+        "API-visible comparison (step tree, HRS/MRS, dependencies, statuses, "
+        "project bindings, checksum)",
+        needs_catalog=True,
+        needs_project=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)
