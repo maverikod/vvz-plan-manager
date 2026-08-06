@@ -3282,7 +3282,13 @@ def _r27_success_responses() -> dict[str, Any]:
     return {
         "wish_create": _ok({"uuid": "wish-1", "wish_uuid": "wish-1"}),
         "wish_get": _ok({"uuid": "wish-1", "wish_uuid": "wish-1"}),
-        "wish_list": _ok({"wishes": [{"wish_uuid": "wish-1"}], "total": 1, "limit": 5, "offset": 0}),
+        "wish_list": _sequence(
+            # limit=5 page: shape contract only (membership is no longer
+            # asserted on this page -- see bug 396ea09b).
+            _ok({"wishes": [{"wish_uuid": "wish-1"}], "total": 1, "limit": 5, "offset": 0}),
+            # limit=50 offset=0 membership page: scratch wish present.
+            _ok({"wishes": [{"wish_uuid": "wish-1"}], "total": 1, "limit": 50, "offset": 0}),
+        ),
         "wish_update": _ok({"uuid": "wish-1", "wish_uuid": "wish-1", "status": "planned"}),
         "calendar_entry_create": _ok({"uuid": "entry-1", "calendar_entry_uuid": "entry-1"}),
         "calendar_entry_get": _ok({"uuid": "entry-1", "calendar_entry_uuid": "entry-1"}),
@@ -3327,6 +3333,7 @@ def test_run_r27_full_success_every_check_passes():
     assert [name for name, _ in client.calls] == [
         "wish_create",
         "wish_get",
+        "wish_list",
         "wish_list",
         "wish_update",
         "calendar_entry_create",
@@ -3390,6 +3397,38 @@ def test_run_r27_is_registered_for_pipeline_dispatch():
     assert spec.function_name == "run_r27_runtime_work_layer_lifecycle"
     assert spec.needs_catalog is True
     assert spec.needs_project is True
+
+
+def test_run_r27_wish_list_membership_located_beyond_the_limit_5_page():
+    """Bug 396ea09b: with 5+ pre-existing project wishes ordered ahead of
+    the scratch one, it can legitimately be absent from the limit=5 page
+    used for the shape assertion. R27_wish_list must still PASS by finding
+    the scratch wish on a later limit=50 page instead of false-FAILing on
+    membership in the first page."""
+    responses = _r27_success_responses()
+    responses["wish_list"] = _sequence(
+        # limit=5 page: shape contract only, scratch wish absent (pushed
+        # off the page by 60 pre-existing project wishes).
+        _ok({"wishes": [{"wish_uuid": f"other-{i}"} for i in range(5)], "total": 60, "limit": 5, "offset": 0}),
+        # limit=50 offset=0: still absent.
+        _ok({"wishes": [{"wish_uuid": f"other-{i}"} for i in range(50)], "total": 60, "limit": 50, "offset": 0}),
+        # limit=50 offset=50: scratch wish present on this later page.
+        _ok({"wishes": [{"wish_uuid": "wish-1"}], "total": 60, "limit": 50, "offset": 50}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r27_runtime_work_layer_lifecycle(client, ls.R27_REQUIRED_COMMANDS, "proj-1"))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R27_wish_list"].status == ls.STATUS_PASS
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+
+    wish_list_calls = [params for name, params in client.calls if name == "wish_list"]
+    assert wish_list_calls == [
+        {"project": "proj-1", "active_only": True, "limit": 5},
+        {"project": "proj-1", "active_only": True, "limit": 50, "offset": 0},
+        {"project": "proj-1", "active_only": True, "limit": 50, "offset": 50},
+    ]
 
 
 def test_run_r28_is_registered_for_pipeline_dispatch():

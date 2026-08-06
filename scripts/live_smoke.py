@@ -5026,7 +5026,14 @@ async def run_r27_runtime_work_layer_lifecycle(
 
     Recipe:
       1. wish_create(project anchor) -> wish_get -> wish_list(project,
-         active_only, limit) -> wish_update(status=planned).
+         active_only, limit) -> wish_update(status=planned). The limit=5
+         call only pins the page CONTRACT (shape/total/limit/offset) --
+         membership of the freshly created scratch wish is located
+         separately by paging with limit=50 (advancing offset until found
+         or offset >= total), since 5+ pre-existing project wishes ordered
+         ahead of it would otherwise push it past a fixed limit-5 page and
+         produce a false FAIL (bug 396ea09b). Both conditions are AND-ed
+         into the single R27_wish_list CheckResult.
       2. calendar_entry_create(project anchor, linked to that wish) ->
          calendar_entry_get -> calendar_entry_list(project, wish, day
          window, limit) -> calendar_entry_update(status=in_progress).
@@ -5080,12 +5087,44 @@ async def run_r27_runtime_work_layer_lifecycle(
             return results
 
         ok, res = await call(client, "wish_list", {"project": project_id, "active_only": True, "limit": 5})
-        wish_list_ok = (
+        wish_list_page_ok = (
             ok and isinstance(res, dict) and isinstance(res.get("wishes"), list)
             and isinstance(res.get("total"), int) and res.get("limit") == 5 and res.get("offset") == 0
-            and any(isinstance(row, dict) and row.get("wish_uuid") == wish_uuid for row in res["wishes"])
         )
-        results.append(CheckResult("4", "R27_wish_list", STATUS_PASS if wish_list_ok else STATUS_FAIL, "" if wish_list_ok else str(res)))
+
+        # The page contract above only pins limit=5's shape; with 5+
+        # pre-existing project wishes ordered ahead of the scratch one, it
+        # can legitimately land on a later page. Membership is located
+        # separately by paging with limit=50 until found or offset exceeds
+        # the reported total, so the assertion is deterministic regardless
+        # of how many other wishes the project already holds.
+        wish_list_membership_ok = False
+        membership_res: Any = res
+        if wish_list_page_ok:
+            total = res["total"]
+            offset = 0
+            while offset < total:
+                ok, page = await call(
+                    client, "wish_list",
+                    {"project": project_id, "active_only": True, "limit": 50, "offset": offset},
+                )
+                membership_res = page
+                if not ok:
+                    break
+                if isinstance(page, dict) and isinstance(page.get("wishes"), list) and any(
+                    isinstance(row, dict) and row.get("wish_uuid") == wish_uuid for row in page["wishes"]
+                ):
+                    wish_list_membership_ok = True
+                    break
+                offset += 50
+
+        wish_list_ok = wish_list_page_ok and wish_list_membership_ok
+        results.append(
+            CheckResult(
+                "4", "R27_wish_list", STATUS_PASS if wish_list_ok else STATUS_FAIL,
+                "" if wish_list_ok else str(membership_res),
+            )
+        )
         if not wish_list_ok:
             return results
 
