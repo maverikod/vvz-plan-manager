@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sys
 
 
@@ -238,6 +239,24 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "tests/test_id_resolve_command.py",
         ),
     ),
+    PipelineCheckSpec(
+        name="cr7-no-out-of-mechanism-write",
+        description=(
+            "Mechanically assert CR-7 G-004: no INSERT/DELETE statement targets a "
+            "registered entity table outside the unified engine mechanism."
+        ),
+        # CR-7 G-004 (C-005, C-012): the scan runs as its own subprocess, not as a
+        # pytest suite like the cr6-* checks, because G-004 mandates this check be
+        # RED while any module still writes beside the mechanism -- a pytest-based
+        # wiring would drag the repo-tests check red along with it mid-sweep. The
+        # scan's behavior is unit-tested in tests/test_cr7_g004_write_scan.py.
+        argv=(
+            sys.executable,
+            "-c",
+            "from plan_manager.pipeline_checks.registry import g004_scan_main; "
+            "raise SystemExit(g004_scan_main())",
+        ),
+    ),
 )
 
 
@@ -257,3 +276,134 @@ def default_checks() -> tuple[PipelineCheckSpec, ...]:
 def repo_root() -> Path:
     """Return the repository root used as cwd for every pipeline subprocess."""
     return _REPO_ROOT
+
+
+# ---------------------------------------------------------------------------
+# CR-7 G-004 (C-005, C-012): the cr7-no-out-of-mechanism-write scan.
+#
+# G-004's acceptance, asserted mechanically: no registered entity table may be
+# the target of an INSERT or DELETE statement anywhere in the plan_manager
+# package outside the unified engine mechanism. The mechanism files below are
+# consumed read-only by this scan -- they are the allowed writers and are never
+# reported. A statement outside them is an offender unless the literal W05
+# compatibility marker appears in the preceding 10 source lines, in which case
+# it is reported as a known exception without failing the check.
+# ---------------------------------------------------------------------------
+
+# The unified engine mechanism: the entity base, the admission collaborator,
+# the deletion guard, and the registry/relation-index/enumeration maintenance
+# paths (all mechanism-internal per CR-7 G-004).
+_G004_MECHANISM_FILES: frozenset[str] = frozenset(
+    {
+        "plan_manager/domain/entity.py",
+        "plan_manager/storage/admission.py",
+        "plan_manager/storage/hard_delete_guard.py",
+        "plan_manager/storage/identity.py",
+        "plan_manager/storage/identity_audit.py",
+        "plan_manager/storage/relation_index_store.py",
+        "plan_manager/storage/enumeration_store.py",
+    }
+)
+
+# The literal in-code marker W05 placed on each documented compatibility
+# exception; only this exact string, within the 10 lines above a statement,
+# downgrades it from offender to known exception.
+_G004_COMPAT_MARKER = "CR-7 G-004 compatibility note"
+_G004_MARKER_WINDOW = 10
+
+_G004_CHECK_NAME = "cr7-no-out-of-mechanism-write"
+
+
+@dataclass(frozen=True)
+class G004WriteFinding:
+    """One source statement that writes a registered entity table directly."""
+
+    path: str  # repo-relative posix path of the source file
+    line: int  # 1-based line number of the statement
+    statement: str  # the offending source line, stripped
+
+
+def _g004_statement_pattern(tables: frozenset[str]) -> "re.Pattern[str]":
+    """Compile the statement matcher for the registered entity tables.
+
+    Case-sensitive on purpose: every real statement in this package spells the
+    keywords in uppercase, while prose in comments and docstrings ("an insert
+    into runtime_audit_log") does not, so prose never false-positives. The
+    trailing word boundary keeps a registered name from matching a longer
+    unregistered one (e.g. "step" inside "step_runtime"). A brace right after
+    the keywords catches dynamically-composed targets (f-strings and
+    sql.SQL format placeholders); outside the mechanism such a dynamic target
+    is conservatively treated as a registered-table write.
+    """
+    alternation = "|".join(re.escape(name) for name in sorted(tables, key=len, reverse=True))
+    return re.compile(
+        r"(INSERT INTO|DELETE FROM)\s+(?:\"?(?:%s)\"?\b|\{)" % alternation
+    )
+
+
+def g004_scan(
+    package_dir: Path | None = None,
+) -> tuple[list[G004WriteFinding], list[G004WriteFinding]]:
+    """Scan package sources for out-of-mechanism writes on registered tables.
+
+    Args:
+        package_dir: The ``plan_manager`` package directory to scan; defaults
+            to this repository's package. Tests point this at a fixture tree.
+
+    Returns:
+        ``(offenders, known_exceptions)`` -- statements without and with the
+        W05 compatibility marker respectively, each as a G004WriteFinding
+        with repo-relative path, line number, and statement text.
+    """
+    # Imported lazily: the closed registry lives beside psycopg-importing
+    # storage code, and the pipeline CLI must stay importable without it.
+    from plan_manager.storage.identity import ALLOWED_TABLES
+
+    root = package_dir if package_dir is not None else _REPO_ROOT / "plan_manager"
+    base = root.parent
+    pattern = _g004_statement_pattern(ALLOWED_TABLES)
+    offenders: list[G004WriteFinding] = []
+    known_exceptions: list[G004WriteFinding] = []
+    for source in sorted(root.rglob("*.py")):
+        rel = source.relative_to(base).as_posix()
+        if rel in _G004_MECHANISM_FILES:
+            continue  # the mechanism's own writers; consumed read-only here
+        lines = source.read_text(encoding="utf-8").splitlines()
+        for index, text in enumerate(lines):
+            if not pattern.search(text):
+                continue
+            finding = G004WriteFinding(path=rel, line=index + 1, statement=text.strip())
+            window = lines[max(0, index - _G004_MARKER_WINDOW):index]
+            if any(_G004_COMPAT_MARKER in prior for prior in window):
+                known_exceptions.append(finding)
+            else:
+                offenders.append(finding)
+    return offenders, known_exceptions
+
+
+def g004_scan_main(package_dir: Path | None = None) -> int:
+    """Subprocess body of the cr7-no-out-of-mechanism-write pipeline check.
+
+    Prints every known exception and every offender (file, line, statement)
+    and returns a nonzero exit code when any offender exists, so the check is
+    RED while any module still writes beside the mechanism and GREEN only
+    when the removal sweep is complete.
+    """
+    offenders, known_exceptions = g004_scan(package_dir)
+    for finding in known_exceptions:
+        print(
+            f"[known exception] {finding.path}:{finding.line}: {finding.statement}"
+        )
+    for finding in offenders:
+        print(f"[OFFENDER] {finding.path}:{finding.line}: {finding.statement}")
+    if offenders:
+        print(
+            f"{_G004_CHECK_NAME}: RED -- {len(offenders)} unmarked out-of-mechanism "
+            "write(s) on registered entity tables (listed above)."
+        )
+        return 1
+    print(
+        f"{_G004_CHECK_NAME}: GREEN -- no out-of-mechanism writes "
+        f"({len(known_exceptions)} documented compatibility exception(s))."
+    )
+    return 0

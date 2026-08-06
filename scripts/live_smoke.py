@@ -6516,6 +6516,269 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
     return results
 
 
+R37_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the command surface the CR-7 C-012 direct-state acceptance "
+    "check exercises -- redeploy pending"
+)
+
+R37_REQUIRED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "plan_create", "plan_comment_set", "plan_delete",
+        "todo_create", "todo_update", "todo_get", "todo_delete",
+        "provider_create", "provider_update", "provider_get", "provider_delete",
+    }
+)
+
+R37_RESERVE_SKIP_REASON = (
+    "server predates project_uuid_reserve (CR-6) -- the cross-kind duplicate "
+    "refusal has no caller-supplied-identifier surface on this vintage"
+)
+
+
+async def run_r37_cr7_direct_state_acceptance(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-7 G-004/T-002/A-003: direct-state acceptance of the C-012 cutover.
+
+    Three sub-regressions, each read back zero-trust from the live server:
+
+    1. One create-update-read cycle per migrated family, proving the unified
+       engine path serves the live API: todo (runtime store family), provider
+       (config store family), and plan (plan-truth module family, via
+       plan_create + the plan_comment_set update surface, whose response
+       re-reads the comment from storage).
+    2. The null-removes-key update semantics (todo 4bb0f85b closure
+       evidence): plan_comment_set documents "omit or pass null to clear",
+       so after setting a comment, an explicit ``comment: null`` on the same
+       surface must come back cleared in the command's own storage re-read.
+    3. Cross-kind duplicate rejection: NO public create command accepts a
+       caller-supplied id (creation identifiers are always server-generated),
+       so the documented refusal is asserted through project_uuid_reserve --
+       the one shipped surface taking a caller-supplied identifier -- which
+       calls the registry's single cross-kind collision guard
+       (ensure_identity_available) exactly like every create path does.
+       Reserving a live todo's uuid must be refused with DUPLICATE_ID naming
+       the existing mismatched kind. Marker-gated SKIP on a pre-CR-6 server.
+
+    Cutover neutrality: every assertion reads public command responses only,
+    so both C-012 cutover states -- the wrapped surface and the direct
+    surface -- must pass this same check identically.
+
+    Cleanup is top-level try/finally: todo before its anchor plan, provider
+    independently; an unexpectedly-successful reservation (a check FAILURE)
+    is released so a red run never leaves the identifier occupied.
+    """
+    if not R37_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R37_REQUIRED_COMMANDS - catalog_names)
+        return [
+            CheckResult(
+                "4",
+                "R37_cr7_direct_state_acceptance",
+                STATUS_SKIP,
+                f"{R37_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        ]
+
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    provider_uuid: Optional[str] = None
+    reserved_unexpectedly: Optional[str] = None
+    try:
+        # --- plan-truth family: create. ---
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r37-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R37_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R37_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        # --- runtime store family: todo create-update-read. ---
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r37-todo"),
+                "description": "R37 direct-state acceptance scratch todo",
+                "kind": "task", "priority_nice": 10, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R37_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+        results.append(CheckResult("4", "R37_todo_create", STATUS_PASS, f"uuid={todo_uuid}"))
+
+        ok, res = await call(
+            client, "todo_update",
+            {"todo": todo_uuid, "changed_by": "live-smoke", "priority_nice": -5},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R37_todo_update", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R37_todo_update", STATUS_PASS))
+
+        ok, res = await call(client, "todo_get", {"todo": todo_uuid})
+        todo_read_ok = (
+            ok and isinstance(res, dict)
+            and res.get("uuid") == todo_uuid and res.get("priority_nice") == -5
+        )
+        results.append(
+            CheckResult(
+                "4", "R37_todo_read_back", STATUS_PASS if todo_read_ok else STATUS_FAIL,
+                "engine-served update visible via todo_get" if todo_read_ok else str(res),
+            )
+        )
+        if not todo_read_ok:
+            return results
+
+        # --- config store family: provider create-update-read. ---
+        ok, res = await call(
+            client, "provider_create",
+            {
+                "name": unique_suffix("r37-provider"), "type": "cloud_api",
+                "rented_hardware": False, "status": "active", "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R37_provider_create", STATUS_FAIL, str(res)))
+            return results
+        provider_uuid = res["uuid"]
+        results.append(CheckResult("4", "R37_provider_create", STATUS_PASS, f"uuid={provider_uuid}"))
+
+        ok, res = await call(
+            client, "provider_update",
+            {
+                "provider_uuid": provider_uuid, "changed_by": "live-smoke",
+                "billing_notes": "live-smoke R37 engine-path update",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R37_provider_update", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R37_provider_update", STATUS_PASS))
+
+        ok, res = await call(client, "provider_get", {"provider_uuid": provider_uuid})
+        provider_read_ok = (
+            ok and isinstance(res, dict)
+            and res.get("uuid") == provider_uuid
+            and res.get("billing_notes") == "live-smoke R37 engine-path update"
+        )
+        results.append(
+            CheckResult(
+                "4", "R37_provider_read_back", STATUS_PASS if provider_read_ok else STATUS_FAIL,
+                "engine-served update visible via provider_get" if provider_read_ok else str(res),
+            )
+        )
+        if not provider_read_ok:
+            return results
+
+        # --- plan-truth family: update-read, then null-removes-key. ---
+        comment_text = "live-smoke r37 direct-state comment"
+        ok, res = await call(
+            client, "plan_comment_set",
+            {"plan": plan_uuid, "changed_by": "live-smoke", "comment": comment_text},
+        )
+        comment_set_ok = ok and isinstance(res, dict) and res.get("comment") == comment_text
+        results.append(
+            CheckResult(
+                "4", "R37_plan_comment_update", STATUS_PASS if comment_set_ok else STATUS_FAIL,
+                "comment re-read from storage" if comment_set_ok else str(res),
+            )
+        )
+        if not comment_set_ok:
+            return results
+
+        # Explicit "comment": null is the documented clear form ("omit or pass
+        # null to clear"); the response's comment is re-read from storage, so a
+        # null key coming back cleared IS the null-removes-key observation
+        # (todo 4bb0f85b closure evidence).
+        ok, res = await call(
+            client, "plan_comment_set",
+            {"plan": plan_uuid, "changed_by": "live-smoke", "comment": None},
+        )
+        null_clear_ok = ok and isinstance(res, dict) and res.get("comment") is None
+        results.append(
+            CheckResult(
+                "4", "R37_4bb0f85b_null_removes_key", STATUS_PASS if null_clear_ok else STATUS_FAIL,
+                "explicit null cleared the comment" if null_clear_ok
+                else f"expected the comment cleared by explicit null, got ok={ok} {res!r}",
+            )
+        )
+        if not null_clear_ok:
+            return results
+
+        # --- cross-kind duplicate rejection. ---
+        if "project_uuid_reserve" not in catalog_names:
+            # No public create accepts a caller-supplied id, so on a pre-CR-6
+            # server no surface can even attempt the mismatched-kind ref.
+            results.append(
+                CheckResult("4", "R37_cross_kind_duplicate", STATUS_SKIP, R37_RESERVE_SKIP_REASON)
+            )
+        else:
+            # The "second create with a mismatched-kind ref": reserve claims the
+            # PROJECT kind for a caller-supplied identifier that already belongs
+            # to a live todo, and must be refused by the registry's single
+            # cross-kind collision guard (same domain-code assertion idiom as
+            # R33's DUPLICATE_ID check).
+            ok, res = await call(
+                client, "project_uuid_reserve",
+                {"action": "reserve", "project_uuid": todo_uuid, "reserved_by": "live-smoke-r37"},
+            )
+            if (not ok) and "DUPLICATE_ID" in str(res):
+                results.append(
+                    CheckResult(
+                        "4", "R37_cross_kind_duplicate", STATUS_PASS,
+                        f"reserve of a live todo uuid refused: {str(res)[:160]}",
+                    )
+                )
+            else:
+                if ok:
+                    reserved_unexpectedly = todo_uuid
+                results.append(
+                    CheckResult(
+                        "4", "R37_cross_kind_duplicate", STATUS_FAIL,
+                        f"expected DUPLICATE_ID refusal, got ok={ok} {res!r}",
+                    )
+                )
+                return results
+    finally:
+        cleanup_ok = True
+        if reserved_unexpectedly is not None:
+            # Only reachable on a FAILED refusal check: free the identifier so
+            # a red run never leaves the todo's uuid occupied by a reservation.
+            ok, res = await call(
+                client, "project_uuid_reserve",
+                {
+                    "action": "release", "project_uuid": reserved_unexpectedly,
+                    "reserved_by": "live-smoke-r37",
+                },
+            )
+            cleanup_ok = cleanup_ok and ok
+        if provider_uuid is not None:
+            ok, res = await call(
+                client, "provider_delete",
+                {"provider_uuid": provider_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete",
+                {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True},
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R37_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

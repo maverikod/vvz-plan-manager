@@ -99,6 +99,13 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "run_r36_soft_delete_owned_column",
         "soft delete hides a row without removing it, for todo and comment (bug 31ba96d5)",
     ),
+    LiveSmokeTestSpec(
+        "r37",
+        "run_r37_cr7_direct_state_acceptance",
+        "CR-7 C-012 direct-state acceptance: engine-served CRUD per family, "
+        "null-removes-key, cross-kind duplicate rejection",
+        needs_catalog=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

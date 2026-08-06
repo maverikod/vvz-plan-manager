@@ -3469,3 +3469,166 @@ def test_run_r12_gate_findings_pagination_extension_present_in_source():
     assert "gate_findings_limit" in source
     assert "gate_findings_total" in source
     assert "R12_b6ed4b0b_gate_findings_pagination" in source
+
+
+# --------------------------------------------------------------------------
+# R37 (CR-7 G-004/T-002/A-003): the C-012 direct-state acceptance regression
+# -- engine-served create-update-read per migrated family, null-removes-key
+# through plan_comment_set, and the cross-kind duplicate refusal through
+# project_uuid_reserve (the only caller-supplied-identifier surface).
+# --------------------------------------------------------------------------
+
+_R37_CATALOG = frozenset(ls.R37_REQUIRED_COMMANDS | {"project_uuid_reserve"})
+
+_R37_COMMENT = "live-smoke r37 direct-state comment"
+_R37_NOTES = "live-smoke R37 engine-path update"
+
+
+def _r37_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-1"}),
+        "todo_create": _ok({"uuid": "todo-1"}),
+        "todo_update": _ok({"uuid": "todo-1", "priority_nice": -5}),
+        "todo_get": _ok({"uuid": "todo-1", "priority_nice": -5}),
+        "provider_create": _ok({"uuid": "prov-1"}),
+        "provider_update": _ok({"uuid": "prov-1", "billing_notes": _R37_NOTES}),
+        "provider_get": _ok({"uuid": "prov-1", "billing_notes": _R37_NOTES}),
+        "plan_comment_set": _sequence(
+            _ok({"plan_uuid": "plan-1", "comment": _R37_COMMENT, "audit_uuid": "a-1"}),
+            _ok({"plan_uuid": "plan-1", "comment": None, "audit_uuid": "a-2"}),
+        ),
+        "project_uuid_reserve": {
+            "success": False,
+            "error": (
+                "DUPLICATE_ID: entity id already registered: todo-1 "
+                "(kind=todo, table=todo_item)"
+            ),
+        },
+        "provider_delete": _ok({"deleted_uuid": "prov-1", "mode": "hard"}),
+        "todo_delete": _ok({"deleted_uuid": "todo-1", "mode": "hard"}),
+        "plan_delete": _ok({"deleted_uuid": "plan-1"}),
+    }
+
+
+def test_run_r37_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r37")
+    assert spec.function_name == "run_r37_cr7_direct_state_acceptance"
+    assert spec.needs_catalog is True
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r37_pre_deploy_server_skips_entire_group_not_per_command():
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, frozenset()))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "R37_cr7_direct_state_acceptance"
+    assert result.status == ls.STATUS_SKIP
+    assert ls.R37_PRE_DEPLOY_SKIP_REASON in result.detail
+    assert client.calls == []
+
+
+def test_run_r37_full_success_every_check_passes():
+    client = _ScriptedClient(_r37_success_responses())
+
+    results = asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, _R37_CATALOG))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    assert [name for name, _ in client.calls] == [
+        "plan_create",
+        "todo_create",
+        "todo_update",
+        "todo_get",
+        "provider_create",
+        "provider_update",
+        "provider_get",
+        "plan_comment_set",
+        "plan_comment_set",
+        "project_uuid_reserve",
+        "provider_delete",
+        "todo_delete",
+        "plan_delete",
+    ]
+
+
+def test_run_r37_null_clear_call_carries_explicit_null_comment():
+    """The second plan_comment_set call must SEND "comment": null explicitly
+    (the documented clear form), not merely omit the key -- the explicit null
+    IS the null-removes-key observation of todo 4bb0f85b."""
+    client = _ScriptedClient(_r37_success_responses())
+
+    asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, _R37_CATALOG))
+
+    comment_calls = [params for name, params in client.calls if name == "plan_comment_set"]
+    assert len(comment_calls) == 2
+    assert comment_calls[0]["comment"] == _R37_COMMENT
+    assert "comment" in comment_calls[1] and comment_calls[1]["comment"] is None
+
+
+def test_run_r37_null_not_cleared_fails_and_still_cleans_up():
+    responses = _r37_success_responses()
+    responses["plan_comment_set"] = _sequence(
+        _ok({"plan_uuid": "plan-1", "comment": _R37_COMMENT, "audit_uuid": "a-1"}),
+        # Defective server: explicit null did NOT clear the comment.
+        _ok({"plan_uuid": "plan-1", "comment": _R37_COMMENT, "audit_uuid": "a-2"}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, _R37_CATALOG))
+
+    null_check = [r for r in results if r.name == "R37_4bb0f85b_null_removes_key"]
+    assert len(null_check) == 1 and null_check[0].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "project_uuid_reserve" not in called  # aborted before the refusal probe
+    assert called[-3:] == ["provider_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r37_cross_kind_unexpected_success_fails_and_releases():
+    responses = _r37_success_responses()
+    responses["project_uuid_reserve"] = _sequence(
+        # Defective server: the mismatched-kind reservation was ACCEPTED.
+        _ok({"project_uuid": "todo-1", "reserved_by": "live-smoke-r37"}),
+        _ok({"project_uuid": "todo-1", "released": True}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, _R37_CATALOG))
+
+    refusal = [r for r in results if r.name == "R37_cross_kind_duplicate"]
+    assert len(refusal) == 1 and refusal[0].status == ls.STATUS_FAIL
+    reserve_calls = [params for name, params in client.calls if name == "project_uuid_reserve"]
+    # The accidental reservation is released during cleanup, never left live.
+    assert [params["action"] for params in reserve_calls] == ["reserve", "release"]
+
+
+def test_run_r37_reserve_absent_skips_only_the_cross_kind_subcheck():
+    responses = _r37_success_responses()
+    del responses["project_uuid_reserve"]
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(
+        ls.run_r37_cr7_direct_state_acceptance(client, frozenset(ls.R37_REQUIRED_COMMANDS))
+    )
+
+    skipped = [r for r in results if r.status == ls.STATUS_SKIP]
+    assert [r.name for r in skipped] == ["R37_cross_kind_duplicate"]
+    assert ls.R37_RESERVE_SKIP_REASON in skipped[0].detail
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+
+
+def test_run_r37_mid_sequence_failure_still_cleans_up():
+    responses = _r37_success_responses()
+    responses["todo_update"] = {"success": False, "error": "RUNTIME_VALIDATION_ERROR: boom"}
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r37_cr7_direct_state_acceptance(client, _R37_CATALOG))
+
+    assert any(r.name == "R37_todo_update" and r.status == ls.STATUS_FAIL for r in results)
+    called = [name for name, _ in client.calls]
+    # The provider was never created, so cleanup deletes only todo then plan.
+    assert "provider_delete" not in called
+    assert called[-2:] == ["todo_delete", "plan_delete"]
