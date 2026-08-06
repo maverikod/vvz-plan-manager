@@ -98,6 +98,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import re
 import sys
@@ -106,6 +107,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _CLIENT_SRC = REPO_ROOT / "client"
@@ -431,6 +434,12 @@ TIER4_HANDLED: frozenset[str] = frozenset(
         # plan -> todo -> comment fixture) by
         # run_r34_reference_inspect_traversal below.
         "reference_inspect",
+        # R38 (CR-7 G-005/T-002/A-002): the black-box export/import
+        # round-trip regression -- plan_export, export_read, hrs_export,
+        # plan_import, and the plan_project_attach binding it verifies
+        # survives the round trip -- exercised end-to-end by
+        # run_r38_export_import_round_trip below.
+        "plan_export", "export_read", "hrs_export", "plan_import", "plan_project_attach",
     }
 )
 
@@ -439,13 +448,12 @@ TIER4_HANDLED: frozenset[str] = frozenset(
 KNOWN_SKIP_REASONS: dict[str, str] = {
     "export_cleanup": "destructive filesystem cleanup of export archives; not exercised against live data",
     "runtime_purge_batch": "irreversibly purges EVERY soft-deleted row of an entity type, not just this pass's throwaway rows; not safe to exercise against live data",
-    "plan_import": "requires a prepared export archive/source payload outside the scope of a throwaway smoke entity",
+    # plan_import/export_read/hrs_export/plan_export: R38 (CR-7 G-005/T-002/
+    # A-002) now exercises the whole export/import round trip end-to-end --
+    # see TIER4_HANDLED and run_r38_export_import_round_trip below.
     "export_upload_save": "requires a prior chunked transfer_id handshake; not exercised in this pass",
-    "export_read": "requires a materialized export file produced by plan_export/hrs_export; not exercised in this pass",
     "export_archive": "archives export state for a real plan; destructive of export history, not exercised against live data",
     "hrs_import": "mutates HRS from an externally prepared document; out of scope for a throwaway smoke entity",
-    "hrs_export": "produces a file-system export artifact; not exercised in this pass",
-    "plan_export": "produces a file-system export artifact; not exercised in this pass",
     "plan_snapshot": "produces a file-system snapshot artifact; not exercised in this pass",
     "cascade_begin": "opens a long-lived cascade coordination window; not exercised outside a dedicated cascade CR",
     "cascade_preview": "requires an open cascade_uuid from cascade_begin",
@@ -459,7 +467,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "model_binding_remove": "requires an existing binding_uuid from model_binding_set",
     "model_binding_resolve": "requires a specific role value from the shared binding registry; not derivable generically",
     "model_binding_get": "requires an existing binding_uuid from model_binding_set",
-    "para_insert": "mutates the human-owned HRS prose (root CLAUDE.md: HRS changes only on user decision)",
+    "para_insert": "mutates the human-owned HRS prose (root CLAUDE.md: HRS changes only on user decision); the one sanctioned exception is R38's dedicated fixed-identity export/import round-trip fixture, a single paragraph on a plan the pipeline itself creates and hard-deletes -- not exercised outside that dedicated scenario",
     "para_update": "mutates the human-owned HRS prose",
     "para_delete": "mutates the human-owned HRS prose",
     "para_label_assign": "mutates the human-owned HRS prose",
@@ -529,7 +537,8 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_clear": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
-    "plan_project_attach": "mutates the plan<->project binding on a throwaway plan we already tear down; not exercised in this pass",
+    # plan_project_attach: R38 (CR-7 G-005/T-002/A-002) now exercises it for
+    # real, on the round-trip fixture plan -- see TIER4_HANDLED above.
     "plan_project_detach": "requires an existing plan_project_attach binding to remove; not exercised in this pass",
     "plan_project_set_primary": "requires an existing plan_project_attach binding to promote; not exercised in this pass",
     "plan_project_clear_primary": "requires an existing primary plan-project binding to clear; not exercised in this pass",
@@ -6812,6 +6821,391 @@ async def run_r37_cr7_direct_state_acceptance(
         results.append(
             CheckResult(
                 "4", "R37_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+R38_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the export/import round-trip command surface the CR-7 "
+    "G-005/T-002/A-002 acceptance check exercises -- redeploy pending"
+)
+
+R38_REQUIRED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "plan_create", "para_insert", "plan_project_attach", "context_common",
+        "step_create", "step_dependency_apply", "plan_export", "hrs_export",
+        "export_read", "plan_import", "plan_delete",
+    }
+)
+
+# Fixed-identity fixture content: literal across every run (only the plan
+# NAME below carries the usual unique_suffix), so the two exports are
+# compared against a deterministic baseline rather than a fresh random one
+# each time.
+R38_PARAGRAPH_TEXT = "R38 fixed-identity round-trip regression paragraph body."
+R38_G_SLUG = "g"
+R38_T1_SLUG = "t-one"
+R38_T2_SLUG = "t-two"
+
+# What this black-box, API-only round trip fundamentally CANNOT see -- named
+# explicitly (not just implied by omission) per the CR-7 G-005/T-002/A-002
+# acceptance requirement. UUID-level identity preservation across the FULL
+# entity registry (every table, every ref kept) is instead the canonical-
+# form migration transport's own contract (plan_manager.exchange.
+# canonical_form: export_canonical_document/import_canonical_document, CR-7
+# G-005/T-001/A-003), verified at unit-test depth (tests/exchange/test_
+# importer_canonical.py, tests/domain/test_entity.py) -- that sibling depth
+# is not reachable through this pipeline's public-API, no-database-
+# inspection black-box acceptance.
+R38_NOT_VISIBLE: tuple[str, ...] = (
+    "row-level UUIDs of the plan, its steps, and its paragraph: plan_import "
+    "always assigns fresh identities, so the API never exposes whether the "
+    "imported row IS the original row or merely a new one with matching "
+    "content",
+    "created_at/updated_at timestamps of the original rows: the standard "
+    "export layout (source_spec.md/spec.yaml/README.yaml) carries no "
+    "timestamp fields at all",
+    "full revision-by-revision history: plan_import records exactly one "
+    "synthetic 'plan import' revision, not a replay of the original plan's "
+    "individual revisions",
+    "soft-deleted/marked rows: the standard layout exports only live head "
+    "state, never a markdel'd row",
+    "identity-registry bookkeeping for the deleted original plan/steps/"
+    "paragraph: removed by the hard delete, invisible to any API surface",
+    "UUID-level identity preservation across the full entity registry -- "
+    "that is the canonical-form migration transport's own contract "
+    "(export_canonical_document/import_canonical_document, CR-7 G-005/"
+    "T-001/A-003), verified at unit-test depth, not by this black-box API "
+    "round trip",
+)
+
+
+def _r38_export_file_paths(g_id: str, t_one_id: str, t_two_id: str) -> list[str]:
+    """The fixed set of export-tree files this regression compares byte-for-byte."""
+    g_dir = f"{g_id}-{R38_G_SLUG}"
+    return [
+        "source_spec.md",
+        "spec.yaml",
+        f"{g_dir}/README.yaml",
+        f"{g_dir}/{t_one_id}-{R38_T1_SLUG}/README.yaml",
+        f"{g_dir}/{t_two_id}-{R38_T2_SLUG}/README.yaml",
+    ]
+
+
+async def _r38_read_export_snapshot(
+    client: Any, plan_name: str, file_paths: list[str]
+) -> tuple[bool, dict[str, dict[str, Any]], str]:
+    """Read every fixture file through export_read (public API only, no
+    filesystem/database inspection): whole-file sha256 plus base64 bytes for
+    each, requiring each response be the WHOLE file in one chunk (every
+    fixture file here is well under the 262144-byte chunk cap)."""
+    snapshot: dict[str, dict[str, Any]] = {}
+    for path in file_paths:
+        ok, res = await call(client, "export_read", {"plan": plan_name, "file": path})
+        if not ok or not isinstance(res, dict) or "sha256" not in res or "chunk_base64" not in res:
+            return False, snapshot, f"export_read({path!r}) failed: {res!r}"
+        if not res.get("eof", False):
+            return False, snapshot, f"export_read({path!r}) did not return the whole file in one chunk (eof=False)"
+        snapshot[path] = res
+    return True, snapshot, ""
+
+
+def _r38_decode_yaml(chunk_base64: str) -> Any:
+    """Decode one export_read chunk's base64 payload as YAML (spec.yaml/README.yaml are always YAML)."""
+    return yaml.safe_load(base64.b64decode(chunk_base64).decode("utf-8"))
+
+
+def _r38_compare_snapshots(
+    file_paths: list[str],
+    snapshot_a: dict[str, dict[str, Any]],
+    snapshot_b: dict[str, dict[str, Any]],
+) -> tuple[bool, str, bool, str]:
+    """Compare two export_read snapshots of the same fixed file set.
+
+    Returns (checksum_match, checksum_detail, content_match, content_detail).
+    checksum_match is the canonical, byte-level check ("the canonical
+    checksum where the API returns it"); content_match decodes every YAML
+    file for a semantic cross-check (step tree, dependencies, statuses,
+    project bindings), giving a readable diff on a checksum mismatch.
+    """
+    checksum_mismatches = [p for p in file_paths if snapshot_a[p]["sha256"] != snapshot_b[p]["sha256"]]
+    checksum_match = not checksum_mismatches
+    checksum_detail = "" if checksum_match else f"sha256 diverged for: {checksum_mismatches}"
+
+    content_mismatches: list[str] = []
+    for path in file_paths:
+        if not path.endswith((".yaml", ".yml")):
+            continue
+        decoded_a = _r38_decode_yaml(snapshot_a[path]["chunk_base64"])
+        decoded_b = _r38_decode_yaml(snapshot_b[path]["chunk_base64"])
+        if decoded_a != decoded_b:
+            content_mismatches.append(f"{path}: {decoded_a!r} != {decoded_b!r}")
+    content_match = not content_mismatches
+    content_detail = "" if content_match else "; ".join(content_mismatches)
+    return checksum_match, checksum_detail, content_match, content_detail
+
+
+async def run_r38_export_import_round_trip(
+    client: Any,
+    catalog_names: frozenset[str],
+    project_id: str,
+) -> list[CheckResult]:
+    """CR-7 G-005/T-002/A-002: black-box round-trip regression for the
+    export/import command surface, read back through the public API only
+    (no database or filesystem inspection, per the black-box acceptance).
+
+    Recipe: build a dedicated fixed-identity throwaway plan (one paragraph,
+    a project binding, a G/T-one/T-two step tree with a T-two depends_on
+    T-one dependency) -> plan_export + hrs_export + export_read capture the
+    first, "A", API-visible snapshot -> hard-delete the ORIGINAL plan,
+    freeing its export directory's name (plan.name is UNIQUE; the export
+    directory plan_export wrote is untouched by the delete, which only
+    removes the database row) -> plan_import the freed name for real
+    (dry_run=False), creating a FRESH plan (new uuid, new revision history)
+    that comes to occupy the same name (see the "fresh name" note below) ->
+    plan_export + hrs_export + export_read capture the second, "B",
+    snapshot -> compare every API-visible dimension: HRS markdown text, MRS
+    project bindings, and per-step descriptors (step tree, depends_on,
+    status), both by decoded content and by the canonical sha256
+    export_read itself returns.
+
+    "Fresh name" note: PlanImportCommand always names the created plan
+    after the source LAYOUT DIRECTORY (plan_manager/exchange/importer.py
+    import_plan's ``root.name``), and that directory is itself always named
+    after the plan that exported it (plan_manager/exchange/exporter.py
+    export_plan's ``root = Path(export_root) / plan.name``) -- neither
+    command exposes a parameter to pick a different name. So "into a fresh
+    name" is achieved the only way the contract allows: the name is FREED
+    by hard-deleting the row that currently holds it, and the import that
+    follows creates a genuinely fresh plan (new uuid, new head revision)
+    that comes to occupy the freed name -- never the same row, never the
+    same identity, only the same string and (if the round trip holds) the
+    same content. Both plans still get an explicit try/finally cleanup
+    below; the original just leaves that lifecycle earlier than the
+    imported one.
+
+    Identity preservation the plan_import contract DOES promise (per
+    plan_manager/commands/info_reference.py: "Restores project_ids,
+    primary_project_id, and step project_id; step project_id must be listed
+    in imported project_ids") is asserted directly through the MRS/README
+    comparison. What the round trip cannot see at all is named explicitly
+    in R38_NOT_VISIBLE and surfaced as this check's own final PASS detail.
+
+    Marker-gated SKIP (whole group, not per-command) on a server predating
+    this command surface, mirroring R27/R34/R37's convention. Cleanup is
+    top-level try/finally: the original plan is deleted mid-sequence (to
+    free its name for the import) and the imported plan at the very end;
+    the finally block only re-attempts whichever of the two a preceding
+    FAILURE left alive, so a red run never leaks either scratch plan.
+    """
+    if not R38_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R38_REQUIRED_COMMANDS - catalog_names)
+        return [
+            CheckResult(
+                "4",
+                "R38_export_import_round_trip",
+                STATUS_SKIP,
+                f"{R38_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        ]
+
+    results: list[CheckResult] = []
+    plan_name = unique_suffix("r38-plan")
+    original_plan_uuid: Optional[str] = None
+    imported_plan_uuid: Optional[str] = None
+    try:
+        # --- build the fixed-identity fixture on the ORIGINAL plan. ---
+        ok, res = await call(client, "plan_create", {"name": plan_name})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R38_plan_create", STATUS_FAIL, str(res)))
+            return results
+        original_plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R38_plan_create", STATUS_PASS, f"uuid={original_plan_uuid} name={plan_name}"))
+
+        ok, res = await call(client, "para_insert", {"plan": original_plan_uuid, "text": R38_PARAGRAPH_TEXT})
+        results.append(CheckResult("4", "R38_para_insert", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if not ok:
+            return results
+
+        ok, res = await call(
+            client, "plan_project_attach",
+            {"plan": original_plan_uuid, "project_id": project_id, "primary": True},
+        )
+        results.append(CheckResult("4", "R38_plan_project_attach", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if not ok:
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": original_plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R38_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(
+            client, "step_create",
+            {"plan": original_plan_uuid, "level": 3, "slug": R38_G_SLUG, "project_id": project_id},
+        )
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R38_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R38_step_create(G)", STATUS_PASS, f"step_id={g_id}"))
+
+        t_ids: dict[str, str] = {}
+        t_uuids: dict[str, str] = {}
+        for slug in (R38_T1_SLUG, R38_T2_SLUG):
+            ok, res = await call(client, "context_common", {"plan": original_plan_uuid, "node": g_id, "child_level": 4})
+            if not ok:
+                results.append(CheckResult("4", f"R38_context_common(G,level4,before {slug})", STATUS_FAIL, str(res)))
+                return results
+            ok, res = await call(
+                client, "step_create",
+                {"plan": original_plan_uuid, "level": 4, "slug": slug, "parent_step_id": g_id},
+            )
+            tid = _extract_step_id(res) if ok else None
+            t_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+            if not ok or tid is None or not t_uuid:
+                results.append(CheckResult("4", f"R38_step_create({slug})", STATUS_FAIL, str(res)))
+                return results
+            t_ids[slug] = tid
+            t_uuids[slug] = t_uuid
+        results.append(CheckResult("4", "R38_step_create(T-one/T-two)", STATUS_PASS, f"{t_ids}"))
+
+        ok, res = await call(
+            client, "step_dependency_apply",
+            {
+                "plan": original_plan_uuid,
+                "changes": [{"op": "add", "step_id": t_uuids[R38_T2_SLUG], "depends_on": [t_uuids[R38_T1_SLUG]]}],
+                "dry_run": False,
+            },
+        )
+        dep_ok = ok and isinstance(res, dict) and res.get("applied") is True
+        results.append(CheckResult("4", "R38_step_dependency_apply", STATUS_PASS if dep_ok else STATUS_FAIL, "" if dep_ok else str(res)))
+        if not dep_ok:
+            return results
+
+        file_paths = _r38_export_file_paths(g_id, t_ids[R38_T1_SLUG], t_ids[R38_T2_SLUG])
+
+        # --- first export ("A") + its API-visible snapshot. ---
+        ok, res = await call(client, "plan_export", {"plan": original_plan_uuid})
+        export_a_ok = ok and isinstance(res, dict) and bool(res.get("files"))
+        results.append(
+            CheckResult(
+                "4", "R38_plan_export(A)", STATUS_PASS if export_a_ok else STATUS_FAIL,
+                f"files={res.get('files')}" if export_a_ok else str(res),
+            )
+        )
+        if not export_a_ok:
+            return results
+
+        ok, res = await call(client, "hrs_export", {"plan": original_plan_uuid})
+        hrs_a_ok = ok and isinstance(res, dict) and "markdown" in res
+        results.append(CheckResult("4", "R38_hrs_export(A)", STATUS_PASS if hrs_a_ok else STATUS_FAIL, "" if hrs_a_ok else str(res)))
+        if not hrs_a_ok:
+            return results
+        markdown_a = res["markdown"]
+
+        snap_ok, snapshot_a, snap_detail = await _r38_read_export_snapshot(client, plan_name, file_paths)
+        results.append(CheckResult("4", "R38_export_read(A)", STATUS_PASS if snap_ok else STATUS_FAIL, snap_detail))
+        if not snap_ok:
+            return results
+
+        # --- free the exported name: hard-delete the original plan (see the
+        # "fresh name" note in this function's own docstring). ---
+        ok, res = await call(client, "plan_delete", {"plan": original_plan_uuid, "hard": True})
+        results.append(CheckResult("4", "R38_original_plan_delete", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if not ok:
+            return results
+        deleted_original_uuid = original_plan_uuid
+        original_plan_uuid = None  # deleted; the finally block must not double-delete
+
+        # --- import into the freed name: a genuinely fresh plan identity. ---
+        ok, res = await call(client, "plan_import", {"source": plan_name, "dry_run": False})
+        import_ok = ok and isinstance(res, dict) and bool(res.get("plan_uuid")) and res.get("name") == plan_name
+        results.append(
+            CheckResult(
+                "4", "R38_plan_import", STATUS_PASS if import_ok else STATUS_FAIL,
+                f"uuid={res.get('plan_uuid')} name={res.get('name')}" if import_ok else str(res),
+            )
+        )
+        if not import_ok:
+            return results
+        imported_plan_uuid = res["plan_uuid"]
+
+        fresh_identity_ok = imported_plan_uuid != deleted_original_uuid
+        results.append(
+            CheckResult(
+                "4", "R38_fresh_identity", STATUS_PASS if fresh_identity_ok else STATUS_FAIL,
+                "" if fresh_identity_ok else f"imported plan reused the original uuid {imported_plan_uuid!r}",
+            )
+        )
+        if not fresh_identity_ok:
+            return results
+
+        # --- second export ("B") + its API-visible snapshot. ---
+        ok, res = await call(client, "plan_export", {"plan": imported_plan_uuid})
+        export_b_ok = ok and isinstance(res, dict) and bool(res.get("files"))
+        results.append(
+            CheckResult(
+                "4", "R38_plan_export(B)", STATUS_PASS if export_b_ok else STATUS_FAIL,
+                f"files={res.get('files')}" if export_b_ok else str(res),
+            )
+        )
+        if not export_b_ok:
+            return results
+
+        ok, res = await call(client, "hrs_export", {"plan": imported_plan_uuid})
+        hrs_b_ok = ok and isinstance(res, dict) and "markdown" in res
+        results.append(CheckResult("4", "R38_hrs_export(B)", STATUS_PASS if hrs_b_ok else STATUS_FAIL, "" if hrs_b_ok else str(res)))
+        if not hrs_b_ok:
+            return results
+        markdown_b = res["markdown"]
+
+        snap_ok, snapshot_b, snap_detail = await _r38_read_export_snapshot(client, plan_name, file_paths)
+        results.append(CheckResult("4", "R38_export_read(B)", STATUS_PASS if snap_ok else STATUS_FAIL, snap_detail))
+        if not snap_ok:
+            return results
+
+        # --- compare the two exports across every API-visible dimension. ---
+        hrs_match = markdown_a == markdown_b
+        results.append(
+            CheckResult(
+                "4", "R38_compare_hrs_markdown", STATUS_PASS if hrs_match else STATUS_FAIL,
+                "" if hrs_match else "HRS markdown text diverged across the round trip",
+            )
+        )
+        if not hrs_match:
+            return results
+
+        checksum_match, checksum_detail, content_match, content_detail = _r38_compare_snapshots(
+            file_paths, snapshot_a, snapshot_b
+        )
+        results.append(
+            CheckResult("4", "R38_compare_export_checksum", STATUS_PASS if checksum_match else STATUS_FAIL, checksum_detail)
+        )
+        if not checksum_match:
+            return results
+        results.append(
+            CheckResult(
+                "4", "R38_compare_step_tree_deps_status_bindings",
+                STATUS_PASS if content_match else STATUS_FAIL, content_detail,
+            )
+        )
+        if not content_match:
+            return results
+
+        results.append(CheckResult("4", "R38_not_visible_surface", STATUS_PASS, "; ".join(R38_NOT_VISIBLE)))
+    finally:
+        cleanup_ok = True
+        if imported_plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": imported_plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        if original_plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": original_plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R38_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
                 "" if cleanup_ok else "one or more scratch entities survived cleanup",
             )
         )

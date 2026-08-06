@@ -33,6 +33,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -154,6 +156,14 @@ def test_classify_catalog_runtime_work_layer_commands_moved_out_of_skip():
         "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
         "calendar_entry_update", "calendar_entry_delete",
     }
+    result = ls.classify_catalog(frozenset(names))
+    skipped_names = {n for n, _ in result.skipped}
+    assert skipped_names.isdisjoint(names)
+    assert names <= set(result.tier4_handled)
+
+
+def test_classify_catalog_r38_export_import_commands_moved_out_of_skip():
+    names = {"plan_export", "export_read", "hrs_export", "plan_import", "plan_project_attach"}
     result = ls.classify_catalog(frozenset(names))
     skipped_names = {n for n, _ in result.skipped}
     assert skipped_names.isdisjoint(names)
@@ -3671,3 +3681,210 @@ def test_run_r37_mid_sequence_failure_still_cleans_up():
     # The provider was never created, so cleanup deletes only todo then plan.
     assert "provider_delete" not in called
     assert called[-2:] == ["todo_delete", "plan_delete"]
+
+
+# --------------------------------------------------------------------------
+# R38 (CR-7 G-005/T-002/A-002): the black-box export/import round-trip
+# regression -- plan_export/export_read/hrs_export of a dedicated
+# fixed-identity plan, plan_import into a freed name, re-export, and an
+# API-visible comparison of the two exports.
+# --------------------------------------------------------------------------
+
+_R38_CATALOG = frozenset(ls.R38_REQUIRED_COMMANDS)
+
+# The fixed file set _r38_export_file_paths produces for a G-001/T-001/T-002
+# fixture -- mirrored here so the scripted export_read fixture can key its
+# canned content by the exact same relative paths the runner requests.
+_R38_FILE_PATHS = (
+    "source_spec.md",
+    "spec.yaml",
+    "G-001-g/README.yaml",
+    "G-001-g/T-001-t-one/README.yaml",
+    "G-001-g/T-002-t-two/README.yaml",
+)
+
+_R38_BASE_CONTENT: dict[str, bytes] = {
+    "source_spec.md": f"{{aaaa}} {ls.R38_PARAGRAPH_TEXT}\n".encode("utf-8"),
+    "spec.yaml": b"project_ids:\n- proj-1\nprimary_project_id: proj-1\nconcepts: []\nrelations: []\n",
+    "G-001-g/README.yaml": b"step_id: G-001\nproject_id: proj-1\nstatus: draft\n",
+    "G-001-g/T-001-t-one/README.yaml": b"step_id: T-001\nproject_id: null\nstatus: draft\n",
+    "G-001-g/T-002-t-two/README.yaml": b"step_id: T-002\ndepends_on:\n- T-001\nproject_id: null\nstatus: draft\n",
+}
+
+
+def _r38_export_read_outcome(mismatch_path: str | None = None):
+    """Callable outcome for export_read: deterministic per-path content on
+    the first call (snapshot A) and, unless ``mismatch_path`` names it, the
+    IDENTICAL content again on the second call (snapshot B) for the same
+    path -- modeling a byte-for-byte round trip. When ``mismatch_path`` is
+    given, that one path's second (snapshot-B) read carries different bytes
+    (and thus a different sha256), modeling a genuine round-trip defect."""
+    call_counts: dict[str, int] = {}
+
+    def _next(params: dict) -> dict:
+        path = params["file"]
+        seen = call_counts.get(path, 0)
+        call_counts[path] = seen + 1
+        content = _R38_BASE_CONTENT[path]
+        if mismatch_path is not None and path == mismatch_path and seen == 1:
+            content = content + b"# mismatch on the second (snapshot B) read\n"
+        digest = hashlib.sha256(content).hexdigest()
+        return _ok(
+            {
+                "plan": params.get("plan"),
+                "file": path,
+                "offset": 0,
+                "limit": 262144,
+                "chunk_base64": base64.b64encode(content).decode("ascii"),
+                "chunk_size": len(content),
+                "total_size": len(content),
+                "sha256": digest,
+                "eof": True,
+            }
+        )
+
+    return _next
+
+
+def _r38_success_responses(mismatch_path: str | None = None) -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-orig", "name": "irrelevant-locally-computed"}),
+        "para_insert": _ok({"uuid": "para-1", "label": "aaaa", "position": 0}),
+        "plan_project_attach": _ok(
+            {"plan_uuid": "plan-orig", "project_ids": ["proj-1"], "primary_project_id": "proj-1", "already_exists": False}
+        ),
+        "context_common": _ok({"common_block_id": "blk-1"}),
+        "step_create": _sequence(
+            _ok({"uuid": "g-uuid", "step_id": "G-001"}),
+            _ok({"uuid": "t1-uuid", "step_id": "T-001"}),
+            _ok({"uuid": "t2-uuid", "step_id": "T-002"}),
+        ),
+        "step_dependency_apply": _ok({"applied": True}),
+        "plan_export": _ok({"root": "/export/whatever", "files": 5, "revision": "head"}),
+        "hrs_export": _ok({"markdown": f"{{aaaa}} {ls.R38_PARAGRAPH_TEXT}\n"}),
+        "export_read": _r38_export_read_outcome(mismatch_path),
+        # plan_import always names the created plan after "source" -- mirror
+        # that exactly so the runner's own res["name"] == plan_name check
+        # (against the locally-generated unique_suffix name) holds.
+        "plan_import": lambda params: _ok({"dry_run": False, "plan_uuid": "plan-fresh", "name": params["source"]}),
+        "plan_delete": _ok({"deleted_uuid": "whichever"}),
+    }
+
+
+def test_run_r38_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r38")
+    assert spec.function_name == "run_r38_export_import_round_trip"
+    assert spec.needs_catalog is True
+    assert spec.needs_project is True
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r38_pre_deploy_server_skips_entire_group_not_per_command():
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, frozenset(), "proj-1"))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "R38_export_import_round_trip"
+    assert result.status == ls.STATUS_SKIP
+    assert ls.R38_PRE_DEPLOY_SKIP_REASON in result.detail
+    assert client.calls == []
+
+
+def test_run_r38_full_success_every_check_passes():
+    client = _ScriptedClient(_r38_success_responses())
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    not_visible = [r for r in results if r.name == "R38_not_visible_surface"]
+    assert len(not_visible) == 1
+    assert not_visible[0].status == ls.STATUS_PASS
+    assert not_visible[0].detail  # the NOT-VISIBLE list is actually printed, not just implied
+    for item in ls.R38_NOT_VISIBLE:
+        assert item in not_visible[0].detail
+
+    assert [name for name, _ in client.calls] == [
+        "plan_create",
+        "para_insert",
+        "plan_project_attach",
+        "context_common",
+        "step_create",
+        "context_common",
+        "step_create",
+        "context_common",
+        "step_create",
+        "step_dependency_apply",
+        "plan_export",
+        "hrs_export",
+        "export_read", "export_read", "export_read", "export_read", "export_read",
+        "plan_delete",
+        "plan_import",
+        "plan_export",
+        "hrs_export",
+        "export_read", "export_read", "export_read", "export_read", "export_read",
+        "plan_delete",
+    ]
+
+
+def test_run_r38_export_read_uses_the_fixed_file_set_and_plan_name():
+    client = _ScriptedClient(_r38_success_responses())
+
+    asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    read_calls = [params for name, params in client.calls if name == "export_read"]
+    assert len(read_calls) == 10
+    assert {params["file"] for params in read_calls} == set(_R38_FILE_PATHS)
+    plan_names = {params["plan"] for params in read_calls}
+    assert len(plan_names) == 1  # same plan NAME addresses both the original and the freshly-imported export
+
+
+def test_run_r38_checksum_mismatch_fails_comparison_and_still_cleans_up():
+    responses = _r38_success_responses(mismatch_path="G-001-g/T-002-t-two/README.yaml")
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    checksum_check = [r for r in results if r.name == "R38_compare_export_checksum"]
+    assert len(checksum_check) == 1 and checksum_check[0].status == ls.STATUS_FAIL
+    assert "T-002" in checksum_check[0].detail
+    # The comparison ran only after BOTH plans existed; the imported one
+    # must still be torn down even though the comparison itself failed.
+    called = [name for name, _ in client.calls]
+    assert called[-1] == "plan_delete"
+    assert called.count("plan_delete") == 2  # original (mid-sequence) + imported (finally)
+
+
+def test_run_r38_mid_sequence_failure_before_original_delete_still_cleans_up():
+    responses = _r38_success_responses()
+    responses["step_dependency_apply"] = {"success": False, "error": "RUNTIME_VALIDATION_ERROR: boom"}
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    assert any(r.name == "R38_step_dependency_apply" and r.status == ls.STATUS_FAIL for r in results)
+    called = [name for name, _ in client.calls]
+    # plan_export/plan_import never ran; only the original plan needs cleanup.
+    assert "plan_export" not in called
+    assert "plan_import" not in called
+    assert called[-1] == "plan_delete"
+    assert called.count("plan_delete") == 1
+
+
+def test_run_r38_import_failure_after_original_freed_leaves_nothing_to_clean_up():
+    responses = _r38_success_responses()
+    responses["plan_import"] = {"success": False, "error": "IMPORT_INVALID: boom"}
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    assert any(r.name == "R38_plan_import" and r.status == ls.STATUS_FAIL for r in results)
+    cleanup = [r for r in results if r.name == "R38_cleanup"]
+    assert len(cleanup) == 1 and cleanup[0].status == ls.STATUS_PASS
+    # The original plan was already hard-deleted (freeing its name) BEFORE
+    # the failed import, and the import never produced a plan to delete --
+    # so the finally block issues zero further plan_delete calls.
+    called = [name for name, _ in client.calls]
+    assert called.count("plan_delete") == 1
+    assert called[-1] == "plan_import"
