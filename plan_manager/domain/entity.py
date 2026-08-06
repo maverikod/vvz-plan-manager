@@ -24,7 +24,6 @@ from plan_manager.storage.admission import (
 from plan_manager.storage.identity import (
     EXCLUDED_TABLES,
     register_entity_identity,
-    resolve_entity_identity,
     unregister_entity_identity,
 )
 
@@ -938,10 +937,6 @@ class DataclassEntity(EntityRecord):
     @classmethod
     def crud_reference_counts(cls, conn: psycopg.Connection, entity_id: Any) -> dict[str, int]:
         return find_entity_reference_counts(conn, cls, entity_id)
-
-    @classmethod
-    def crud_resolve_identity(cls, conn: psycopg.Connection, entity_id: uuid.UUID) -> dict[str, Any]:
-        return resolve_entity_identity(conn, entity_id)
 
     @classmethod
     def _foreign_key_reference_checks(
