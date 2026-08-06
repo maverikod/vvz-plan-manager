@@ -32,6 +32,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import hashlib
@@ -47,6 +48,7 @@ for _p in (str(SCRIPTS_DIR), str(CLIENT_SRC)):
         sys.path.insert(0, _p)
 
 import live_smoke as ls  # noqa: E402
+from live_smoke_tests import LiveSmokeTestSpec  # noqa: E402
 from plan_manager_client.server_api import COMMAND_NAMES  # noqa: E402
 
 
@@ -3888,3 +3890,291 @@ def test_run_r38_import_failure_after_original_freed_leaves_nothing_to_clean_up(
     called = [name for name, _ in client.calls]
     assert called.count("plan_delete") == 1
     assert called[-1] == "plan_import"
+
+
+# --------------------------------------------------------------------------
+# R36 (bug 31ba96d5), updated for the CR-7 G-006/T-001/A-003 point-read
+# contract: crud_get/get_by_id (todo_get, comment_get) now resolve a
+# soft-deleted row unconditionally, with deleted_at as the visible proof;
+# only crud_list/crud_search (todo_list, comment_list) still hide marked
+# rows, and neither exposes an include-marked/include-deleted parameter on
+# its own command surface, so only the default-listing absence half is
+# checked. Bug 31ba96d5's original intent (the deletion must go through the
+# owned-column engine path) is unchanged; only what proves it moved from
+# "vanished from a point read" to "carries a non-null deleted_at".
+# --------------------------------------------------------------------------
+
+
+def _r36_success_responses(*, deleted_at: str = "2026-08-05T00:00:00+00:00") -> dict[str, Any]:
+    return {
+        "plan_create": _ok({"uuid": "r36-plan-1"}),
+        "todo_create": _ok({"uuid": "r36-todo-1"}),
+        "todo_delete": _ok({"deleted": True}),
+        "todo_get": _ok({"uuid": "r36-todo-1", "deleted_at": deleted_at}),
+        "todo_list": _ok({"todos": [], "total": 0, "limit": 200, "offset": 0}),
+        "comment_add": _ok({"uuid": "r36-comment-1"}),
+        "comment_delete": _ok({"deleted": True}),
+        "comment_get": _ok({"uuid": "r36-comment-1", "deleted_at": deleted_at}),
+        "comment_list": _ok({"comments": [], "total": 0, "limit": 200, "offset": 0}),
+        "plan_delete": _ok({"deleted": True}),
+    }
+
+
+def test_run_r36_todo_get_resolves_soft_deleted_row_with_deleted_at_as_proof():
+    client = _ScriptedClient(_r36_success_responses())
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_PASS
+    called = [name for name, _ in client.calls]
+    assert "todo_get" in called  # the new contract calls it, unlike the old hidden-row check
+
+
+def test_run_r36_fails_when_todo_get_no_longer_resolves():
+    """If todo_get ever goes back to raising NOT_FOUND for a soft-deleted
+    row, that is itself a regression against the CR-7 point-read contract
+    -- this check must FAIL, not silently pass the old way."""
+    responses = _r36_success_responses()
+    responses["todo_get"] = {"success": False, "error": "TODO_NOT_FOUND: todo not found"}
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_FAIL
+    assert "must resolve" in check[0].detail
+
+
+def test_run_r36_fails_when_resolved_todo_carries_no_deleted_at():
+    responses = _r36_success_responses()
+    responses["todo_get"] = _ok({"uuid": "r36-todo-1", "deleted_at": None})
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_FAIL
+    assert "deleted_at" in check[0].detail
+
+
+def test_run_r36_todo_list_hides_marked_row_by_default():
+    client = _ScriptedClient(_r36_success_responses())
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_list_hides_marked"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_PASS
+    todo_list_params = [params for name, params in client.calls if name == "todo_list"][0]
+    assert todo_list_params["anchor_plan"] == "r36-plan-1"
+
+
+def test_run_r36_fails_when_todo_list_still_contains_the_soft_deleted_row():
+    responses = _r36_success_responses()
+    responses["todo_list"] = _ok(
+        {"todos": [{"uuid": "r36-todo-1"}], "total": 1, "limit": 200, "offset": 0}
+    )
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_list_hides_marked"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_FAIL
+    assert "r36-todo-1" in check[0].detail
+
+
+def test_run_r36_comment_get_resolves_soft_deleted_row_with_deleted_at_as_proof():
+    client = _ScriptedClient(_r36_success_responses())
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_comment_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_PASS
+    called = [name for name, _ in client.calls]
+    assert "comment_get" in called
+
+
+def test_run_r36_fails_when_comment_get_no_longer_resolves():
+    responses = _r36_success_responses()
+    responses["comment_get"] = {"success": False, "error": "COMMENT_NOT_FOUND: comment not found"}
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_comment_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_FAIL
+    assert "must resolve" in check[0].detail
+
+
+def test_run_r36_comment_list_hides_marked_row_by_default():
+    client = _ScriptedClient(_r36_success_responses())
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_comment_list_hides_marked"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_PASS
+    comment_list_params = [params for name, params in client.calls if name == "comment_list"][0]
+    assert comment_list_params["plan"] == "r36-plan-1"
+
+
+def test_run_r36_fails_when_comment_list_still_contains_the_soft_deleted_row():
+    responses = _r36_success_responses()
+    responses["comment_list"] = _ok(
+        {"comments": [{"uuid": "r36-comment-1"}], "total": 1, "limit": 200, "offset": 0}
+    )
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_comment_list_hides_marked"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_FAIL
+    assert "r36-comment-1" in check[0].detail
+
+
+def test_run_r36_full_success_path_is_all_pass_and_cleans_up_only_the_plan():
+    client = _ScriptedClient(_r36_success_responses())
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    assert all(r.status == ls.STATUS_PASS for r in results)
+    called = [name for name, _ in client.calls]
+    # Both soft-deleted rows count as disposed of (R7's convention); only
+    # the plan itself needs a hard-delete in the finally block.
+    assert called.count("plan_delete") == 1
+    assert called.count("todo_delete") == 1  # the soft delete only, no second hard-delete
+    assert called.count("comment_delete") == 1  # ditto
+    assert called[-1] == "plan_delete"
+
+
+def test_run_r36_pre_fix_whitelist_error_still_skips():
+    """The pre-fix detection path (bug 31ba96d5 not yet deployed) is
+    untouched by the point-read contract update."""
+    responses = _r36_success_responses()
+    responses["todo_delete"] = {
+        "success": False,
+        "error": "unknown update columns for Tool: ['deleted_at']",
+    }
+    client = _ScriptedClient(responses)
+    results = asyncio.run(ls.run_r36_soft_delete_owned_column(client))
+    check = [r for r in results if r.name == "R36_31ba96d5_todo_soft_delete"]
+    assert len(check) == 1
+    assert check[0].status == ls.STATUS_SKIP
+    # Never reaches todo_get/todo_list/comment_* -- the pre-fix skip returns early.
+    called = [name for name, _ in client.calls]
+    assert "todo_get" not in called
+    assert "comment_add" not in called
+
+
+# --------------------------------------------------------------------------
+# run_selected_tests dispatch robustness (defect: silent coverage loss).
+#
+# On the live 0.1.97 run, R36 legitimately failed (the point-read contract
+# change above, before this fix) and the old `break`-on-first-failure loop
+# silently swallowed every spec registered after it in the registry --
+# R37 and R38, ~25 checks, zero R37_/R38_ lines anywhere in the run's
+# output, no diagnostic naming the gap. These tests pin: (1) a failure in
+# one spec's batch must never stop a later spec from being dispatched, and
+# (2) a spec runner that produces zero CheckResults is caught by a loud,
+# named "spec_runner_dispatch" check instead of just quietly disappearing.
+# --------------------------------------------------------------------------
+
+
+def _install_fake_runner(name: str, coro_factory):
+    """Register `coro_factory` as an async runner under `name` in
+    live_smoke.py's own module namespace -- run_selected_tests looks runners
+    up via globals(), which for code executing inside live_smoke.py IS
+    live_smoke.py's module __dict__, i.e. exactly what `setattr(ls, ...)`
+    updates. Returns a zero-arg cleanup callable restoring the prior state.
+    """
+
+    had_previous = hasattr(ls, name)
+    previous = getattr(ls, name, None)
+    setattr(ls, name, coro_factory)
+
+    def _cleanup():
+        if had_previous:
+            setattr(ls, name, previous)
+        else:
+            delattr(ls, name)
+
+    return _cleanup
+
+
+def test_run_selected_tests_dispatches_every_spec_even_after_an_earlier_failure():
+    async def _failing_runner(client):
+        return [ls.CheckResult("4", "FAKE_A_check", ls.STATUS_FAIL, "fake failure")]
+
+    async def _passing_runner(client):
+        return [ls.CheckResult("4", "FAKE_B_check", ls.STATUS_PASS, "")]
+
+    cleanup_a = _install_fake_runner("_test_fake_runner_a", _failing_runner)
+    cleanup_b = _install_fake_runner("_test_fake_runner_b", _passing_runner)
+    try:
+        specs = [
+            LiveSmokeTestSpec("fake_a", "_test_fake_runner_a", "fake failing spec"),
+            LiveSmokeTestSpec("fake_b", "_test_fake_runner_b", "fake passing spec"),
+        ]
+        args = argparse.Namespace(test=[], project="proj-1")
+        results = asyncio.run(ls.run_selected_tests(object(), frozenset(), args, specs))
+    finally:
+        cleanup_a()
+        cleanup_b()
+
+    # Both specs ran: spec_b's PASS check is present even though spec_a
+    # (dispatched first, in registry order) failed.
+    assert any(r.name == "FAKE_A_check" and r.status == ls.STATUS_FAIL for r in results)
+    assert any(r.name == "FAKE_B_check" and r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_selected_tests_fails_loudly_on_a_zero_result_runner():
+    async def _empty_runner(client):
+        return []
+
+    cleanup = _install_fake_runner("_test_fake_empty_runner", _empty_runner)
+    try:
+        specs = [LiveSmokeTestSpec("fake_empty", "_test_fake_empty_runner", "fake empty spec")]
+        args = argparse.Namespace(test=[], project="proj-1")
+        results = asyncio.run(ls.run_selected_tests(object(), frozenset(), args, specs))
+    finally:
+        cleanup()
+
+    dispatch_check = [r for r in results if r.name == "spec_runner_dispatch"]
+    assert len(dispatch_check) == 1
+    assert dispatch_check[0].status == ls.STATUS_FAIL
+    assert "fake_empty" in dispatch_check[0].detail
+
+
+def test_run_selected_tests_spec_runner_dispatch_passes_when_every_batch_is_non_empty():
+    async def _passing_runner(client):
+        return [ls.CheckResult("4", "FAKE_C_check", ls.STATUS_PASS, "")]
+
+    cleanup = _install_fake_runner("_test_fake_runner_c", _passing_runner)
+    try:
+        specs = [LiveSmokeTestSpec("fake_c", "_test_fake_runner_c", "fake passing spec")]
+        args = argparse.Namespace(test=[], project="proj-1")
+        results = asyncio.run(ls.run_selected_tests(object(), frozenset(), args, specs))
+    finally:
+        cleanup()
+
+    dispatch_check = [r for r in results if r.name == "spec_runner_dispatch"]
+    assert len(dispatch_check) == 1
+    assert dispatch_check[0].status == ls.STATUS_PASS
+    assert "1 of 1" in dispatch_check[0].detail
+
+
+def test_run_selected_tests_continues_past_a_missing_runner_to_dispatch_the_rest():
+    async def _passing_runner(client):
+        return [ls.CheckResult("4", "FAKE_D_check", ls.STATUS_PASS, "")]
+
+    cleanup = _install_fake_runner("_test_fake_runner_d", _passing_runner)
+    try:
+        specs = [
+            LiveSmokeTestSpec("fake_missing", "_test_fake_runner_nonexistent", "no such runner"),
+            LiveSmokeTestSpec("fake_d", "_test_fake_runner_d", "fake passing spec"),
+        ]
+        args = argparse.Namespace(test=[], project="proj-1")
+        results = asyncio.run(ls.run_selected_tests(object(), frozenset(), args, specs))
+    finally:
+        cleanup()
+
+    assert any(r.name == "fake_missing_missing_runner" and r.status == ls.STATUS_FAIL for r in results)
+    # The spec after the missing runner still ran.
+    assert any(r.name == "FAKE_D_check" and r.status == ls.STATUS_PASS for r in results)
+
+
+def test_run_r37_is_still_dispatched_after_r36_registry_order():
+    """Structural guard against the exact live-0.1.97 regression: r36 must
+    stay ordered before r37/r38 in the registry (unchanged), and
+    run_selected_tests (fixed above) no longer stops dispatch at the first
+    failing spec, so r37/r38 are reachable regardless of r36's outcome."""
+    ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
+    assert ordered_keys.index("r36") < ordered_keys.index("r37") < ordered_keys.index("r38")

@@ -6408,17 +6408,36 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
     families whose live soft-delete path nothing else drives -- todo and
     comment.
 
+    Contract update (CR-7 G-006/T-001/A-003): the engine's point-read
+    surface (Entity.crud_get / get_by_id, which get_todo and get_comment
+    both sit on) was deliberately changed to resolve a row REGARDLESS of
+    its markdel flag -- a caller invoking todo_get/comment_get already
+    holds the identifier, so hiding a marked row there would turn "marked
+    but still present" into a false NOT_FOUND. Only crud_list/crud_search
+    (todo_list / comment_list) still hide marked rows by default, gated by
+    an include_marked flag that neither todo_list nor comment_list exposes
+    on its own command surface (checked against TODO_LIST_FILTER_FIELDS in
+    todo_list_command.py and FILTER_FIELDS in comment_list_command.py --
+    neither lists an include-marked/include-deleted parameter), so this
+    check can only assert the row's absence from the DEFAULT listing, not
+    exercise an opt-in to see it there. Bug 31ba96d5's original intent
+    stands unchanged under the new contract: soft delete must go through
+    the engine's owned-column write path (todo_delete/comment_delete), and
+    now the visible proof of that is not "the row vanished" but "the
+    resolved row carries a non-null deleted_at" -- the marker IS the
+    evidence.
+
     What is observable through the real command surface, and what is not:
     the soft delete SUCCEEDING is the regression itself -- before the fix it
-    failed outright with the whitelist error -- and the row then being
-    hidden from reads is the second half. The row's continued PHYSICAL
-    presence cannot be observed here: no shipped command exposes
-    include_deleted, and both todo_delete and comment_delete read their
-    precondition through a live-only getter (get_todo / get_comment), so a
-    second delete on a soft-deleted id returns NOT_FOUND rather than
-    purging it. The sanctioned second phase is runtime_purge_batch, which
-    this pipeline must not invoke live because it purges EVERY soft-deleted
-    row of a type, not just this pass's.
+    failed outright with the whitelist error. The row's continued PHYSICAL
+    presence is now directly observable through todo_get/comment_get
+    (deleted_at set on the resolved row); a second delete on a
+    soft-deleted id still returns NOT_FOUND, because todo_delete/
+    comment_delete read their own precondition through get_todo/get_comment
+    with an explicit deleted_at is-null guard ahead of the mutation, not
+    through the raw point-read contract. The sanctioned second phase is
+    runtime_purge_batch, which this pipeline must not invoke live because it
+    purges EVERY soft-deleted row of a type, not just this pass's.
 
     Cleanup convention: a soft-deleted throwaway row counts as disposed of,
     exactly as run_r7_agent_config_lifecycle already treats its
@@ -6428,8 +6447,10 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
 
     Recipe (throwaway plan, try/finally cleanup): plan_create -> todo
     anchored to that plan -> todo_delete(hard=false) must SUCCEED ->
-    todo_get must no longer resolve -> the same two steps for a comment
-    anchored to the plan.
+    todo_get must still RESOLVE, with deleted_at now set -> the same row
+    must be absent from the default (no include-marked opt-in) todo_list
+    scoped to the plan -> the same four steps for a comment anchored to
+    the plan.
 
     Pre-fix detection: the soft delete fails with the whitelist error this
     bug names, which SKIPs naming bug 31ba96d5 rather than failing the
@@ -6482,22 +6503,65 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
         # The soft delete succeeded; the row counts as disposed of (R7's
         # convention), so the finally block must not try to delete it again.
         todo_uuid = None
-        hidden_ok, hidden_res = await call(client, "todo_get", {"todo": todo_uuid_soft})
-        if not hidden_ok:
-            results.append(
-                CheckResult(
-                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_PASS,
-                    "soft delete accepted and the row is hidden from todo_get",
-                )
-            )
-        else:
+        # CR-7 G-006/T-001/A-003: the point-read contract now resolves the
+        # physical row unconditionally -- todo_get must SUCCEED here, and the
+        # non-null deleted_at on the returned row is the proof the soft
+        # delete happened (bug 31ba96d5's original intent -- the deletion
+        # went through the owned-column engine path -- still holds; only the
+        # observable evidence moved from "vanished" to "marked").
+        resolved_ok, resolved_res = await call(client, "todo_get", {"todo": todo_uuid_soft})
+        if not resolved_ok:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL,
-                    f"a soft-deleted todo must not resolve through todo_get: {hidden_res!r}",
+                    f"todo_get must resolve a soft-deleted todo under the CR-7 "
+                    f"G-006/T-001/A-003 point-read contract: {resolved_res!r}",
                 )
             )
             return results
+        resolved_deleted_at = resolved_res.get("deleted_at") if isinstance(resolved_res, dict) else None
+        if not resolved_deleted_at:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_soft_delete", STATUS_FAIL,
+                    f"todo_get resolved the soft-deleted todo but deleted_at is not "
+                    f"set on the returned row: {resolved_res!r}",
+                )
+            )
+            return results
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_todo_soft_delete", STATUS_PASS,
+                "soft delete accepted; todo_get resolves the physical row with a "
+                "non-null deleted_at as proof",
+            )
+        )
+
+        # todo_list exposes no include-marked/include-deleted parameter (see
+        # TODO_LIST_FILTER_FIELDS in todo_list_command.py), so the only
+        # observable half of the list-hides-marked-rows contract is that the
+        # soft-deleted row is absent from the plain, default listing.
+        list_ok, list_res = await call(
+            client, "todo_list", {"anchor_plan": plan_uuid, "view": "full", "limit": 200}
+        )
+        if not list_ok or not isinstance(list_res, dict):
+            results.append(CheckResult("4", "R36_31ba96d5_todo_list_hides_marked", STATUS_FAIL, str(list_res)))
+            return results
+        listed_todo_uuids = {item.get("uuid") for item in list_res.get("todos", [])}
+        if todo_uuid_soft in listed_todo_uuids:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_todo_list_hides_marked", STATUS_FAIL,
+                    f"soft-deleted todo {todo_uuid_soft} must not appear in the default todo_list",
+                )
+            )
+            return results
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_todo_list_hides_marked", STATUS_PASS,
+                "soft-deleted todo absent from the default todo_list listing",
+            )
+        )
 
         ok, res = await call(
             client, "comment_add",
@@ -6522,23 +6586,65 @@ async def run_r36_soft_delete_owned_column(client: Any) -> list[CheckResult]:
 
         comment_uuid_soft = comment_uuid
         comment_uuid = None
-        hidden_ok, hidden_res = await call(
+        # Same CR-7 G-006/T-001/A-003 point-read contract as todo_get above:
+        # comment_get sits on the same Entity.crud_get, so it must resolve
+        # too, with deleted_at as the evidence.
+        resolved_ok, resolved_res = await call(
             client, "comment_get", {"plan": plan_uuid, "comment_uuid": comment_uuid_soft}
         )
-        if not hidden_ok:
-            results.append(
-                CheckResult(
-                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_PASS,
-                    "soft delete accepted and the row is hidden from comment_get",
-                )
-            )
-        else:
+        if not resolved_ok:
             results.append(
                 CheckResult(
                     "4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL,
-                    f"a soft-deleted comment must not resolve through comment_get: {hidden_res!r}",
+                    f"comment_get must resolve a soft-deleted comment under the CR-7 "
+                    f"G-006/T-001/A-003 point-read contract: {resolved_res!r}",
                 )
             )
+            return results
+        resolved_deleted_at = resolved_res.get("deleted_at") if isinstance(resolved_res, dict) else None
+        if not resolved_deleted_at:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_soft_delete", STATUS_FAIL,
+                    f"comment_get resolved the soft-deleted comment but deleted_at "
+                    f"is not set on the returned row: {resolved_res!r}",
+                )
+            )
+            return results
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_comment_soft_delete", STATUS_PASS,
+                "soft delete accepted; comment_get resolves the physical row with "
+                "a non-null deleted_at as proof",
+            )
+        )
+
+        # comment_list exposes no include-marked/include-deleted parameter
+        # either (see FILTER_FIELDS in comment_list_command.py), so again
+        # only the default-listing absence half is observable here.
+        comment_list_ok, comment_list_res = await call(
+            client, "comment_list", {"plan": plan_uuid, "view": "full", "limit": 200}
+        )
+        if not comment_list_ok or not isinstance(comment_list_res, dict):
+            results.append(
+                CheckResult("4", "R36_31ba96d5_comment_list_hides_marked", STATUS_FAIL, str(comment_list_res))
+            )
+            return results
+        listed_comment_uuids = {item.get("uuid") for item in comment_list_res.get("comments", [])}
+        if comment_uuid_soft in listed_comment_uuids:
+            results.append(
+                CheckResult(
+                    "4", "R36_31ba96d5_comment_list_hides_marked", STATUS_FAIL,
+                    f"soft-deleted comment {comment_uuid_soft} must not appear in the default comment_list",
+                )
+            )
+            return results
+        results.append(
+            CheckResult(
+                "4", "R36_31ba96d5_comment_list_hides_marked", STATUS_PASS,
+                "soft-deleted comment absent from the default comment_list listing",
+            )
+        )
     finally:
         # Each uuid is cleared once its row has been soft-deleted, so these two
         # branches only fire when the check failed BEFORE the soft delete and the
@@ -7225,14 +7331,29 @@ async def run_selected_tests(
     args: argparse.Namespace,
     selected_specs: Optional[list[Any]] = None,
 ) -> list[CheckResult]:
-    """Run the selected Tier-4 regression tests in registry order.
+    """Run every selected Tier-4 regression test in registry order.
 
-    Stops on the first failing test group and returns only the accumulated
-    results up to that point.
+    Every selected spec is dispatched, even after an earlier one fails or is
+    missing its runner. This loop used to `break` on the first failing (or
+    missing-runner) batch; on the live 0.1.97 run R36 legitimately failed
+    (CR-7's point-read contract change, since fixed above) and that `break`
+    silently swallowed every spec registered after it -- R37 and R38, ~25
+    checks, zero R37_/R38_ lines anywhere in the output, with no diagnostic
+    naming the gap. A later spec's coverage must never depend on an earlier
+    spec passing, so failures accumulate instead of truncating the run.
+
+    The trailing "spec_runner_dispatch" check is what makes non-execution
+    loud instead of silent: if any dispatched runner returns an empty batch
+    (zero CheckResults -- from the summary's point of view indistinguishable
+    from "this spec never ran"), the run FAILS a named check listing exactly
+    which spec key(s) produced nothing, instead of just quietly shipping
+    fewer checks than the registry promised.
     """
 
     specs = selected_specs if selected_specs is not None else resolve_selected_test_specs(args.test)
     results: list[CheckResult] = []
+    empty_batch_keys: list[str] = []
+    dispatched_count = 0
     for spec in specs:
         runner = globals().get(spec.function_name)
         if runner is None:
@@ -7244,16 +7365,34 @@ async def run_selected_tests(
                     f"no runner named {spec.function_name}",
                 )
             )
-            break
+            continue
         kwargs: dict[str, Any] = {}
         if spec.needs_catalog:
             kwargs["catalog_names"] = catalog_names
         if spec.needs_project:
             kwargs["project_id"] = args.project
         batch = await runner(client, **kwargs)
+        dispatched_count += 1
+        if not batch:
+            empty_batch_keys.append(spec.key)
         results += batch
-        if has_failures(batch):
-            break
+
+    if empty_batch_keys:
+        results.append(
+            CheckResult(
+                "4", "spec_runner_dispatch", STATUS_FAIL,
+                "registered spec runner(s) produced zero CheckResults (silent "
+                f"non-execution): {', '.join(empty_batch_keys)}",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "4", "spec_runner_dispatch", STATUS_PASS,
+                f"{dispatched_count} of {len(specs)} registered spec runner(s) dispatched, "
+                "each produced at least one check",
+            )
+        )
     return results
 
 
