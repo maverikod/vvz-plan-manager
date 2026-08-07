@@ -7,6 +7,13 @@ never start. plan_unfreeze is the only sanctioned door out: it audits the
 escape and opens a cascade, bypassing ONLY the all-steps-frozen refusal via
 an explicit internal entry point of begin_cascade. The public cascade_begin
 guard is unchanged and still refuses fully frozen plans.
+
+Bug ecced710: begin_cascade also independently refuses whenever
+plan.status == 'frozen' (added by bug 845b43a8's fix, bea106c), and
+allow_all_frozen deliberately does NOT lift that guard -- so this command
+resets plan.status to 'draft' itself, on the same connection/transaction,
+BEFORE calling begin_cascade, rather than asking begin_cascade to admit a
+frozen-status plan.
 """
 
 from __future__ import annotations
@@ -122,20 +129,35 @@ class PlanUnfreezeCommand(Command):
                         f"plan {p.name} already has an open cascade",
                     )
                 head = p.head_revision_uuid
+                # Bug ecced710: fix bea106c (bug 845b43a8) added a
+                # plan.status == 'frozen' refusal to begin_cascade that was
+                # previously unreachable (plan.status used to never be kept
+                # in sync with the step tree). Now that it IS kept in sync,
+                # a fully frozen plan always has status='frozen' at this
+                # point, so calling begin_cascade before flipping the
+                # aggregate would always hit that guard -- even through the
+                # allow_all_frozen door, which deliberately does NOT relax
+                # it (see begin_cascade's docstring; that guard must keep
+                # refusing direct cascade_begin unconditionally). So the
+                # aggregate is force-reset to 'draft' FIRST, still on this
+                # same conn/transaction: the step tree itself is still
+                # all-frozen at this instant (that was the precondition
+                # above), so the aggregate cannot be derived from it here --
+                # this is the one documented door that opens a fully frozen
+                # plan for normative editing. "No state may exist where the
+                # tree is editable but the shell says frozen." If
+                # begin_cascade then raises for any reason, this whole
+                # `with db_connection()` block exits by exception and
+                # db_connection() rolls back the entire transaction
+                # (including this status write) before the outer except
+                # clauses below ever run, so the aggregate is never left
+                # stuck on 'draft' without an actual cascade to justify it.
+                set_plan_status(conn, p.uuid, PLAN_STATUS_DRAFT)
                 rec = begin_cascade(conn, p.uuid, allow_all_frozen=True)
                 reread = get_open_cascade(conn, p.uuid)
                 assert reread is not None and reread.uuid == rec.uuid, (
                     f"cascade {rec.uuid} for plan {p.name} did not verify by re-read"
                 )
-                # Bug 845b43a8: this is the one documented door that opens a
-                # fully frozen plan for normative editing. The step tree
-                # itself is still all-frozen at this instant (that was the
-                # precondition above), so the aggregate cannot be derived
-                # from it -- force it back to 'draft' directly, atomically
-                # with the cascade open (same conn/transaction). "No state
-                # may exist where the tree is editable but the shell says
-                # frozen."
-                set_plan_status(conn, p.uuid, PLAN_STATUS_DRAFT)
                 # Bug 74ba4313: the audit record is written AFTER the cascade
                 # exists so it can name the opened cascade_uuid — without it
                 # the begin side of an unfreeze-opened cascade's provenance

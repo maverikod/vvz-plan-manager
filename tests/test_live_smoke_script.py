@@ -4892,6 +4892,8 @@ def test_run_r43_gate_naming_the_base_fails():
 def _r44_success_responses() -> dict:
     return {
         "plan_create": _ok({"uuid": "plan-r44"}),
+        "context_common": _ok({"common_block_id": "blk-r44"}),
+        "step_create": _ok({"uuid": "step-r44-g", "step_id": "G-001"}),
         "cascade_begin": _ok({"cascade_uuid": "casc-r44"}),
         "concept_add": _sequence(
             _ok({"concept_id": "C-001", "deleted": False}),
@@ -4923,6 +4925,7 @@ def test_run_r44_full_success_every_check_passes():
     assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
     names = [r.name for r in results]
     for expected in (
+        "R44_c315ff84_repro_step_created",
         "R44_c315ff84_relation_add",
         "R44_c315ff84_concept_remove_refused_while_referenced",
         "R44_c315ff84_relation_remove",
@@ -4931,7 +4934,8 @@ def test_run_r44_full_success_every_check_passes():
     ):
         assert expected in names, names
     assert [name for name, _ in client.calls] == [
-        "plan_create", "cascade_begin", "concept_add", "concept_add",
+        "plan_create", "context_common", "step_create", "cascade_begin",
+        "concept_add", "concept_add",
         "relation_add", "concept_remove", "relation_remove", "concept_remove", "plan_delete",
     ]
 

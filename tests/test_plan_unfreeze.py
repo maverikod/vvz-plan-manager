@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import pytest
 
 from plan_manager.cascade import begin as begin_mod
-from plan_manager.cascade.record import CascadeRecord
+from plan_manager.cascade.record import CascadeError, CascadeRecord
 from plan_manager.commands import plan_unfreeze_command, step_transition_command
 from plan_manager.commands.plan_unfreeze_command import PlanUnfreezeCommand
 from plan_manager.commands.step_transition_command import StepTransitionCommand
@@ -295,6 +295,181 @@ def test_plan_unfreeze_refuses_empty_actor_or_reason(monkeypatch, changed_by, re
     )
     payload = result.to_dict()
     assert payload["error"]["data"]["domain_code"] == "RUNTIME_VALIDATION_ERROR"
+
+
+# --------------------------------------- bug ecced710: unfreeze on frozen status
+
+
+def _plan_with_status(status: str) -> Plan:
+    return Plan(
+        uuid=PLAN_UUID, name="throwaway", status=status, context_budget=4000,
+        head_revision_uuid=HEAD_REV, project_ids=[], primary_project_id=None,
+    )
+
+
+def test_plan_unfreeze_succeeds_end_to_end_against_real_begin_cascade_on_frozen_status(monkeypatch) -> None:
+    """Regression for bug ecced710: fix bea106c (bug 845b43a8) added a
+    plan.status == 'frozen' refusal to begin_cascade that is unconditional
+    -- allow_all_frozen does NOT relax it (see test_internal_bypass_still_
+    refuses_plan_status_frozen above). Once plan.status is truthfully kept
+    in sync with the step tree, a fully frozen plan's status IS 'frozen'
+    at the moment plan_unfreeze wants to open its cascade, so calling the
+    real begin_cascade before resetting the aggregate would always hit
+    that guard. Exercises the REAL begin_cascade (plan_unfreeze_command's
+    begin_cascade is never stubbed here) with only its storage-layer
+    collaborators faked, proving set_plan_status runs -- and is visible to
+    begin_cascade's own get_plan() re-read -- strictly before begin_cascade
+    is called.
+    """
+    plan = _plan_with_status("frozen")
+    status_box = {"status": "frozen"}
+    cascade_box: dict = {"open": None}
+
+    monkeypatch.setattr(plan_unfreeze_command, "db_connection", _fake_db)
+    monkeypatch.setattr(plan_unfreeze_command, "resolve_plan", lambda conn, p: plan)
+    monkeypatch.setattr(plan_unfreeze_command, "_all_steps_frozen", lambda conn, pu: True)
+    monkeypatch.setattr(plan_unfreeze_command, "get_open_cascade", lambda conn, pu: cascade_box["open"])
+
+    def _set_status(conn, plan_uuid, status):
+        status_box["status"] = status
+
+    monkeypatch.setattr(plan_unfreeze_command, "set_plan_status", _set_status)
+
+    def _audit(conn, **kwargs):
+        return _AuditRecord()
+
+    monkeypatch.setattr(plan_unfreeze_command, "record_runtime_change", _audit)
+
+    # NOT stubbing plan_unfreeze_command.begin_cascade: it stays bound to
+    # the real plan_manager.cascade.begin.begin_cascade. Fake only what
+    # THAT function reaches into.
+    monkeypatch.setattr(begin_mod, "acquire_plan_lock", lambda conn, pu: None)
+    monkeypatch.setattr(begin_mod, "release_plan_lock", lambda conn, pu: None)
+    monkeypatch.setattr(begin_mod, "get_open_cascade", lambda conn, pu: None)
+    monkeypatch.setattr(begin_mod, "get_plan", lambda conn, pu: _plan_with_status(status_box["status"]))
+    monkeypatch.setattr(begin_mod, "create_ref", lambda conn, pu, name, rev: None)
+
+    def _insert_cascade(conn, rec):
+        cascade_box["open"] = rec
+
+    monkeypatch.setattr(begin_mod, "insert_cascade", _insert_cascade)
+
+    result = asyncio.run(
+        PlanUnfreezeCommand().execute(plan="p", changed_by="orchestrator", reason="reopen for fix")
+    )
+    payload = result.to_dict()
+    assert payload["success"] is True, payload
+    assert status_box["status"] == "draft"
+    assert cascade_box["open"] is not None
+
+
+def test_plan_unfreeze_resets_status_before_calling_begin_cascade(monkeypatch) -> None:
+    """Order assertion: the set_plan_status(draft) write must happen before
+    begin_cascade is invoked, not after -- that ordering (not just the
+    fact both calls occur) is what lets begin_cascade's own status=='frozen'
+    guard see 'draft' instead of 'frozen'."""
+    plan = _plan()
+    order: list[str] = []
+    cascade_box: dict = {"open": None}
+
+    monkeypatch.setattr(plan_unfreeze_command, "db_connection", _fake_db)
+    monkeypatch.setattr(plan_unfreeze_command, "resolve_plan", lambda conn, p: plan)
+    monkeypatch.setattr(plan_unfreeze_command, "_all_steps_frozen", lambda conn, pu: True)
+    monkeypatch.setattr(plan_unfreeze_command, "get_open_cascade", lambda conn, pu: cascade_box["open"])
+
+    def _set_status(conn, plan_uuid, status):
+        order.append("set_plan_status")
+
+    monkeypatch.setattr(plan_unfreeze_command, "set_plan_status", _set_status)
+
+    def _begin(conn, pu, allow_all_frozen=False):
+        order.append("begin_cascade")
+        rec = _cascade_record()
+        cascade_box["open"] = rec
+        return rec
+
+    monkeypatch.setattr(plan_unfreeze_command, "begin_cascade", _begin)
+
+    def _audit(conn, **kwargs):
+        return _AuditRecord()
+
+    monkeypatch.setattr(plan_unfreeze_command, "record_runtime_change", _audit)
+
+    result = asyncio.run(
+        PlanUnfreezeCommand().execute(plan="p", changed_by="o", reason="r")
+    )
+    assert result.to_dict()["success"] is True
+    assert order == ["set_plan_status", "begin_cascade"]
+
+
+class _TxConn:
+    """Fake connection adding the commit/rollback bookkeeping plan_manager.
+    runtime.context.db_connection performs around a real psycopg
+    connection, so a test can prove the plan.status write is undone
+    together with the failed begin_cascade attempt. Mirrors test_bug_
+    845b43a8_plan_status_freeze_sync.py's _TxConn/_tx_scoped_db."""
+
+    def __init__(self) -> None:
+        self.log: list[tuple[str, tuple]] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def execute(self, sql, params=()):
+        self.log.append((sql, tuple(params) if params else ()))
+        return None
+
+
+@contextmanager
+def _tx_scoped_db(conn: _TxConn):
+    try:
+        yield conn
+        conn.committed = True
+    except BaseException:
+        conn.rolled_back = True
+        raise
+
+
+def test_plan_unfreeze_begin_cascade_failure_leaves_status_unchanged(monkeypatch) -> None:
+    """Atomicity: if begin_cascade fails for any reason after plan_unfreeze
+    has already issued the plan.status='draft' UPDATE (same conn), the
+    whole `with db_connection()` block must exit by exception so the
+    surrounding transaction rolls back -- including that status write --
+    rather than leaving the aggregate stuck on 'draft' with no cascade
+    opened to justify it. Uses the REAL set_plan_status (not stubbed), so
+    the UPDATE is genuinely issued against the fake conn's execute(), and
+    a real commit/rollback-tracking db_connection stand-in."""
+    plan = _plan()
+    conn = _TxConn()
+
+    @contextmanager
+    def _fake_tx_db():
+        with _tx_scoped_db(conn) as c:
+            yield c
+
+    monkeypatch.setattr(plan_unfreeze_command, "db_connection", _fake_tx_db)
+    monkeypatch.setattr(plan_unfreeze_command, "resolve_plan", lambda c, p: plan)
+    monkeypatch.setattr(plan_unfreeze_command, "_all_steps_frozen", lambda c, pu: True)
+    monkeypatch.setattr(plan_unfreeze_command, "get_open_cascade", lambda c, pu: None)
+
+    def _boom(c, pu, allow_all_frozen=False):
+        raise CascadeError("simulated begin_cascade failure")
+
+    monkeypatch.setattr(plan_unfreeze_command, "begin_cascade", _boom)
+
+    result = asyncio.run(
+        PlanUnfreezeCommand().execute(plan="p", changed_by="o", reason="r")
+    )
+    payload = result.to_dict()
+    assert payload["success"] is False
+    assert payload["error"]["data"]["domain_code"] == "CASCADE_CONFLICT"
+
+    # The status UPDATE was issued (proving it ran, atomically, before the
+    # failure) but the surrounding transaction rolled back, not committed --
+    # so nothing partial was ever made durable.
+    status_updates = [entry for entry in conn.log if entry[0].startswith("UPDATE plan SET status")]
+    assert status_updates == [("UPDATE plan SET status = %s WHERE uuid = %s", ("draft", PLAN_UUID))]
+    assert conn.rolled_back is True
+    assert conn.committed is False
 
 
 # --------------------------------- end-to-end former-deadlock, then reopen succeeds

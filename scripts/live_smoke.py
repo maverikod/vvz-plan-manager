@@ -8287,14 +8287,19 @@ async def run_r44_delete_guard_scoped_probe(client: Any) -> list[CheckResult]:
     audited by the guard itself.
 
     Recipe (throwaway plan, try/finally cleanup): plan_create ->
-    cascade_begin -> concept_add C-001, concept_add C-002 -> relation_add
-    (C-001 uses C-002) -> concept_remove(C-001) must be REFUSED
-    (ENTITY_REFERENCED/DELETE_BLOCKED family) while the relation exists ->
-    relation_remove(same triple) -> concept_remove(C-001) must now
-    SUCCEED. The observable contract (refusal then success) is what this
-    check pins; it is neutral to whether the refusal is caller-side or
-    guard-native. Cleanup: plan_delete(hard) -- removes the plan's open
-    cascade along with everything else, no separate cascade_abort needed.
+    context_common(plan, level3) -> step_create G (level 3) -- cascade_begin
+    refuses CASCADE_CONFLICT("cannot open a cascade on a plan with no head
+    revision") on a plan with no step tree yet, so a head revision must
+    exist first (same context_common-immediately-before-step_create idiom
+    as R2/R8/R12/R15/R18/R41) -- -> cascade_begin -> concept_add C-001,
+    concept_add C-002 -> relation_add (C-001 uses C-002) ->
+    concept_remove(C-001) must be REFUSED (ENTITY_REFERENCED/DELETE_BLOCKED
+    family) while the relation exists -> relation_remove(same triple) ->
+    concept_remove(C-001) must now SUCCEED. The observable contract
+    (refusal then success) is what this check pins; it is neutral to
+    whether the refusal is caller-side or guard-native. Cleanup:
+    plan_delete(hard) -- removes the plan's open cascade along with
+    everything else, no separate cascade_abort needed.
     """
     results: list[CheckResult] = []
     plan_uuid: Optional[str] = None
@@ -8304,6 +8309,17 @@ async def run_r44_delete_guard_scoped_probe(client: Any) -> list[CheckResult]:
             results.append(CheckResult("4", "R44_c315ff84_plan_create", STATUS_FAIL, str(res)))
             return results
         plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R44_c315ff84_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R44_c315ff84_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R44_c315ff84_repro_step_created", STATUS_PASS, f"G={g_id}"))
 
         ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
