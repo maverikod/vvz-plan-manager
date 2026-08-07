@@ -3716,11 +3716,13 @@ _R38_BASE_CONTENT: dict[str, bytes] = {
 
 def _r38_export_read_outcome(mismatch_path: str | None = None):
     """Callable outcome for export_read: deterministic per-path content on
-    the first call (snapshot A) and, unless ``mismatch_path`` names it, the
-    IDENTICAL content again on the second call (snapshot B) for the same
-    path -- modeling a byte-for-byte round trip. When ``mismatch_path`` is
-    given, that one path's second (snapshot-B) read carries different bytes
-    (and thus a different sha256), modeling a genuine round-trip defect."""
+    the first call (snapshot A, taken on the still-live plan) and, unless
+    ``mismatch_path`` names it, the IDENTICAL content again on the second
+    call (snapshot B, taken again on the SAME still-live plan after the
+    refused re-import) for the same path -- modeling a stable, side-effect-
+    free re-export. When ``mismatch_path`` is given, that one path's second
+    (snapshot-B) read carries different bytes (and thus a different
+    sha256), modeling a genuine regression."""
     call_counts: dict[str, int] = {}
 
     def _next(params: dict) -> dict:
@@ -3765,10 +3767,15 @@ def _r38_success_responses(mismatch_path: str | None = None) -> dict:
         "plan_export": _ok({"root": "/export/whatever", "files": 5, "revision": "head"}),
         "hrs_export": _ok({"markdown": f"{{aaaa}} {ls.R38_PARAGRAPH_TEXT}\n"}),
         "export_read": _r38_export_read_outcome(mismatch_path),
-        # plan_import always names the created plan after "source" -- mirror
-        # that exactly so the runner's own res["name"] == plan_name check
-        # (against the locally-generated unique_suffix name) holds.
-        "plan_import": lambda params: _ok({"dry_run": False, "plan_uuid": "plan-fresh", "name": params["source"]}),
+        # dry_run=True always validates (no DB touch, so the name being
+        # occupied by the live original plan is irrelevant); dry_run=False
+        # is refused because the original plan still holds that name --
+        # the documented unique plan-name conflict, DUPLICATE_ID.
+        "plan_import": lambda params: (
+            _ok({"dry_run": True, "valid": True, "source": params["source"]})
+            if params.get("dry_run")
+            else {"success": False, "error": "DUPLICATE_ID: plan name already exists"}
+        ),
         "plan_delete": _ok({"deleted_uuid": "whichever"}),
     }
 
@@ -3821,7 +3828,7 @@ def test_run_r38_full_success_every_check_passes():
         "plan_export",
         "hrs_export",
         "export_read", "export_read", "export_read", "export_read", "export_read",
-        "plan_delete",
+        "plan_import",
         "plan_import",
         "plan_export",
         "hrs_export",
@@ -3839,7 +3846,18 @@ def test_run_r38_export_read_uses_the_fixed_file_set_and_plan_name():
     assert len(read_calls) == 10
     assert {params["file"] for params in read_calls} == set(_R38_FILE_PATHS)
     plan_names = {params["plan"] for params in read_calls}
-    assert len(plan_names) == 1  # same plan NAME addresses both the original and the freshly-imported export
+    assert len(plan_names) == 1  # same still-live plan addresses both snapshot A and snapshot B
+
+
+def test_run_r38_plan_import_calls_use_dry_run_then_real():
+    client = _ScriptedClient(_r38_success_responses())
+
+    asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    import_calls = [params for name, params in client.calls if name == "plan_import"]
+    assert [params["dry_run"] for params in import_calls] == [True, False]
+    sources = {params["source"] for params in import_calls}
+    assert len(sources) == 1  # both calls target the same still-occupied plan name
 
 
 def test_run_r38_checksum_mismatch_fails_comparison_and_still_cleans_up():
@@ -3851,14 +3869,15 @@ def test_run_r38_checksum_mismatch_fails_comparison_and_still_cleans_up():
     checksum_check = [r for r in results if r.name == "R38_compare_export_checksum"]
     assert len(checksum_check) == 1 and checksum_check[0].status == ls.STATUS_FAIL
     assert "T-002" in checksum_check[0].detail
-    # The comparison ran only after BOTH plans existed; the imported one
-    # must still be torn down even though the comparison itself failed.
+    # The comparison ran, and the single scratch plan (never deleted mid-
+    # sequence in this recipe) must still be torn down in the finally block
+    # even though the comparison itself failed.
     called = [name for name, _ in client.calls]
     assert called[-1] == "plan_delete"
-    assert called.count("plan_delete") == 2  # original (mid-sequence) + imported (finally)
+    assert called.count("plan_delete") == 1
 
 
-def test_run_r38_mid_sequence_failure_before_original_delete_still_cleans_up():
+def test_run_r38_mid_sequence_failure_before_export_still_cleans_up():
     responses = _r38_success_responses()
     responses["step_dependency_apply"] = {"success": False, "error": "RUNTIME_VALIDATION_ERROR: boom"}
     client = _ScriptedClient(responses)
@@ -3867,29 +3886,53 @@ def test_run_r38_mid_sequence_failure_before_original_delete_still_cleans_up():
 
     assert any(r.name == "R38_step_dependency_apply" and r.status == ls.STATUS_FAIL for r in results)
     called = [name for name, _ in client.calls]
-    # plan_export/plan_import never ran; only the original plan needs cleanup.
+    # plan_export/plan_import never ran; only the one scratch plan needs cleanup.
     assert "plan_export" not in called
     assert "plan_import" not in called
     assert called[-1] == "plan_delete"
     assert called.count("plan_delete") == 1
 
 
-def test_run_r38_import_failure_after_original_freed_leaves_nothing_to_clean_up():
+def test_run_r38_dry_run_import_failure_still_cleans_up():
     responses = _r38_success_responses()
     responses["plan_import"] = {"success": False, "error": "IMPORT_INVALID: boom"}
     client = _ScriptedClient(responses)
 
     results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
 
-    assert any(r.name == "R38_plan_import" and r.status == ls.STATUS_FAIL for r in results)
+    assert any(
+        r.name == "R38_plan_import_dry_run_valid" and r.status == ls.STATUS_FAIL for r in results
+    )
     cleanup = [r for r in results if r.name == "R38_cleanup"]
     assert len(cleanup) == 1 and cleanup[0].status == ls.STATUS_PASS
-    # The original plan was already hard-deleted (freeing its name) BEFORE
-    # the failed import, and the import never produced a plan to delete --
-    # so the finally block issues zero further plan_delete calls.
+    # The scratch plan was never deleted mid-sequence in this recipe, so the
+    # finally block issues exactly one plan_delete for it.
     called = [name for name, _ in client.calls]
     assert called.count("plan_delete") == 1
-    assert called[-1] == "plan_import"
+    assert called[-1] == "plan_delete"
+
+
+def test_run_r38_name_conflict_not_refused_fails_and_still_cleans_up():
+    """If a server ever stopped refusing the duplicate name (a real
+    contract regression), the check must FAIL loudly rather than silently
+    accept an unexpected successful import."""
+    responses = _r38_success_responses()
+    responses["plan_import"] = lambda params: (
+        _ok({"dry_run": True, "valid": True, "source": params["source"]})
+        if params.get("dry_run")
+        else _ok({"dry_run": False, "plan_uuid": "unexpected-plan", "name": params["source"]})
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r38_export_import_round_trip(client, _R38_CATALOG, "proj-1"))
+
+    assert any(
+        r.name == "R38_plan_import_name_conflict_refused" and r.status == ls.STATUS_FAIL
+        for r in results
+    )
+    called = [name for name, _ in client.calls]
+    assert called[-1] == "plan_delete"
+    assert called.count("plan_delete") == 1
 
 
 # --------------------------------------------------------------------------

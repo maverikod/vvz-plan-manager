@@ -6962,36 +6962,52 @@ R38_G_SLUG = "g"
 R38_T1_SLUG = "t-one"
 R38_T2_SLUG = "t-two"
 
-# What this black-box, API-only round trip fundamentally CANNOT see -- named
+# What this black-box, API-only regression fundamentally CANNOT see -- named
 # explicitly (not just implied by omission) per the CR-7 G-005/T-002/A-002
-# acceptance requirement. UUID-level identity preservation across the FULL
-# entity registry (every table, every ref kept) is instead the canonical-
-# form migration transport's own contract (plan_manager.exchange.
-# canonical_form: export_canonical_document/import_canonical_document, CR-7
-# G-005/T-001/A-003), verified at unit-test depth (tests/exchange/test_
-# importer_canonical.py, tests/domain/test_entity.py) -- that sibling depth
-# is not reachable through this pipeline's public-API, no-database-
-# inspection black-box acceptance.
+# acceptance requirement.
+#
+# DEFECT HISTORY (live 0.1.98, R38_plan_import IMPORT_INVALID "source root
+# not found"): this check used to hard-delete the original plan mid-sequence
+# to free its name for a real plan_import, on the documented assumption that
+# "the export directory plan_export wrote is untouched by the delete, which
+# only removes the database row". That assumption was false: plan_delete
+# (hard=True) also removes the plan's own export-layout directory
+# (plan_manager/commands/plan_delete_command.py's _remove_export_layout,
+# wired into the hard-delete path per todo 76b7ea7e's export-artifact
+# lifecycle) -- so by the time plan_import ran, its source directory was
+# already gone. The server behaved exactly per its contract; the defect was
+# this check's own sequencing. No public-API sequence can recover the
+# originally intended shape (free the name by deleting the original, then
+# import a FRESH plan from a PRESERVED export of the original's content):
+# plan_export/export_archive always write under exactly
+# <export_root>/<plan.name>/ with no output-name parameter, and no
+# export-copy/export-rename command exists to materialize the same content
+# under a second, distinct directory name before the delete. The recipe
+# below is downgraded to what the public API can actually prove.
 R38_NOT_VISIBLE: tuple[str, ...] = (
-    "row-level UUIDs of the plan, its steps, and its paragraph: plan_import "
-    "always assigns fresh identities, so the API never exposes whether the "
-    "imported row IS the original row or merely a new one with matching "
-    "content",
-    "created_at/updated_at timestamps of the original rows: the standard "
-    "export layout (source_spec.md/spec.yaml/README.yaml) carries no "
-    "timestamp fields at all",
-    "full revision-by-revision history: plan_import records exactly one "
-    "synthetic 'plan import' revision, not a replay of the original plan's "
-    "individual revisions",
+    "the full delete-then-reimport round trip (free the original plan's "
+    "name with a hard delete, then import a FRESH plan from a PRESERVED "
+    "export of the original's content) is not exercised at all: "
+    "plan_delete(hard=True) purges the plan's own export-layout directory "
+    "as part of its documented lifecycle, and no public-API surface "
+    "(plan_export, export_archive, export_upload_save) can materialize an "
+    "import source under a name other than the exporting plan's own name -- "
+    "there is no sequencing that both frees the name and preserves the "
+    "export content",
+    "plan_import's actual write path (create_plan, HRS/MRS ingestion, step "
+    "tree import) is exercised here only as a name-conflict REFUSAL, never "
+    "as a successful ingestion into a new plan row; that positive path is "
+    "covered at unit-test depth (tests/exchange/test_importer_canonical.py, "
+    "tests/domain/test_entity.py) and by the CR-7 canonical-form migration "
+    "transport (export_canonical_document/import_canonical_document, CR-7 "
+    "G-005/T-001/A-003), not by this black-box API check",
+    "row-level UUIDs of a freshly-imported plan/steps/paragraph and how "
+    "they would relate to the originals: no real (dry_run=False, name-free) "
+    "import ever actually runs here",
+    "full revision-by-revision history of an imported plan: no real import "
+    "ever actually runs here",
     "soft-deleted/marked rows: the standard layout exports only live head "
     "state, never a markdel'd row",
-    "identity-registry bookkeeping for the deleted original plan/steps/"
-    "paragraph: removed by the hard delete, invisible to any API surface",
-    "UUID-level identity preservation across the full entity registry -- "
-    "that is the canonical-form migration transport's own contract "
-    "(export_canonical_document/import_canonical_document, CR-7 G-005/"
-    "T-001/A-003), verified at unit-test depth, not by this black-box API "
-    "round trip",
 )
 
 
@@ -7065,53 +7081,37 @@ async def run_r38_export_import_round_trip(
     catalog_names: frozenset[str],
     project_id: str,
 ) -> list[CheckResult]:
-    """CR-7 G-005/T-002/A-002: black-box round-trip regression for the
-    export/import command surface, read back through the public API only
-    (no database or filesystem inspection, per the black-box acceptance).
+    """CR-7 G-005/T-002/A-002: black-box regression for the export/import
+    command surface, read back through the public API only (no database or
+    filesystem inspection, per the black-box acceptance).
 
-    Recipe: build a dedicated fixed-identity throwaway plan (one paragraph,
-    a project binding, a G/T-one/T-two step tree with a T-two depends_on
-    T-one dependency) -> plan_export + hrs_export + export_read capture the
-    first, "A", API-visible snapshot -> hard-delete the ORIGINAL plan,
-    freeing its export directory's name (plan.name is UNIQUE; the export
-    directory plan_export wrote is untouched by the delete, which only
-    removes the database row) -> plan_import the freed name for real
-    (dry_run=False), creating a FRESH plan (new uuid, new revision history)
-    that comes to occupy the same name (see the "fresh name" note below) ->
-    plan_export + hrs_export + export_read capture the second, "B",
-    snapshot -> compare every API-visible dimension: HRS markdown text, MRS
-    project bindings, and per-step descriptors (step tree, depends_on,
-    status), both by decoded content and by the canonical sha256
-    export_read itself returns.
+    Recipe (downgraded from the original delete-then-reimport shape -- see
+    R38_NOT_VISIBLE's module-level comment for why that shape is
+    unreachable through the public API): build a dedicated fixed-identity
+    throwaway plan (one paragraph, a project binding, a G/T-one/T-two step
+    tree with a T-two depends_on T-one dependency) -> plan_export +
+    hrs_export + export_read capture the first, "A", API-visible snapshot
+    of the STILL-LIVE plan -> plan_import(dry_run=True) proves the exported
+    layout validates as ingestible without touching the database ->
+    plan_import(dry_run=False) against the SAME occupied name is expected
+    to be REFUSED (the documented unique plan-name conflict, mapped to
+    domain code DUPLICATE_ID) -> plan_export + hrs_export + export_read
+    again on the SAME still-live plan capture a second, "B", snapshot ->
+    compare every API-visible dimension between A and B (HRS markdown text,
+    MRS project bindings, per-step descriptors, both by decoded content and
+    by the canonical sha256 export_read itself returns) to prove
+    plan_export/hrs_export/export_read are stable and that the refused
+    import attempt left no side effects. This substitutes for the
+    unreachable delete-then-reimport content comparison.
 
-    "Fresh name" note: PlanImportCommand always names the created plan
-    after the source LAYOUT DIRECTORY (plan_manager/exchange/importer.py
-    import_plan's ``root.name``), and that directory is itself always named
-    after the plan that exported it (plan_manager/exchange/exporter.py
-    export_plan's ``root = Path(export_root) / plan.name``) -- neither
-    command exposes a parameter to pick a different name. So "into a fresh
-    name" is achieved the only way the contract allows: the name is FREED
-    by hard-deleting the row that currently holds it, and the import that
-    follows creates a genuinely fresh plan (new uuid, new head revision)
-    that comes to occupy the freed name -- never the same row, never the
-    same identity, only the same string and (if the round trip holds) the
-    same content. Both plans still get an explicit try/finally cleanup
-    below; the original just leaves that lifecycle earlier than the
-    imported one.
-
-    Identity preservation the plan_import contract DOES promise (per
-    plan_manager/commands/info_reference.py: "Restores project_ids,
-    primary_project_id, and step project_id; step project_id must be listed
-    in imported project_ids") is asserted directly through the MRS/README
-    comparison. What the round trip cannot see at all is named explicitly
-    in R38_NOT_VISIBLE and surfaced as this check's own final PASS detail.
+    What this regression cannot see at all -- because it never performs a
+    real (dry_run=False, name-free) import -- is named explicitly in
+    R38_NOT_VISIBLE and surfaced as this check's own final PASS detail.
 
     Marker-gated SKIP (whole group, not per-command) on a server predating
-    this command surface, mirroring R27/R34/R37's convention. Cleanup is
-    top-level try/finally: the original plan is deleted mid-sequence (to
-    free its name for the import) and the imported plan at the very end;
-    the finally block only re-attempts whichever of the two a preceding
-    FAILURE left alive, so a red run never leaks either scratch plan.
+    this command surface, mirroring R27/R34/R37's convention. Cleanup is a
+    top-level try/finally: exactly one plan ever exists in this recipe, so
+    a red run never leaks it.
     """
     if not R38_REQUIRED_COMMANDS <= catalog_names:
         missing = sorted(R38_REQUIRED_COMMANDS - catalog_names)
@@ -7127,7 +7127,6 @@ async def run_r38_export_import_round_trip(
     results: list[CheckResult] = []
     plan_name = unique_suffix("r38-plan")
     original_plan_uuid: Optional[str] = None
-    imported_plan_uuid: Optional[str] = None
     try:
         # --- build the fixed-identity fixture on the ORIGINAL plan. ---
         ok, res = await call(client, "plan_create", {"name": plan_name})
@@ -7199,7 +7198,8 @@ async def run_r38_export_import_round_trip(
 
         file_paths = _r38_export_file_paths(g_id, t_ids[R38_T1_SLUG], t_ids[R38_T2_SLUG])
 
-        # --- first export ("A") + its API-visible snapshot. ---
+        # --- first export ("A") + its API-visible snapshot, taken on the
+        # STILL-LIVE plan (never deleted in this recipe). ---
         ok, res = await call(client, "plan_export", {"plan": original_plan_uuid})
         export_a_ok = ok and isinstance(res, dict) and bool(res.get("files"))
         results.append(
@@ -7223,40 +7223,44 @@ async def run_r38_export_import_round_trip(
         if not snap_ok:
             return results
 
-        # --- free the exported name: hard-delete the original plan (see the
-        # "fresh name" note in this function's own docstring). ---
-        ok, res = await call(client, "plan_delete", {"plan": original_plan_uuid, "hard": True})
-        results.append(CheckResult("4", "R38_original_plan_delete", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
-        if not ok:
+        # --- dry-run import: the exported layout validates as ingestible.
+        # dry_run never touches the database (PlanImportCommand.execute
+        # returns before opening a connection), so this succeeds even though
+        # the name is still occupied by the live original. ---
+        ok, res = await call(client, "plan_import", {"source": plan_name, "dry_run": True})
+        dry_run_ok = ok and isinstance(res, dict) and res.get("dry_run") is True and res.get("valid") is True
+        results.append(
+            CheckResult(
+                "4", "R38_plan_import_dry_run_valid", STATUS_PASS if dry_run_ok else STATUS_FAIL,
+                "" if dry_run_ok else str(res),
+            )
+        )
+        if not dry_run_ok:
             return results
-        deleted_original_uuid = original_plan_uuid
-        original_plan_uuid = None  # deleted; the finally block must not double-delete
 
-        # --- import into the freed name: a genuinely fresh plan identity. ---
+        # --- real import against the still-occupied name: expect the
+        # documented unique-name refusal (plan.name is UNIQUE; import_plan's
+        # create_plan raises psycopg.errors.UniqueViolation, mapped to
+        # domain code DUPLICATE_ID by plan_manager.commands.errors.
+        # map_exception). This is the negative check this recipe is
+        # downgraded to -- see R38_NOT_VISIBLE for why a successful
+        # dry_run=False import is not reachable here. ---
         ok, res = await call(client, "plan_import", {"source": plan_name, "dry_run": False})
-        import_ok = ok and isinstance(res, dict) and bool(res.get("plan_uuid")) and res.get("name") == plan_name
+        refused_ok = (not ok) and "DUPLICATE_ID" in str(res)
         results.append(
             CheckResult(
-                "4", "R38_plan_import", STATUS_PASS if import_ok else STATUS_FAIL,
-                f"uuid={res.get('plan_uuid')} name={res.get('name')}" if import_ok else str(res),
+                "4", "R38_plan_import_name_conflict_refused", STATUS_PASS if refused_ok else STATUS_FAIL,
+                "" if refused_ok else str(res),
             )
         )
-        if not import_ok:
-            return results
-        imported_plan_uuid = res["plan_uuid"]
-
-        fresh_identity_ok = imported_plan_uuid != deleted_original_uuid
-        results.append(
-            CheckResult(
-                "4", "R38_fresh_identity", STATUS_PASS if fresh_identity_ok else STATUS_FAIL,
-                "" if fresh_identity_ok else f"imported plan reused the original uuid {imported_plan_uuid!r}",
-            )
-        )
-        if not fresh_identity_ok:
+        if not refused_ok:
             return results
 
-        # --- second export ("B") + its API-visible snapshot. ---
-        ok, res = await call(client, "plan_export", {"plan": imported_plan_uuid})
+        # --- second export ("B") + its API-visible snapshot, taken again on
+        # the SAME still-live plan: proves plan_export/hrs_export/
+        # export_read are stable and that the refused import left no side
+        # effects. ---
+        ok, res = await call(client, "plan_export", {"plan": original_plan_uuid})
         export_b_ok = ok and isinstance(res, dict) and bool(res.get("files"))
         results.append(
             CheckResult(
@@ -7267,7 +7271,7 @@ async def run_r38_export_import_round_trip(
         if not export_b_ok:
             return results
 
-        ok, res = await call(client, "hrs_export", {"plan": imported_plan_uuid})
+        ok, res = await call(client, "hrs_export", {"plan": original_plan_uuid})
         hrs_b_ok = ok and isinstance(res, dict) and "markdown" in res
         results.append(CheckResult("4", "R38_hrs_export(B)", STATUS_PASS if hrs_b_ok else STATUS_FAIL, "" if hrs_b_ok else str(res)))
         if not hrs_b_ok:
@@ -7279,7 +7283,8 @@ async def run_r38_export_import_round_trip(
         if not snap_ok:
             return results
 
-        # --- compare the two exports across every API-visible dimension. ---
+        # --- compare the two exports across every API-visible dimension:
+        # the full export-side comparison this recipe is downgraded to. ---
         hrs_match = markdown_a == markdown_b
         results.append(
             CheckResult(
@@ -7310,9 +7315,6 @@ async def run_r38_export_import_round_trip(
         results.append(CheckResult("4", "R38_not_visible_surface", STATUS_PASS, "; ".join(R38_NOT_VISIBLE)))
     finally:
         cleanup_ok = True
-        if imported_plan_uuid is not None:
-            ok, res = await call(client, "plan_delete", {"plan": imported_plan_uuid, "hard": True})
-            cleanup_ok = cleanup_ok and ok
         if original_plan_uuid is not None:
             ok, res = await call(client, "plan_delete", {"plan": original_plan_uuid, "hard": True})
             cleanup_ok = cleanup_ok and ok
