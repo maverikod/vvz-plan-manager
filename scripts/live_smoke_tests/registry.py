@@ -130,6 +130,36 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "bug_list/bug_get/escalation_list explicit read projection after the "
         "0029 owner-edge column (bug 0798c162)",
     ),
+    LiveSmokeTestSpec(
+        "r41",
+        "run_r41_plan_status_freeze_sync",
+        "plan.status aggregate syncs with the step tree on freeze/unfreeze "
+        "(bug 845b43a8)",
+    ),
+    LiveSmokeTestSpec(
+        "r42",
+        "run_r42_prompt_chain_gs_dependency_closure",
+        "plan_prompt_chain waves inherit GS/TS dependency closure, read-only "
+        "on the frozen CR-7 acceptance plan (bug 5d923c91)",
+    ),
+    LiveSmokeTestSpec(
+        "r43",
+        "run_r43_freeze_gate_names_cascade_tip",
+        "step_transition's freeze gate names the open cascade's working tip, "
+        "not the base head (bug 1ddea076)",
+    ),
+    LiveSmokeTestSpec(
+        "r44",
+        "run_r44_delete_guard_scoped_probe",
+        "deletion guard refuses a referenced concept and admits it once the "
+        "relation is removed (bug c315ff84)",
+    ),
+    LiveSmokeTestSpec(
+        "r45",
+        "run_r45_step_update_null_removes_field_key",
+        "step_update fields: explicit null removes a key instead of "
+        "persisting it (todo 4bb0f85b)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

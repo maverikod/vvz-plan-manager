@@ -4577,3 +4577,446 @@ def test_run_r40_unpack_regression_fails_named_check_and_still_cleans_up():
     assert "bug_delete" in called
     assert "plan_delete" in called
     assert by_name["R40_cleanup"].status == ls.STATUS_PASS
+
+
+# --------------------------------------------------------------------------
+# R41: plan.status aggregate syncs with the step tree on freeze/unfreeze
+# (bug 845b43a8).
+# --------------------------------------------------------------------------
+
+
+def _r41_plan_status(status: str, derived_status: str, consistent: bool) -> dict:
+    return _ok(
+        {
+            "plan": {
+                "uuid": "plan-r41",
+                "name": "r41-plan",
+                "status": status,
+                "derived_status": derived_status,
+                "status_consistent": consistent,
+                "completed": False,
+                "comment": None,
+            }
+        }
+    )
+
+
+def _r41_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-r41"}),
+        "context_common": _ok({"common_block_id": "blk-r41"}),
+        "step_create": _ok({"uuid": "step-r41-g", "step_id": "G-001"}),
+        "step_transition": _ok(
+            {
+                "transitioned": [{"uuid": "step-r41-g", "step_id": "G-001", "from": "draft", "to": "frozen"}],
+                "skipped": [],
+                "gate": {"green": None, "scope": "whole_plan", "revision_uuid": None, "required": False, "checked": False},
+                "revision_uuid": "rev-r41-1",
+                "dry_run": False,
+            }
+        ),
+        "plan_status": _sequence(
+            _r41_plan_status("frozen", "frozen", True),
+            _r41_plan_status("draft", "draft", True),
+        ),
+        "plan_unfreeze": _ok({"cascade_uuid": "casc-r41", "base_revision_uuid": "rev-r41-1"}),
+        "cascade_abort": _ok({"aborted": True}),
+        "plan_delete": _ok({"deleted_uuid": "plan-r41"}),
+    }
+
+
+def test_run_r41_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r41")
+    assert spec.function_name == "run_r41_plan_status_freeze_sync"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r41_full_success_every_check_passes():
+    client = _ScriptedClient(_r41_success_responses())
+
+    results = asyncio.run(ls.run_r41_plan_status_freeze_sync(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    names = [r.name for r in results]
+    for expected in (
+        "R41_845b43a8_freeze_whole_plan",
+        "R41_845b43a8_plan_status_reports_frozen",
+        "R41_845b43a8_plan_unfreeze",
+        "R41_845b43a8_plan_status_reports_draft_after_unfreeze",
+        "R41_845b43a8_cleanup",
+    ):
+        assert expected in names, names
+    assert [name for name, _ in client.calls] == [
+        "plan_create", "context_common", "step_create", "step_transition",
+        "plan_status", "plan_unfreeze", "plan_status", "cascade_abort", "plan_delete",
+    ]
+
+
+def test_run_r41_status_not_synced_fails_and_stops_before_unfreeze():
+    """Pre-fix reproduction: plan_status still reports status='draft' (or
+    status_consistent=False) right after a whole_plan freeze. The check
+    must FAIL the named plan_status assertion, never call plan_unfreeze,
+    and still clean up with a plain plan_delete (no cascade was opened)."""
+    responses = _r41_success_responses()
+    responses["plan_status"] = _r41_plan_status("draft", "frozen", False)
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r41_plan_status_freeze_sync(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R41_845b43a8_plan_status_reports_frozen"].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "plan_unfreeze" not in called
+    assert "cascade_abort" not in called
+    assert "plan_delete" in called
+    assert by_name["R41_845b43a8_cleanup"].status == ls.STATUS_PASS
+
+
+# --------------------------------------------------------------------------
+# R42: plan_prompt_chain waves inherit GS/TS dependency closure, read-only
+# on the frozen CR-7 acceptance plan (bug 5d923c91).
+# --------------------------------------------------------------------------
+
+
+def _r42_gs_steps(*, g001_deps=(), g002_deps=("G-001",)) -> dict:
+    return _ok(
+        {
+            "steps": [
+                {"step_id": "G-001", "depends_on": list(g001_deps)},
+                {"step_id": "G-002", "depends_on": list(g002_deps)},
+            ],
+            "total": 2, "limit": 200, "offset": 0,
+        }
+    )
+
+
+def _r42_success_responses() -> dict:
+    return {
+        "step_list": _r42_gs_steps(),
+        "plan_prompt_chain": _ok(
+            {
+                "waves": [["G-001/T-001/A-001"], ["G-002/T-001/A-001"]],
+                "assembly": [], "total": 0, "limit": 1, "offset": 0,
+            }
+        ),
+        "graph_parallel_map": _ok(
+            {
+                "waves": [
+                    ["G-001"], ["G-001/T-001"], ["G-001/T-001/A-001"],
+                    ["G-002"], ["G-002/T-001"], ["G-002/T-001/A-001"],
+                ],
+                "total": 6, "limit": 200, "offset": 0,
+            }
+        ),
+    }
+
+
+def test_run_r42_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r42")
+    assert spec.function_name == "run_r42_prompt_chain_gs_dependency_closure"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r42_full_success_every_check_passes():
+    client = _ScriptedClient(_r42_success_responses())
+
+    results = asyncio.run(ls.run_r42_prompt_chain_gs_dependency_closure(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    names = [r.name for r in results]
+    for expected in (
+        "R42_5d923c91_step_list(gs_depends_on)",
+        "R42_5d923c91_gs_dependency_pairs_found",
+        "R42_5d923c91_plan_prompt_chain_call",
+        "R42_5d923c91_prompt_chain_waves_respect_gs_closure",
+        "R42_5d923c91_graph_parallel_map_call",
+        "R42_5d923c91_graph_parallel_map_waves_respect_gs_closure",
+    ):
+        assert expected in names, names
+    # Read-only: never mutates or creates anything.
+    assert [name for name, _ in client.calls] == ["step_list", "plan_prompt_chain", "graph_parallel_map"]
+    step_list_params = dict(client.calls)["step_list"]
+    assert step_list_params.get("plan") == ls.R42_CR7_PLAN_UUID
+    assert step_list_params.get("level") == 3
+
+
+def test_run_r42_prompt_chain_closure_violation_fails():
+    """Pre-fix reproduction: the dependent GS's AS lands in the SAME wave
+    as the producer GS's AS in plan_prompt_chain's wave map (the dropped
+    GS-level edge never reached the atomic-only closure computation)."""
+    responses = _r42_success_responses()
+    responses["plan_prompt_chain"] = _ok(
+        {
+            "waves": [["G-001/T-001/A-001", "G-002/T-001/A-001"]],
+            "assembly": [], "total": 0, "limit": 1, "offset": 0,
+        }
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r42_prompt_chain_gs_dependency_closure(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R42_5d923c91_prompt_chain_waves_respect_gs_closure"].status == ls.STATUS_FAIL
+    assert "G-002" in by_name["R42_5d923c91_prompt_chain_waves_respect_gs_closure"].detail
+    # graph_parallel_map's own (unrelated, correct) wave map is unaffected.
+    assert by_name["R42_5d923c91_graph_parallel_map_waves_respect_gs_closure"].status == ls.STATUS_PASS
+
+
+def test_run_r42_no_gs_dependency_pairs_skips_without_calling_wave_commands():
+    responses = _r42_success_responses()
+    responses["step_list"] = _r42_gs_steps(g001_deps=(), g002_deps=())
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r42_prompt_chain_gs_dependency_closure(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R42_5d923c91_gs_dependency_pairs_found"].status == ls.STATUS_SKIP
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    called = [name for name, _ in client.calls]
+    assert called == ["step_list"]
+
+
+# --------------------------------------------------------------------------
+# R43: step_transition's freeze gate names the open cascade's working tip,
+# not the base head (bug 1ddea076).
+# --------------------------------------------------------------------------
+
+_R43_BASE = "11111111-1111-1111-1111-111111111111"
+_R43_TIP = "22222222-2222-2222-2222-222222222222"
+
+
+def _r43_success_responses(*, second_gate_ok: bool, reported_revision: str) -> dict:
+    freeze_response = _ok(
+        {
+            "transitioned": [{"uuid": "g-uuid", "step_id": "G-001", "from": "draft", "to": "frozen"}],
+            "skipped": [],
+            "gate": {"green": None, "scope": "whole_plan", "revision_uuid": None, "required": False, "checked": False},
+            "revision_uuid": _R43_BASE,
+            "dry_run": False,
+        }
+    )
+    gate_payload = {
+        "green": second_gate_ok, "scope": "G-001", "revision_uuid": reported_revision,
+        "required": True, "checked": True, "finding_count": 0 if second_gate_ok else 1,
+    }
+    if second_gate_ok:
+        second_response = _ok(
+            {
+                "transitioned": [], "skipped": [{"uuid": "g-uuid", "step_id": "G-001", "reason": "already_at_target"}],
+                "gate": gate_payload, "revision_uuid": None, "dry_run": False,
+            }
+        )
+    else:
+        second_response = {"success": False, "error": {"domain_code": "GATE_RED", "gate": gate_payload}}
+    return {
+        "plan_create": _ok({"uuid": "plan-r43"}),
+        "context_common": _ok({"common_block_id": "blk-r43"}),
+        "step_create": _sequence(
+            _ok({"uuid": "g-uuid", "step_id": "G-001"}),
+            _ok({"uuid": "t-uuid", "step_id": "T-001"}),
+            _ok({"uuid": "a-uuid", "step_id": "A-001"}),
+        ),
+        "step_transition": _sequence(freeze_response, second_response),
+        "plan_unfreeze": _ok({"cascade_uuid": "casc-r43", "base_revision_uuid": _R43_BASE}),
+        "concept_add": _ok({"concept_id": "C-001", "revision_uuid": _R43_TIP}),
+        "plan_validate": _ok(
+            {"tip_revision_uuid": _R43_TIP, "cascade_uuid": "casc-r43", "green": True, "scope": "plan", "revision_uuid": _R43_BASE}
+        ),
+        "cascade_abort": _ok({"aborted": True}),
+        "plan_delete": _ok({"deleted_uuid": "plan-r43"}),
+    }
+
+
+def test_run_r43_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r43")
+    assert spec.function_name == "run_r43_freeze_gate_names_cascade_tip"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r43_gate_green_names_the_tip_every_check_passes():
+    client = _ScriptedClient(_r43_success_responses(second_gate_ok=True, reported_revision=_R43_TIP))
+
+    results = asyncio.run(ls.run_r43_freeze_gate_names_cascade_tip(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    by_name = {r.name: r for r in results}
+    assert by_name["R43_1ddea076_tip_advanced_past_base"].status == ls.STATUS_PASS
+    assert by_name["R43_1ddea076_gate_names_cascade_tip"].status == ls.STATUS_PASS
+    assert [name for name, _ in client.calls] == [
+        "plan_create", "context_common", "step_create", "context_common", "step_create",
+        "context_common", "step_create", "step_transition", "plan_unfreeze", "concept_add",
+        "plan_validate", "step_transition", "cascade_abort", "plan_delete",
+    ]
+
+
+def test_run_r43_gate_red_refusal_still_names_the_tip_from_the_error_payload():
+    """The gate may legitimately refuse (GATE_RED) for a minimal fixture;
+    the revision_uuid the refusal names must still be the tip, extracted
+    from the formatted diagnostic string call() surfaces on failure."""
+    client = _ScriptedClient(_r43_success_responses(second_gate_ok=False, reported_revision=_R43_TIP))
+
+    results = asyncio.run(ls.run_r43_freeze_gate_names_cascade_tip(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R43_1ddea076_gate_names_cascade_tip"].status == ls.STATUS_PASS
+    assert _R43_TIP in by_name["R43_1ddea076_gate_names_cascade_tip"].detail
+
+
+def test_run_r43_gate_naming_the_base_fails():
+    """Pre-fix reproduction: the gate payload names the BASE head instead
+    of the advanced cascade tip."""
+    client = _ScriptedClient(_r43_success_responses(second_gate_ok=True, reported_revision=_R43_BASE))
+
+    results = asyncio.run(ls.run_r43_freeze_gate_names_cascade_tip(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R43_1ddea076_gate_names_cascade_tip"].status == ls.STATUS_FAIL
+    assert _R43_BASE in by_name["R43_1ddea076_gate_names_cascade_tip"].detail
+    # Cleanup still runs even though the pinned assertion failed.
+    called = [name for name, _ in client.calls]
+    assert called[-2:] == ["cascade_abort", "plan_delete"]
+
+
+# --------------------------------------------------------------------------
+# R44: the deletion guard refuses a referenced concept and admits it once
+# the relation is removed (bug c315ff84).
+# --------------------------------------------------------------------------
+
+
+def _r44_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-r44"}),
+        "cascade_begin": _ok({"cascade_uuid": "casc-r44"}),
+        "concept_add": _sequence(
+            _ok({"concept_id": "C-001", "deleted": False}),
+            _ok({"concept_id": "C-002", "deleted": False}),
+        ),
+        "relation_add": _ok({"from_concept": "C-001", "to_concept": "C-002", "type": "uses"}),
+        "concept_remove": _sequence(
+            {"success": False, "error": "ENTITY_REFERENCED: concept 'C-001' has inbound references: {'relation.from_concept': 1}"},
+            _ok({"concept_id": "C-001", "deleted": True, "revision_uuid": "rev-r44"}),
+        ),
+        "relation_remove": _ok({"from_concept": "C-001", "to_concept": "C-002", "type": "uses", "deleted": True}),
+        "plan_delete": _ok({"deleted_uuid": "plan-r44"}),
+    }
+
+
+def test_run_r44_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r44")
+    assert spec.function_name == "run_r44_delete_guard_scoped_probe"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r44_full_success_every_check_passes():
+    client = _ScriptedClient(_r44_success_responses())
+
+    results = asyncio.run(ls.run_r44_delete_guard_scoped_probe(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    names = [r.name for r in results]
+    for expected in (
+        "R44_c315ff84_relation_add",
+        "R44_c315ff84_concept_remove_refused_while_referenced",
+        "R44_c315ff84_relation_remove",
+        "R44_c315ff84_concept_remove_succeeds_after_relation_removed",
+        "R44_c315ff84_cleanup",
+    ):
+        assert expected in names, names
+    assert [name for name, _ in client.calls] == [
+        "plan_create", "cascade_begin", "concept_add", "concept_add",
+        "relation_add", "concept_remove", "relation_remove", "concept_remove", "plan_delete",
+    ]
+
+
+def test_run_r44_missing_refusal_fails_and_still_cleans_up():
+    """Regression guard for the guard itself: if concept_remove wrongly
+    SUCCEEDS while the relation still exists, the check must FAIL the
+    named refusal assertion, skip the remaining steps, and still hard
+    delete the throwaway plan."""
+    responses = _r44_success_responses()
+    responses["concept_remove"] = _ok({"concept_id": "C-001", "deleted": True, "revision_uuid": "rev-r44"})
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r44_delete_guard_scoped_probe(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R44_c315ff84_concept_remove_refused_while_referenced"].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "relation_remove" not in called
+    assert "plan_delete" in called
+    assert by_name["R44_c315ff84_cleanup"].status == ls.STATUS_PASS
+
+
+# --------------------------------------------------------------------------
+# R45: step_update fields -- explicit null removes a key instead of
+# persisting it (todo 4bb0f85b).
+# --------------------------------------------------------------------------
+
+
+def _r45_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-r45"}),
+        "context_common": _ok({"common_block_id": "blk-r45"}),
+        "step_create": _ok({"uuid": "g-uuid", "step_id": "G-001"}),
+        "step_update": _ok({"uuid": "g-uuid", "step_id": "G-001", "fields": {}, "revision_uuid": "rev-r45"}),
+        "step_get": _sequence(
+            _ok({"uuid": "g-uuid", "step_id": "G-001", "fields": {"k": "v"}}),
+            _ok({"uuid": "g-uuid", "step_id": "G-001", "fields": {}}),
+        ),
+        "plan_delete": _ok({"deleted_uuid": "plan-r45"}),
+    }
+
+
+def test_run_r45_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r45")
+    assert spec.function_name == "run_r45_step_update_null_removes_field_key"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r45_full_success_every_check_passes():
+    client = _ScriptedClient(_r45_success_responses())
+
+    results = asyncio.run(ls.run_r45_step_update_null_removes_field_key(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    names = [r.name for r in results]
+    for expected in (
+        "R45_4bb0f85b_step_get_confirms_k_set",
+        "R45_4bb0f85b_step_get_confirms_k_absent",
+        "R45_4bb0f85b_null_on_never_set_key_accepted",
+        "R45_4bb0f85b_cleanup",
+    ):
+        assert expected in names, names
+    step_update_calls = [params for name, params in client.calls if name == "step_update"]
+    assert step_update_calls[0]["fields"] == {"k": "v"}
+    assert step_update_calls[1]["fields"] == {"k": None}
+    assert step_update_calls[2]["fields"] == {"never_set": None}
+
+
+def test_run_r45_null_persisted_as_literal_key_fails():
+    """Pre-fix reproduction: the second step_get still shows 'k' present
+    (persisted as a literal null) instead of removed from fields."""
+    responses = _r45_success_responses()
+    responses["step_get"] = _sequence(
+        _ok({"uuid": "g-uuid", "step_id": "G-001", "fields": {"k": "v"}}),
+        _ok({"uuid": "g-uuid", "step_id": "G-001", "fields": {"k": None}}),
+    )
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r45_step_update_null_removes_field_key(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R45_4bb0f85b_step_get_confirms_k_absent"].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "plan_delete" in called
+    assert by_name["R45_4bb0f85b_cleanup"].status == ls.STATUS_PASS
