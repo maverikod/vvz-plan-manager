@@ -52,7 +52,14 @@ def get_plan_status_metadata(cls: Any) -> dict:
                     "distribution, gate verdict, and scoring section."
                 ),
                 "data": {
-                    "plan": "Resolved plan identity: uuid, name, status.",
+                    "plan": (
+                        "Resolved plan identity: uuid, name, status (the "
+                        "stored aggregate: 'draft' or 'frozen' -- bug "
+                        "845b43a8), derived_status (recomputed live from "
+                        "the step tree), and status_consistent (True when "
+                        "status == derived_status; False flags historical "
+                        "divergence)."
+                    ),
                     "counts_by_level": "Artifact counts keyed by level 3, 4, 5.",
                     "status_distribution": "Count of steps per status value across all levels.",
                     "gate": "Gate verdict: green (bool), scope, revision_uuid. When red, also includes findings_count and top_findings.",
@@ -67,6 +74,8 @@ def get_plan_status_metadata(cls: Any) -> dict:
                         "uuid": "3fae3c1e-2b0e-4a1a-9e2a-6f6b1a2c3d4e",
                         "name": "my-plan",
                         "status": "draft",
+                        "derived_status": "draft",
+                        "status_consistent": True,
                     },
                     "counts_by_level": {"3": 2, "4": 8, "5": 40},
                     "status_distribution": {"draft": 10, "frozen": 40},

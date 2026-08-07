@@ -191,6 +191,11 @@ def _patch_unfreeze(monkeypatch, *, all_frozen: bool, open_cascade, plan: Plan) 
     monkeypatch.setattr(plan_unfreeze_command, "_all_steps_frozen", lambda conn, pu: all_frozen)
     monkeypatch.setattr(plan_unfreeze_command, "get_open_cascade", lambda conn, pu: open_cascade)
 
+    def _set_status(conn, plan_uuid, status):
+        calls.setdefault("set_plan_status_calls", []).append((plan_uuid, status))
+
+    monkeypatch.setattr(plan_unfreeze_command, "set_plan_status", _set_status)
+
     def _audit(conn, **kwargs):
         calls["audit"] = kwargs
         return _AuditRecord()
@@ -249,6 +254,9 @@ def test_plan_unfreeze_opens_audited_cascade_on_fully_frozen(monkeypatch) -> Non
         "cascade_uuid": str(calls["cascade"].uuid),
     }
     assert calls["begin_allow_all_frozen"] is True
+    # Bug 845b43a8: opening the cascade must reset plan.status to 'draft' in
+    # the same operation, even though the step tree is still all-frozen.
+    assert calls["set_plan_status_calls"] == [(PLAN_UUID, "draft")]
 
 
 def test_plan_unfreeze_refuses_not_fully_frozen(monkeypatch) -> None:
@@ -260,6 +268,7 @@ def test_plan_unfreeze_refuses_not_fully_frozen(monkeypatch) -> None:
     payload = result.to_dict()
     assert payload["error"]["data"]["domain_code"] == "PLAN_NOT_FULLY_FROZEN"
     assert "audit" not in calls  # no audit, no cascade opened on refusal
+    assert "set_plan_status_calls" not in calls  # no status reset on refusal
 
 
 def test_plan_unfreeze_refuses_open_cascade(monkeypatch) -> None:
@@ -271,6 +280,7 @@ def test_plan_unfreeze_refuses_open_cascade(monkeypatch) -> None:
     payload = result.to_dict()
     assert payload["error"]["data"]["domain_code"] == "CASCADE_CONFLICT"
     assert "audit" not in calls
+    assert "set_plan_status_calls" not in calls
 
 
 @pytest.mark.parametrize(

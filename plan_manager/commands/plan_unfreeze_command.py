@@ -21,6 +21,7 @@ from plan_manager.cascade.record import get_open_cascade
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.plan_unfreeze_metadata import get_plan_unfreeze_metadata
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.domain.plan_status_sync import PLAN_STATUS_DRAFT, set_plan_status
 from plan_manager.runtime.context import db_connection
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
@@ -126,6 +127,15 @@ class PlanUnfreezeCommand(Command):
                 assert reread is not None and reread.uuid == rec.uuid, (
                     f"cascade {rec.uuid} for plan {p.name} did not verify by re-read"
                 )
+                # Bug 845b43a8: this is the one documented door that opens a
+                # fully frozen plan for normative editing. The step tree
+                # itself is still all-frozen at this instant (that was the
+                # precondition above), so the aggregate cannot be derived
+                # from it -- force it back to 'draft' directly, atomically
+                # with the cascade open (same conn/transaction). "No state
+                # may exist where the tree is editable but the shell says
+                # frozen."
+                set_plan_status(conn, p.uuid, PLAN_STATUS_DRAFT)
                 # Bug 74ba4313: the audit record is written AFTER the cascade
                 # exists so it can name the opened cascade_uuid — without it
                 # the begin side of an unfreeze-opened cascade's provenance
