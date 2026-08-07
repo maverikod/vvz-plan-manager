@@ -20,6 +20,8 @@ class SrtSnapshotRecord(DataclassEntity):
     ENTITY_ID_FIELD = "snapshot_uuid"
     TABLE_NAME = "srt_snapshot"
     SOFT_DELETE_COLUMN = None
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_COLUMN = "plan_uuid"
     # Compact view=summary projection (bug 8a13977d; fields widened by todo
     # 4265fa4e to the full metadata set the caller's contract requires):
     # drops tree_content, the whole semantic tree (own_vector/child vectors

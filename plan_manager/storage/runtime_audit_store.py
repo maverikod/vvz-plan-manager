@@ -84,6 +84,8 @@ class RuntimeAuditRecord(DataclassEntity):
     )
     SOFT_DELETE_COLUMN: ClassVar[str | None] = None
     UPDATED_AT_COLUMN: ClassVar[str | None] = None
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_GAP = "append-only audit row: entity_id is the RECORDED target, not an ownership edge; the log has no owner by design"
     # Identity for audit rows is registered by the DB trigger (see class
     # docstring); the engine's Python-side registration stays off so the
     # routed create keeps the exact single-INSERT statement profile.
