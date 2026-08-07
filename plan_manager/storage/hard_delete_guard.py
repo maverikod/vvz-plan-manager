@@ -80,8 +80,36 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _scope_value(scope: Mapping[str, Any] | None, scope_key: str) -> Any:
+    """Resolve the value to bind for one entry's scope column, or _NO_PROBE.
+
+    ``scope`` is a mapping of scope-key name (the second element of a
+    ``CatalogEntry.scope_columns`` pair, e.g. "plan_uuid") to the value the
+    caller wants that scope pinned to. It is deliberately a separate mapping
+    from ``entity_id``/``probe_id`` rather than another component folded into
+    them: the identity a caller reports (for ``EntityReferencedError`` and the
+    refusal audit) must stay exactly what it was before bug a589bc18, while
+    the scope used to narrow a probe is new information those reports never
+    carried.
+
+    Returns _NO_PROBE when no scope value is available for this key -- either
+    ``scope`` is None (caller did not supply one, e.g. the read-only
+    reference-inspection command) or the entry's own scope key is absent from
+    it. Callers fall back to the pre-fix ``IS NOT NULL`` clause in that case,
+    so a caller with no scope to give keeps the old (over-broad but not
+    newly-broken) behaviour instead of erroring or silently skipping the probe.
+    """
+    if scope is None or scope_key not in scope:
+        return _NO_PROBE
+    return scope[scope_key]
+
+
 def lookup_referrers(
-    conn: psycopg.Connection, table: str, entity_id: Any
+    conn: psycopg.Connection,
+    table: str,
+    entity_id: Any,
+    *,
+    scope: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """List the live rows that reference one entity and would block its removal.
 
@@ -99,6 +127,15 @@ def lookup_referrers(
             value; each catalog entry is then probed with the component named
             by its own ``target_column`` (see :func:`_probe_value`), never
             with the mapping itself, which cannot bind as a SQL parameter.
+        scope: values that pin a SCOPED catalog entry's probe to one parent,
+            keyed by the entry's own ``scope_columns`` component name (e.g.
+            ``{"plan_uuid": plan_uuid}``). Bug a589bc18: without this, a scoped
+            entry such as relation.from_concept/to_concept or step.concepts
+            only checked its scope column ``IS NOT NULL``, so a row in ANY
+            plan sharing the same concept_id blocked the deletion. When the
+            entry's scope key is absent here (including ``scope=None``), the
+            entry falls back to the pre-fix ``IS NOT NULL`` clause -- entries
+            with no ``scope_columns`` at all are never affected either way.
 
     Returns:
         One dict per referring row with keys ``table``, ``column``,
@@ -132,8 +169,17 @@ def lookup_referrers(
             params.append(literal)
 
         # A scoped reference (concept) is only a reference within the same plan.
-        for source_column, _target_column in entry.scope_columns:
-            clauses.append(sql.SQL("{} IS NOT NULL").format(sql.Identifier(source_column)))
+        # Bug a589bc18: this used to be an IS NOT NULL check only, so a same-
+        # named concept_id in ANY plan blocked the deletion. When the caller
+        # supplies a scope value for this entry's scope key, bind it with
+        # equality instead; otherwise keep the old, unscoped NOT NULL clause.
+        for source_column, scope_key in entry.scope_columns:
+            scope_probe = _scope_value(scope, scope_key)
+            if scope_probe is _NO_PROBE:
+                clauses.append(sql.SQL("{} IS NOT NULL").format(sql.Identifier(source_column)))
+            else:
+                clauses.append(sql.SQL("{} = %s").format(sql.Identifier(source_column)))
+                params.append(scope_probe)
 
         if entry.live_column is not None:
             clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(entry.live_column)))
@@ -183,7 +229,11 @@ def guarded_hard_delete(
             (anchor_plan_uuid, source_plan_uuid, target_plan_uuid,
             linked_plan_uuid) — so a caller that has already read the row passes
             it, and the audit row keeps the plan anchoring it had before this
-            centralization.
+            centralization. Bug a589bc18: it also doubles as the catalog
+            probe's ``scope={"plan_uuid": plan_uuid}`` (see
+            ``lookup_referrers``), so a SCOPED catalog entry (concept) is only
+            probed within this plan instead of matching a same-named row in
+            every plan in the database.
         audit_entity_type: the entity_type value to record, when it must differ
             from entity_cls.entity_type(). Two shipped wrappers historically
             recorded the TABLE name (runtime_comment, bug_report) rather than the
@@ -239,7 +289,8 @@ def guarded_hard_delete(
             raise EntityNotSoftDeletedError(entity_cls.entity_type(), entity_id)
 
     reported_id = entity_id if probe_id is None else probe_id
-    referrers = lookup_referrers(conn, entity_cls.TABLE_NAME, reported_id)
+    scope = {"plan_uuid": plan_uuid} if plan_uuid is not None else None
+    referrers = lookup_referrers(conn, entity_cls.TABLE_NAME, reported_id, scope=scope)
     if referrers:
         record_runtime_change(
             conn,
