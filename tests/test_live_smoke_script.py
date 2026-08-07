@@ -3936,6 +3936,286 @@ def test_run_r38_name_conflict_not_refused_fails_and_still_cleans_up():
 
 
 # --------------------------------------------------------------------------
+# R39 (CR-7 G-008/T-001/A-003): one live regression per G-008 invariant --
+# identifier classification of a newly registered kind, out-of-mechanism
+# absence via registry/relation-index effects, metadata projection
+# equality, and ownership declared via a structural proxy. Exercised
+# against a scripted fake client (no real network).
+# --------------------------------------------------------------------------
+
+_R39_CATALOG = frozenset(ls.R39_REQUIRED_COMMANDS)
+
+
+def _r39_id_resolve_response(fragment_to_entity_type: dict[str, str]):
+    """Scripted id_resolve outcome: a fragment argument maps to a single
+    match of the given entity_type, or an empty match list when the
+    fragment is not in the map -- mirrors the real command's shape
+    ({"matches": [{"uuid", "entity_type", ...}], "total": ...})."""
+
+    def _next(params: dict) -> dict:
+        fragment = params["fragment"]
+        entity_type = fragment_to_entity_type.get(fragment)
+        if entity_type is None:
+            return _ok({"matches": [], "total": 0, "unique": False})
+        return _ok(
+            {
+                "matches": [{"uuid": fragment, "entity_type": entity_type, "table_name": "irrelevant"}],
+                "total": 1,
+                "unique": True,
+            }
+        )
+
+    return _next
+
+
+def _r39_success_responses(
+    *,
+    enum_entity_type: str = "enumeration",
+    todo_entity_type: str = "todo",
+    tool_entity_type: str = "tool",
+    link_type_enum: Optional[list] = None,
+    referrer_id: Optional[str] = "comment-1",
+    primary_anchor_type: Optional[str] = "plan",
+) -> dict:
+    if link_type_enum is None:
+        link_type_enum = sorted(ls.R39_CLOSED_VOCABULARIES["runtime_link_type"])
+    return {
+        "id_resolve": _r39_id_resolve_response(
+            {
+                ls.R39_FIXED_ENUMERATION_REF: enum_entity_type,
+                "todo-1": todo_entity_type,
+                "tool-1": tool_entity_type,
+            }
+        ),
+        "plan_create": _ok({"uuid": "plan-1"}),
+        "todo_create": _ok({"uuid": "todo-1"}),
+        "comment_add": _ok({"uuid": "comment-1"}),
+        "reference_inspect": _ok(
+            {
+                "direct_referrers": (
+                    [{"referrer_id": referrer_id, "table": "runtime_comment", "column": "anchor_ref_id",
+                      "referrer_kind": "runtime_comment"}]
+                    if referrer_id is not None else []
+                ),
+            }
+        ),
+        "help": _ok({"schema": {"properties": {"link_type": {"enum": link_type_enum}}}}),
+        "todo_get": _ok({"uuid": "todo-1", "primary_anchor_type": primary_anchor_type}),
+        "tool_create": _ok({"uuid": "tool-1"}),
+        "tool_delete": _ok({"deleted": True}),
+        "comment_delete": _ok({"deleted": True}),
+        "todo_delete": _ok({"deleted": True}),
+        "plan_delete": _ok({"deleted_uuid": "plan-1"}),
+    }
+
+
+def _r39_scripted_client(responses: dict) -> _ScriptedClient:
+    """Build a _ScriptedClient from an r39 responses dict, routing "help"
+    through direct_responses -- "help" is a KNOWN_BUILTIN_COMMANDS entry, so
+    call() dispatches it via the direct path, never the queued _call path
+    every other r39 command uses (see _ScriptedClient's own docstring)."""
+    responses = dict(responses)
+    help_response = responses.pop("help")
+    return _ScriptedClient(responses, direct_responses={"help": help_response})
+
+
+def test_run_r39_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r39")
+    assert spec.function_name == "run_r39_cr7_invariants"
+    assert spec.needs_catalog is True
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r39_pre_deploy_server_skips_entire_group_not_per_command():
+    client = _ScriptedClient({})
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, frozenset()))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.name == "R39_cr7_invariants"
+    assert result.status == ls.STATUS_SKIP
+    assert ls.R39_PRE_DEPLOY_SKIP_REASON in result.detail
+    assert client.calls == []
+
+
+def test_run_r39_pre_deploy_skip_names_the_missing_commands_not_just_some():
+    client = _ScriptedClient({})
+    partial_catalog = frozenset(ls.R39_REQUIRED_COMMANDS - {"tool_create", "reference_inspect"})
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, partial_catalog))
+
+    assert len(results) == 1
+    assert results[0].status == ls.STATUS_SKIP
+    assert "tool_create" in results[0].detail
+    assert "reference_inspect" in results[0].detail
+
+
+def test_run_r39_full_success_every_check_passes_in_order():
+    client = _r39_scripted_client(_r39_success_responses())
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    assert not any(r.status == ls.STATUS_SKIP for r in results), [r.line() for r in results]
+    # "help" is a KNOWN_BUILTIN_COMMANDS entry, dispatched via the direct
+    # path (client.direct_calls), never the queued path every other r39
+    # command here uses (client.calls) -- see _r39_scripted_client.
+    assert [name for name, _ in client.calls] == [
+        "id_resolve",
+        "plan_create",
+        "todo_create",
+        "id_resolve",
+        "comment_add",
+        "reference_inspect",
+        "todo_get",
+        "tool_create",
+        "id_resolve",
+        "tool_delete",
+        "comment_delete",
+        "todo_delete",
+        "plan_delete",
+    ]
+    assert [name for name, _ in client.direct_calls] == ["help"]
+
+
+def test_run_r39_surface_gaps_check_prints_all_three_gaps_explicitly():
+    client = _r39_scripted_client(_r39_success_responses())
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    gap_checks = [r for r in results if r.name == "R39_surface_gaps"]
+    assert len(gap_checks) == 1
+    assert gap_checks[0].status == ls.STATUS_PASS
+    assert ls.R39_REFERENCE_INSPECT_GAP in gap_checks[0].detail
+    assert ls.R39_METADATA_PROJECTION_GAP in gap_checks[0].detail
+    assert ls.R39_OWNERSHIP_GAP in gap_checks[0].detail
+
+
+def test_run_r39_cleanup_order_on_full_success():
+    client = _r39_scripted_client(_r39_success_responses())
+
+    asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    called = [name for name, _ in client.calls]
+    assert called[-4:] == ["tool_delete", "comment_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r39_enumeration_classification_fails_when_no_match_found():
+    responses = _r39_success_responses()
+    responses["id_resolve"] = _r39_id_resolve_response({"todo-1": "todo", "tool-1": "tool"})
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_enumeration_classification"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    # Aborted before creating anything: nothing to clean up.
+    assert [name for name, _ in client.calls] == ["id_resolve"]
+
+
+def test_run_r39_enumeration_classification_fails_on_wrong_entity_type():
+    responses = _r39_success_responses(enum_entity_type="enumeration_value")
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_enumeration_classification"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    assert [name for name, _ in client.calls] == ["id_resolve"]
+
+
+def test_run_r39_todo_registry_effect_fails_and_still_cleans_up():
+    responses = _r39_success_responses(todo_entity_type="todo_item")
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_todo_registry_effect"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    # Comment/tool never created; cleanup still deletes todo then plan.
+    assert "comment_add" not in called
+    assert "tool_create" not in called
+    assert called[-2:] == ["todo_delete", "plan_delete"]
+
+
+def test_run_r39_relation_index_effect_fails_and_still_cleans_up():
+    responses = _r39_success_responses(referrer_id=None)
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_todo_relation_index_effect"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "tool_create" not in called
+    assert called[-3:] == ["comment_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r39_metadata_projection_fails_on_mismatched_enum_and_still_cleans_up():
+    responses = _r39_success_responses(
+        link_type_enum=sorted(ls.R39_CLOSED_VOCABULARIES["runtime_link_type"] - {"followup_for"})
+    )
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_metadata_projection_equality"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    assert "followup_for" in check[0].detail
+    called = [name for name, _ in client.calls]
+    assert "tool_create" not in called
+    assert called[-3:] == ["comment_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r39_ownership_anchor_family_fails_when_primary_anchor_type_missing():
+    responses = _r39_success_responses(primary_anchor_type=None)
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_ownership_anchor_family"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert "tool_create" not in called
+    assert called[-3:] == ["comment_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r39_ownership_root_kind_fails_and_still_cleans_up_the_tool():
+    responses = _r39_success_responses(tool_entity_type="wish")
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    check = [r for r in results if r.name == "R39_ownership_root_kind"]
+    assert len(check) == 1 and check[0].status == ls.STATUS_FAIL
+    called = [name for name, _ in client.calls]
+    assert called[-4:] == ["tool_delete", "comment_delete", "todo_delete", "plan_delete"]
+
+
+def test_run_r39_mid_sequence_failure_still_cleans_up():
+    responses = _r39_success_responses()
+    responses["todo_create"] = {"success": False, "error": "RUNTIME_VALIDATION_ERROR: boom"}
+    client = _r39_scripted_client(responses)
+
+    results = asyncio.run(ls.run_r39_cr7_invariants(client, _R39_CATALOG))
+
+    assert any(r.name == "R39_todo_create" and r.status == ls.STATUS_FAIL for r in results)
+    called = [name for name, _ in client.calls]
+    # The plan itself was created before the failure, so only it needs cleanup.
+    assert "comment_delete" not in called
+    assert "todo_delete" not in called
+    assert called[-1] == "plan_delete"
+
+
+def test_run_r39_is_registered_after_r38_in_dispatch_order():
+    ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
+    assert ordered_keys.index("r38") < ordered_keys.index("r39")
+
+
+# --------------------------------------------------------------------------
 # R36 (bug 31ba96d5), updated for the CR-7 G-006/T-001/A-003 point-read
 # contract: crud_get/get_by_id (todo_get, comment_get) now resolve a
 # soft-deleted row unconditionally, with deleted_at as the visible proof;

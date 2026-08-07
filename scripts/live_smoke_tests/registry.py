@@ -116,6 +116,14 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         needs_catalog=True,
         needs_project=True,
     ),
+    LiveSmokeTestSpec(
+        "r39",
+        "run_r39_cr7_invariants",
+        "CR-7 G-008/T-001/A-003 live invariant regression: identifier classification "
+        "of a newly registered kind, out-of-mechanism absence via registry/relation-"
+        "index effects, metadata projection equality, and ownership declared",
+        needs_catalog=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

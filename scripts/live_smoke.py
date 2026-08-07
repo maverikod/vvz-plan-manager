@@ -7327,6 +7327,421 @@ async def run_r38_export_import_round_trip(
     return results
 
 
+# --------------------------------------------------------------------------
+# R39 (CR-7 G-008/T-001/A-003): four live regressions, one per G-008
+# invariant, because both defects found while authoring this plan were
+# invisible to a green unit suite and appeared only against real data.
+# --------------------------------------------------------------------------
+
+R39_PRE_DEPLOY_SKIP_REASON = (
+    "server predates the command surface the CR-7 G-008/T-001/A-003 live "
+    "invariant regression exercises -- redeploy pending"
+)
+
+R39_REQUIRED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "plan_create", "plan_delete",
+        "todo_create", "todo_get", "todo_delete",
+        "comment_add", "comment_delete",
+        "id_resolve", "reference_inspect",
+        "tool_create", "tool_delete",
+    }
+)
+
+# Every vocabulary below is copied verbatim from plan_manager_db/migrations/
+# 0028_closed_enumerations.sql, whose own header comment names the domain
+# Enum classes it seeds from (plan_manager/domain/bug_report.py, todo.py,
+# wish.py, calendar_entry.py, runtime_link.py). This live-smoke script runs
+# on a host with only plan-manager-client installed, never the server
+# package, so these eight closed vocabularies cannot be imported live --
+# they are pinned literals here instead, compared against whatever a live
+# command surface actually projects.
+R39_CLOSED_VOCABULARIES: dict[str, frozenset[str]] = {
+    "bug_kind": frozenset(
+        {
+            "functional", "wrong_output", "data_loss", "regression", "compatibility",
+            "stale_context", "planning", "performance", "security", "infrastructure",
+            "deployment", "configuration", "documentation", "user_experience",
+        }
+    ),
+    "bug_severity": frozenset({"blocker", "critical", "major", "minor", "trivial"}),
+    "bug_status": frozenset(
+        {
+            "reported", "triaged", "confirmed", "rejected", "duplicate", "fixing",
+            "fixed_source", "propagating", "verified", "closed", "reopened",
+        }
+    ),
+    "todo_status": frozenset({"open", "in_progress", "blocked", "resolved", "closed", "cancelled"}),
+    "wish_kind": frozenset({"feature", "ux", "automation", "integration", "reporting", "tooling", "other"}),
+    "wish_status": frozenset(
+        {"proposed", "triaged", "planned", "in_progress", "delivered", "rejected", "cancelled"}
+    ),
+    "calendar_entry_status": frozenset({"planned", "in_progress", "done", "cancelled"}),
+    "runtime_link_type": frozenset(
+        {
+            "relates_to", "blocks", "blocked_by", "duplicates", "caused_by",
+            "created_from", "requires", "followup_for",
+        }
+    ),
+}
+
+# Discovery finding (grepped the full command catalog for an enumeration/
+# field-catalogue read surface): plan_manager/storage/enumeration_store.py's
+# read functions (list_enumerations, list_enumeration_values) and
+# reference_catalog.py's list_reference_fields/get_reference_field are never
+# called from any plan_manager/commands/*.py module -- no command exposes
+# either the enumeration/enumeration_value tables or the reference-field
+# catalogue directly. The one live command schema that DOES carry a genuine,
+# structured JSON-schema "enum" constraint matching one of the eight closed
+# vocabularies verbatim is runtime_link_add's link_type parameter
+# (plan_manager/commands/runtime_link_add_command.py), so that is the one
+# metadata projection compared for real; the other seven vocabularies have
+# no comparable live structured-enum surface at all.
+R39_LIVE_ENUM_COMMAND = "runtime_link_add"
+R39_LIVE_ENUM_PARAM = "link_type"
+R39_LIVE_ENUM_VOCABULARY = "runtime_link_type"
+
+# G-001 registered 'enumeration' and 'enumeration_value' as identity-registry
+# entity types (enumeration_store.schema_update_enumerations ->
+# register_entity_identity), but neither has a domain DataclassEntity
+# subclass, so plan_manager.storage.reference_catalog.known_entity_types()
+# -- the source of both reference_inspect's and id_resolve's entity_type
+# schema enum -- does not include them (confirmed: known_entity_types()
+# lists 32 types, neither 'enumeration' nor 'enumeration_value' among them).
+# reference_inspect therefore flatly refuses entity_type='enumeration' (a
+# schema-enum rejection, before any lookup runs) -- it cannot observe this
+# kind at all. id_resolve's entity_type filter is optional, though, and its
+# underlying search (identity_search.search_entity_identities) queries the
+# entity_identity registry table directly, unconstrained by
+# known_entity_types(); resolving one of migration 0028's FIXED,
+# deterministic enumeration refs (the migration's own header comment: "Refs
+# are FIXED literals so seeding is deterministic ... on any database") is
+# therefore a genuine live classification read of a newly registered kind,
+# just not through reference_inspect. bug_kind's own enumeration row is used
+# here (an enumeration row, not a value row, so exactly one fixed ref is
+# needed).
+R39_FIXED_ENUMERATION_REF = "0fb4f10c-be1a-4512-84f7-0cdb2b431ccb"
+R39_FIXED_ENUMERATION_NAME = "bug_kind"
+
+R39_REFERENCE_INSPECT_GAP = (
+    "reference_inspect cannot target entity_type='enumeration' or "
+    "'enumeration_value' at all -- both are absent from known_entity_types() "
+    "(no DataclassEntity subclass backs either), which is the source of "
+    "reference_inspect's own entity_type schema enum; classification of "
+    "the newly registered enumeration kind is observed via id_resolve "
+    "instead, whose entity_type filter is optional and whose search queries "
+    "the identity registry directly"
+)
+R39_METADATA_PROJECTION_GAP = (
+    "no command exposes the enumeration/enumeration_value tables or the "
+    "reference-field catalogue directly (grepped: enumeration_store's and "
+    "reference_catalog's read functions are never called from any command "
+    "module); only runtime_link_add's link_type parameter carries a "
+    "genuine, structured live JSON-schema enum matching one of the eight "
+    "closed vocabularies (runtime_link_type) -- the other seven (bug_kind, "
+    "bug_severity, bug_status, todo_status, wish_kind, wish_status, "
+    "calendar_entry_status) are documented only in free-text parameter "
+    "descriptions or not enumerated at all in any command schema, so their "
+    "live projection equality is NOT observable through the public command "
+    "surface"
+)
+R39_OWNERSHIP_GAP = (
+    "no public command exposes an owner/root declaration directly -- todo_get "
+    "and every other point read carry no 'owner' field, even after the "
+    "G-007 owner-column collapse; ownership is asserted only via the "
+    "structural proxy this check uses: todo_get's primary_anchor_type (the "
+    "anchor family a todo belongs to) for an anchored entity, and "
+    "id_resolve's entity_type classification of a scratch tool (a "
+    "root-kind entity with no primary-anchor concept at all) for an "
+    "unanchored one"
+)
+
+
+async def run_r39_cr7_invariants(
+    client: Any, catalog_names: frozenset[str]
+) -> list[CheckResult]:
+    """CR-7 G-008/T-001/A-003: one live regression per G-008 invariant.
+
+    Both defects found while authoring this plan were invisible to a green
+    unit suite and appeared only against real data, so every sub-check here
+    reads its assertion back zero-trust from the live server rather than
+    trusting a create/update response.
+
+    1. Identifier classification of a newly registered kind: G-001's
+       enumeration/enumeration_value identity-registry entries.
+       reference_inspect cannot target either kind (see
+       R39_REFERENCE_INSPECT_GAP, printed explicitly by R39_surface_gaps
+       below); id_resolve can, by resolving migration 0028's FIXED bug_kind
+       enumeration ref.
+    2. Out-of-mechanism absence, observed indirectly: a scratch todo create
+       lands with a registry effect (id_resolve resolves its uuid to
+       entity_type='todo') and a relation-index effect (reference_inspect on
+       the todo shows a comment anchored to it as a catalogued direct
+       referrer), both read back from the live server rather than trusted
+       from the create responses.
+    3. Metadata projection equality: the one vocabulary a live command
+       schema documents as a genuine JSON-schema enum (runtime_link_add's
+       link_type, matching runtime_link_type) is compared, live, against the
+       pinned literal copy of that vocabulary (R39_CLOSED_VOCABULARIES). The
+       other seven vocabularies have no comparable live surface (see
+       R39_METADATA_PROJECTION_GAP).
+    4. Ownership declared: no command exposes an owner/root declaration
+       directly, so the structural proxy is asserted instead -- todo_get's
+       primary_anchor_type for an anchored family, and id_resolve's
+       entity_type classification of a scratch tool (an inherently
+       unanchored, root-kind entity). See R39_OWNERSHIP_GAP.
+
+    R39_surface_gaps is its own PASS check (mirroring R38_not_visible_
+    surface's convention) printing all three surface-gap notes explicitly,
+    never buried inside another check's detail.
+
+    Cleanup is a top-level try/finally: tool independently, comment before
+    its anchored todo, todo before its anchor plan.
+    """
+    if not R39_REQUIRED_COMMANDS <= catalog_names:
+        missing = sorted(R39_REQUIRED_COMMANDS - catalog_names)
+        return [
+            CheckResult(
+                "4", "R39_cr7_invariants", STATUS_SKIP,
+                f"{R39_PRE_DEPLOY_SKIP_REASON} (missing: {missing})",
+            )
+        ]
+
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    todo_uuid: Optional[str] = None
+    comment_uuid: Optional[str] = None
+    tool_uuid: Optional[str] = None
+    try:
+        # --- invariant 1: identifier classification of a newly registered kind. ---
+        ok, res = await call(client, "id_resolve", {"fragment": R39_FIXED_ENUMERATION_REF, "limit": 5})
+        enum_match = None
+        if ok and isinstance(res, dict) and isinstance(res.get("matches"), list):
+            enum_match = next(
+                (
+                    row for row in res["matches"]
+                    if isinstance(row, dict) and row.get("uuid") == R39_FIXED_ENUMERATION_REF
+                ),
+                None,
+            )
+        enum_classified_ok = enum_match is not None and enum_match.get("entity_type") == "enumeration"
+        results.append(
+            CheckResult(
+                "4", "R39_enumeration_classification",
+                STATUS_PASS if enum_classified_ok else STATUS_FAIL,
+                (
+                    f"id_resolve classifies the fixed {R39_FIXED_ENUMERATION_NAME!r} "
+                    "enumeration ref as entity_type='enumeration'"
+                    if enum_classified_ok
+                    else f"expected entity_type='enumeration' for {R39_FIXED_ENUMERATION_REF}, got ok={ok} {res!r}"
+                ),
+            )
+        )
+        if not enum_classified_ok:
+            return results
+
+        # --- invariant 2: out-of-mechanism absence, observed indirectly. ---
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r39-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R39_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R39_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(
+            client, "todo_create",
+            {
+                "title": unique_suffix("r39-todo"),
+                "description": "R39 CR-7 invariants scratch todo",
+                "kind": "task", "priority_nice": 10, "created_by": "live-smoke",
+                "anchor_type": "plan", "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R39_todo_create", STATUS_FAIL, str(res)))
+            return results
+        todo_uuid = res["uuid"]
+        results.append(CheckResult("4", "R39_todo_create", STATUS_PASS, f"uuid={todo_uuid}"))
+
+        ok, res = await call(client, "id_resolve", {"fragment": todo_uuid, "limit": 5})
+        todo_registry_match = None
+        if ok and isinstance(res, dict) and isinstance(res.get("matches"), list):
+            todo_registry_match = next(
+                (row for row in res["matches"] if isinstance(row, dict) and row.get("uuid") == todo_uuid),
+                None,
+            )
+        registry_effect_ok = (
+            todo_registry_match is not None and todo_registry_match.get("entity_type") == "todo"
+        )
+        results.append(
+            CheckResult(
+                "4", "R39_todo_registry_effect",
+                STATUS_PASS if registry_effect_ok else STATUS_FAIL,
+                "id_resolve resolves the created todo to entity_type='todo'" if registry_effect_ok
+                else f"expected id_resolve to classify {todo_uuid} as 'todo', got ok={ok} {res!r}",
+            )
+        )
+        if not registry_effect_ok:
+            return results
+
+        ok, res = await call(
+            client, "comment_add",
+            {
+                "plan": plan_uuid, "anchor_type": "todo", "anchor_ref_id": todo_uuid,
+                "kind": "comment", "visibility": "audit_only", "author": "live-smoke",
+                "body": "R39 relation-index second-hop referrer",
+                "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R39_comment_add", STATUS_FAIL, str(res)))
+            return results
+        comment_uuid = res["uuid"]
+        results.append(CheckResult("4", "R39_comment_add", STATUS_PASS, f"uuid={comment_uuid}"))
+
+        ok, res = await call(
+            client, "reference_inspect",
+            {"entity_type": "todo", "entity_id": todo_uuid, "recursive": False},
+        )
+        direct = res.get("direct_referrers") if ok and isinstance(res, dict) else None
+        relation_index_match = None
+        if isinstance(direct, list):
+            relation_index_match = next(
+                (row for row in direct if isinstance(row, dict) and row.get("referrer_id") == comment_uuid),
+                None,
+            )
+        relation_index_ok = relation_index_match is not None
+        results.append(
+            CheckResult(
+                "4", "R39_todo_relation_index_effect",
+                STATUS_PASS if relation_index_ok else STATUS_FAIL,
+                "reference_inspect catalogues the comment as a direct referrer of the todo"
+                if relation_index_ok
+                else f"the comment is not among reference_inspect's direct_referrers: ok={ok} {res!r}",
+            )
+        )
+        if not relation_index_ok:
+            return results
+
+        # --- invariant 3: metadata projection equality (one live structured enum). ---
+        ok, res = await call(client, "help", {"cmdname": R39_LIVE_ENUM_COMMAND})
+        live_enum: Optional[frozenset] = None
+        if ok and isinstance(res, dict):
+            schema = res.get("schema")
+            if isinstance(schema, dict):
+                properties = schema.get("properties")
+                if isinstance(properties, dict):
+                    param = properties.get(R39_LIVE_ENUM_PARAM)
+                    if isinstance(param, dict) and isinstance(param.get("enum"), list):
+                        live_enum = frozenset(param["enum"])
+        expected_vocabulary = R39_CLOSED_VOCABULARIES[R39_LIVE_ENUM_VOCABULARY]
+        projection_ok = live_enum is not None and live_enum == expected_vocabulary
+        results.append(
+            CheckResult(
+                "4", "R39_metadata_projection_equality",
+                STATUS_PASS if projection_ok else STATUS_FAIL,
+                (
+                    f"{R39_LIVE_ENUM_COMMAND}.{R39_LIVE_ENUM_PARAM}'s live schema enum matches "
+                    f"the pinned {R39_LIVE_ENUM_VOCABULARY} vocabulary ({len(expected_vocabulary)} values)"
+                )
+                if projection_ok
+                else (
+                    f"expected {sorted(expected_vocabulary)}, got "
+                    f"{sorted(live_enum) if live_enum is not None else None} (ok={ok}, help={res!r})"
+                ),
+            )
+        )
+        if not projection_ok:
+            return results
+
+        # --- invariant 4: ownership declared, via the structural proxy. ---
+        ok, res = await call(client, "todo_get", {"todo": todo_uuid})
+        anchor_family_ok = (
+            ok and isinstance(res, dict)
+            and isinstance(res.get("primary_anchor_type"), str)
+            and bool(res.get("primary_anchor_type"))
+        )
+        results.append(
+            CheckResult(
+                "4", "R39_ownership_anchor_family",
+                STATUS_PASS if anchor_family_ok else STATUS_FAIL,
+                f"todo_get shows primary_anchor_type={res.get('primary_anchor_type')!r}"
+                if anchor_family_ok
+                else f"expected a non-empty primary_anchor_type, got ok={ok} {res!r}",
+            )
+        )
+        if not anchor_family_ok:
+            return results
+
+        ok, res = await call(
+            client, "tool_create",
+            {
+                "name": unique_suffix("r39-tool"), "server_id": "live-smoke-server",
+                "command": "noop", "pinned_options": {}, "created_by": "live-smoke",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R39_tool_create", STATUS_FAIL, str(res)))
+            return results
+        tool_uuid = res["uuid"]
+        results.append(CheckResult("4", "R39_tool_create", STATUS_PASS, f"uuid={tool_uuid}"))
+
+        ok, res = await call(client, "id_resolve", {"fragment": tool_uuid, "limit": 5})
+        tool_registry_match = None
+        if ok and isinstance(res, dict) and isinstance(res.get("matches"), list):
+            tool_registry_match = next(
+                (row for row in res["matches"] if isinstance(row, dict) and row.get("uuid") == tool_uuid),
+                None,
+            )
+        root_kind_ok = tool_registry_match is not None and tool_registry_match.get("entity_type") == "tool"
+        results.append(
+            CheckResult(
+                "4", "R39_ownership_root_kind",
+                STATUS_PASS if root_kind_ok else STATUS_FAIL,
+                "id_resolve classifies the scratch tool as entity_type='tool' "
+                "(a root-kind entity with no primary-anchor concept)"
+                if root_kind_ok
+                else f"expected id_resolve to classify {tool_uuid} as 'tool', got ok={ok} {res!r}",
+            )
+        )
+        if not root_kind_ok:
+            return results
+
+        results.append(
+            CheckResult(
+                "4", "R39_surface_gaps", STATUS_PASS,
+                " | ".join((R39_REFERENCE_INSPECT_GAP, R39_METADATA_PROJECTION_GAP, R39_OWNERSHIP_GAP)),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if tool_uuid is not None:
+            ok, res = await call(
+                client, "tool_delete", {"tool_uuid": tool_uuid, "changed_by": "live-smoke", "hard": True}
+            )
+            cleanup_ok = cleanup_ok and ok
+        if comment_uuid is not None:
+            ok, res = await call(
+                client, "comment_delete", {"comment": comment_uuid, "changed_by": "live-smoke", "hard": True}
+            )
+            cleanup_ok = cleanup_ok and ok
+        if todo_uuid is not None:
+            ok, res = await call(
+                client, "todo_delete", {"todo": todo_uuid, "changed_by": "live-smoke", "hard": True}
+            )
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R39_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
