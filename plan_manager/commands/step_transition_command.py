@@ -10,12 +10,13 @@ from plan_manager.commands.base_command import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.core.errors import InvalidParamsError
 
-from plan_manager.cascade.record import CascadeError
+from plan_manager.cascade.record import CascadeError, get_open_cascade
 from plan_manager.cascade.regime import check_admission
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
 from plan_manager.commands.step_transition_metadata import get_step_transition_metadata
+from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.domain.status_model import validate_transition
 from plan_manager.domain.step import Step
 from plan_manager.cascade.write import step_snapshot
@@ -157,7 +158,9 @@ class StepTransitionCommand(Command):
                 transitioned, skipped = _plan_transitions(nodes, selected, to_status)
                 gate = _unchecked_gate(scope_label, p.head_revision_uuid)
                 if to_status == "frozen" and require_green:
-                    gate = _run_transition_gate(conn, p.uuid, nodes, selected, scope_label)
+                    gate = _run_transition_gate(
+                        conn, p.uuid, nodes, selected, scope_label, p.head_revision_uuid
+                    )
                     if not gate["green"]:
                         return domain_error(
                             "GATE_RED",
@@ -408,19 +411,89 @@ def _unchecked_gate(scope_label: str, head_revision_uuid: uuid.UUID | None) -> d
     }
 
 
+def _live_working_revision(
+    conn: Any, plan_uuid: uuid.UUID, head_revision_uuid: uuid.UUID | None
+) -> uuid.UUID | None:
+    """Return the plan's live working-tip revision (bug 1ddea076).
+
+    run_gate itself always scans live table rows regardless of who calls
+    it -- there is no separate "base" snapshot it can read instead -- so
+    the mechanical gate's green/red verdict already reflects the plan's
+    current working state. What was wrong is only the label attached to
+    that verdict: run_gate reports ``current_head_revision``, which is
+    the plan HEAD and never moves while a cascade is open (the cascade's
+    BASE), not the cascade ref's current target (the WORKING TIP) that
+    plan_validate_command surfaces as ``tip_revision_uuid``. This
+    resolves the same tip plan_validate_command does: the open cascade's
+    ref target when a cascade is open, otherwise the plan head.
+
+    Args:
+        conn: Open database connection.
+        plan_uuid: Identity of the plan.
+        head_revision_uuid: The plan's head revision, used verbatim when
+            no cascade is open.
+
+    Returns:
+        The cascade's tip revision uuid when the plan has an open
+        cascade, else `head_revision_uuid` unchanged.
+    """
+    cascade = get_open_cascade(conn, plan_uuid)
+    if cascade is None:
+        return head_revision_uuid
+    return get_ref(conn, plan_uuid, cascade.name)
+
+
+def _hrs_slice_for(conn: Any, plan_uuid: uuid.UUID, gs: Step) -> list[Any]:
+    """Build a branch's hrs_slice exactly as views.branch.resolve_branch_scope
+    does, for a scoped freeze gate run (bug 1ddea076).
+
+    Before this fix, ``_run_transition_gate`` handed the mechanical gate a
+    BranchScope with ``hrs_slice=[]`` hardcoded, so
+    ``check_parse_sanity_counts`` (verify/gate_structure.py) fired a
+    spurious "branch hrs_slice is empty" finding on every scoped
+    (non-whole_plan) freeze, independent of whether the plan's actual
+    repaired state was green -- unlike plan_validate_command, which
+    always resolves the real hrs_slice via resolve_branch_scope. That
+    divergence, not any revision selection, is why a scope plan_validate
+    reported green could still be refused here with GATE_RED.
+
+    Args:
+        conn: Open database connection.
+        plan_uuid: Identity of the plan.
+        gs: The branch's resolved global (level 3) step.
+
+    Returns:
+        The list of Paragraph rows bound to gs.fields["source_labels"],
+        in document order, matching resolve_branch_scope's hrs_slice.
+    """
+    source_labels = gs.fields.get("source_labels", [])
+    bare = {label[1:-1] for label in source_labels}
+    return [
+        paragraph
+        for paragraph in list_paragraphs(conn, plan_uuid)
+        if paragraph.label is not None and paragraph.label in bare
+    ]
+
+
 def _run_transition_gate(
     conn: Any,
     plan_uuid: uuid.UUID,
     nodes: dict[uuid.UUID, Step],
     selected: list[Step],
     scope_label: str,
+    head_revision_uuid: uuid.UUID | None = None,
 ) -> dict[str, Any]:
+    # Bug 1ddea076: report and reason about the plan's live WORKING TIP --
+    # the same state plan_validate_command evaluates -- not the plan HEAD,
+    # which is the cascade's BASE and never moves while a cascade is open.
+    live_revision_uuid = _live_working_revision(conn, plan_uuid, head_revision_uuid)
+
     if scope_label == "whole_plan":
         report, verdict = run_gate(conn, plan_uuid)
         return {
             "green": report.green,
             "scope": scope_label,
-            "revision_uuid": str(verdict.revision_uuid) if verdict.revision_uuid else None,
+            "revision_uuid": str(live_revision_uuid) if live_revision_uuid else None,
             "required": True,
             "checked": True,
             "finding_count": _finding_count(report),
@@ -431,7 +504,7 @@ def _run_transition_gate(
         return {
             "green": False,
             "scope": scope_label,
-            "revision_uuid": None,
+            "revision_uuid": str(live_revision_uuid) if live_revision_uuid else None,
             "required": True,
             "checked": True,
             "finding_count": 1,
@@ -440,7 +513,7 @@ def _run_transition_gate(
 
     green = True
     finding_count = 0
-    revision_uuid = None
+    hrs_slices: dict[uuid.UUID, list[Any]] = {}
     for atomic in atomics:
         ts = nodes.get(atomic.parent_step_uuid)
         gs = nodes.get(ts.parent_step_uuid) if ts is not None else None
@@ -448,20 +521,31 @@ def _run_transition_gate(
             green = False
             finding_count += 1
             continue
+        if gs.uuid not in hrs_slices:
+            hrs_slices[gs.uuid] = _hrs_slice_for(conn, plan_uuid, gs)
         report, verdict = run_gate(
             conn,
             plan_uuid,
             # Bug 36414056: run_gate takes a BranchScope; the plain Branch view
             # has no ``depth`` and crashed the freeze gate with AttributeError.
-            branch=BranchScope(plan_uuid=plan_uuid, depth="as", gs=gs, ts=ts, atomic=atomic, hrs_slice=[]),
+            # Bug 1ddea076: hrs_slice must be resolved the same way
+            # resolve_branch_scope resolves it for plan_validate_command,
+            # not hardcoded empty (see _hrs_slice_for's docstring).
+            branch=BranchScope(
+                plan_uuid=plan_uuid,
+                depth="as",
+                gs=gs,
+                ts=ts,
+                atomic=atomic,
+                hrs_slice=hrs_slices[gs.uuid],
+            ),
         )
         green = green and report.green
         finding_count += _finding_count(report)
-        revision_uuid = verdict.revision_uuid
     return {
         "green": green,
         "scope": scope_label,
-        "revision_uuid": str(revision_uuid) if revision_uuid else None,
+        "revision_uuid": str(live_revision_uuid) if live_revision_uuid else None,
         "required": True,
         "checked": True,
         "finding_count": finding_count,

@@ -185,6 +185,12 @@ def test_run_transition_gate_passes_branch_scope_with_depth(monkeypatch) -> None
         return _Report(), _Verdict()
 
     monkeypatch.setattr(mod, "run_gate", fake_run_gate)
+    # Bug 1ddea076: _run_transition_gate now independently resolves the
+    # plan's open cascade (for the live working-tip revision) and the
+    # branch's hrs_slice (for BranchScope), both via a `conn` this test
+    # passes as None; stub both so the plumbing doesn't crash on that.
+    monkeypatch.setattr(mod, "get_open_cascade", lambda conn, plan_uuid: None)
+    monkeypatch.setattr(mod, "list_paragraphs", lambda conn, plan_uuid: [])
 
     result = mod._run_transition_gate(None, PLAN_UUID, nodes, [atomic], "G-001/T-001/A-001")
 
@@ -192,3 +198,7 @@ def test_run_transition_gate_passes_branch_scope_with_depth(monkeypatch) -> None
     assert result["green"] is True
     assert result["checked"] is True
     assert result["branch_count"] == 1
+    # gs has no fields["source_labels"] in this fixture, so the resolved
+    # hrs_slice is legitimately empty -- unlike the pre-fix hardcoded [],
+    # this is now a real resolution, not a shortcut.
+    assert seen[0].hrs_slice == []
