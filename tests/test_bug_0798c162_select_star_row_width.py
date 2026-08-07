@@ -102,9 +102,18 @@ ANSWER_ENVELOPE_TABLE_ROW = {
 }
 
 
+class _ColumnDesc:
+    """Mock psycopg column description."""
+    def __init__(self, name):
+        self.name = name
+
+
 class _Result:
-    def __init__(self, rows):
+    def __init__(self, rows, column_names=None):
         self._rows = rows
+        self.column_names = column_names or []
+        # Build description for psycopg's _row_to_dict compatibility
+        self.description = [_ColumnDesc(name) for name in self.column_names]
 
     def fetchall(self):
         return self._rows
@@ -144,17 +153,23 @@ class _SchemaAwareConn:
             return _Result([])
         projection = _projection(sql_text)
         if projection.replace(" ", "").lower() == "count(*)":
-            return _Result([(self.row_count,)])
+            return _Result([(self.row_count,)], column_names=["count"])
         values: list[object] = []
+        column_names: list[str] = []
         for term in projection.split(","):
             term = term.strip()
             if term == "*":
                 values.extend(self.table_row.values())
+                column_names.extend(self.table_row.keys())
             elif term.lower().startswith("count(*) over()"):
                 values.append(self.row_count)
+                column_names.append("total")
             else:
-                values.append(self.table_row[term])
-        return _Result([tuple(values)] * self.row_count)
+                # Strip quoted identifiers: "uuid" -> uuid, `uuid` -> uuid
+                unquoted_term = term.strip('"').strip('`')
+                values.append(self.table_row[unquoted_term])
+                column_names.append(unquoted_term)
+        return _Result([tuple(values)] * self.row_count, column_names=column_names)
 
 
 # --- projection pinning ------------------------------------------------------
@@ -242,4 +257,223 @@ def test_answer_envelope_reads_tolerate_additive_owner_column() -> None:
     records = list_answer_envelopes(conn)
     assert len(records) == 1
     assert records[0].kind == "result"
+    assert records[0].created_at == NOW.isoformat()
+
+
+# --- bug_fix and review_result pinning ----------------------------------------
+
+
+# The 26 bug_fix columns, in table order (migration 0013). Explicitly named
+# here to ensure no SELECT * or RETURNING * remains over this table.
+BUG_FIX_COLUMNS = (
+    "uuid", "bug_uuid", "status", "fix_type", "summary", "implementation_notes",
+    "source_project_id", "branch", "commit_hash", "pull_request", "changed_files",
+    "tests", "author", "reviewer", "started_at", "implemented_at", "verified_at",
+    "verification_method", "expected_result", "actual_result", "passed",
+    "revert_info", "created_by", "created_at", "updated_at", "deleted_at",
+)
+
+BUG_FIX_UUID = uuid.uuid4()
+BUG_UUID_FOR_FIX = uuid.uuid4()
+
+BUG_FIX_TABLE_ROW = {
+    "uuid": BUG_FIX_UUID,
+    "bug_uuid": BUG_UUID_FOR_FIX,
+    "status": "proposed",
+    "fix_type": "code",
+    "summary": "Fix the bug",
+    "implementation_notes": "Apply patch",
+    "source_project_id": uuid.uuid4(),
+    "branch": "fix/bug-123",
+    "commit_hash": "abc123def456",
+    "pull_request": "https://github.com/example/pr/123",
+    "changed_files": ["file1.py", "file2.py"],
+    "tests": ["test1", "test2"],
+    "author": "author_name",
+    "reviewer": None,
+    "started_at": None,
+    "implemented_at": None,
+    "verified_at": None,
+    "verification_method": None,
+    "expected_result": None,
+    "actual_result": None,
+    "passed": None,
+    "revert_info": None,
+    "created_by": "creator",
+    "created_at": NOW,
+    "updated_at": NOW,
+    "deleted_at": None,
+}
+
+# The 14 review_result columns, in table order (migration 0012).
+REVIEW_RESULT_COLUMNS = (
+    "uuid", "object_type", "reviewed_attempt_uuid", "reviewed_revision_uuid",
+    "reviewer", "status", "findings", "evidence", "verification_commands",
+    "escalation_target_uuid", "created_by", "created_at", "updated_at", "deleted_at",
+)
+
+REVIEW_UUID = uuid.uuid4()
+ATTEMPT_UUID = uuid.uuid4()
+
+REVIEW_RESULT_TABLE_ROW = {
+    "uuid": REVIEW_UUID,
+    "object_type": "execution_attempt",
+    "reviewed_attempt_uuid": ATTEMPT_UUID,
+    "reviewed_revision_uuid": None,
+    "reviewer": "reviewer_name",
+    "status": "accepted",
+    "findings": "All looks good",
+    "evidence": {"check": "passed"},
+    "verification_commands": ["cmd1", "cmd2"],
+    "escalation_target_uuid": None,
+    "created_by": "creator",
+    "created_at": NOW,
+    "updated_at": NOW,
+    "deleted_at": None,
+}
+
+
+def test_bug_fix_reads_project_explicit_columns() -> None:
+    """Test that bug_fix reads use explicit column projection, not SELECT *."""
+    from plan_manager.storage.bug_fix_store import (
+        get_bug_fix, list_bug_fixes, verify_bug_fix,
+    )
+
+    conn = _SchemaAwareConn(BUG_FIX_TABLE_ROW, row_count=1)
+
+    # Verify get_bug_fix uses explicit projection
+    get_bug_fix(conn, BUG_FIX_UUID)
+
+    # Verify list_bug_fixes uses explicit projection
+    list_bug_fixes(conn, bug_uuid=BUG_UUID_FOR_FIX)
+
+    # Check that no SELECT * is used
+    for sql_text, _params in conn.calls:
+        if sql_text.lstrip().upper().startswith("SELECT"):
+            projection = _projection(sql_text)
+            assert "*" not in projection, (
+                "bug_fix reads must never SELECT * (bug 0798c162)"
+            )
+            named = [
+                term.strip().strip('"').strip('`')  # Remove quotes from identifiers
+                for term in projection.split(",")
+                if not term.strip().lower().startswith("count(*) over()")
+            ]
+            assert tuple(named) == BUG_FIX_COLUMNS, (
+                f"bug_fix projection must list exactly the 26 columns in table order; "
+                f"got {tuple(named)} vs expected {BUG_FIX_COLUMNS}"
+            )
+
+
+def test_bug_fix_verify_and_revert_use_explicit_returning() -> None:
+    """Test that bug_fix UPDATE...RETURNING uses explicit columns, not RETURNING *."""
+    sql_calls = []
+
+    class _TrackingConn:
+        """Track SQL calls but don't execute them."""
+        def execute(self, sql, params=None):
+            sql_text = sql if isinstance(sql, str) else str(sql)
+            sql_calls.append(sql_text)
+            # Return empty result for verify/revert (they don't actually execute)
+            return _Result([])
+
+    conn = _TrackingConn()
+
+    # Simulate verify_bug_fix call (will fail on execute, but we capture the SQL)
+    try:
+        from plan_manager.storage.bug_fix_store import verify_bug_fix
+        verify_bug_fix(conn, BUG_FIX_UUID, changed_by="tester", passed=True)
+    except (AttributeError, TypeError):
+        pass  # Expected, since we're not returning a real row
+
+    # Check the UPDATE statement used explicit RETURNING
+    found_returning = False
+    for sql_text in sql_calls:
+        if "RETURNING" in sql_text:
+            assert "*" not in sql_text, (
+                "bug_fix UPDATE must not use RETURNING * (bug 0798c162)"
+            )
+            assert "uuid, bug_uuid" in sql_text, (
+                "bug_fix RETURNING must use explicit column list"
+            )
+            found_returning = True
+
+    # We expect at least one RETURNING statement
+    assert found_returning, "verify_bug_fix should execute an UPDATE...RETURNING"
+
+
+def test_review_result_reads_project_explicit_columns() -> None:
+    """Test that review_result reads use explicit column projection, not SELECT *."""
+    from plan_manager.storage.review_result_store import (
+        get_review_result, list_review_results,
+    )
+
+    conn = _SchemaAwareConn(REVIEW_RESULT_TABLE_ROW, row_count=1)
+
+    # Verify get_review_result uses explicit projection
+    get_review_result(conn, REVIEW_UUID)
+
+    # Verify list_review_results uses explicit projection
+    list_review_results(conn, reviewed_attempt_uuid=ATTEMPT_UUID)
+
+    # Check that no SELECT * is used
+    for sql_text, _params in conn.calls:
+        projection = _projection(sql_text)
+        assert "*" not in projection, (
+            "review_result reads must never SELECT * (bug 0798c162)"
+        )
+        named = [
+            term.strip().strip('"').strip('`')  # Remove quotes from identifiers
+            for term in projection.split(",")
+            if not term.strip().lower().startswith("count(*) over()")
+        ]
+        assert tuple(named) == REVIEW_RESULT_COLUMNS, (
+            f"review_result projection must list exactly the 14 columns in table order; "
+            f"got {tuple(named)} vs expected {REVIEW_RESULT_COLUMNS}"
+        )
+
+
+def test_bug_fix_reads_tolerate_additive_columns() -> None:
+    """Test that bug_fix reads work even if the physical table has more columns."""
+    from plan_manager.storage.bug_fix_store import get_bug_fix, list_bug_fixes
+
+    # Add a fake extra column to the row to simulate table widening
+    wider_row = dict(BUG_FIX_TABLE_ROW)
+    wider_row["future_owner_uuid"] = uuid.uuid4()  # Simulated additive column
+
+    conn = _SchemaAwareConn(wider_row, row_count=2)
+
+    record = get_bug_fix(conn, BUG_FIX_UUID)
+    assert record is not None
+    assert record.fix_uuid == BUG_FIX_UUID
+    assert record.status == "proposed"
+    assert record.summary == "Fix the bug"
+
+    records = list_bug_fixes(conn, bug_uuid=BUG_UUID_FOR_FIX)
+    assert len(records) == 2
+    assert records[0].author == "author_name"
+    assert records[0].created_at == NOW.isoformat()
+
+
+def test_review_result_reads_tolerate_additive_columns() -> None:
+    """Test that review_result reads work even if the physical table has more columns."""
+    from plan_manager.storage.review_result_store import (
+        get_review_result, list_review_results,
+    )
+
+    # Add a fake extra column to the row to simulate table widening
+    wider_row = dict(REVIEW_RESULT_TABLE_ROW)
+    wider_row["future_owner"] = uuid.uuid4()  # Simulated additive column
+
+    conn = _SchemaAwareConn(wider_row, row_count=1)
+
+    record = get_review_result(conn, REVIEW_UUID)
+    assert record is not None
+    assert record.review_uuid == REVIEW_UUID
+    assert record.object_type == "execution_attempt"
+    assert record.status == "accepted"
+
+    records = list_review_results(conn, reviewed_attempt_uuid=ATTEMPT_UUID)
+    assert len(records) == 1
+    assert records[0].reviewer == "reviewer_name"
     assert records[0].created_at == NOW.isoformat()
