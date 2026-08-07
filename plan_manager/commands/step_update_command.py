@@ -102,6 +102,25 @@ def _validate_relations_field(fields: dict[str, Any]) -> list[dict[str, str]] | 
     return result
 
 
+def _merge_step_fields(existing_fields: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """Shallow-merge patch onto existing_fields; an explicit null removes the key.
+
+    Bug 4bb0f85b: plain dict.update stores a literal null instead of
+    deleting the key, leaving no way to remove a stored fields key. Here a
+    None value in patch pops the key (no-op if already absent); any other
+    value overwrites it, unchanged from before. Stays shallow, matching the
+    existing single-level fields contract: nested values are replaced
+    wholesale, never merged recursively.
+    """
+    merged = dict(existing_fields)
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _validate_step_fields(level: int, merged_fields: dict[str, Any]) -> None:
     """Reject structurally malformed merged fields for level-specific steps.
 
@@ -190,7 +209,7 @@ class StepUpdateCommand(Command):
                 },
                 "fields": {
                     "type": "object",
-                    "description": "Non-empty level-specific field patch applied to the step's fields dict.",
+                    "description": "Non-empty level-specific field patch applied to the step's fields dict; an explicit null value for a key removes that key instead of storing a null.",
                     "additionalProperties": True,
                 },
                 "concepts": {
@@ -328,8 +347,7 @@ class StepUpdateCommand(Command):
                     if frozen_at_or_below(nodes, target.uuid):
                         return domain_error("FROZEN_ARTIFACT", str(exc))
                     return domain_error("CASCADE_REQUIRED", str(exc))
-                merged_fields = dict(target.fields)
-                merged_fields.update(fields)
+                merged_fields = _merge_step_fields(target.fields, fields)
                 _validate_step_fields(target.level, merged_fields)
                 if project_present:
                     update_step_fields_concepts_project(
