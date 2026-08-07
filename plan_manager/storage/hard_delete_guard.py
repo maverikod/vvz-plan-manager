@@ -23,12 +23,45 @@ to its paragraphs, concepts, relations and steps.
 from __future__ import annotations
 
 import uuid as uuid_module
+from collections.abc import Mapping
 from typing import Any
 
 import psycopg
 from psycopg import sql
 
 from plan_manager.storage.reference_catalog import blocking_entries_targeting
+
+_NO_PROBE = object()
+"""Sentinel: this catalog entry cannot be probed with the given identity."""
+
+
+def _probe_value(identity: Any, target_column: str) -> Any:
+    """Resolve the scalar to bind against one catalog entry's source column.
+
+    ``identity`` is almost always a bare scalar -- the ordinary uuid-keyed
+    case -- and is forwarded unchanged, exactly as before bug c315ff84: the
+    catalog's ``target_column`` default ("uuid") does not have to match the
+    dataclass field name (bug_uuid, fix_uuid, ...; see reference_catalog's
+    TARGET-COLUMN CAVEAT), so name-matching a scalar identity would break
+    every one of those.
+
+    ``identity`` is a mapping only for a genuinely composite ID_COLUMNS
+    identity (e.g. Concept's plan_uuid+concept_id) or when a caller passes an
+    explicit multi-key probe override. There, forwarding the mapping itself
+    as a SQL parameter cannot bind (bug c315ff84 shape 1: psycopg raises), and
+    probing a scoped key such as concept_id with the wrong component silently
+    matches nothing (shape 2). The component named by the catalog's own
+    ``target_column`` is the only correct choice; a single-key mapping falls
+    back to its sole value for the same reason the scalar branch ignores the
+    catalog's column name.
+    """
+    if isinstance(identity, Mapping):
+        if target_column in identity:
+            return identity[target_column]
+        if len(identity) == 1:
+            return next(iter(identity.values()))
+        return _NO_PROBE
+    return identity
 
 
 def _json_safe(value: Any) -> Any:
@@ -60,7 +93,12 @@ def lookup_referrers(
             accepts an entity type. Passing one would match no catalog entry and
             return an empty list, which reads as "nothing blocks this deletion"
             while the truth is the opposite.
-        entity_id: the identifier being probed for.
+        entity_id: the identifier being probed for. Usually a bare scalar
+            (the uuid-keyed case). For a composite identity -- or an explicit
+            multi-key probe override -- pass a mapping of id-column name to
+            value; each catalog entry is then probed with the component named
+            by its own ``target_column`` (see :func:`_probe_value`), never
+            with the mapping itself, which cannot bind as a SQL parameter.
 
     Returns:
         One dict per referring row with keys ``table``, ``column``,
@@ -69,6 +107,14 @@ def lookup_referrers(
     """
     referrers: list[dict[str, Any]] = []
     for entry in blocking_entries_targeting(table):
+        probe_value = _probe_value(entity_id, entry.target_column)
+        if probe_value is _NO_PROBE:
+            # A composite identity that does not carry the component this
+            # entry's target_column names cannot be probed at all -- there is
+            # no value to bind. Skipping (rather than guessing) is the safe
+            # choice: no other catalog entry loses its own probe over this.
+            continue
+
         clauses: list[sql.Composable] = []
         params: list[Any] = []
 
@@ -76,7 +122,7 @@ def lookup_referrers(
             clauses.append(sql.SQL("{} @> ARRAY[%s]").format(sql.Identifier(entry.source_column)))
         else:
             clauses.append(sql.SQL("{} = %s").format(sql.Identifier(entry.source_column)))
-        params.append(entity_id)
+        params.append(probe_value)
 
         # A polymorphic column such as anchor_ref_id points at a different table
         # per discriminator value, so the const filter is what selects THIS
@@ -118,6 +164,7 @@ def guarded_hard_delete(
     require_soft_deleted: bool = True,
     plan_uuid: Any = None,
     audit_entity_type: str | None = None,
+    probe_id: Any = None,
 ) -> dict[str, Any] | None:
     """Physically remove one row, refusing while any blocking reference exists.
 
@@ -142,7 +189,21 @@ def guarded_hard_delete(
             recorded the TABLE name (runtime_comment, bug_report) rather than the
             entity type (comment, bug). Changing them would split the audit
             history for existing audit_list queries, so those callers pass their
-            historical value.
+            historical value. Also reported as the ``entity_type`` of a raised
+            EntityReferencedError, for the same reason.
+        probe_id: the identity to consult the reference catalog with, when it
+            differs from ``entity_id`` (bug c315ff84). Defaults to
+            ``entity_id``, which is correct for every ordinary uuid-keyed and
+            composite-keyed entity. It exists for a deletion SEAT class whose
+            own identity is not what the catalog keys its blocking entries by
+            -- e.g. concept_store's ``_ConceptRowByUuid`` deletes by uuid, but
+            the catalog's entries for "concept" key on the scoped
+            ``concept_id`` (see ``reference_catalog``'s "references to concept"
+            entries) -- so the caller passes the scoped key explicitly rather
+            than the guard silently matching nothing against the wrong column.
+            Also reported as the ``entity_id`` of a raised EntityReferencedError
+            and its refusal-audit payload, since that is the identity the
+            refusal was actually decided against.
         returning: when False the deleted payload is not read back and None is
             returned, exactly as before.
         require_soft_deleted: keep the two-phase discipline — a row is removed
@@ -177,7 +238,8 @@ def guarded_hard_delete(
         if current.get(entity_cls.SOFT_DELETE_COLUMN) is None:
             raise EntityNotSoftDeletedError(entity_cls.entity_type(), entity_id)
 
-    referrers = lookup_referrers(conn, entity_cls.TABLE_NAME, entity_id)
+    reported_id = entity_id if probe_id is None else probe_id
+    referrers = lookup_referrers(conn, entity_cls.TABLE_NAME, reported_id)
     if referrers:
         record_runtime_change(
             conn,
@@ -187,10 +249,12 @@ def guarded_hard_delete(
             action="hard_delete",
             changed_by=changed_by,
             changed_fields=_json_safe(
-                {"refused": True, "id": entity_id, "referrers": referrers}
+                {"refused": True, "id": reported_id, "referrers": referrers}
             ),
         )
-        raise EntityReferencedError(entity_cls.entity_type(), entity_id, referrers)
+        raise EntityReferencedError(
+            audit_entity_type or entity_cls.entity_type(), reported_id, referrers
+        )
 
     id_values = entity_cls._normalize_id(entity_id)
     predicate, params = entity_cls._predicate_sql(id_values)

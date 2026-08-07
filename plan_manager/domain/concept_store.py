@@ -18,11 +18,12 @@ from plan_manager.domain.concept import Concept, validate_concept, check_concept
 class _ConceptRowByUuid(Concept):
     """Uuid-keyed deletion seat for the concept table (CR-7 G-004).
 
-    The guard's catalog probes for concept are keyed by concept_id (the
-    scoped reference key), while the physical row is deleted by its uuid.
-    remove_concept consults the guard's read surface with the concept_id
-    first, then hands the uuid to the guarded engine delete; this subclass
-    only narrows the identity predicate to the uuid column.
+    The catalog's blocking entries for "concept" key on the scoped
+    concept_id (relation.from_concept/to_concept, step.concepts), while the
+    physical row is deleted by its uuid. remove_concept passes concept_id as
+    guarded_hard_delete's ``probe_id`` (bug c315ff84 fix) so the guard's own
+    catalog probe uses the right column; this subclass only narrows the
+    identity predicate used by the DELETE itself to the uuid column.
     """
 
     # Not a user-facing entity type of its own: ENTITY_TYPE=None keeps this
@@ -239,19 +240,11 @@ def remove_concept(
         raise ValueError(f"concept not found: {concept_id}")
     # CR-7 G-004 (C-005, C-012): the deletion guard is consulted on every
     # concept removal (bug da06315d: a concept still referenced by relations
-    # is refused). The catalog keys concept references by concept_id, so the
-    # guard's read surface is probed with that key; the physical delete then
-    # goes through the guarded engine wrapper on the row's uuid.
-    from plan_manager.domain.entity import EntityReferencedError
-    from plan_manager.storage.hard_delete_guard import lookup_referrers
-
-    referrers = [
-        ref
-        for ref in lookup_referrers(conn, "concept", concept_id)
-        if not (ref["table"] == "relation" and plan_uuid is None)
-    ]
-    if referrers:
-        raise EntityReferencedError("concept", concept_id, referrers)
+    # is refused). Bug c315ff84 fix: guarded_hard_delete now accepts an
+    # explicit probe_id, so the scoped concept_id key reaches the guard's own
+    # catalog probe directly instead of this store re-implementing the check
+    # ahead of a uuid-only delete call. EntityReferencedError -- and its
+    # refusal audit -- are raised by the guard itself.
     row = conn.execute(
         "SELECT uuid FROM concept WHERE plan_uuid = %s AND concept_id = %s",
         (plan_uuid, concept_id),
@@ -263,5 +256,6 @@ def remove_concept(
         returning=False,
         plan_uuid=plan_uuid,
         audit_entity_type="concept",
+        probe_id=concept_id,
     )
     return existing

@@ -1074,11 +1074,17 @@ class DataclassEntity(EntityRecord):
         changed_by: str = "system",
         plan_uuid: Any = None,
         audit_entity_type: str | None = None,
+        probe_id: Any = None,
     ) -> dict[str, Any] | None:
         """Physically delete one already-soft-deleted row.
 
         This is a low-level helper for ``crud_purge_soft_deleted_batch``. Normal
         callers should use ``crud_delete``/``crud_soft_delete``.
+
+        probe_id: forwarded to the guard unchanged -- see
+            ``hard_delete_guard.guarded_hard_delete`` for what it is for (bug
+            c315ff84). Only a deletion seat class whose own identity is not
+            what the reference catalog keys its blocking entries by needs it.
         """
         return hard_delete_entity(
             cls,
@@ -1089,6 +1095,7 @@ class DataclassEntity(EntityRecord):
             changed_by=changed_by,
             plan_uuid=plan_uuid,
             audit_entity_type=audit_entity_type,
+            probe_id=probe_id,
         )
 
     @classmethod
@@ -1327,6 +1334,7 @@ def hard_delete_entity(
     changed_by: str = "system",
     plan_uuid: Any = None,
     audit_entity_type: str | None = None,
+    probe_id: Any = None,
 ) -> dict[str, Any] | None:
     """Centrally perform physical deletion for one already-soft-deleted row.
 
@@ -1334,7 +1342,9 @@ def hard_delete_entity(
     plan_manager.storage.hard_delete_guard now. This function stays as the
     entity-layer entry point so no caller changes; changed_by is an additive
     defaulted keyword so a caller that knows the actor can name it in the audit
-    trail, and every existing caller keeps working untouched.
+    trail, and every existing caller keeps working untouched. probe_id is the
+    same kind of additive keyword, for the reference-catalog probe identity
+    (bug c315ff84) rather than the actor.
     """
     # Function-level import by construction: the guard imports this module's
     # error types, so a module-level import here would close the cycle.
@@ -1349,6 +1359,7 @@ def hard_delete_entity(
         require_soft_deleted=require_soft_deleted,
         plan_uuid=plan_uuid,
         audit_entity_type=audit_entity_type,
+        probe_id=probe_id,
     )
 
 
