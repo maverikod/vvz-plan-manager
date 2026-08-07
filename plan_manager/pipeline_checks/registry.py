@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -272,6 +273,71 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
             "raise SystemExit(g004_scan_main())",
         ),
     ),
+    # -----------------------------------------------------------------------
+    # CR-7 G-008/T-001/A-001: the four-check acceptance group.
+    # -----------------------------------------------------------------------
+    PipelineCheckSpec(
+        name="cr7-identifier-classification",
+        description=(
+            "CR-7 G-008: every identifier column of every registered table is "
+            "classified in the reference catalogue (extends the CR-6 "
+            "total-classification guard to the CR-7 registry scope)."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_reference_catalog.py::test_every_uuid_column_of_a_registered_table_is_classified",
+            "tests/test_reference_catalog.py::test_the_pending_classification_list_only_shrinks",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr7-metadata-projection-equality",
+        description=(
+            "CR-7 G-008: the database projection of the reference metadata "
+            "(field catalogue, relation-index triple shape, enumeration "
+            "seeds) equals its source of truth in code, byte-comparable in "
+            "both directions."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_cr7_metadata_projection_equality.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr7-owner-or-root-declared",
+        description=(
+            "CR-7 G-008: every registered entity class declares exactly one "
+            "ownership state (OWNER_COLUMN in COLUMNS, OWNER_ROOT, or a "
+            "recorded OWNER_GAP)."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_cr7_owner_or_root_declared.py",
+        ),
+    ),
+    PipelineCheckSpec(
+        name="cr7",
+        description=(
+            "Run the CR-7 G-008 four-check acceptance group as one command: "
+            "cr7-identifier-classification, cr7-no-out-of-mechanism-write, "
+            "cr7-metadata-projection-equality, cr7-owner-or-root-declared."
+        ),
+        # The group runner is itself a subprocess (the same idiom as
+        # g004_scan_main above) so ``pipeline cr7`` dispatches through the
+        # ordinary get_check(name) exact-name lookup like every other check,
+        # with no change to pipeline_cli.py's dispatch logic.
+        argv=(
+            sys.executable,
+            "-c",
+            "from plan_manager.pipeline_checks.registry import cr7_group_main; "
+            "raise SystemExit(cr7_group_main())",
+        ),
+    ),
 )
 
 
@@ -422,3 +488,49 @@ def g004_scan_main(package_dir: Path | None = None) -> int:
         f"({len(known_exceptions)} documented compatibility exception(s))."
     )
     return 0
+
+
+# ---------------------------------------------------------------------------
+# CR-7 G-008/T-001/A-001: the ``cr7`` acceptance-group umbrella.
+#
+# G-008's acceptance is carried by four named checks, each mechanically
+# runnable and RED/GREEN-legible on its own. This umbrella wires them into one
+# group runnable as ``pipeline cr7``, the same subprocess-body idiom as
+# g004_scan_main above: each member check runs as its own subprocess (its own
+# argv, unmodified), so running the group is equivalent to running the four
+# checks individually in sequence, and a failure in any one fails the group.
+# ---------------------------------------------------------------------------
+
+_CR7_GROUP_CHECK_NAMES: tuple[str, ...] = (
+    "cr7-identifier-classification",
+    "cr7-no-out-of-mechanism-write",
+    "cr7-metadata-projection-equality",
+    "cr7-owner-or-root-declared",
+)
+
+
+def cr7_group_main() -> int:
+    """Subprocess body of the ``cr7`` pipeline check: run the four G-008 checks.
+
+    Runs every check named in _CR7_GROUP_CHECK_NAMES, in order, each as its
+    own subprocess under its own argv (unchanged from its individual
+    registration), and continues through all four even after a failure so one
+    run reports every failing check, not just the first. Returns 0 only when
+    every one of the four returned 0.
+    """
+    exit_code = 0
+    for name in _CR7_GROUP_CHECK_NAMES:
+        spec = get_check(name)
+        print(f"[cr7] {name}: {' '.join(spec.argv)}", flush=True)
+        completed = subprocess.run(spec.argv, cwd=_REPO_ROOT)
+        if completed.returncode != 0:
+            print(f"[cr7] FAILED: {name} (exit {completed.returncode})", flush=True)
+            if exit_code == 0:
+                exit_code = completed.returncode
+        else:
+            print(f"[cr7] OK: {name}", flush=True)
+    if exit_code:
+        print("cr7: RED -- one or more of the four G-008 acceptance checks failed.", flush=True)
+    else:
+        print("cr7: GREEN -- all four G-008 acceptance checks passed.", flush=True)
+    return exit_code
