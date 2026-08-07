@@ -337,6 +337,7 @@ def _uuid_columns_of_registered_tables() -> set[tuple[str, str]]:
 def test_every_uuid_column_of_a_registered_table_is_classified() -> None:
     from plan_manager.storage.reference_catalog import (
         EXTERNAL_IDENTIFIER_COLUMNS,
+        REGISTRY_RESOLVED_OWNER_COLUMNS,
         UNCLASSIFIED_REFERENCE_COLUMNS,
     )
 
@@ -344,12 +345,17 @@ def test_every_uuid_column_of_a_registered_table_is_classified() -> None:
     assert columns, "no uuid columns parsed out of the migration chain"
 
     classified = (
-        set(REFERENCE_CATALOG) | set(EXTERNAL_IDENTIFIER_COLUMNS) | set(UNCLASSIFIED_REFERENCE_COLUMNS)
+        set(REFERENCE_CATALOG)
+        | set(EXTERNAL_IDENTIFIER_COLUMNS)
+        | set(UNCLASSIFIED_REFERENCE_COLUMNS)
+        # G-007/T-001/A-001: the anchor-collapse owner edges resolve their
+        # target through the identity registry, not a fixed CatalogEntry.
+        | set(REGISTRY_RESOLVED_OWNER_COLUMNS)
     )
     unclassified = sorted(columns - classified)
     assert unclassified == [], (
-        "uuid columns in neither REFERENCE_CATALOG, EXTERNAL_IDENTIFIER_COLUMNS nor "
-        f"UNCLASSIFIED_REFERENCE_COLUMNS: {unclassified}"
+        "uuid columns in neither REFERENCE_CATALOG, EXTERNAL_IDENTIFIER_COLUMNS, "
+        f"UNCLASSIFIED_REFERENCE_COLUMNS nor REGISTRY_RESOLVED_OWNER_COLUMNS: {unclassified}"
     )
 
 
