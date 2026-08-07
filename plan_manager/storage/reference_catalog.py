@@ -352,6 +352,28 @@ UNCLASSIFIED_REFERENCE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
 )
 """uuid reference columns awaiting classification (bug f7b9cebf). Shrinks only."""
 
+REGISTRY_RESOLVED_OWNER_COLUMNS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("todo_item", "owner"),
+        ("wish_item", "owner"),
+        ("bug_report", "owner_uuid"),
+        ("runtime_comment", "owner"),
+        ("calendar_entry", "owner"),
+        ("escalation", "owner"),
+        ("answer_envelope", "owner"),
+    }
+)
+"""The G-007 anchor-collapse owner edges (migration 0029_owner_edge_schema.sql).
+
+The target table is resolved through the identity registry per row, so no
+single ``CatalogEntry`` can carry a fixed ``target_table`` for these columns
+the way it does for an ordinary FK-shaped reference. Deletion/blocking
+semantics for these edges are enforced by the ownership model and the
+admission collaborator, not by this catalog. Full catalog treatment -- a
+proper ``CatalogEntry`` with owner-aware blocking/on_delete behaviour --
+arrives with G-007/T-001/A-003's owner-based query rewrite.
+"""
+
 
 def _entity_classes() -> list[type]:
     """Every table-backed DataclassEntity subclass, discovered once per call.
