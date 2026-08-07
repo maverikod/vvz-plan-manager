@@ -9,6 +9,25 @@ from plan_manager.domain.answer_envelope import AnswerEnvelope, validate_answer_
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
+# Explicit read projection for every answer_envelope SELECT in this module (bug
+# 0798c162 sweep): these reads used SELECT * with positional row indexing, so a
+# schema change to the table's column order -- or a column inserted before the
+# tail -- would silently misread rows (migration 0029 appended `owner`).
+# Selecting exactly these columns pins the row shape to the names, immune to
+# future additive columns.
+_ENVELOPE_SELECT_COLUMN_NAMES = (
+    "uuid", "kind", "schema_version", "payload", "anchor_plan_uuid",
+    "anchor_step_uuid", "attempt_uuid", "created_by", "created_at",
+    "updated_at", "deleted_at",
+)
+_ENVELOPE_SELECT_COLUMNS = ", ".join(_ENVELOPE_SELECT_COLUMN_NAMES)
+
+
+def _row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+    """Zip a row fetched via _ENVELOPE_SELECT_COLUMNS into a column dict."""
+    return dict(zip(_ENVELOPE_SELECT_COLUMN_NAMES, row))
+
+
 def _row_to_record(row: dict[str, Any]) -> AnswerEnvelope:
     """Convert a database row dict to an AnswerEnvelope instance."""
     created_at_str = row["created_at"].isoformat() if isinstance(row["created_at"], datetime) else row["created_at"]
@@ -93,28 +112,14 @@ def create_answer_envelope(
 
 def get_answer_envelope(conn: psycopg.Connection, envelope_uuid: uuid.UUID) -> AnswerEnvelope | None:
     """Get an answer envelope by its UUID."""
-    sql = "SELECT * FROM answer_envelope WHERE uuid = %s"
+    sql = f"SELECT {_ENVELOPE_SELECT_COLUMNS} FROM answer_envelope WHERE uuid = %s"
     cursor = conn.execute(sql, (envelope_uuid,))
     row = cursor.fetchone()
 
     if row is None:
         return None
 
-    row_dict = {
-        "uuid": row[0],
-        "kind": row[1],
-        "schema_version": row[2],
-        "payload": row[3],
-        "anchor_plan_uuid": row[4],
-        "anchor_step_uuid": row[5],
-        "attempt_uuid": row[6],
-        "created_by": row[7],
-        "created_at": row[8],
-        "updated_at": row[9],
-        "deleted_at": row[10],
-    }
-
-    return _row_to_record(row_dict)
+    return _row_to_record(_row_to_dict(row))
 
 
 def list_answer_envelopes(
@@ -126,7 +131,7 @@ def list_answer_envelopes(
     include_deleted: bool = False,
 ) -> list[AnswerEnvelope]:
     """List answer envelopes with optional filters."""
-    sql_parts = ["SELECT * FROM answer_envelope WHERE 1=1"]
+    sql_parts = [f"SELECT {_ENVELOPE_SELECT_COLUMNS} FROM answer_envelope WHERE 1=1"]
     params: list[Any] = []
 
     if kind is not None:
@@ -151,21 +156,4 @@ def list_answer_envelopes(
     cursor = conn.execute(sql, params)
     rows = cursor.fetchall()
 
-    envelopes = []
-    for row in rows:
-        row_dict = {
-            "uuid": row[0],
-            "kind": row[1],
-            "schema_version": row[2],
-            "payload": row[3],
-            "anchor_plan_uuid": row[4],
-            "anchor_step_uuid": row[5],
-            "attempt_uuid": row[6],
-            "created_by": row[7],
-            "created_at": row[8],
-            "updated_at": row[9],
-            "deleted_at": row[10],
-        }
-        envelopes.append(_row_to_record(row_dict))
-
-    return envelopes
+    return [_row_to_record(_row_to_dict(row)) for row in rows]

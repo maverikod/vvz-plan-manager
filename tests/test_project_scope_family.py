@@ -148,7 +148,10 @@ def test_list_bugs_page_sql_without_project_filter_unchanged() -> None:
     conn = _FakeConn()
     list_bugs_page(conn)
     sql, params = conn.calls[0]
-    assert "source_project_id" not in sql
+    # The explicit read projection (bug 0798c162) legitimately names
+    # source_project_id in the SELECT list; what must be absent is the
+    # WHERE filter (both its direct arm and the transitive subquery).
+    assert "source_project_id = %s" not in sql
     assert "project_ids" not in sql
     assert params == [50, 0]  # no filters at all -> only the default LIMIT/OFFSET params remain
 
@@ -334,7 +337,9 @@ def test_list_escalations_sql_without_project_filter_unchanged() -> None:
     conn = _FakeConn()
     list_escalations(conn)
     sql, params = conn.calls[0]
-    assert "anchor_project_id" not in sql
+    # The explicit read projection (bug 0798c162) legitimately names the
+    # column in the SELECT list; what must be absent is the WHERE filter.
+    assert "anchor_project_id = %s" not in sql
     assert params == []
 
 

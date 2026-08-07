@@ -15,8 +15,25 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, check
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
+# Explicit read projection for every bug_report SELECT in this module. Bug
+# 0798c162: these reads used SELECT * and unpacked the row into a fixed
+# 34-element tuple, so migration 0029's additive owner_uuid column made every
+# bug_report row 35 wide and broke bug_list/bug_get with "too many values to
+# unpack". Selecting exactly the columns _row_to_record consumes keeps the row
+# shape pinned to the unpack below, immune to future additive columns.
+_BUG_REPORT_SELECT_COLUMNS = """
+    uuid, title, short_description, detailed_description, expected_behavior,
+    actual_behavior, reproduction, evidence, environment, kind, severity,
+    priority_nice, status, reporter, owner, duplicate_of_uuid, parent_bug_uuid,
+    source_anchor_type, source_project_id, source_file_path, source_plan_uuid,
+    source_revision_uuid, source_step_uuid, source_step_path, source_ref_id,
+    source_command, source_service, confirmed_at, closed_at, reopened_at,
+    created_by, created_at, updated_at, deleted_at
+"""
+
+
 def _row_to_record(row: tuple[Any, ...]) -> BugReport:
-    """Convert a raw database row tuple to a BugReport object."""
+    """Convert a database row tuple (in _BUG_REPORT_SELECT_COLUMNS order) to a BugReport object."""
     (uuid_val, title, short_description, detailed_description, expected_behavior, actual_behavior,
      reproduction, evidence, environment, kind, severity, priority_nice, status, reporter, owner,
      duplicate_of_uuid, parent_bug_uuid, source_anchor_type, source_project_id, source_file_path,
@@ -101,7 +118,8 @@ def create_bug(
             "source_command": source_cols["source_command"],
             "source_service": source_cols["source_service"],
             # Explicit NULL lifecycle columns keep the compatibility-state
-            # INSERT in full table-column order (SELECT * roundtrip parity).
+            # INSERT in full table-column order (read-projection roundtrip
+            # parity with _BUG_REPORT_SELECT_COLUMNS).
             "confirmed_at": None, "closed_at": None, "reopened_at": None,
             "created_by": created_by, "created_at": now, "updated_at": now,
             "deleted_at": None,
@@ -126,7 +144,7 @@ def create_bug(
 
 def get_bug(conn: psycopg.Connection, bug_uuid: uuid.UUID) -> BugReport | None:
     """Retrieve a bug report by UUID; return None if not found."""
-    sql = "SELECT * FROM bug_report WHERE uuid = %s"
+    sql = f"SELECT {_BUG_REPORT_SELECT_COLUMNS} FROM bug_report WHERE uuid = %s"
     result = conn.execute(sql, (bug_uuid,))
     row = result.fetchone()
     if row is None:
@@ -172,7 +190,7 @@ def list_bugs(
         where_clauses.append("deleted_at IS NULL")
 
     where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
-    sql = f"SELECT * FROM bug_report WHERE {where_clause} ORDER BY created_at ASC"
+    sql = f"SELECT {_BUG_REPORT_SELECT_COLUMNS} FROM bug_report WHERE {where_clause} ORDER BY created_at ASC"
 
     result = conn.execute(sql, params)
     rows = result.fetchall()
@@ -301,7 +319,7 @@ def list_bugs_page(
     where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
 
     sql = (
-        f"SELECT *, count(*) OVER() AS total FROM bug_report WHERE {where_clause} "
+        f"SELECT {_BUG_REPORT_SELECT_COLUMNS}, count(*) OVER() AS total FROM bug_report WHERE {where_clause} "
         "ORDER BY created_at ASC, uuid ASC LIMIT %s OFFSET %s"
     )
     rows = conn.execute(sql, params + [limit, offset]).fetchall()

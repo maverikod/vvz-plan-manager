@@ -115,7 +115,9 @@ def test_list_bugs_sql_without_plan_scope_unchanged() -> None:
     conn = _FakeConn()
     list_bugs(conn)
     sql, params = conn.calls[0]
-    assert "source_plan_uuid" not in sql
+    # The explicit read projection (bug 0798c162) legitimately names the
+    # column in the SELECT list; what must be absent is the WHERE filter.
+    assert "source_plan_uuid = %s" not in sql
     assert params == []
 
 
@@ -226,7 +228,9 @@ def test_list_escalations_sql_without_plan_scope_unchanged() -> None:
     conn = _FakeConn()
     list_escalations(conn)
     sql, params = conn.calls[0]
-    assert "anchor_plan_uuid" not in sql
+    # The explicit read projection (bug 0798c162) legitimately names the
+    # column in the SELECT list; what must be absent is the WHERE filter.
+    assert "anchor_plan_uuid = %s" not in sql
     assert params == []
 
 

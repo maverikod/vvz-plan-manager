@@ -23,9 +23,11 @@ class _FakeConn:
     """Minimal psycopg-shaped connection.
 
     Mirrors psycopg's placeholder/parameter parity check (the source of defect 1),
-    stores the inserted bug_report row, and serves get_bug's SELECT * from it. The
-    bug_report INSERT column order, SELECT * order, and _row_to_record unpack order
-    are identical, so the captured params tuple is a valid SELECT * row.
+    stores the inserted bug_report row, and serves get_bug's SELECT from it. The
+    bug_report INSERT column order, the explicit read projection
+    (_BUG_REPORT_SELECT_COLUMNS, bug 0798c162 -- SELECT * is banned in this store
+    now), and _row_to_record's unpack order are identical, so the captured params
+    tuple is a valid row for the read.
     """
 
     def __init__(self):
@@ -44,7 +46,8 @@ class _FakeConn:
         if normalized.startswith("INSERT INTO BUG_REPORT"):
             self._bug_row = params
             return _Cursor(None)
-        if normalized.startswith("SELECT * FROM BUG_REPORT"):
+        if normalized.startswith("SELECT") and "FROM BUG_REPORT" in normalized:
+            assert "SELECT *" not in normalized, "bug_report reads must not SELECT * (bug 0798c162)"
             return _Cursor(self._bug_row)
         return _Cursor(None)
 

@@ -7742,6 +7742,87 @@ async def run_r39_cr7_invariants(
     return results
 
 
+async def run_r40_owner_edge_read_projection(client: Any) -> list[CheckResult]:
+    """Bug 0798c162: migration 0029 appended an additive owner edge column to
+    seven tables (bug_report got ``owner_uuid``), and bug_report_store's read
+    paths unpacked ``SELECT *`` rows into a fixed 34-element tuple -- so on
+    live 0.1.99 every bug_list/bug_get failed with "too many values to unpack
+    (expected 34)". The sweep also converted escalation_store and
+    answer_envelope_store (same ``SELECT *`` pattern, positional indexing) to
+    explicit column projections.
+
+    Recipe: a throwaway plan + one scratch bug guarantee at least one
+    bug_report row actually flows through the fixed row converter (an empty
+    filtered result would not exercise the unpack); bug_list(plan=...) and
+    bug_get are the exact repro calls. escalation_list is the swept sibling's
+    read -- read-only, and even with zero rows it validates the projected
+    escalation column names against the live schema (a bad name fails the
+    SELECT outright). answer_envelope has no command surface, so its swept
+    store is pinned by unit tests only
+    (tests/test_bug_0798c162_select_star_row_width.py). Cleanup hard-deletes
+    the scratch bug then the plan in a top-level try/finally (r13's idiom:
+    source_plan_uuid carries no FK/cascade, so plan_delete alone would orphan
+    the bug row).
+    """
+    results: list[CheckResult] = []
+    plan_name = unique_suffix("r40-plan")
+    ok, plan_res = await call(client, "plan_create", {"name": plan_name})
+    if not ok or not isinstance(plan_res, dict) or not plan_res.get("uuid"):
+        results.append(CheckResult("4", "R40_plan_create", STATUS_FAIL, str(plan_res)))
+        return results
+    plan_uuid = plan_res["uuid"]
+    bug_uuid: Optional[str] = None
+    try:
+        title = unique_suffix("r40-bug")
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "plan": plan_uuid, "title": title,
+                "short_description": "R40 scratch bug (owner-edge read projection)",
+                "detailed_description": "scratch row so bug_list/bug_get unpack a real post-0029 row",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19,
+                "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "plan", "source_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R40_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        results.append(CheckResult("4", "R40_bug_create", STATUS_PASS, f"uuid={bug_uuid}"))
+
+        # The live failure mode: any bug_list that materializes >= 1 row.
+        ok, res = await call(client, "bug_list", {"plan": plan_uuid, "limit": 5})
+        list_ok = ok and isinstance(res, dict) and isinstance(res.get("bugs"), list)
+        results.append(CheckResult("4", "R40_0798c162_bug_list_call", STATUS_PASS if list_ok else STATUS_FAIL, "" if list_ok else str(res)))
+        if list_ok:
+            row_present = any(isinstance(b, dict) and b.get("uuid") == bug_uuid for b in res["bugs"])
+            results.append(CheckResult("4", "R40_0798c162_bug_list_row_unpacked", STATUS_PASS if row_present else STATUS_FAIL, "" if row_present else f"bug {bug_uuid} missing from bug_list(plan={plan_name})"))
+
+        # bug_get shares get_bug's projection with the list path.
+        ok, res = await call(client, "bug_get", {"bug_id": bug_uuid})
+        get_ok = ok and isinstance(res, dict) and res.get("uuid") == bug_uuid
+        results.append(CheckResult("4", "R40_0798c162_bug_get_call", STATUS_PASS if get_ok else STATUS_FAIL, "" if get_ok else str(res)))
+
+        # Swept sibling: escalation reads now use an explicit projection too.
+        ok, res = await call(client, "escalation_list", {})
+        results.append(CheckResult("4", "R40_0798c162_escalation_list_call", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+    finally:
+        cleanup_ok = True
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+        cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R40_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

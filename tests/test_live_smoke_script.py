@@ -4501,3 +4501,79 @@ def test_run_r37_is_still_dispatched_after_r36_registry_order():
     failing spec, so r37/r38 are reachable regardless of r36's outcome."""
     ordered_keys = [spec.key for spec in ls.LIVE_SMOKE_TEST_SPECS]
     assert ordered_keys.index("r36") < ordered_keys.index("r37") < ordered_keys.index("r38")
+
+
+# --------------------------------------------------------------------------
+# R40: explicit read projection after the 0029 owner-edge column (bug
+# 0798c162) -- bug_list/bug_get must survive a post-0029 bug_report row and
+# escalation_list must validate the swept escalation projection live.
+# --------------------------------------------------------------------------
+
+
+def _r40_success_responses() -> dict:
+    return {
+        "plan_create": _ok({"uuid": "plan-r40"}),
+        "bug_create": _ok({"uuid": "bug-r40"}),
+        "bug_list": _ok({"bugs": [{"uuid": "bug-r40", "status": "reported"}], "total": 1, "limit": 5, "offset": 0}),
+        "bug_get": _ok({"uuid": "bug-r40", "status": "reported"}),
+        "escalation_list": _ok({"escalations": []}),
+        "bug_delete": _ok({"deleted_uuid": "bug-r40"}),
+        "plan_delete": _ok({"deleted_uuid": "plan-r40"}),
+    }
+
+
+def test_run_r40_is_registered_for_pipeline_dispatch():
+    spec = ls.get_live_smoke_test_spec("r40")
+    assert spec.function_name == "run_r40_owner_edge_read_projection"
+    assert spec.needs_catalog is False
+    assert spec.needs_project is False
+    assert hasattr(ls, spec.function_name)
+
+
+def test_run_r40_full_success_every_check_passes():
+    client = _ScriptedClient(_r40_success_responses())
+
+    results = asyncio.run(ls.run_r40_owner_edge_read_projection(client))
+
+    assert not any(r.status == ls.STATUS_FAIL for r in results), [r.line() for r in results]
+    names = [r.name for r in results]
+    for expected in (
+        "R40_bug_create",
+        "R40_0798c162_bug_list_call",
+        "R40_0798c162_bug_list_row_unpacked",
+        "R40_0798c162_bug_get_call",
+        "R40_0798c162_escalation_list_call",
+        "R40_cleanup",
+    ):
+        assert expected in names, names
+    assert [name for name, _ in client.calls] == [
+        "plan_create", "bug_create", "bug_list", "bug_get",
+        "escalation_list", "bug_delete", "plan_delete",
+    ]
+    bug_delete_params = dict(client.calls)["bug_delete"]
+    assert bug_delete_params.get("hard") is True
+    plan_delete_params = dict(client.calls)["plan_delete"]
+    assert plan_delete_params.get("hard") is True
+
+
+def test_run_r40_unpack_regression_fails_named_check_and_still_cleans_up():
+    """The exact live 0.1.99 failure shape: bug_list dies server-side with
+    the fixed-width unpack error. The check group must FAIL the named
+    bug_list check (not skip, not crash) and still hard-delete its scratch
+    bug and plan."""
+    responses = _r40_success_responses()
+    responses["bug_list"] = {
+        "success": False,
+        "error": "Command execution error: too many values to unpack (expected 34)",
+    }
+    client = _ScriptedClient(responses)
+
+    results = asyncio.run(ls.run_r40_owner_edge_read_projection(client))
+
+    by_name = {r.name: r for r in results}
+    assert by_name["R40_0798c162_bug_list_call"].status == ls.STATUS_FAIL
+    assert "too many values to unpack" in by_name["R40_0798c162_bug_list_call"].detail
+    called = [name for name, _ in client.calls]
+    assert "bug_delete" in called
+    assert "plan_delete" in called
+    assert by_name["R40_cleanup"].status == ls.STATUS_PASS

@@ -124,6 +124,12 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "index effects, metadata projection equality, and ownership declared",
         needs_catalog=True,
     ),
+    LiveSmokeTestSpec(
+        "r40",
+        "run_r40_owner_edge_read_projection",
+        "bug_list/bug_get/escalation_list explicit read projection after the "
+        "0029 owner-edge column (bug 0798c162)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

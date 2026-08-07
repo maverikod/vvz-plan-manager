@@ -7,8 +7,32 @@ import psycopg
 from plan_manager.domain.escalation import Escalation, ESCALATION_STATUSES, validate_escalation_status
 from plan_manager.domain.primary_anchor import PrimaryAnchor, validate_anchor, anchor_to_columns, anchor_from_columns
 from plan_manager.domain.runtime_validation import RuntimeValidationError
-from plan_manager.storage.escalation_routing_store import ROUTING_INSERT_COLUMNS, routing_from_row
+from plan_manager.storage.escalation_routing_store import routing_from_row
 from plan_manager.storage.runtime_audit_store import record_runtime_change
+
+
+# Explicit read projection for every escalation SELECT in this module (bug
+# 0798c162 sweep): these reads used SELECT * with positional row indexing, so
+# any change to the table's column order -- and, for the fixed slices, any
+# inserted column -- would silently misread rows (migration 0029 appended
+# `owner`, which the fixed indexes below would otherwise drift onto). Selecting
+# exactly these columns pins the row shape to the names, immune to future
+# additive columns.
+_ESCALATION_SELECT_COLUMN_NAMES = (
+    "uuid", "primary_anchor_type", "anchor_project_id", "anchor_file_path",
+    "anchor_plan_uuid", "anchor_revision_uuid", "anchor_step_uuid",
+    "anchor_step_path", "anchor_ref_id", "reason", "from_level", "to_level",
+    "status", "resolution", "resolved_by", "resolved_at", "created_by",
+    "created_at", "updated_at", "deleted_at", "addressee_level",
+    "addressee_role", "forwarded_from_uuid", "chain_root_uuid",
+    "sweep_priority", "blocks_subtree",
+)
+_ESCALATION_SELECT_COLUMNS = ", ".join(_ESCALATION_SELECT_COLUMN_NAMES)
+
+
+def _row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+    """Zip a row fetched via _ESCALATION_SELECT_COLUMNS into a column dict."""
+    return dict(zip(_ESCALATION_SELECT_COLUMN_NAMES, row))
 
 
 def _row_to_record(row: dict[str, Any]) -> Escalation:
@@ -165,15 +189,16 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
                        resolution: str) -> Escalation:
     """Resolve an open escalation."""
     # Load the existing escalation
-    sql_select = "SELECT * FROM escalation WHERE uuid = %s"
+    sql_select = f"SELECT {_ESCALATION_SELECT_COLUMNS} FROM escalation WHERE uuid = %s"
     cursor = conn.execute(sql_select, (escalation_uuid,))
     row = cursor.fetchone()
 
     if row is None:
         raise RuntimeValidationError(f"Escalation {escalation_uuid} not found")
+    row_dict = _row_to_dict(row)
 
     # Check if soft-deleted
-    if row[19] is not None:  # deleted_at column (20th column, 0-indexed as 19)
+    if row_dict["deleted_at"] is not None:
         raise RuntimeValidationError(f"Escalation {escalation_uuid} is deleted")
 
     # Get current timestamp
@@ -198,10 +223,9 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
     conn.execute(sql_update, params)
 
     # Record runtime change
-    # row[4] is anchor_plan_uuid (5th column, 0-indexed as 4)
     record_runtime_change(
         conn,
-        plan_uuid=row[4],
+        plan_uuid=row_dict["anchor_plan_uuid"],
         entity_type="escalation",
         entity_id=escalation_uuid,
         action="update",
@@ -212,19 +236,19 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
     # Rebuild the row dict for _row_to_record
     # Using the updated values
     anchor_columns = {
-        "primary_anchor_type": row[1],
-        "anchor_project_id": row[2],
-        "anchor_file_path": row[3],
-        "anchor_plan_uuid": row[4],
-        "anchor_revision_uuid": row[5],
-        "anchor_step_uuid": row[6],
-        "anchor_step_path": row[7],
-        "anchor_ref_id": row[8],
+        "primary_anchor_type": row_dict["primary_anchor_type"],
+        "anchor_project_id": row_dict["anchor_project_id"],
+        "anchor_file_path": row_dict["anchor_file_path"],
+        "anchor_plan_uuid": row_dict["anchor_plan_uuid"],
+        "anchor_revision_uuid": row_dict["anchor_revision_uuid"],
+        "anchor_step_uuid": row_dict["anchor_step_uuid"],
+        "anchor_step_path": row_dict["anchor_step_path"],
+        "anchor_ref_id": row_dict["anchor_ref_id"],
     }
     anchor = anchor_from_columns(anchor_columns)
-    # row[20:26] are the six routing columns, in ROUTING_INSERT_COLUMNS order
-    routing = routing_from_row(dict(zip(ROUTING_INSERT_COLUMNS, row[20:26])))
+    routing = routing_from_row(row_dict)
 
+    created_at_val = row_dict["created_at"]
     return Escalation(
         escalation_uuid=escalation_uuid,
         primary_anchor_type=anchor.anchor_type,
@@ -235,15 +259,15 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
         anchor_step_uuid=anchor.step_uuid,
         anchor_step_path=anchor.step_path,
         anchor_ref_id=anchor.ref_id,
-        reason=row[9],
-        from_level=row[10],
-        to_level=row[11],
+        reason=row_dict["reason"],
+        from_level=row_dict["from_level"],
+        to_level=row_dict["to_level"],
         status="resolved",
         resolution=resolution,
         resolved_by=resolved_by,
         resolved_at=now.isoformat(),
-        created_by=row[16],
-        created_at=row[17].isoformat() if isinstance(row[17], datetime) else row[17],
+        created_by=row_dict["created_by"],
+        created_at=created_at_val.isoformat() if isinstance(created_at_val, datetime) else created_at_val,
         updated_at=now.isoformat(),
         deleted_at=None,
         **routing,
@@ -252,44 +276,14 @@ def resolve_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID, *, 
 
 def get_escalation(conn: psycopg.Connection, escalation_uuid: uuid.UUID) -> Escalation | None:
     """Get an escalation by UUID."""
-    sql = "SELECT * FROM escalation WHERE uuid = %s"
+    sql = f"SELECT {_ESCALATION_SELECT_COLUMNS} FROM escalation WHERE uuid = %s"
     cursor = conn.execute(sql, (escalation_uuid,))
     row = cursor.fetchone()
 
     if row is None:
         return None
 
-    # Convert tuple to dict for reconstruction
-    row_dict = {
-        "uuid": row[0],
-        "primary_anchor_type": row[1],
-        "anchor_project_id": row[2],
-        "anchor_file_path": row[3],
-        "anchor_plan_uuid": row[4],
-        "anchor_revision_uuid": row[5],
-        "anchor_step_uuid": row[6],
-        "anchor_step_path": row[7],
-        "anchor_ref_id": row[8],
-        "reason": row[9],
-        "from_level": row[10],
-        "to_level": row[11],
-        "status": row[12],
-        "resolution": row[13],
-        "resolved_by": row[14],
-        "resolved_at": row[15],
-        "created_by": row[16],
-        "created_at": row[17],
-        "updated_at": row[18],
-        "deleted_at": row[19],
-        "addressee_level": row[20],
-        "addressee_role": row[21],
-        "forwarded_from_uuid": row[22],
-        "chain_root_uuid": row[23],
-        "sweep_priority": row[24],
-        "blocks_subtree": row[25],
-    }
-
-    return _row_to_record(row_dict)
+    return _row_to_record(_row_to_dict(row))
 
 
 def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
@@ -311,7 +305,7 @@ def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
     anchor_project_id is None.
     """
     # Build the query
-    sql_parts = ["SELECT * FROM escalation WHERE 1=1"]
+    sql_parts = [f"SELECT {_ESCALATION_SELECT_COLUMNS} FROM escalation WHERE 1=1"]
     params: list[Any] = []
 
     if status is not None:
@@ -345,36 +339,4 @@ def list_escalations(conn: psycopg.Connection, *, status: str | None = None,
     cursor = conn.execute(sql, params)
     rows = cursor.fetchall()
 
-    escalations = []
-    for row in rows:
-        row_dict = {
-            "uuid": row[0],
-            "primary_anchor_type": row[1],
-            "anchor_project_id": row[2],
-            "anchor_file_path": row[3],
-            "anchor_plan_uuid": row[4],
-            "anchor_revision_uuid": row[5],
-            "anchor_step_uuid": row[6],
-            "anchor_step_path": row[7],
-            "anchor_ref_id": row[8],
-            "reason": row[9],
-            "from_level": row[10],
-            "to_level": row[11],
-            "status": row[12],
-            "resolution": row[13],
-            "resolved_by": row[14],
-            "resolved_at": row[15],
-            "created_by": row[16],
-            "created_at": row[17],
-            "updated_at": row[18],
-            "deleted_at": row[19],
-            "addressee_level": row[20],
-            "addressee_role": row[21],
-            "forwarded_from_uuid": row[22],
-            "chain_root_uuid": row[23],
-            "sweep_priority": row[24],
-            "blocks_subtree": row[25],
-        }
-        escalations.append(_row_to_record(row_dict))
-
-    return escalations
+    return [_row_to_record(_row_to_dict(row)) for row in rows]
