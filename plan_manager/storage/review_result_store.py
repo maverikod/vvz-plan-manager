@@ -13,6 +13,17 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, check
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
+# Explicit read projection for every review_result SELECT in this module. Bug
+# 0798c162: SELECT * rows are fragile when tables add columns; selecting
+# exactly the columns _row_to_record consumes keeps the row shape pinned to
+# the unpack below, immune to future additive columns.
+_REVIEW_RESULT_SELECT_COLUMNS = """
+    uuid, object_type, reviewed_attempt_uuid, reviewed_revision_uuid, reviewer,
+    status, findings, evidence, verification_commands, escalation_target_uuid,
+    created_by, created_at, updated_at, deleted_at
+"""
+
+
 def create_review_result(
     conn: psycopg.Connection, *, object_type: str, reviewer: str, status: str, created_by: str,
     reviewed_attempt_uuid: uuid.UUID | None = None, reviewed_revision_uuid: uuid.UUID | None = None,
@@ -105,7 +116,7 @@ def create_review_result(
 
 def get_review_result(conn: psycopg.Connection, review_uuid: uuid.UUID) -> ReviewResult | None:
     """Fetch a single review result by UUID, or None if not found."""
-    sql = "SELECT * FROM review_result WHERE uuid = %s"
+    sql = f"SELECT {_REVIEW_RESULT_SELECT_COLUMNS} FROM review_result WHERE uuid = %s"
     row = conn.execute(sql, (review_uuid,)).fetchone()
     if row is None:
         return None
@@ -170,14 +181,14 @@ def list_review_results(
         conditions.append("deleted_at IS NULL")
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
-    sql = f"SELECT * FROM review_result WHERE {where_clause} ORDER BY created_at ASC"
+    sql = f"SELECT {_REVIEW_RESULT_SELECT_COLUMNS} FROM review_result WHERE {where_clause} ORDER BY created_at ASC"
 
     rows = conn.execute(sql, params).fetchall()
     return [_row_to_record(row) for row in rows]
 
 
 def _row_to_record(row: Any) -> ReviewResult:
-    """Convert a database row tuple to a ReviewResult dataclass instance.
+    """Convert a database row tuple (in _REVIEW_RESULT_SELECT_COLUMNS order) to a ReviewResult dataclass instance.
 
     Row columns (in table order):
     0: uuid, 1: object_type, 2: reviewed_attempt_uuid, 3: reviewed_revision_uuid,
