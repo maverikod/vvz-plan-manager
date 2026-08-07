@@ -17,6 +17,7 @@ from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
 from plan_manager.commands.step_transition_metadata import get_step_transition_metadata
 from plan_manager.domain.paragraph_store import list_paragraphs
+from plan_manager.domain.plan_status_sync import derive_plan_status, set_plan_status
 from plan_manager.domain.status_model import validate_transition
 from plan_manager.domain.step import Step
 from plan_manager.cascade.write import step_snapshot
@@ -239,6 +240,20 @@ class StepTransitionCommand(Command):
                             "UPDATE step SET status = %s WHERE uuid = %s",
                             (item["to"], uuid.UUID(item["uuid"])),
                         )
+                    # Bug 845b43a8: plan.status is a derived projection of the
+                    # WHOLE step tree, not just this transition's scope -- a
+                    # scoped freeze/unfreeze can complete or break a full
+                    # freeze of the plan, so recompute from every step's
+                    # post-transition status (nodes.values(), overridden by
+                    # this call's own transitioned targets), not just
+                    # `selected`. Atomic with the step UPDATEs above: same
+                    # conn/transaction, committed together by db_connection().
+                    new_status_by_uuid = {item["uuid"]: item["to"] for item in transitioned}
+                    aggregate_status = derive_plan_status(
+                        new_status_by_uuid.get(str(step.uuid), step.status)
+                        for step in nodes.values()
+                    )
+                    set_plan_status(conn, p.uuid, aggregate_status)
                     changes = [
                         (
                             uuid.UUID(item["uuid"]),

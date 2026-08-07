@@ -28,6 +28,14 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
             "Patches level-specific fields of an existing step under its "
             "declarative level schema and/or replaces the step's top-level "
             "concept bindings, re-validating every touched reference. "
+            "Within fields, an explicit null value for a key REMOVES that "
+            "key from the stored fields mapping instead of storing a null "
+            "under it (bug 4bb0f85b); nulling a key that is not currently "
+            "present is a no-op, not an error. The merge is shallow: a "
+            "non-null value for a key replaces that key's stored value "
+            "wholesale, so nested lists/objects are never merged "
+            "recursively -- only fields' own top-level keys can be removed "
+            "this way. "
             "fields.relations must be a list of relation objects with type, "
             "from_concept, and to_concept; malformed relation payloads are "
             "rejected before storage. This is a mutating command that runs "
@@ -78,7 +86,7 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "required": True,
             },
             "fields": {
-                "description": "Optional non-empty level-specific field patch applied to the step's fields dict.",
+                "description": "Optional non-empty level-specific field patch applied to the step's fields dict; an explicit null value for a key removes that key instead of storing a null.",
                 "type": "object",
                 "required": False,
             },
@@ -133,6 +141,11 @@ def get_step_update_metadata(cls: type) -> dict[str, Any]:
                 "description": "Patch a single level-specific field on an existing step.",
                 "command": {"plan": "plan_manager", "step_id": "T-006", "fields": {"name": "step-commands"}},
                 "explanation": "Applies the given field patch to T-006 and returns the re-read result.",
+            },
+            {
+                "description": "Remove a stored fields key by nulling it.",
+                "command": {"plan": "plan_manager", "step_id": "T-006", "fields": {"scratch_note": None}},
+                "explanation": "An explicit null for scratch_note removes that key from the step's stored fields dict entirely, rather than storing a null under it; nulling a key that is not currently present is a no-op.",
             },
             {
                 "description": "Replace a step's top-level concept bindings.",

@@ -250,38 +250,50 @@ def _wave_data(
 ) -> tuple[list[list[str]], dict[uuid.UUID, int]]:
     """Partition the scoped atomic steps into execution waves.
 
-    ``edges`` is the full plan edge set (build_edges over every node); it
-    is restricted here to edges whose endpoints are both scoped atomic
-    steps. Wave partitioning ranges over the atomic subset only, but the
-    tie-break key is resolved against the full ``nodes`` so parent paths
-    of repeated local ids (A-001 under different tactical steps) stay
-    canonical. On a genuine cycle the raised message carries the concrete
-    canonical cycle path.
+    Bug 5d923c91: filtering ``edges`` to atomic-only endpoints before
+    computing waves silently dropped every GS/TS-level depends_on edge
+    (e.g. G-002 depends_on G-001), so an AS under a dependent GS could
+    land in the same wave as, or before, an AS under the GS it structurally
+    depends on. The fix reuses the exact closure algorithm graph_parallel_map
+    drives (``waves`` in this module, over the FULL plan graph — every
+    level, not atomic steps alone) instead of forking a second closure
+    computation: ``waves`` already inherits an ancestor's explicit
+    prerequisites down to every descendant and applies the strict-subtree-
+    closure semantics from todo 19391f0b, so a GS/TS-level dependency edge
+    reaches every atomic step in the dependent subtree even though the
+    GS/TS nodes themselves never appear in the returned wave map.
+
+    ``edges`` and ``nodes`` are the full plan edge/node sets (build_edges
+    and load_steps over every node, every level) -- the same inputs
+    graph_parallel_map's ``waves(nodes, edges)`` call uses, so the two
+    commands always agree on relative order. The full-graph wave rows are
+    then projected onto the scoped atomic subset: rows with no atomic step
+    in scope are dropped and the remaining indices are compacted to a
+    dense 0..N-1 range, so a narrow scope (e.g. one tactical step) still
+    reports a compact wave map. On a genuine cycle the raised message
+    carries the concrete canonical cycle path.
     """
     atomic_nodes = {step.uuid: step for step in atomic_steps}
-    atomic_edges = {
-        (prereq, dependent)
-        for prereq, dependent in edges
-        if prereq in atomic_nodes and dependent in atomic_nodes
-    }
     try:
-        wave_rows = waves(atomic_nodes, atomic_edges, key_nodes=nodes)
+        full_wave_rows = waves(nodes, edges, key_nodes=nodes)
     except ValueError as exc:
         if str(exc) == "cycle detected":
-            _order, residual = topological_order(
-                atomic_nodes, atomic_edges, key_nodes=nodes
-            )
+            _order, residual = topological_order(nodes, edges, key_nodes=nodes)
             cycle_path = " -> ".join(
-                _step_key(nodes, atomic_nodes[node_uuid]) for node_uuid in residual
+                _step_key(nodes, nodes[node_uuid]) for node_uuid in residual
             )
             raise ValueError(f"cycle detected: {cycle_path}") from exc
         raise
     wave_index: dict[uuid.UUID, int] = {}
     result: list[list[str]] = []
-    for index, row in enumerate(wave_rows):
-        keys = [_step_key(nodes, atomic_nodes[node_uuid]) for node_uuid in row]
+    for row in full_wave_rows:
+        scoped_row = [node_uuid for node_uuid in row if node_uuid in atomic_nodes]
+        if not scoped_row:
+            continue
+        index = len(result)
+        keys = [_step_key(nodes, atomic_nodes[node_uuid]) for node_uuid in scoped_row]
         result.append(keys)
-        for node_uuid in row:
+        for node_uuid in scoped_row:
             wave_index[node_uuid] = index
     return result, wave_index
 

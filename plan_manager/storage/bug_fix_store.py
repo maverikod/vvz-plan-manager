@@ -12,11 +12,25 @@ from plan_manager.domain.runtime_validation import RuntimeValidationError, check
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 
 
-def _row_to_record(row: dict[str, Any] | tuple[Any, ...]) -> BugFix:
-    """Build a BugFix from a DB row dict or tuple in bug_fix table column order.
+# Explicit read projection for every bug_fix SELECT/RETURNING in this module. Bug
+# 0798c162: reads used SELECT * and RETURNING * which are fragile when tables add
+# columns. Selecting exactly the columns _row_to_record consumes keeps the row
+# shape pinned to the unpack below, immune to future additive columns.
+_BUG_FIX_SELECT_COLUMNS = """
+    uuid, bug_uuid, status, fix_type, summary, implementation_notes,
+    source_project_id, branch, commit_hash, pull_request, changed_files, tests,
+    author, reviewer, started_at, implemented_at, verified_at, verification_method,
+    expected_result, actual_result, passed, revert_info, created_by, created_at,
+    updated_at, deleted_at
+"""
 
-    crud_* methods return dicts with column names as keys; legacy tuple-based
-    callers (if any) are still supported by dict-conversion.
+
+def _row_to_record(row: dict[str, Any] | tuple[Any, ...]) -> BugFix:
+    """Build a BugFix from a DB row dict or tuple in _BUG_FIX_SELECT_COLUMNS order.
+
+    crud_* methods return dicts with column names as keys; tuple-based
+    callers (verify_bug_fix, revert_bug_fix) must match the explicit
+    projection to stay immune to future additive columns (bug 0798c162).
     """
     if isinstance(row, dict):
         return BugFix(
@@ -230,7 +244,7 @@ def verify_bug_fix(conn: psycopg.Connection, fix_uuid: uuid.UUID, *, changed_by:
         params.append(actual_result)
     params.append(fix_uuid)
     update_clause = ", ".join(updates)
-    sql = f"UPDATE bug_fix SET {update_clause} WHERE uuid = %s RETURNING *"
+    sql = f"UPDATE bug_fix SET {update_clause} WHERE uuid = %s RETURNING {_BUG_FIX_SELECT_COLUMNS}"
     cursor = conn.execute(sql, params)
     row = cursor.fetchone()
     record_runtime_change(conn, plan_uuid=None, entity_type="bug_fix", entity_id=fix_uuid, action="update", changed_by=changed_by)
@@ -240,11 +254,11 @@ def verify_bug_fix(conn: psycopg.Connection, fix_uuid: uuid.UUID, *, changed_by:
 def revert_bug_fix(conn: psycopg.Connection, fix_uuid: uuid.UUID, *, changed_by: str, revert_info: dict[str, Any]) -> BugFix:
     """Revert a bug fix."""
     now = datetime.now(timezone.utc)
-    sql = """
+    sql = f"""
     UPDATE bug_fix
     SET status = %s, revert_info = %s, updated_at = %s
     WHERE uuid = %s
-    RETURNING *
+    RETURNING {_BUG_FIX_SELECT_COLUMNS}
     """
     params = ("reverted", Jsonb(revert_info), now, fix_uuid)
     cursor = conn.execute(sql, params)
