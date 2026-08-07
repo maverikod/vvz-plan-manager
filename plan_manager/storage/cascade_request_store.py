@@ -19,6 +19,8 @@ class CascadeRequestRecord(DataclassEntity):
     ENTITY_ID_FIELD = "request_uuid"
     TABLE_NAME = "cascade_request"
     SOFT_DELETE_COLUMN = None
+    # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
+    OWNER_COLUMN = "plan_uuid"
 
     request_uuid: uuid.UUID
     plan_uuid: uuid.UUID

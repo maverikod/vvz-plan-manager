@@ -28,39 +28,17 @@ from plan_manager.storage.identity import ALLOWED_TABLES
 # ---------------------------------------------------------------------------
 # Known, tracked ownership gaps.
 #
-# Widening the sweep beyond the domain package surfaces three registered
-# classes that declare no OWNER_COLUMN/OWNER_ROOT/OWNER_GAP today:
-# RuntimeAuditRecord, SrtSnapshotRecord and CascadeRequestRecord. Fixing them
-# means editing their own module (plan_manager/storage/runtime_audit_store.py,
-# srt_snapshot_store.py, cascade_request_store.py) -- out of scope for this
-# step (CR-7 G-008/T-001/A-001), whose frozen prompt permits touching only
-# plan_manager/pipeline_checks/registry.py. They are named here, explicitly
-# and visibly, exactly like plan_manager/storage/reference_catalog.py's
-# UNCLASSIFIED_REFERENCE_COLUMNS/EXCLUDED_TABLES discipline: a documented
-# decision, not a silent exemption, and the check output below prints every
-# one of them so the gap stays visible pipeline run after pipeline run.
-#
 # THIS DICT MUST ONLY SHRINK. A class that gains a real ownership declaration
 # must be removed from here (test_known_ownership_gaps_are_still_real_gaps
 # below fails loudly if an entry has actually been fixed but left listed).
 # Nothing may be added without a written reason.
+#
+# All three storage-layer seats (RuntimeAuditRecord, SrtSnapshotRecord,
+# CascadeRequestRecord) declared their ownership state as of CR-7 G-003 and
+# have been removed from this dict.
 # ---------------------------------------------------------------------------
 
-_KNOWN_OWNERSHIP_GAPS: dict[str, str] = {
-    "runtime_audit_log": (
-        "RuntimeAuditRecord (plan_manager/storage/runtime_audit_store.py): "
-        "append-only audit trail seat, no ownership state declared yet"
-    ),
-    "srt_snapshot": (
-        "SrtSnapshotRecord (plan_manager/storage/srt_snapshot_store.py): "
-        "content-hash-deduplicated derived snapshot seat, no ownership state "
-        "declared yet"
-    ),
-    "cascade_request": (
-        "CascadeRequestRecord (plan_manager/storage/cascade_request_store.py): "
-        "cascade request seat, no ownership state declared yet"
-    ),
-}
+_KNOWN_OWNERSHIP_GAPS: dict[str, str] = {}
 
 
 def _import_every_registered_seat_module() -> None:
