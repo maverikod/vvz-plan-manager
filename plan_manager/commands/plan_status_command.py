@@ -8,6 +8,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.plan_status_metadata import get_plan_status_metadata
 from plan_manager.commands.resolve import resolve_plan
+from plan_manager.domain.plan_status_sync import derive_plan_status
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate import run_gate
 from plan_manager.views.dependency_graph import load_steps
@@ -94,6 +95,14 @@ class PlanStatusCommand(Command):
                     status_distribution[step.status] = (
                         status_distribution.get(step.status, 0) + 1
                     )
+                # Bug 845b43a8: plan.status is written eagerly by
+                # step_transition/plan_unfreeze (see plan_status_sync), but
+                # this dashboard also reports the live derivation and flags
+                # any divergence -- historical rows repaired by migration
+                # 0030 should always show status_consistent True; a future
+                # write-path bug would surface here as False before it ever
+                # reaches an operator through plan_list alone.
+                derived_status = derive_plan_status(step.status for step in nodes.values())
                 report, verdict = run_gate(conn, p.uuid)
                 gate_part = {
                     "green": report.green,
@@ -134,6 +143,8 @@ class PlanStatusCommand(Command):
                             "uuid": str(p.uuid),
                             "name": p.name,
                             "status": p.status,
+                            "derived_status": derived_status,
+                            "status_consistent": p.status == derived_status,
                             "completed": p.completed,
                             "comment": p.comment,
                         },

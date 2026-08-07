@@ -15,9 +15,15 @@ from plan_manager.storage.version_store import create_ref
 def _all_steps_frozen(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> bool:
     """Return True when the plan has at least one step and every step is frozen.
 
-    Plan-level status is never set to 'frozen' by any command surface; a fully
-    frozen plan manifests as a non-empty step set whose every row has
-    step.status = 'frozen'. An empty step set is authoring-stage and not frozen.
+    This is the ground-truth check, independent of the plan.status column: a
+    fully frozen plan is a non-empty step set whose every row has
+    step.status = 'frozen'. An empty step set is authoring-stage and not
+    frozen. (Bug 845b43a8: plan.status is now KEPT in sync with this same
+    definition by plan_manager.domain.plan_status_sync, called from
+    step_transition and plan_unfreeze -- but this function still computes the
+    truth directly from the step tree rather than trusting the mirror, since
+    it also has to work correctly the instant plan_unfreeze forces
+    plan.status back to 'draft' while the tree is still all-frozen.)
     """
     has_steps = conn.execute(
         "SELECT EXISTS (SELECT 1 FROM step WHERE plan_uuid = %s)",
