@@ -7823,6 +7823,685 @@ async def run_r40_owner_edge_read_projection(client: Any) -> list[CheckResult]:
     return results
 
 
+async def run_r41_plan_status_freeze_sync(client: Any) -> list[CheckResult]:
+    """Bug 845b43a8: plan.status is a stored aggregate that used to be
+    written once at create_plan() time and never touched again, so a fully
+    frozen plan (every step frozen) still reported status='draft' forever
+    via plan_status/plan_list. plan_status_sync.derive_plan_status now
+    recomputes the aggregate (frozen iff every step frozen, else draft)
+    after every step_transition -- always over the WHOLE step tree, never
+    just the transitioned scope -- and plan_unfreeze force-resets it to
+    'draft' the instant an audited cascade reopens a fully frozen plan
+    (the tree itself is still all-frozen at that instant, so the aggregate
+    cannot be derived from it there). plan_status now also exposes
+    derived_status (recomputed live from the step tree) and
+    status_consistent (status == derived_status).
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> one G
+    step -> step_transition(whole_plan -> frozen, require_green=false) ->
+    plan_status must report status='frozen', derived_status='frozen',
+    status_consistent=true -> plan_unfreeze -> plan_status must
+    immediately report status='draft'. Cleanup: cascade_abort (unfreeze
+    always leaves one open) then plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_open = False
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r41-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R41_845b43a8_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R41_845b43a8_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R41_845b43a8_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R41_845b43a8_repro_step_created", STATUS_PASS, f"G={g_id}"))
+
+        ok, res = await call(
+            client, "step_transition",
+            {"plan": plan_uuid, "scope": "whole_plan", "to_status": "frozen", "require_green": False},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R41_845b43a8_freeze_whole_plan", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R41_845b43a8_freeze_whole_plan", STATUS_PASS))
+
+        ok, res = await call(client, "plan_status", {"plan": plan_uuid})
+        plan_part = res.get("plan") if ok and isinstance(res, dict) else None
+        frozen_ok = (
+            ok and isinstance(plan_part, dict)
+            and plan_part.get("status") == "frozen"
+            and plan_part.get("derived_status") == "frozen"
+            and plan_part.get("status_consistent") is True
+        )
+        results.append(
+            CheckResult(
+                "4", "R41_845b43a8_plan_status_reports_frozen",
+                STATUS_PASS if frozen_ok else STATUS_FAIL,
+                "" if frozen_ok else (
+                    "expected status=derived_status='frozen', status_consistent=True, "
+                    f"got ok={ok} plan={plan_part!r}"
+                ),
+            )
+        )
+        if not frozen_ok:
+            return results
+
+        ok, res = await call(
+            client, "plan_unfreeze",
+            {
+                "plan": plan_uuid, "changed_by": "live-smoke",
+                "reason": "R41 plan.status aggregate probe (bug 845b43a8)",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R41_845b43a8_plan_unfreeze", STATUS_FAIL, str(res)))
+            return results
+        cascade_open = True
+        results.append(CheckResult("4", "R41_845b43a8_plan_unfreeze", STATUS_PASS, f"cascade_uuid={res['cascade_uuid']}"))
+
+        ok, res = await call(client, "plan_status", {"plan": plan_uuid})
+        plan_part = res.get("plan") if ok and isinstance(res, dict) else None
+        draft_ok = ok and isinstance(plan_part, dict) and plan_part.get("status") == "draft"
+        results.append(
+            CheckResult(
+                "4", "R41_845b43a8_plan_status_reports_draft_after_unfreeze",
+                STATUS_PASS if draft_ok else STATUS_FAIL,
+                "" if draft_ok else f"expected status='draft' immediately after unfreeze, got ok={ok} plan={plan_part!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if cascade_open:
+            ok, res = await call(client, "cascade_abort", {"plan": plan_uuid})
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R41_845b43a8_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+# Fixed CR-7 acceptance plan (see docs/cr7_acceptance_governance.md): frozen,
+# gate-green, deployed and left live so R42 has a stable, real multi-GS
+# dependency graph to read WITHOUT constructing (and hardcoding the shape of)
+# its own throwaway fixture.
+R42_CR7_PLAN_UUID = "99340015-56d0-415d-860a-06bf46c51aa2"
+
+
+def _r42_group_as_waves_by_gs(wave_rows: list[list[str]]) -> dict[str, list[int]]:
+    """Group AS-level artifact-path wave indices by their owning GS id.
+
+    ``wave_rows`` is a list of waves (index = wave number), each a list of
+    artifact path strings at any level. Only entries with exactly three
+    '/'-separated segments (G-NNN/T-NNN/A-NNN) are AS-level; GS-only,
+    TS-only, or any path not observed in a scoped wave map are ignored.
+    """
+    by_gs: dict[str, list[int]] = {}
+    for wave_index, row in enumerate(wave_rows):
+        for path in row:
+            segments = path.split("/")
+            if len(segments) != 3:
+                continue
+            by_gs.setdefault(segments[0], []).append(wave_index)
+    return by_gs
+
+
+def _r42_gs_dependency_closure(gs_entries: list[dict[str, Any]]) -> dict[str, set[str]]:
+    """Transitive closure of GS-level depends_on edges.
+
+    step.depends_on holds "step_id values of sibling steps this step
+    depends on" (direct edges only); this closes it transitively so a
+    two-hop chain (G-003 depends_on G-002 depends_on G-001) still reaches
+    the (G-001, G-003) pair.
+    """
+    direct: dict[str, set[str]] = {}
+    for entry in gs_entries:
+        gs_id = entry.get("step_id")
+        if not isinstance(gs_id, str):
+            continue
+        deps = entry.get("depends_on") or []
+        direct[gs_id] = {d for d in deps if isinstance(d, str)}
+    closure: dict[str, set[str]] = {}
+    for gs_id in direct:
+        seen: set[str] = set()
+        stack = list(direct.get(gs_id, ()))
+        while stack:
+            dep = stack.pop()
+            if dep in seen:
+                continue
+            seen.add(dep)
+            stack.extend(direct.get(dep, ()))
+        closure[gs_id] = seen
+    return closure
+
+
+def _r42_closure_violations(
+    closure: dict[str, set[str]], as_waves_by_gs: dict[str, list[int]]
+) -> list[str]:
+    """Every (producer, dependent) GS pair the closure names, with both
+    sides represented in ``as_waves_by_gs``, must have every dependent AS
+    strictly after every producer AS. Returns one diagnostic string per
+    violating pair (empty when the property holds everywhere it applies).
+    """
+    violations: list[str] = []
+    for dependent, producers in closure.items():
+        dependent_waves = as_waves_by_gs.get(dependent)
+        if not dependent_waves:
+            continue
+        for producer in producers:
+            producer_waves = as_waves_by_gs.get(producer)
+            if not producer_waves:
+                continue
+            if min(dependent_waves) <= max(producer_waves):
+                violations.append(
+                    f"{dependent} (depends on {producer}) has an AS in wave "
+                    f"{min(dependent_waves)}, not strictly after {producer}'s "
+                    f"last AS wave {max(producer_waves)}"
+                )
+    return violations
+
+
+async def run_r42_prompt_chain_gs_dependency_closure(client: Any) -> list[CheckResult]:
+    """Bug 5d923c91: plan_prompt_chain's ``_wave_data`` filtered the plan's
+    edge set to atomic-only endpoints BEFORE computing waves, silently
+    dropping every GS/TS-level depends_on edge (e.g. G-002 depends_on
+    G-001) -- so an AS under a dependent GS could land in the same wave
+    as, or before, an AS under the GS it structurally depends on. Fixed
+    by driving the wave map from the exact same closure algorithm
+    graph_parallel_map already uses (``waves()`` over the FULL plan
+    graph), then projecting onto the scoped atomic subset.
+
+    Read-only, against the fixed, frozen CR-7 acceptance plan (uuid
+    99340015-56d0-415d-860a-06bf46c51aa2): step_list(level=3) supplies
+    each GS's own depends_on (direct edges, transitively closed here)
+    WITHOUT hardcoding this plan's actual structure. plan_prompt_chain
+    (whole_plan, role=coder, include_statuses=['frozen']) and
+    graph_parallel_map are each checked independently: for every
+    (producer, dependent) GS pair the closure finds, every dependent AS's
+    wave must be strictly greater than every producer AS's wave, in BOTH
+    commands' own wave numbering (they do not share a numbering scheme --
+    prompt_chain's waves are densely re-indexed over the scoped atomic
+    subset, graph_parallel_map's span the full node set). If this plan's
+    step tree happens to carry no GS-level depends_on edge at all, both
+    checks SKIP naming that rather than reporting a vacuous PASS.
+    """
+    results: list[CheckResult] = []
+    plan_uuid = R42_CR7_PLAN_UUID
+
+    ok, res = await call(
+        client, "step_list",
+        {"plan": plan_uuid, "level": 3, "fields": ["step_id", "depends_on"], "limit": 200},
+    )
+    gs_entries = res.get("steps") if ok and isinstance(res, dict) else None
+    if not ok or not isinstance(gs_entries, list):
+        results.append(CheckResult("4", "R42_5d923c91_step_list(gs_depends_on)", STATUS_FAIL, str(res)))
+        return results
+    results.append(CheckResult("4", "R42_5d923c91_step_list(gs_depends_on)", STATUS_PASS, f"{len(gs_entries)} GS steps"))
+
+    closure = _r42_gs_dependency_closure(gs_entries)
+    if not any(closure.values()):
+        results.append(
+            CheckResult(
+                "4", "R42_5d923c91_gs_dependency_pairs_found", STATUS_SKIP,
+                "no GS in the CR-7 plan's step tree depends_on another GS -- "
+                "nothing to exercise the closure property against",
+            )
+        )
+        return results
+    results.append(
+        CheckResult(
+            "4", "R42_5d923c91_gs_dependency_pairs_found", STATUS_PASS,
+            str({gs: sorted(deps) for gs, deps in closure.items() if deps}),
+        )
+    )
+
+    ok, res = await call(
+        client, "plan_prompt_chain",
+        {
+            "plan": plan_uuid, "scope": "whole_plan", "role": "coder",
+            "include_statuses": ["frozen"], "limit": 1,
+        },
+    )
+    chain_waves = res.get("waves") if ok and isinstance(res, dict) else None
+    if not ok or not isinstance(chain_waves, list):
+        results.append(CheckResult("4", "R42_5d923c91_plan_prompt_chain_call", STATUS_FAIL, str(res)))
+        return results
+    results.append(CheckResult("4", "R42_5d923c91_plan_prompt_chain_call", STATUS_PASS, f"{len(chain_waves)} waves"))
+
+    chain_violations = _r42_closure_violations(closure, _r42_group_as_waves_by_gs(chain_waves))
+    results.append(
+        CheckResult(
+            "4", "R42_5d923c91_prompt_chain_waves_respect_gs_closure",
+            STATUS_PASS if not chain_violations else STATUS_FAIL,
+            "" if not chain_violations else "; ".join(chain_violations),
+        )
+    )
+
+    ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid, "limit": 200})
+    full_waves = res.get("waves") if ok and isinstance(res, dict) else None
+    if not ok or not isinstance(full_waves, list):
+        results.append(CheckResult("4", "R42_5d923c91_graph_parallel_map_call", STATUS_FAIL, str(res)))
+        return results
+    results.append(CheckResult("4", "R42_5d923c91_graph_parallel_map_call", STATUS_PASS, f"{len(full_waves)} waves"))
+
+    full_violations = _r42_closure_violations(closure, _r42_group_as_waves_by_gs(full_waves))
+    results.append(
+        CheckResult(
+            "4", "R42_5d923c91_graph_parallel_map_waves_respect_gs_closure",
+            STATUS_PASS if not full_violations else STATUS_FAIL,
+            "" if not full_violations else "; ".join(full_violations),
+        )
+    )
+    return results
+
+
+_R43_REVISION_UUID_PATTERN = re.compile(r"'revision_uuid':\s*'([0-9a-fA-F-]{36})'")
+
+
+async def run_r43_freeze_gate_names_cascade_tip(client: Any) -> list[CheckResult]:
+    """Bug 1ddea076: step_transition's freeze gate (require_green=true)
+    labeled its verdict with the plan HEAD -- the cascade's BASE revision,
+    which never moves while a cascade is open -- instead of the cascade's
+    live working TIP (the same state plan_validate_command reports as
+    tip_revision_uuid). Fixed by resolving the open cascade's ref target
+    (via ``_live_working_revision``) whenever one is open.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create -> G/T/A
+    chain -> step_transition(whole_plan -> frozen, require_green=false) ->
+    plan_unfreeze (captures cascade_uuid; the cascade's ref target equals
+    the base head at this instant) -> concept_add(cascade_uuid=...)
+    advances the cascade's OWN working tip away from the base (a real
+    mutation under the same open cascade, so tip != base from here on) ->
+    plan_validate captures the now-advanced tip_revision_uuid ->
+    step_transition(scope=G, to_status=frozen, require_green=true,
+    cascade_uuid=...) -- the G branch is already frozen, so nothing
+    actually transitions, but the gate still runs (require_green=true).
+    Whichever way that call resolves (success or a GATE_RED refusal), its
+    gate payload's revision_uuid must equal the ADVANCED tip, never the
+    base head captured right after plan_unfreeze. Cleanup: cascade_abort,
+    then plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    cascade_open = False
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r43-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R43_1ddea076_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R43_1ddea076_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+        if not ok or not t_uuid:
+            results.append(CheckResult("4", "R43_1ddea076_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_uuid, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_context_common(T,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_uuid})
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_step_create(A)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R43_1ddea076_repro_chain_created", STATUS_PASS, f"G={g_id}"))
+
+        ok, res = await call(
+            client, "step_transition",
+            {"plan": plan_uuid, "scope": "whole_plan", "to_status": "frozen", "require_green": False},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_freeze_whole_plan", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "plan_unfreeze",
+            {
+                "plan": plan_uuid, "changed_by": "live-smoke",
+                "reason": "R43 freeze-gate cascade-tip probe (bug 1ddea076)",
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R43_1ddea076_plan_unfreeze", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+        base_revision = res.get("base_revision_uuid")
+        cascade_open = True
+        results.append(CheckResult("4", "R43_1ddea076_plan_unfreeze", STATUS_PASS, f"cascade_uuid={cascade_uuid} base={base_revision}"))
+
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001",
+                "name": "LiveSmokeR43Concept", "definition": "R43 tip-advancing scratch concept.",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R43_1ddea076_concept_add(advance_tip)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R43_1ddea076_concept_add(advance_tip)", STATUS_PASS))
+
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        tip_revision = res.get("tip_revision_uuid") if ok and isinstance(res, dict) else None
+        if not ok or not tip_revision:
+            results.append(CheckResult("4", "R43_1ddea076_plan_validate(tip)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R43_1ddea076_plan_validate(tip)", STATUS_PASS, f"tip_revision_uuid={tip_revision}"))
+        results.append(
+            CheckResult(
+                "4", "R43_1ddea076_tip_advanced_past_base",
+                STATUS_PASS if tip_revision != base_revision else STATUS_FAIL,
+                "" if tip_revision != base_revision else f"tip {tip_revision} did not advance past base {base_revision}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_transition",
+            {
+                "plan": plan_uuid, "scope": g_id, "to_status": "frozen",
+                "require_green": True, "cascade_uuid": cascade_uuid,
+            },
+        )
+        if ok and isinstance(res, dict):
+            gate = res.get("gate")
+            reported_revision = gate.get("revision_uuid") if isinstance(gate, dict) else None
+        else:
+            match = _R43_REVISION_UUID_PATTERN.search(str(res))
+            reported_revision = match.group(1) if match else None
+        if reported_revision is None:
+            results.append(
+                CheckResult(
+                    "4", "R43_1ddea076_gate_names_cascade_tip", STATUS_FAIL,
+                    f"could not extract gate.revision_uuid from response: ok={ok} res={res!r}",
+                )
+            )
+        elif reported_revision == tip_revision:
+            results.append(
+                CheckResult(
+                    "4", "R43_1ddea076_gate_names_cascade_tip", STATUS_PASS,
+                    f"gate.revision_uuid={reported_revision} == tip_revision_uuid (call ok={ok})",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R43_1ddea076_gate_names_cascade_tip", STATUS_FAIL,
+                    f"gate.revision_uuid={reported_revision!r} != tip_revision_uuid={tip_revision!r} "
+                    f"(base was {base_revision!r}, call ok={ok})",
+                )
+            )
+    finally:
+        cleanup_ok = True
+        if cascade_open:
+            ok, res = await call(client, "cascade_abort", {"plan": plan_uuid})
+            cleanup_ok = cleanup_ok and ok
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R43_1ddea076_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r44_delete_guard_scoped_probe(client: Any) -> list[CheckResult]:
+    """Bug c315ff84: the hard-delete guard's catalog probe used to bind a
+    composite identity mapping directly as a SQL parameter instead of
+    resolving it through the catalog entry's declared target_column, so a
+    concept still referenced by a relation was refused only because
+    concept_store re-implemented its own referrer check ahead of the
+    guarded delete -- a caller-side workaround, not the guard's own
+    catalog probe. Fixed: guarded_hard_delete now accepts an explicit
+    probe_id (the scoped concept_id key), so the guard's own catalog
+    probe reaches the right column directly, and the refusal is now
+    audited by the guard itself.
+
+    Recipe (throwaway plan, try/finally cleanup): plan_create ->
+    cascade_begin -> concept_add C-001, concept_add C-002 -> relation_add
+    (C-001 uses C-002) -> concept_remove(C-001) must be REFUSED
+    (ENTITY_REFERENCED/DELETE_BLOCKED family) while the relation exists ->
+    relation_remove(same triple) -> concept_remove(C-001) must now
+    SUCCEED. The observable contract (refusal then success) is what this
+    check pins; it is neutral to whether the refusal is caller-side or
+    guard-native. Cleanup: plan_delete(hard) -- removes the plan's open
+    cascade along with everything else, no separate cascade_abort needed.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r44-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R44_c315ff84_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "cascade_begin", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict) or not res.get("cascade_uuid"):
+            results.append(CheckResult("4", "R44_c315ff84_cascade_begin", STATUS_FAIL, str(res)))
+            return results
+        cascade_uuid = res["cascade_uuid"]
+
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001",
+                "name": "LiveSmokeR44Source", "definition": "R44 scoped-probe scratch concept (from).",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R44_c315ff84_concept_add(C-001)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(
+            client, "concept_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-002",
+                "name": "LiveSmokeR44Target", "definition": "R44 scoped-probe scratch concept (to).",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R44_c315ff84_concept_add(C-002)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R44_c315ff84_concepts_created", STATUS_PASS, "C-001, C-002"))
+
+        ok, res = await call(
+            client, "relation_add",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid,
+                "from_concept": "C-001", "to_concept": "C-002", "type": "uses",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R44_c315ff84_relation_add", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R44_c315ff84_relation_add", STATUS_PASS))
+
+        ok, res = await call(
+            client, "concept_remove",
+            {"plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001"},
+        )
+        diagnostic = str(res)
+        refused_correctly = (not ok) and ("ENTITY_REFERENCED" in diagnostic or "DELETE_BLOCKED" in diagnostic)
+        results.append(
+            CheckResult(
+                "4", "R44_c315ff84_concept_remove_refused_while_referenced",
+                STATUS_PASS if refused_correctly else STATUS_FAIL,
+                "" if refused_correctly else (
+                    f"expected ENTITY_REFERENCED/DELETE_BLOCKED refusal, got ok={ok} res={res!r}"
+                ),
+            )
+        )
+        if not refused_correctly:
+            return results
+
+        ok, res = await call(
+            client, "relation_remove",
+            {
+                "plan": plan_uuid, "cascade_uuid": cascade_uuid,
+                "from_concept": "C-001", "to_concept": "C-002", "type": "uses",
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R44_c315ff84_relation_remove", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R44_c315ff84_relation_remove", STATUS_PASS))
+
+        ok, res = await call(
+            client, "concept_remove",
+            {"plan": plan_uuid, "cascade_uuid": cascade_uuid, "concept_id": "C-001"},
+        )
+        removed_ok = ok and isinstance(res, dict) and res.get("deleted") is True
+        results.append(
+            CheckResult(
+                "4", "R44_c315ff84_concept_remove_succeeds_after_relation_removed",
+                STATUS_PASS if removed_ok else STATUS_FAIL,
+                "" if removed_ok else f"ok={ok} res={res!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R44_c315ff84_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r45_step_update_null_removes_field_key(client: Any) -> list[CheckResult]:
+    """Todo 4bb0f85b: step_update's fields patch used to persist an
+    explicit JSON null as a literal null value (plain dict.update), so
+    there was no way to actually remove a previously-set fields key.
+    ``_merge_step_fields`` now pops the key when the patch value is None
+    instead of storing it, leaving every other value (and the shallow
+    merge depth) unchanged.
+
+    Recipe (throwaway plan, one G step, try/finally cleanup): plan_create
+    -> step_create(level=3) -> step_update(fields={'k': 'v'}) -> step_get
+    confirms fields.k == 'v' -> step_update(fields={'k': None}) ->
+    step_get confirms 'k' is ABSENT from fields (pre-fix it persisted as
+    a literal null) -> step_update(fields={'never_set': None}) on a key
+    that was never set must be accepted with no error (a no-op pop).
+    Cleanup: plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r45-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R45_4bb0f85b_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R45_4bb0f85b_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R45_4bb0f85b_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R45_4bb0f85b_repro_step_created", STATUS_PASS, f"G={g_id}"))
+
+        ok, res = await call(
+            client, "step_update", {"plan": plan_uuid, "step_id": g_id, "fields": {"k": "v"}},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R45_4bb0f85b_step_update(set_k)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": g_id})
+        fields = res.get("fields") if ok and isinstance(res, dict) else None
+        set_ok = ok and isinstance(fields, dict) and fields.get("k") == "v"
+        results.append(
+            CheckResult(
+                "4", "R45_4bb0f85b_step_get_confirms_k_set",
+                STATUS_PASS if set_ok else STATUS_FAIL,
+                "" if set_ok else f"expected fields.k=='v', got ok={ok} fields={fields!r}",
+            )
+        )
+        if not set_ok:
+            return results
+
+        ok, res = await call(
+            client, "step_update", {"plan": plan_uuid, "step_id": g_id, "fields": {"k": None}},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R45_4bb0f85b_step_update(null_removes_k)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": g_id})
+        fields = res.get("fields") if ok and isinstance(res, dict) else None
+        removed_ok = ok and isinstance(fields, dict) and "k" not in fields
+        results.append(
+            CheckResult(
+                "4", "R45_4bb0f85b_step_get_confirms_k_absent",
+                STATUS_PASS if removed_ok else STATUS_FAIL,
+                "" if removed_ok else f"expected 'k' absent from fields, got ok={ok} fields={fields!r}",
+            )
+        )
+        if not removed_ok:
+            return results
+
+        # Nulling a never-set key is accepted (a no-op pop), not an error.
+        ok, res = await call(
+            client, "step_update", {"plan": plan_uuid, "step_id": g_id, "fields": {"never_set": None}},
+        )
+        results.append(
+            CheckResult(
+                "4", "R45_4bb0f85b_null_on_never_set_key_accepted",
+                STATUS_PASS if ok else STATUS_FAIL,
+                "" if ok else str(res),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R45_4bb0f85b_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
