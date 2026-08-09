@@ -8518,6 +8518,111 @@ async def run_r45_step_update_null_removes_field_key(client: Any) -> list[CheckR
     return results
 
 
+async def run_r46_prompt_chain_scoped_branch_depth(client: Any) -> list[CheckResult]:
+    """Bug 4f7fbd43: plan_prompt_chain's scoped (non-whole_plan) path builds
+    a per-atomic ``Branch`` view via ``branch_for_atomic``
+    (plan_manager.views.prompt_chain) -- a plain ``Branch`` dataclass
+    (plan_uuid/gs/ts/atomic/hrs_slice, no ``depth`` field) -- and feeds it
+    straight into ``run_gate(conn, p.uuid, branch=branch)``. The gate's
+    finding-scope switch (plan_manager.verify.gate) reads ``branch.depth``
+    to decide whether a finding is in-scope for "gs"/"ts"/"as" narrowing --
+    a field that only the OTHER branch view, ``BranchScope``
+    (plan_manager.views.branch), carries. Any scope narrower than
+    whole_plan (G-NNN or G-NNN/T-NNN) therefore crashes the gate with
+    ``AttributeError: 'Branch' object has no attribute 'depth'``, surfaced
+    to the client as JSON-RPC -32603. whole_plan never calls
+    branch_for_atomic (it calls run_gate(branch=None) instead), so it is
+    unaffected -- confirmed live by R42 above, which already exercises
+    scope=whole_plan read-only against this same plan.
+
+    Read-only, against the fixed, frozen CR-7 acceptance plan (uuid
+    99340015-56d0-415d-860a-06bf46c51aa2, same plan as R42): plan_prompt_chain
+    with scope="G-004" and, separately, scope="G-004/T-001" (both scope
+    forms are admitted per plan_prompt_chain's own schema/help -- G-NNN and
+    G-NNN/T-NNN), role="review". Each call must complete
+    (command_success=true) and return the documented artifact shape:
+    waves (non-empty list), assembly (non-empty list), used_block_keys
+    (dict), and meta (dict), with the response's own "scope" echoing the
+    request. On the live server this bug is filed against, both calls fail
+    with the 'Branch' object has no attribute 'depth' error, so this check
+    FAILS until the scoped path is fixed to build (or feed the gate) a
+    BranchScope instead of a bare Branch -- that FAIL is the point: it
+    reproduces the bug through the same client/queue path a real caller
+    uses, not just at the unit level.
+    """
+    results: list[CheckResult] = []
+    plan_uuid = R42_CR7_PLAN_UUID
+
+    for scope in ("G-004", "G-004/T-001"):
+        tag = scope.replace("/", "_")
+        ok, res = await call(
+            client, "plan_prompt_chain",
+            {"plan": plan_uuid, "scope": scope, "role": "review", "limit": 200},
+        )
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_prompt_chain_call({tag})",
+                STATUS_PASS if ok else STATUS_FAIL,
+                "" if ok else str(res),
+            )
+        )
+        if not ok or not isinstance(res, dict):
+            # Nothing further to shape-check once the call itself failed --
+            # this is exactly the reported crash path.
+            continue
+
+        waves = res.get("waves")
+        waves_ok = isinstance(waves, list) and len(waves) > 0
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_waves_shape({tag})",
+                STATUS_PASS if waves_ok else STATUS_FAIL,
+                "" if waves_ok else f"waves={waves!r}",
+            )
+        )
+
+        assembly = res.get("assembly")
+        assembly_ok = isinstance(assembly, list) and len(assembly) > 0
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_assembly_shape({tag})",
+                STATUS_PASS if assembly_ok else STATUS_FAIL,
+                "" if assembly_ok else f"assembly={assembly!r}",
+            )
+        )
+
+        used_block_keys = res.get("used_block_keys")
+        used_block_keys_ok = isinstance(used_block_keys, dict)
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_used_block_keys_shape({tag})",
+                STATUS_PASS if used_block_keys_ok else STATUS_FAIL,
+                "" if used_block_keys_ok else f"used_block_keys={used_block_keys!r}",
+            )
+        )
+
+        meta = res.get("meta")
+        meta_ok = isinstance(meta, dict)
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_meta_shape({tag})",
+                STATUS_PASS if meta_ok else STATUS_FAIL,
+                "" if meta_ok else f"meta={meta!r}",
+            )
+        )
+
+        scope_echo_ok = res.get("scope") == scope
+        results.append(
+            CheckResult(
+                "4", f"R46_4f7fbd43_scope_echo({tag})",
+                STATUS_PASS if scope_echo_ok else STATUS_FAIL,
+                "" if scope_echo_ok else f"scope echoed {res.get('scope')!r}, expected {scope!r}",
+            )
+        )
+
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

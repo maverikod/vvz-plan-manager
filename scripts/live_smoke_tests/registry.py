@@ -160,6 +160,12 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "step_update fields: explicit null removes a key instead of "
         "persisting it (todo 4bb0f85b)",
     ),
+    LiveSmokeTestSpec(
+        "r46",
+        "run_r46_prompt_chain_scoped_branch_depth",
+        "plan_prompt_chain crashes on a G-NNN or G-NNN/T-NNN scope: "
+        "'Branch' object has no attribute 'depth' (bug 4f7fbd43)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)
