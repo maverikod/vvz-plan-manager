@@ -44,13 +44,16 @@ class _CommandDispatchMixin:
 
         Always calls self._rpc.execute_command_unified(command, params, auto_poll=True)
         so a queued command is auto-polled to completion (queue_get_job_status
-        semantics) before this coroutine returns. Returns the "result" value from
-        the unified response for both immediate and queued commands.
+        semantics) before this coroutine returns. The held JsonRpcClient's
+        configured timeout is forwarded unchanged so the adapter's own terminal
+        wait remains bounded by the caller-selected budget. Returns the "result"
+        value from the unified response for both immediate and queued commands.
         """
         response = await self._rpc.execute_command_unified(  # type: ignore[attr-defined]
             command,
             params or {},
             auto_poll=True,
+            timeout=getattr(self._rpc, "timeout", None),  # type: ignore[attr-defined]
         )
         return response.get("result")
 

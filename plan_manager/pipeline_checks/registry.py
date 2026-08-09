@@ -265,6 +265,19 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
         ),
     ),
     PipelineCheckSpec(
+        name="plan-manager-client-timeout-watchdog",
+        description=(
+            "Run the Plan Manager client timeout-forwarding and live-smoke "
+            "outer-watchdog regression matrix."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_plan_manager_client_timeout_watchdog.py",
+        ),
+    ),
+    PipelineCheckSpec(
         name="cr7-roundtrip",
         description=(
             "Run the CR-7 G-005/T-002/A-001 canonical round-trip fidelity suite "

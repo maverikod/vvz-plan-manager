@@ -105,7 +105,7 @@ import sys
 import uuid as uuid_mod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Optional
 from urllib.parse import urlsplit
 
 import yaml
@@ -918,10 +918,25 @@ def _error_message(diagnostic: Any) -> str:
 # meaning KNOWN_BUILTIN_COMMANDS is missing that command name). Reset per
 # run by run_pipeline; printed as part of --json output for visibility.
 DISPATCH_LOG: list[dict[str, Any]] = []
+_CALL_WATCHDOG_TIMEOUT: float | None = None
+_CALL_WATCHDOG_GRACE_SECONDS = 5.0
 
 
 def reset_dispatch_log() -> None:
     DISPATCH_LOG.clear()
+
+
+def configure_call_watchdog(timeout: float | None, *, grace_seconds: float = _CALL_WATCHDOG_GRACE_SECONDS) -> None:
+    """Configure a per-client-invocation outer watchdog for live-smoke calls.
+
+    The PlanManagerClient forwards ``timeout`` to the adapter, where valid
+    queued calls may still need normal terminal-event polling.  The smoke
+    verifier adds this outer guard at ``timeout + 5s`` so a broken client or
+    non-returning transport cannot stall the whole run or prevent fixture
+    cleanup.  Passing ``None`` disables the guard.
+    """
+    global _CALL_WATCHDOG_TIMEOUT
+    _CALL_WATCHDOG_TIMEOUT = None if timeout is None else max(0.0, float(timeout) + grace_seconds)
 
 
 # --------------------------------------------------------------------------
@@ -1017,6 +1032,19 @@ async def _call_direct(client: Any, name: str, params: dict[str, Any]) -> tuple[
     return True, data
 
 
+async def _with_call_watchdog(name: str, path: str, awaitable: Awaitable[tuple[bool, Any]]) -> tuple[bool, Any]:
+    if _CALL_WATCHDOG_TIMEOUT is None:
+        return await awaitable
+    try:
+        return await asyncio.wait_for(awaitable, timeout=_CALL_WATCHDOG_TIMEOUT)
+    except asyncio.TimeoutError:
+        return (
+            False,
+            f"outer watchdog exceeded for {path} command {name!r} "
+            f"after {_CALL_WATCHDOG_TIMEOUT:.3f}s",
+        )
+
+
 async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) -> tuple[bool, Any]:
     """Dispatch one command via the routing policy in the module note above
     KNOWN_BUILTIN_COMMANDS: proactively direct for known adapter builtins,
@@ -1025,13 +1053,13 @@ async def call(client: Any, name: str, params: Optional[dict[str, Any]] = None) 
     DISPATCH_LOG for post-run diagnostics."""
     params = params or {}
     if name in KNOWN_BUILTIN_COMMANDS:
-        ok, data = await _call_direct(client, name, params)
+        ok, data = await _with_call_watchdog(name, "direct", _call_direct(client, name, params))
         DISPATCH_LOG.append({"command": name, "path": "direct", "fallback": False, "ok": ok})
         return ok, data
 
-    ok, data = await _call_queued(client, name, params)
+    ok, data = await _with_call_watchdog(name, "queued", _call_queued(client, name, params))
     if not ok and _looks_like_unresolved_command(name, str(data)):
-        ok2, data2 = await _call_direct(client, name, params)
+        ok2, data2 = await _with_call_watchdog(name, "direct", _call_direct(client, name, params))
         DISPATCH_LOG.append({"command": name, "path": "queued->direct-fallback", "fallback": True, "ok": ok2})
         return ok2, data2
 
@@ -8699,6 +8727,7 @@ async def run_pipeline(args: argparse.Namespace) -> Summary:
 
     reset_dispatch_log()
     config = build_config(args)
+    configure_call_watchdog(config.timeout)
     client = PlanManagerClient(**config.to_jsonrpc_kwargs())
     selected_specs = resolve_selected_test_specs(args.test)
 
