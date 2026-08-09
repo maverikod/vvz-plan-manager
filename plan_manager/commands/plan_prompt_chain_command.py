@@ -20,15 +20,14 @@ from plan_manager.commands.runtime_filtering import (
 from plan_manager.runtime.context import db_connection
 from plan_manager.verify.gate import run_gate
 from plan_manager.verify.finding import Report
+from plan_manager.views.branch import resolve_branch_scope
 from plan_manager.views.prompt_chain import (
     assemble_prompt_chain,
-    branch_for_atomic,
     normalize_scope,
     normalize_role,
     normalize_statuses,
     scope_atomic_steps,
 )
-from plan_manager.domain.paragraph_store import list_paragraphs
 from plan_manager.views.dependency_graph import load_steps
 
 
@@ -177,28 +176,39 @@ class PlanPromptChainCommand(Command):
                         )
                 else:
                     nodes = load_steps(conn, p.uuid)
-                    paragraphs = list_paragraphs(conn, p.uuid)
                     try:
-                        scoped_atomic = scope_atomic_steps(nodes, normalized_scope)
+                        scope_atomic_steps(nodes, normalized_scope)
                     except ValueError as exc:
                         return domain_error("STEP_NOT_FOUND", str(exc))
-                    for atomic in scoped_atomic:
-                        branch = branch_for_atomic(nodes, paragraphs, p.uuid, atomic)
-                        report, _verdict = run_gate(conn, p.uuid, branch=branch)
-                        if not report.green:
-                            findings_count = _finding_count(report)
-                            return domain_error(
-                                "GATE_RED",
-                                (
-                                    f"scope {normalized_scope.label} refused: "
-                                    "mechanical gate not green "
-                                    f"({findings_count} findings)"
-                                ),
-                                {
-                                    "scope": normalized_scope.label,
-                                    "findings_count": findings_count,
-                                },
-                            )
+                    # Bug 4f7fbd43: run the mechanical gate ONCE over the
+                    # hierarchical BranchScope (depth "gs" for G-NNN, "ts"
+                    # for G-NNN/T-NNN) instead of once per atomic step with
+                    # a plain Branch, which run_gate no longer accepts
+                    # (scope_steps reads branch.depth; Branch has none).
+                    try:
+                        branch = resolve_branch_scope(
+                            conn,
+                            p.uuid,
+                            normalized_scope.gs_step_id,
+                            normalized_scope.ts_step_id,
+                        )
+                    except ValueError as exc:
+                        return domain_error("STEP_NOT_FOUND", str(exc))
+                    report, _verdict = run_gate(conn, p.uuid, branch=branch)
+                    if not report.green:
+                        findings_count = _finding_count(report)
+                        return domain_error(
+                            "GATE_RED",
+                            (
+                                f"scope {normalized_scope.label} refused: "
+                                "mechanical gate not green "
+                                f"({findings_count} findings)"
+                            ),
+                            {
+                                "scope": normalized_scope.label,
+                                "findings_count": findings_count,
+                            },
+                        )
 
                 try:
                     data = assemble_prompt_chain(
