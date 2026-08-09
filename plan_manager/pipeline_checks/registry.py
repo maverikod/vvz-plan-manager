@@ -241,6 +241,19 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
         ),
     ),
     PipelineCheckSpec(
+        name="bug-1d597a86-done-atomic-survives-invalidation",
+        description=(
+            "Run the bug 1d597a86 cascade invalidation matrix: atomic execution "
+            "statuses survive invalidation while authoring statuses still invalidate."
+        ),
+        argv=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_bug_1d597a86_atomic_status_invalidation.py",
+        ),
+    ),
+    PipelineCheckSpec(
         name="cr7-roundtrip",
         description=(
             "Run the CR-7 G-005/T-002/A-001 canonical round-trip fidelity suite "

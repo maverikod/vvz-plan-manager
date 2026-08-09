@@ -36,8 +36,10 @@ def step_invalidation(
     Returns:
         A list of (uuid.UUID, "needs_review") tuples in the deterministic
         order produced by impact_set, one entry per descendant step whose
-        status is not already "needs_review". Empty when nothing beneath
-        the origin requires invalidation.
+        status requires cascade invalidation. Atomic execution statuses
+        "done" and "in_progress" are preserved, as is an already
+        "needs_review" atomic or non-atomic step. Empty when nothing
+        beneath the origin requires invalidation.
 
     Raises:
         ValueError: if origin_uuid is not a key of nodes ("origin step
@@ -52,6 +54,8 @@ def step_invalidation(
     for descendant_uuid in impact_set(nodes, origin_uuid):
         descendant = nodes[descendant_uuid]
         if descendant.status == "needs_review":
+            continue
+        if descendant.level == 5 and descendant.status in {"done", "in_progress"}:
             continue
         validate_transition(
             descendant.status,
