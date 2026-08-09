@@ -1,1 +1,1 @@
-{"product": "plan_manager", "package_version": "0.1.102", "adapter_version": "mcp-proxy-adapter>=8.10.20", "build_date": "2026-08-07T12:29:13Z", "image_tag": "0.1.102"}
+{"product": "plan_manager", "package_version": "0.1.105", "adapter_version": "mcp-proxy-adapter>=8.10.21", "build_date": "2026-08-09T12:11:44Z", "image_tag": "0.1.105"}
