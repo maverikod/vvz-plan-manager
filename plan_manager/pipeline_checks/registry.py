@@ -254,6 +254,17 @@ CHECKS: tuple[PipelineCheckSpec, ...] = (
         ),
     ),
     PipelineCheckSpec(
+        name="bug-0040585c-step-transition-require-green",
+        description=(
+            "Run the bug 0040585c real-server regression: step_transition "
+            "require_green=true must evaluate the open cascade working tip."
+        ),
+        argv=(
+            sys.executable,
+            "scripts/pipeline_bug_0040585c.py",
+        ),
+    ),
+    PipelineCheckSpec(
         name="cr7-roundtrip",
         description=(
             "Run the CR-7 G-005/T-002/A-001 canonical round-trip fidelity suite "
