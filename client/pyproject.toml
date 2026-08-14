@@ -8,12 +8,12 @@ dynamic = ["version"]
 description = "First-class client library for the plan_manager JSON-RPC API: full command-surface facade plus export delivery module boundary."
 requires-python = ">=3.12"
 dependencies = [
-    "mcp-proxy-adapter>=8.10.21",
+    "mcp-proxy-adapter>=8.10.26",
 ]
 
 [project.optional-dependencies]
 ca = [
-    "code-analysis-client>=1.6.51",
+    "code-analysis-client>=1.6.111",
 ]
 dev = [
     "pytest>=9",

@@ -14,7 +14,7 @@ dependencies = [
     "numpy",
     "PyYAML",
     "embed-client>=4.0.16",
-    "code-analysis-client>=1.6.51",
+    "code-analysis-client>=1.6.111",
     "sqlglot>=25",
 ]
 
