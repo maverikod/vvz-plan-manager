@@ -9003,15 +9003,31 @@ async def run_r49_step_update_scoped_block_currency_fa15d288(client: Any) -> lis
         (plan,3), (G,4), (T1,5), (T2,5) ->
         FIXTURE ASSERT: block_list(plan, limit=200) shows exactly those 4
         freshly-recompiled blocks (plan, G, T1-path, T2-path) is_live=true ->
-        ONE local edit: step_update(plan, A2, fields={"description": ...}) ->
-        POST-FIX ASSERT (RED today): plan/G/T1's blocks are STILL is_live
-        (today they all flip false) ->
-        POST-FIX ASSERT (RED today): plan_validate reports NO context_
-        coverage.common_current finding for G's or T1's own artifact_path
-        (today it does, for both, since their blocks went stale) ->
-        CONTROL (PASS today and after): T2's own block -- the genuinely
-        affected scope, since A2 is T2's child -- is stale/absent from the
-        live set both before and after the fix.
+
+        PHASE 1 -- deep, out-of-scope edit (A2 is T2's grandchild, not
+        T2's own node_path, and a common block embeds only its OWN node's
+        step_definition, never a descendant's -- so editing A2 changes NO
+        block content anywhere; carrying all four blocks forward is the
+        correct, scoped contract):
+        step_update(plan, A2, fields={"description": ...}) ->
+        ASSERT: all four blocks (plan, G, T1-path, T2-path) are STILL
+        is_live=true ->
+        ASSERT: plan_validate reports NO context_coverage.common_current
+        finding at all (not just for G/T1 -- for T2 either, since T2's own
+        block also correctly stayed live).
+
+        PHASE 2 -- direct edit on T-002 itself, to exercise the exclusion
+        rule the phase-1 fixture never touches (a block goes stale/absent
+        only when its OWN node_path is the changed path, or its content
+        embeds a step_definition entry for a changed path):
+        step_update(plan, T2, fields={"description": ...}) ->
+        ASSERT: T2's own block is stale/absent from the live set (its
+        node_path is the changed path -- exclusion rule fired) ->
+        ASSERT: plan/G/T1's blocks are STILL is_live (carry-forward fired
+        for the untouched scopes) ->
+        ASSERT: plan_validate reports a context_coverage.common_current
+        finding for exactly G-001/T-002 among the fixture nodes -- G-001
+        and G-001/T-001 must NOT be flagged.
 
     Cleanup: plan_delete(hard).
     """
@@ -9120,7 +9136,10 @@ async def run_r49_step_update_scoped_block_currency_fa15d288(client: Any) -> lis
         if not fixture_ok:
             return results
 
-        # ONE local edit, on the leaf A2 alone.
+        # PHASE 1: deep, out-of-scope edit on the leaf A2 alone. A2 is
+        # T2's grandchild, not T2's own node_path -- a common block embeds
+        # only its OWN node's step_definition, never a descendant's, so
+        # this edit changes NO block content anywhere in the fixture.
         ok, res = await call(
             client, "step_update",
             {"plan": plan_uuid, "step_id": a2_path, "fields": {"description": "r49 single local edit"}},
@@ -9137,37 +9156,23 @@ async def run_r49_step_update_scoped_block_currency_fa15d288(client: Any) -> lis
             return results
         results.append(CheckResult("4", "R49_fa15d288_block_list_post_edit", STATUS_PASS))
 
-        # POST-FIX ASSERT (expected RED today): the plan-level block and
-        # the two UNTOUCHED-branch blocks (G, T1) must stay live -- today
-        # every one of them flips stale, since currency is compared against
-        # a single plan-wide head revision rather than the touched scope.
-        for label, node_path in (("plan", "plan"), ("G-001", g_path), ("G-001/T-001", t1_path)):
+        # ASSERT: a deep edit outside every block's own node_path carries
+        # ALL FOUR blocks forward as live -- including T2's own block,
+        # since A2's description is not part of T2's step_definition.
+        for label, node_path in (
+            ("plan", "plan"), ("G-001", g_path), ("G-001/T-001", t1_path), ("G-001/T-002", t2_path),
+        ):
             still_live = node_path in post_edit_live_paths
             results.append(
                 CheckResult(
-                    "4", f"R49_fa15d288_unrelated_scope_stays_live({label})",
+                    "4", f"R49_fa15d288_deep_edit_keeps_all_blocks_live({label})",
                     STATUS_PASS if still_live else STATUS_FAIL,
                     "" if still_live else f"node_path={node_path!r} expected is_live=true, live_paths={post_edit_live_paths!r}",
                 )
             )
 
-        # CONTROL ASSERT (must PASS today AND after the fix): T2's own
-        # block -- the genuinely affected scope, since A2 is T2's child --
-        # is stale/absent from the live set. The fix must not carry this
-        # one forward as if it were unaffected.
-        t2_stale = t2_path not in post_edit_live_paths
-        results.append(
-            CheckResult(
-                "4", "R49_fa15d288_control_touched_scope_goes_stale(G-001/T-002)",
-                STATUS_PASS if t2_stale else STATUS_FAIL,
-                "" if t2_stale else f"expected T2's own block stale/absent, still live: {post_edit_live_paths!r}",
-            )
-        )
-
-        # POST-FIX ASSERT (expected RED today): plan_validate must carry NO
-        # context_coverage.common_current finding for G's or T1's own
-        # artifact_path -- today it does, for both, since their blocks
-        # went stale purely as a side effect of A2's unrelated edit.
+        # ASSERT: plan_validate must carry NO context_coverage.common_
+        # current finding for G's or T1's own artifact_path.
         ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict):
             results.append(CheckResult("4", "R49_fa15d288_plan_validate", STATUS_FAIL, str(res)))
@@ -9181,6 +9186,90 @@ async def run_r49_step_update_scoped_block_currency_fa15d288(client: Any) -> lis
                     "4", f"R49_fa15d288_plan_validate_no_finding({label})",
                     STATUS_PASS if not_flagged else STATUS_FAIL,
                     "" if not_flagged else f"unexpected context_coverage.common_current finding for {artifact_path!r}, flagged={flagged_paths!r}",
+                )
+            )
+
+        # ASSERT: no context_coverage.common_current finding AT ALL after
+        # the deep A2 edit -- every one of the four blocks correctly
+        # stayed live, so T2's own artifact_path must not be flagged
+        # either (the phase-1 fixture never touches T2's own node_path).
+        no_findings_at_all = len(flagged_paths) == 0
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_plan_validate_no_finding_at_all_after_deep_edit",
+                STATUS_PASS if no_findings_at_all else STATUS_FAIL,
+                "" if no_findings_at_all else f"expected zero context_coverage.common_current findings, flagged={flagged_paths!r}",
+            )
+        )
+
+        # PHASE 2: direct edit on T-002 ITSELF, to exercise the exclusion
+        # rule -- a block goes stale/absent only when its OWN node_path is
+        # the changed path (or its content embeds a step_definition entry
+        # for a changed path).
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": t2_path, "fields": {"description": "r49 phase-2 edit of T-002"}},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_step_update(T2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_step_update(T2)", STATUS_PASS))
+
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "limit": 200})
+        phase2_live_paths = _r49_live_common_node_paths(res)
+        if not ok or phase2_live_paths is None:
+            results.append(CheckResult("4", "R49_fa15d288_block_list_post_phase2_edit", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_block_list_post_phase2_edit", STATUS_PASS))
+
+        # ASSERT: T2's own block -- the genuinely affected scope, since
+        # T2's own node_path is the changed path -- is stale/absent from
+        # the live set. The exclusion rule must fire for it.
+        t2_stale = t2_path not in phase2_live_paths
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_phase2_exclusion_fires(G-001/T-002)",
+                STATUS_PASS if t2_stale else STATUS_FAIL,
+                "" if t2_stale else f"expected T2's own block stale/absent, still live: {phase2_live_paths!r}",
+            )
+        )
+
+        # ASSERT: plan/G/T1's blocks are STILL live -- carry-forward fires
+        # for every scope the T2 edit did not touch.
+        for label, node_path in (("plan", "plan"), ("G-001", g_path), ("G-001/T-001", t1_path)):
+            still_live = node_path in phase2_live_paths
+            results.append(
+                CheckResult(
+                    "4", f"R49_fa15d288_phase2_carry_forward_stays_live({label})",
+                    STATUS_PASS if still_live else STATUS_FAIL,
+                    "" if still_live else f"node_path={node_path!r} expected is_live=true, live_paths={phase2_live_paths!r}",
+                )
+            )
+
+        # ASSERT: plan_validate reports a context_coverage.common_current
+        # finding for exactly G-001/T-002 among the fixture nodes -- G-001
+        # and G-001/T-001 must NOT be flagged.
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R49_fa15d288_plan_validate_phase2", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_plan_validate_phase2", STATUS_PASS))
+        phase2_flagged_paths = _plan_validate_finding_artifact_paths(res.get("report"), "context_coverage.common_current")
+        t2_flagged = t2_path in phase2_flagged_paths
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_phase2_plan_validate_finding(G-001/T-002)",
+                STATUS_PASS if t2_flagged else STATUS_FAIL,
+                "" if t2_flagged else f"expected context_coverage.common_current finding for {t2_path!r}, flagged={phase2_flagged_paths!r}",
+            )
+        )
+        for label, artifact_path in (("G-001", g_path), ("G-001/T-001", t1_path)):
+            not_flagged = artifact_path not in phase2_flagged_paths
+            results.append(
+                CheckResult(
+                    "4", f"R49_fa15d288_phase2_plan_validate_no_finding({label})",
+                    STATUS_PASS if not_flagged else STATUS_FAIL,
+                    "" if not_flagged else f"unexpected context_coverage.common_current finding for {artifact_path!r}, flagged={phase2_flagged_paths!r}",
                 )
             )
     finally:
