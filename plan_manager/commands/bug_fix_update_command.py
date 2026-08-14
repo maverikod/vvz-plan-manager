@@ -43,7 +43,8 @@ class BugFixUpdateCommand(Command):
                         "resolved directly by bug_fix (globally unique), so plan is not needed for lookup. "
                         "When omitted, the PLAN_COMPLETED guard applies only to the owning bug's own source "
                         "plan anchor, if any. When supplied, that plan must exist and must not itself be "
-                        "completed."
+                        "completed. Supplying it never changes the bug's anchor; use bug_reanchor to move "
+                        "the anchor."
                     ),
                 },
                 "bug_fix": {"type": "string", "format": "uuid", "description": "UUID of the BugFix (C-024) fix attempt to update."},

@@ -195,6 +195,22 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "frozen->in_progress and in_progress->done per the published "
         "legal_transitions matrix, without a cascade (bug 957c2f6a)",
     ),
+    LiveSmokeTestSpec(
+        "r51",
+        "run_r51_bug_kind_enum_discoverable_b230a02b",
+        "bug_create/bug_update schemas declare the closed kind vocabulary as a "
+        "JSON-Schema enum and document the evidence object convention; invalid "
+        "kind is rejected at the schema layer (bug b230a02b)",
+        needs_project=True,
+    ),
+    LiveSmokeTestSpec(
+        "r52",
+        "run_r52_bug_update_plan_guard_ack_26107e40",
+        "bug_update with a 'plan' parameter acknowledges the completion-guard "
+        "check in its response (plan_guard.checked_plan_uuid) while never "
+        "silently touching the anchor (bug 26107e40)",
+        needs_project=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

@@ -40,7 +40,8 @@ class BugReopenCommand(Command):
                         "Plan identifier (name or UUID); OPTIONAL (bug 3eec33f2). The bug is always "
                         "resolved directly by bug_id (globally unique). When omitted, the PLAN_COMPLETED "
                         "guard applies only to the bug's own source plan anchor, if any. When supplied, "
-                        "that plan must exist and must not itself be completed."
+                        "that plan must exist and must not itself be completed. Supplying it never changes "
+                        "the bug's anchor; use bug_reanchor to move the anchor."
                     ),
                 },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug report to reopen."},

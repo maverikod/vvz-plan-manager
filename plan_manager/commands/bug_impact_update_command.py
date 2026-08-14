@@ -38,7 +38,8 @@ class BugImpactUpdateCommand(Command):
                         "record is always resolved directly by `impact_uuid` (globally unique). When "
                         "omitted, the PLAN_COMPLETED guard applies only to the impact's own target plan "
                         "anchor, if any. When supplied, that plan must exist and must not itself be "
-                        "completed."
+                        "completed. Supplying it never changes the bug's anchor; use bug_reanchor to move "
+                        "the anchor."
                     ),
                 },
                 "impact_uuid": {"type": "string", "format": "uuid", "description": "UUID of the bug_impact record to update."},

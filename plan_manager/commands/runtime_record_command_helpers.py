@@ -121,19 +121,27 @@ def perform_guarded_runtime_update(
     """Update one live runtime record with optional guarded hooks.
 
     Hook order is:
-    1. optional resolve_scope(conn)
+    1. optional resolve_scope(conn) -- its return value is captured (see below)
     2. load existing record or raise *_NOT_FOUND
     3. optional pre_update(conn, existing, update_fields)
     4. optional before_store_update(conn, entity_id, existing, update_fields)
     5. update_record(...)
     6. optional post_update(conn, entity_id, existing, updated_record, update_fields)
+
+    Bug 26107e40: when resolve_scope is supplied and returns an object with a
+    ``uuid`` attribute (the plan record resolve_plan_guarded returns), the
+    response payload gains a ``plan_guard": {"checked_plan_uuid": "..."}``
+    key acknowledging which plan's completion lock was actually checked.
+    Callers that pass resolve_scope=None (plan omitted) never get the key.
+    The uuid extraction is defensive (getattr with a None default) so a
+    resolve_scope that returns something without a ``uuid`` attribute is
+    silently skipped rather than raising.
     """
     parsed_uuid = validate_uuid(raw_entity_id)
     if db_connect is None:
         db_connect = db_connection
     with db_connect() as conn:
-        if resolve_scope is not None:
-            resolve_scope(conn)
+        resolved_scope = resolve_scope(conn) if resolve_scope is not None else None
         existing = get_record(conn, parsed_uuid)
         if existing is None:
             raise DomainCommandError(not_found_code, not_found_message)
@@ -144,6 +152,8 @@ def perform_guarded_runtime_update(
         record = update_record(conn, parsed_uuid, changed_by=changed_by, **update_fields)
         if post_update is not None:
             post_update(conn, parsed_uuid, existing, record, update_fields)
-        if build_result_data is None:
-            return SuccessResult(data=record.to_payload())
-        return SuccessResult(data=build_result_data(record))
+        payload = record.to_payload() if build_result_data is None else build_result_data(record)
+        checked_plan_uuid = getattr(resolved_scope, "uuid", None)
+        if checked_plan_uuid is not None:
+            payload["plan_guard"] = {"checked_plan_uuid": str(checked_plan_uuid)}
+        return SuccessResult(data=payload)

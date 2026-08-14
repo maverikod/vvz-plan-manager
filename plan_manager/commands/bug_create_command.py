@@ -12,6 +12,7 @@ from plan_manager.commands.anchor_confirmation import confirm_anchor
 from plan_manager.commands.bug_command_metadata import bug_metadata, BASE_PARAMETERS
 from plan_manager.commands.errors import map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
+from plan_manager.domain.bug_report import BUG_KINDS
 from plan_manager.domain.bug_source import BugSource
 from plan_manager.domain.runtime_validation import RuntimeValidationError, validate_uuid
 from plan_manager.runtime.context import app_config, db_connection
@@ -54,7 +55,7 @@ class BugCreateCommand(Command):
                 "title": {"type": "string", "description": "Short title of the bug."},
                 "short_description": {"type": "string", "description": "One-line summary of the defect."},
                 "detailed_description": {"type": "string", "description": "Full description of the defect."},
-                "kind": {"type": "string", "description": "Bug kind (functional, wrong_output, data_loss, regression, compatibility, stale_context, planning, performance, security, infrastructure, deployment, configuration, documentation, user_experience)."},
+                "kind": {"type": "string", "enum": sorted(BUG_KINDS), "description": "Bug kind (functional, wrong_output, data_loss, regression, compatibility, stale_context, planning, performance, security, infrastructure, deployment, configuration, documentation, user_experience)."},
                 "severity": {"type": "string", "description": "Bug severity (blocker, critical, major, minor, trivial)."},
                 "priority_nice": {"type": "integer", "description": "Nice-scale priority value in range [-20, 19]."},
                 "reporter": {"type": "string", "description": "Identifier of the reporter."},
@@ -64,7 +65,7 @@ class BugCreateCommand(Command):
                 "expected_behavior": {"type": "string", "description": "What was expected to happen."},
                 "actual_behavior": {"type": "string", "description": "What actually happened."},
                 "reproduction": {"type": "string", "description": "Reproduction steps."},
-                "evidence": {"type": "object", "description": "Structured evidence payload."},
+                "evidence": {"type": "object", "description": "Structured evidence payload (free-form JSON object; wrap plain text as {\"text\": \"...\"})."},
                 "environment": {"type": "string", "description": "Environment description."},
                 "duplicate_of_uuid": {"type": "string", "format": "uuid", "description": "UUID of the bug this one duplicates, if any."},
                 "parent_bug_uuid": {"type": "string", "format": "uuid", "description": "UUID of the parent bug, if any."},

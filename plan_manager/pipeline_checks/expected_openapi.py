@@ -45,10 +45,11 @@ What IS hard-coded here, deliberately, on top of that registry projection:
       values reachable through its guarded transition path, not all six
       TodoStatus values -- this is a deliberate business rule, not a defect),
       or ``"absent"`` (the parameter is documented only in free-text today,
-      e.g. ``bug_create.kind``'s description lists the values but the JSON
-      schema has no ``enum`` key -- this is precisely the gap wish 74ee352d
-      names: "closed vocabularies as schema enums, not rejection-message
-      folklore"). Pinning the CURRENT state (rather than asserting every
+      e.g. ``bug_create.severity``'s description lists the values but the
+      JSON schema has no ``enum`` key -- this is precisely the gap wish
+      74ee352d names: "closed vocabularies as schema enums, not
+      rejection-message folklore"; ``bug_create.kind`` closed this gap under
+      bug b230a02b and is now ``"full"``). Pinning the CURRENT state (rather than asserting every
       carrier must already be "full") is what keeps this check GREEN today
       while still making any *unplanned* change to that state -- including
       an accidental fix that changes the state without updating this pin --
@@ -286,7 +287,9 @@ class VocabularyCarrier:
 
 
 VOCABULARY_CARRIERS: tuple[VocabularyCarrier, ...] = (
-    VocabularyCarrier("bug_kind", "bug_create", "kind", "absent"),
+    # bug b230a02b: bug_create.kind now declares the full pinned enum,
+    # following the runtime_link_add.link_type "full" pattern below.
+    VocabularyCarrier("bug_kind", "bug_create", "kind", "full"),
     VocabularyCarrier("bug_severity", "bug_create", "severity", "absent"),
     VocabularyCarrier("bug_severity", "bug_update", "severity", "absent"),
     VocabularyCarrier("bug_status", "bug_create", "status", "absent"),

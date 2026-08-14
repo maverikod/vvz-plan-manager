@@ -43,7 +43,8 @@ class BugPropagationUpdateCommand(Command):
                         "propagation record is always resolved directly by `propagation_id` (globally "
                         "unique). When omitted, the PLAN_COMPLETED guard applies only to the propagation's "
                         "own linked plan anchor, if any. When supplied, that plan must exist and must not "
-                        "itself be completed."
+                        "itself be completed. Supplying it never changes the bug's anchor; use bug_reanchor "
+                        "to move the anchor."
                     ),
                 },
                 "propagation_id": {"type": "string", "description": "UUID of the bug fix propagation record to update."},

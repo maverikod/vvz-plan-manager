@@ -97,12 +97,15 @@ def test_every_vocabulary_carrier_references_a_real_command_and_param() -> None:
 
 
 def test_full_state_carrier_schema_already_declares_the_pinned_enum() -> None:
-    """runtime_link_add.link_type is pinned "full": the live schema must agree today."""
+    """Every "full"-pinned carrier (runtime_link_add.link_type, bug_create.kind,
+    ...): the live schema must agree today."""
     contract = eo.build_expected_contract()
-    carrier = next(c for c in eo.VOCABULARY_CARRIERS if c.enum_state == "full")
-    vocabulary = next(v for v in eo.CLOSED_VOCABULARIES if v.name == carrier.vocabulary)
-    live_enum = contract["commands"][carrier.command]["params"][carrier.param].get("enum")
-    assert live_enum == sorted(vocabulary.pinned_values)
+    full_carriers = [c for c in eo.VOCABULARY_CARRIERS if c.enum_state == "full"]
+    assert full_carriers, "expected at least one full-state carrier"
+    for carrier in full_carriers:
+        vocabulary = next(v for v in eo.CLOSED_VOCABULARIES if v.name == carrier.vocabulary)
+        live_enum = contract["commands"][carrier.command]["params"][carrier.param].get("enum")
+        assert live_enum == sorted(vocabulary.pinned_values), carrier.command
 
 
 # ---------------------------------------------------------------------------

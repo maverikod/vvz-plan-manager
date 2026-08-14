@@ -41,7 +41,8 @@ class BugUpdateCommand(Command):
                         "When omitted, the PLAN_COMPLETED guard applies only to the bug's own source plan "
                         "anchor, if any (a project/file/command/runtime_service/execution_attempt/"
                         "unidentified-anchored bug has none and is never blocked by an unrelated plan's "
-                        "completion). When supplied, that plan must exist and must not itself be completed."
+                        "completion). When supplied, that plan must exist and must not itself be completed. "
+                        "Supplying it never changes the bug's anchor; use bug_reanchor to move the anchor."
                     ),
                 },
                 "bug_id": {"type": "string", "format": "uuid", "description": "UUID of the bug report to update."},
@@ -52,7 +53,7 @@ class BugUpdateCommand(Command):
                 "expected_behavior": {"type": "string", "description": "New expected behavior text. See `append` to preserve history instead of replacing."},
                 "actual_behavior": {"type": "string", "description": "New actual behavior text. See `append` to preserve history instead of replacing."},
                 "reproduction": {"type": "string", "description": "New reproduction steps. See `append` to preserve history instead of replacing."},
-                "evidence": {"type": "object", "description": "New structured evidence payload."},
+                "evidence": {"type": "object", "description": "New structured evidence payload (free-form JSON object; wrap plain text as {\"text\": \"...\"})."},
                 "environment": {"type": "string", "description": "New environment description."},
                 "severity": {"type": "string", "description": "New severity (blocker, critical, major, minor, trivial)."},
                 "priority_nice": {"type": "integer", "description": "New nice-scale priority value in range [-20, 19]."},

@@ -9469,6 +9469,349 @@ async def run_r50_frozen_atomic_direct_execution_transition_957c2f6a(client: Any
     return results
 
 
+R51_BUG_KIND_VOCABULARY: frozenset[str] = frozenset({
+    "compatibility", "configuration", "data_loss", "deployment", "documentation",
+    "functional", "infrastructure", "performance", "planning", "regression",
+    "security", "stale_context", "user_experience", "wrong_output",
+})
+
+
+async def run_r51_bug_kind_enum_discoverable_b230a02b(client: Any, project_id: str) -> list[CheckResult]:
+    """Bug b230a02b: bug_create/bug_update declare `kind` as a plain
+    {"type": "string"} schema property whose free-text description lists
+    the closed vocabulary in prose (see bug_create_command.py/
+    bug_update_command.py get_schema) instead of a JSON-Schema `enum` --
+    an MCP client (or this pipeline) discovering the contract purely from
+    help()'s schema payload has no machine-checkable way to know which
+    strings are legal. An invalid kind is only caught deep in the domain
+    layer (plan_manager/domain/bug_report.py validate_bug_kind, confirmed
+    live), surfacing as a generic RuntimeValidationError ->
+    ErrorResult(code=-32000, domain_code=RUNTIME_VALIDATION_ERROR) rather
+    than being rejected at the schema layer with the standard -32602
+    invalid-params code. A companion gap: the `evidence` object property's
+    description says nothing about the plain-text wrapping convention
+    ({"text": "..."}) that convention actually uses for it elsewhere.
+    NOTE: bug_update has NO `kind` schema property at all -- kind is
+    immutable after creation, set only by bug_create -- so bug_update's
+    half of the enum-discoverability gap does not apply; what it shares
+    with bug_create is only the evidence-wrapping documentation gap.
+
+    Recipe, five independent sub-assertions (only (3) touches the network
+    beyond help(), and only (3) can leave an entity behind):
+      1. help(cmdname="bug_create").schema.properties.kind carries an
+         "enum" key whose sorted value equals the server's published
+         14-value BUG_KINDS vocabulary. RED today: no enum key at all.
+      2a. help(cmdname="bug_update").schema.properties has NO "kind" key
+          at all -- pins the actual contract (kind is immutable after
+          creation). PASS today and after the fix.
+      2b. help(cmdname="bug_update").schema.properties.evidence.
+          description documents the plain-text wrapping convention --
+          asserts the substring '{"text"' appears in it. RED today.
+      3. bug_create with kind="defect" (not a member of BUG_KINDS) must be
+         REJECTED at the schema layer, JSON-RPC code -32602 -- confirming
+         "invalid enum value" is caught before the domain layer ever runs.
+         RED today: the domain layer rejects it instead, code -32000. If
+         the call unexpectedly SUCCEEDS (kind="defect" persisted), the
+         created bug is captured and hard-deleted in cleanup, and the
+         assertion is marked FAIL regardless -- a schema silently
+         admitting an undocumented kind is not the intended fix either.
+      4. help(cmdname="bug_create").schema.properties.evidence.description
+         documents the plain-text wrapping convention -- asserts the
+         substring '{"text"' appears in it. RED today.
+
+    No entity survives the happy path; only the defensive branch of (3)
+    leaves anything to delete.
+    """
+    results: list[CheckResult] = []
+    defect_bug_uuid: Optional[str] = None
+    try:
+        # --- 1: bug_create schema declares kind as a closed enum. ---
+        ok, res = await call(client, "help", {"cmdname": "bug_create"})
+        create_enum: Optional[list] = None
+        if ok and isinstance(res, dict):
+            schema = res.get("schema")
+            if isinstance(schema, dict):
+                properties = schema.get("properties")
+                if isinstance(properties, dict):
+                    kind_prop = properties.get("kind")
+                    if isinstance(kind_prop, dict) and isinstance(kind_prop.get("enum"), list):
+                        create_enum = kind_prop["enum"]
+        create_enum_ok = create_enum is not None and sorted(create_enum) == sorted(R51_BUG_KIND_VOCABULARY)
+        results.append(
+            CheckResult(
+                "4", "R51_b230a02b_bug_create_kind_enum",
+                STATUS_PASS if create_enum_ok else STATUS_FAIL,
+                "" if create_enum_ok
+                else (
+                    f"expected schema.properties.kind.enum(sorted)=={sorted(R51_BUG_KIND_VOCABULARY)}, "
+                    f"got {sorted(create_enum) if create_enum is not None else None} (ok={ok}, help={res!r})"
+                ),
+            )
+        )
+
+        # --- 2a: bug_update schema declares NO `kind` property at all (kind is
+        # immutable after creation -- pins the actual contract, not a wished-for
+        # enum that bug_update was never meant to carry). ---
+        ok, res = await call(client, "help", {"cmdname": "bug_update"})
+        update_properties: Optional[dict] = None
+        if ok and isinstance(res, dict):
+            schema = res.get("schema")
+            if isinstance(schema, dict):
+                properties = schema.get("properties")
+                if isinstance(properties, dict):
+                    update_properties = properties
+        no_kind_param_ok = update_properties is not None and "kind" not in update_properties
+        results.append(
+            CheckResult(
+                "4", "R51_b230a02b_bug_update_has_no_kind_param",
+                STATUS_PASS if no_kind_param_ok else STATUS_FAIL,
+                "" if no_kind_param_ok
+                else (
+                    f"expected schema.properties to have NO 'kind' key (kind is immutable after creation), "
+                    f"got properties={update_properties!r} (ok={ok}, help={res!r})"
+                ),
+            )
+        )
+
+        # --- 2b: bug_update's evidence description documents the plain-text
+        # wrapping convention -- same companion gap as bug_create's (4). ---
+        update_evidence_description = None
+        if update_properties is not None:
+            evidence_prop = update_properties.get("evidence")
+            if isinstance(evidence_prop, dict):
+                update_evidence_description = evidence_prop.get("description")
+        update_evidence_doc_ok = (
+            isinstance(update_evidence_description, str) and '{"text"' in update_evidence_description
+        )
+        results.append(
+            CheckResult(
+                "4", "R51_b230a02b_bug_update_evidence_text_wrapping_documented",
+                STATUS_PASS if update_evidence_doc_ok else STATUS_FAIL,
+                "" if update_evidence_doc_ok else f"evidence.description={update_evidence_description!r}",
+            )
+        )
+
+        # --- 3: an invalid kind is rejected at the SCHEMA layer (-32602), never the domain layer (-32000). ---
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r51-bug"), "short_description": "R51 invalid-kind schema-rejection probe",
+                "detailed_description": "R51: bug_create with kind='defect', not a member of BUG_KINDS.",
+                "kind": "defect", "severity": "trivial", "priority_nice": 19,
+                "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": project_id,
+            },
+        )
+        if ok:
+            if isinstance(res, dict) and res.get("uuid"):
+                defect_bug_uuid = res["uuid"]
+            results.append(
+                CheckResult(
+                    "4", "R51_b230a02b_invalid_kind_schema_rejected",
+                    STATUS_FAIL,
+                    f"expected schema-layer rejection (-32602), but bug_create SUCCEEDED with kind='defect': {res!r}",
+                )
+            )
+        else:
+            code = _typed_error_code(res)
+            rejected_ok = code == -32602
+            results.append(
+                CheckResult(
+                    "4", "R51_b230a02b_invalid_kind_schema_rejected",
+                    STATUS_PASS if rejected_ok else STATUS_FAIL,
+                    "" if rejected_ok else f"expected code -32602, got code={code!r} res={res!r}",
+                )
+            )
+
+        # --- 4: evidence description documents the plain-text wrapping convention. ---
+        ok, res = await call(client, "help", {"cmdname": "bug_create"})
+        evidence_description = None
+        if ok and isinstance(res, dict):
+            schema = res.get("schema")
+            if isinstance(schema, dict):
+                properties = schema.get("properties")
+                if isinstance(properties, dict):
+                    evidence_prop = properties.get("evidence")
+                    if isinstance(evidence_prop, dict):
+                        evidence_description = evidence_prop.get("description")
+        evidence_doc_ok = isinstance(evidence_description, str) and '{"text"' in evidence_description
+        results.append(
+            CheckResult(
+                "4", "R51_b230a02b_evidence_text_wrapping_documented",
+                STATUS_PASS if evidence_doc_ok else STATUS_FAIL,
+                "" if evidence_doc_ok else f"evidence.description={evidence_description!r}",
+            )
+        )
+    finally:
+        if defect_bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": defect_bug_uuid, "changed_by": "live-smoke", "hard": True})
+            deleted_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == defect_bug_uuid
+            results.append(
+                CheckResult(
+                    "4", "R51_b230a02b_defect_bug_delete(hard)",
+                    STATUS_PASS if deleted_ok else STATUS_FAIL,
+                    "" if deleted_ok else str(res),
+                )
+            )
+    return results
+
+
+async def run_r52_bug_update_plan_guard_ack_26107e40(client: Any, project_id: str) -> list[CheckResult]:
+    """Bug 26107e40: bug_update accepts an OPTIONAL `plan` parameter used
+    only to additionally check that plan's own completion guard
+    (refuse_if_bug_plan_completed via resolve_scope, bug_update_command.py)
+    -- but the response never says so: bug_update returns only the updated
+    BugReport payload, with no field naming which plan (if any) the guard
+    checked. A caller supplying `plan` has no way to confirm from the
+    response alone that the guard was actually evaluated against the plan
+    they intended, and the parameter's OWN name ("plan") invites the
+    misreading that it changes the bug's anchor -- it never does (bug
+    3eec33f2's optional-plan contract, still in force). Fixed: bug_update's
+    response gains a `plan_guard` object naming the checked plan's uuid
+    whenever `plan` was supplied, present only then; the anchor itself
+    (source_plan_uuid) stays untouched either way.
+
+    Recipe (throwaway plan + throwaway project-anchored bug, try/finally
+    cleanup):
+      1. plan_create -> guard_plan uuid (a real, non-completed plan,
+         supplied only as bug_update's guard parameter, never as the
+         bug's own anchor).
+      2. bug_create (source_type=project, source_project_id=<--project>,
+         plan omitted) -> bug uuid; asserts source_plan_uuid is null (the
+         bug has no plan anchor at all going in).
+      3. bug_update(bug_id, changed_by, plan=<guard_plan>, severity=
+         "major"): asserts success and severity=="major" (PASS today).
+         POST-FIX ASSERT (RED today): response contains a "plan_guard"
+         key, and the guard plan's uuid appears somewhere inside it
+         (accepts either plan_guard.checked_plan_uuid or
+         plan_guard["checked_plan_uuid"] naming -- this checks key
+         presence plus uuid membership rather than pinning one exact
+         nested key name, since the fix's shape is not yet live to
+         confirm verbatim).
+      4. bug_get: asserts source_plan_uuid is STILL null -- the guard
+         parameter never touches the anchor. PASS today and must stay
+         PASS after the fix (never-regress control).
+      5. CONTROL: bug_update WITHOUT `plan` (severity="minor") -> response
+         contains NO "plan_guard" key at all. PASS today; must also hold
+         after the fix -- the ack is conditional on `plan` being supplied,
+         never unconditional.
+
+    Cleanup: bug_delete(hard) then plan_delete(hard), each with its own
+    verified CheckResult.
+    """
+    results: list[CheckResult] = []
+    guard_plan_uuid: Optional[str] = None
+    bug_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r52-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R52_26107e40_plan_create", STATUS_FAIL, str(res)))
+            return results
+        guard_plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R52_26107e40_plan_create", STATUS_PASS, f"uuid={guard_plan_uuid}"))
+
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r52-bug"), "short_description": "R52 plan-guard-ack throwaway bug",
+                "detailed_description": "R52: project-anchored bug, no plan anchor, used to probe bug_update's plan guard.",
+                "kind": "functional", "severity": "trivial", "priority_nice": 19,
+                "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": project_id,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R52_26107e40_bug_create", STATUS_FAIL, str(res)))
+            return results
+        bug_uuid = res["uuid"]
+        anchor_clean_ok = res.get("source_plan_uuid") is None
+        results.append(
+            CheckResult(
+                "4", "R52_26107e40_bug_create_no_plan_anchor",
+                STATUS_PASS if anchor_clean_ok else STATUS_FAIL,
+                "" if anchor_clean_ok else f"expected source_plan_uuid null, got {res.get('source_plan_uuid')!r}",
+            )
+        )
+
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "plan": guard_plan_uuid, "severity": "major"},
+        )
+        update_ok = ok and isinstance(res, dict) and res.get("severity") == "major"
+        results.append(
+            CheckResult(
+                "4", "R52_26107e40_bug_update_with_plan",
+                STATUS_PASS if update_ok else STATUS_FAIL,
+                "" if update_ok else str(res),
+            )
+        )
+        if not update_ok:
+            return results
+
+        plan_guard = res.get("plan_guard")
+        plan_guard_ok = "plan_guard" in res and plan_guard is not None and guard_plan_uuid in str(plan_guard)
+        results.append(
+            CheckResult(
+                "4", "R52_26107e40_plan_guard_ack_present",
+                STATUS_PASS if plan_guard_ok else STATUS_FAIL,
+                "" if plan_guard_ok
+                else (
+                    f"expected a 'plan_guard' key naming checked plan {guard_plan_uuid}, "
+                    f"got plan_guard={plan_guard!r} (full response {res!r})"
+                ),
+            )
+        )
+
+        ok, res = await call(client, "bug_get", {"bug_id": bug_uuid})
+        anchor_still_clean_ok = ok and isinstance(res, dict) and res.get("source_plan_uuid") is None
+        results.append(
+            CheckResult(
+                "4", "R52_26107e40_anchor_untouched",
+                STATUS_PASS if anchor_still_clean_ok else STATUS_FAIL,
+                "" if anchor_still_clean_ok else f"expected source_plan_uuid still null, got ok={ok} {res!r}",
+            )
+        )
+
+        ok, res = await call(
+            client, "bug_update",
+            {"bug_id": bug_uuid, "changed_by": "live-smoke", "severity": "minor"},
+        )
+        control_update_ok = ok and isinstance(res, dict) and res.get("severity") == "minor"
+        no_guard_key_ok = control_update_ok and "plan_guard" not in res
+        results.append(
+            CheckResult(
+                "4", "R52_26107e40_control_no_plan_no_guard_key",
+                STATUS_PASS if no_guard_key_ok else STATUS_FAIL,
+                "" if no_guard_key_ok else f"expected success with no 'plan_guard' key, got ok={ok} {res!r}",
+            )
+        )
+    finally:
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            deleted_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == bug_uuid
+            results.append(
+                CheckResult(
+                    "4", "R52_26107e40_bug_delete(hard)",
+                    STATUS_PASS if deleted_ok else STATUS_FAIL,
+                    "" if deleted_ok else str(res),
+                )
+            )
+        if guard_plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": guard_plan_uuid, "hard": True})
+            deleted_ok = (
+                ok and isinstance(res, dict) and res.get("mode") == "hard"
+                and res.get("deleted") is True and res.get("uuid") == guard_plan_uuid
+            )
+            results.append(
+                CheckResult(
+                    "4", "R52_26107e40_plan_delete(hard)",
+                    STATUS_PASS if deleted_ok else STATUS_FAIL,
+                    "" if deleted_ok else str(res),
+                )
+            )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
