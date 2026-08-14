@@ -166,6 +166,21 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "plan_prompt_chain crashes on a G-NNN or G-NNN/T-NNN scope: "
         "'Branch' object has no attribute 'depth' (bug 4f7fbd43)",
     ),
+    LiveSmokeTestSpec(
+        "r47",
+        "run_r47_bug_create_project_anchor_confirmed_94371ee8",
+        "bug_create with an existing CA project persists the project anchor verbatim "
+        "(anchor_confirmation confirmed) instead of silently downgrading to "
+        "unidentified (bug 94371ee8)",
+        needs_project=True,
+    ),
+    LiveSmokeTestSpec(
+        "r48",
+        "run_r48_queued_wait_watchdog_classification_ef59fbcd",
+        "queued dispatch: a slow-but-completing job finishes ok within the watchdog "
+        "budget, and a job outliving a tight watchdog fails with the specific "
+        "'outer watchdog exceeded' diagnostic, never a misclassified RED (bug ef59fbcd)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

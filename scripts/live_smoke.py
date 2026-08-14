@@ -8651,6 +8651,276 @@ async def run_r46_prompt_chain_scoped_branch_depth(client: Any) -> list[CheckRes
     return results
 
 
+async def run_r47_bug_create_project_anchor_confirmed_94371ee8(client: Any, project_id: str) -> list[CheckResult]:
+    """Bug 94371ee8 (under the CA-confirmation umbrella bug 5926d536, root
+    caused by the queued CA envelope double-unwrap fff026c and the CA
+    confirmation timeout budget 375bfe1): bug_create with an EXISTING CA
+    project anchor was silently downgraded to unidentified instead of
+    persisting the requested project anchor verbatim, because the CA
+    confirmation round trip itself was being misread as "not found" (the
+    queued envelope from the analysis server was unwrapped one layer short,
+    and/or a too-tight timeout aborted the confirmation before CA answered).
+    Fixed: confirm_anchor (plan_manager/commands/anchor_confirmation.py)
+    correctly reads confirm_project_anchor's outcome for a project that DOES
+    exist in CA, so bug_create's response carries
+    anchor_confirmation={requested_type:"project", confirmed:true,
+    reason:null} and the persisted bug shows source_anchor_type=="project"
+    with source_project_id echoed verbatim -- never downgraded.
+
+    Recipe: bug_create(source_type=project, source_project_id=<--project>)
+    against this project's own id (registered in CA, the pipeline's default
+    --project) -- assert the live anchor_confirmation shape and that
+    bug_get's persisted source_anchor_type/source_project_id match. A
+    companion negative probe (the bug 5926d536 contract this fix must not
+    regress) repeats the same recipe with a project_id CA has never heard of
+    (a fresh uuid4): anchor_confirmation must report confirmed=false,
+    reason=="not_found", and the persisted bug must show
+    source_anchor_type=="unidentified" with source_project_id null -- an
+    unverifiable anchor is never silently persisted as if it were real.
+
+    Both scratch bugs are hard-deleted in a top-level finally, verified via
+    bug_delete's own {mode:"hard", deleted_uuid:...} response (R19's idiom).
+    """
+    results: list[CheckResult] = []
+    bug_uuid: Optional[str] = None
+    unknown_bug_uuid: Optional[str] = None
+    try:
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r47-bug"), "short_description": "R47 project-anchored scratch bug (known CA project)",
+                "detailed_description": "R47: bug_create with an existing CA project id.", "kind": "functional",
+                "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": project_id,
+            },
+        )
+        results.append(CheckResult("4", "R47_94371ee8_bug_create", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            return results
+        bug_uuid = res["uuid"]
+
+        confirmation = res.get("anchor_confirmation")
+        confirmation_ok = (
+            isinstance(confirmation, dict)
+            and confirmation.get("requested_type") == "project"
+            and confirmation.get("confirmed") is True
+            and confirmation.get("reason") is None
+        )
+        results.append(
+            CheckResult(
+                "4", "R47_94371ee8_anchor_confirmation_confirmed_true",
+                STATUS_PASS if confirmation_ok else STATUS_FAIL,
+                "" if confirmation_ok else f"anchor_confirmation={confirmation!r}",
+            )
+        )
+
+        ok, res = await call(client, "bug_get", {"bug_id": bug_uuid})
+        get_ok = (
+            ok and isinstance(res, dict)
+            and res.get("source_anchor_type") == "project"
+            and res.get("source_project_id") == project_id
+        )
+        results.append(
+            CheckResult(
+                "4", "R47_94371ee8_bug_get_anchor_persisted_verbatim",
+                STATUS_PASS if get_ok else STATUS_FAIL,
+                "" if get_ok else str(res),
+            )
+        )
+
+        # Companion negative (bug 5926d536 contract, must not regress): a
+        # project_id CA has never heard of must downgrade to unidentified,
+        # never persist an unverifiable anchor as if it were confirmed.
+        unknown_project_id = str(uuid_mod.uuid4())
+        ok, res = await call(
+            client, "bug_create",
+            {
+                "title": unique_suffix("r47-bug-unknown"), "short_description": "R47 project-anchored scratch bug (unknown CA project)",
+                "detailed_description": "R47: bug_create with a project id unknown to CA.", "kind": "functional",
+                "severity": "trivial", "priority_nice": 19, "reporter": "live-smoke", "created_by": "live-smoke",
+                "source_type": "project", "source_project_id": unknown_project_id,
+            },
+        )
+        results.append(CheckResult("4", "R47_5926d536_bug_create_unknown_project", STATUS_PASS if ok else STATUS_FAIL, "" if ok else str(res)))
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            return results
+        unknown_bug_uuid = res["uuid"]
+
+        neg_confirmation = res.get("anchor_confirmation")
+        neg_confirmation_ok = (
+            isinstance(neg_confirmation, dict)
+            and neg_confirmation.get("requested_type") == "project"
+            and neg_confirmation.get("confirmed") is False
+            and neg_confirmation.get("reason") == "not_found"
+        )
+        results.append(
+            CheckResult(
+                "4", "R47_5926d536_anchor_confirmation_not_found",
+                STATUS_PASS if neg_confirmation_ok else STATUS_FAIL,
+                "" if neg_confirmation_ok else f"anchor_confirmation={neg_confirmation!r}",
+            )
+        )
+
+        ok, res = await call(client, "bug_get", {"bug_id": unknown_bug_uuid})
+        neg_get_ok = (
+            ok and isinstance(res, dict)
+            and res.get("source_anchor_type") == "unidentified"
+            and res.get("source_project_id") is None
+        )
+        results.append(
+            CheckResult(
+                "4", "R47_5926d536_bug_get_downgraded_to_unidentified",
+                STATUS_PASS if neg_get_ok else STATUS_FAIL,
+                "" if neg_get_ok else str(res),
+            )
+        )
+    finally:
+        if bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": bug_uuid, "changed_by": "live-smoke", "hard": True})
+            deleted_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == bug_uuid
+            results.append(CheckResult("4", "R47_bug_delete(hard)_confirmed", STATUS_PASS if deleted_ok else STATUS_FAIL, "" if deleted_ok else str(res)))
+        if unknown_bug_uuid is not None:
+            ok, res = await call(client, "bug_delete", {"bug_id": unknown_bug_uuid, "changed_by": "live-smoke", "hard": True})
+            deleted_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == unknown_bug_uuid
+            results.append(CheckResult("4", "R47_bug_delete(hard)_unidentified", STATUS_PASS if deleted_ok else STATUS_FAIL, "" if deleted_ok else str(res)))
+    return results
+
+
+async def run_r48_queued_wait_watchdog_classification_ef59fbcd(client: Any) -> list[CheckResult]:
+    """Bug ef59fbcd: the live-smoke outer watchdog (added alongside the
+    timeout-forwarding fix, commit 9213b24) must distinguish a genuine
+    outer-watchdog timeout from a normal command result -- on 0.1.106 a
+    still-running queued process's own result could be misclassified as a
+    functional RED before the process had a chance to actually report back,
+    with no diagnostic distinguishing "the outer wait gave up" from "the
+    command itself failed".
+
+    Recipe, using the module's own primitives directly (_call_queued,
+    _with_call_watchdog, configure_call_watchdog, _CALL_WATCHDOG_TIMEOUT):
+    dispatch the adapter builtin `long_task` (parameter name `seconds`,
+    confirmed live via help(cmdname="long_task") and against
+    LongTaskCommand.get_schema in mcp_proxy_adapter/commands/
+    command_registry.py) via `_call_queued`, NOT the module's `call()`
+    wrapper -- `long_task` is listed in KNOWN_BUILTIN_COMMANDS, so `call()`
+    would route it straight to the direct (non-queued) path, bypassing
+    exactly the queued dispatch + outer-watchdog machinery this regression
+    is about.
+
+    DEVIATION FROM THE ORIGINAL RECIPE SKETCH (investigated live against
+    0.1.108, documented here rather than silently adjusted): `long_task`'s
+    own handler (mcp_proxy_adapter's demo JobManager command) enqueues a
+    background asyncio task and returns immediately with an application
+    payload `{job_id, status:"queued", store:"job_manager",
+    poll_with:"job_status"}` -- confirmed live, the call returns in ~1.6-2.2s
+    REGARDLESS of the requested `seconds` (5, 8, 10, or 20 all measured the
+    same), because the command's own execution (scheduling the background
+    sleep) is what completes, not the sleep itself. Two consequences neither
+    this script nor the bug's fix can change (adapter-framework contract,
+    out of scope for plan_manager): (1) this script's own `unwrap_envelope`
+    sees that inner payload's `status` key alongside `job_id` and treats it
+    as another unresolved queue-envelope layer (status "queued" is not in
+    COMPLETED_STATUSES), so `_call_queued` reports `ok=False` for EVERY
+    `long_task` dispatch, independent of watchdog configuration or elapsed
+    time -- asserting `ok is True` here would assert something the live
+    contract never produces, so this check asserts the more precise,
+    behaviorally meaningful property instead: the returned diagnostic is
+    recognizably the well-formed job-acceptance payload (a genuine,
+    honest "still queued" result), not the watchdog's own failure text --
+    i.e. the process's own result is never smuggled into a watchdog
+    misclassification. (2) because the call itself returns in ~2s regardless
+    of `seconds`, the prompt sketch's illustrative
+    configure_call_watchdog(2.0, grace_seconds=1.0) (3.0s budget) does NOT
+    reliably exceed that ~2s round trip on this deployment (confirmed live:
+    4/4 trials stayed under budget) -- this check instead uses a
+    deliberately sub-second budget (0.05s timeout + 0.05s grace, confirmed
+    live to trip 3/3 trials) to make the TRIP half of the matrix
+    deterministic rather than a flaky race against live network latency.
+    The behavioral contract under test -- POSITIVE never carries "outer
+    watchdog" in its diagnostic, TRIP always does, with the specific "outer
+    watchdog exceeded" wording -- is unchanged from the original sketch.
+
+    POSITIVE: dispatch `long_task` with `seconds=8` under the pipeline's
+    already-configured (generous) watchdog budget. Asserts (a) the
+    diagnostic never contains "outer watchdog" (the process's own -- still
+    queued -- result was not misclassified as a watchdog timeout), and (b)
+    the diagnostic IS the documented job-acceptance shape (its repr carries
+    job_id, status=="queued", store=="job_manager", poll_with=="job_status"
+    -- `_call_queued` reports a failing envelope as a formatted diagnostic
+    STRING, not the dict itself, so this matches on the dict's repr
+    fragments embedded in that string).
+
+    TRIP: saves the current watchdog config, configures an artificially
+    tight one (0.05s + 0.05s grace), dispatches `long_task` with
+    `seconds=10`. Asserts the call fails with "outer watchdog exceeded" in
+    the diagnostic -- the specific wording `_with_call_watchdog` uses,
+    naming the command and path, distinguishing this from the generic
+    "non-success/incomplete envelope" wording the POSITIVE case's own
+    (unrelated) envelope-shape mismatch produces. The watchdog config is
+    restored in a finally, unconditionally -- a leaked tight watchdog would
+    poison every later check in the same process, so restoration is
+    verified with its own CheckResult. The orphaned server-side sleep job is
+    a harmless adapter demo builtin with no owning entity this script
+    created; there is nothing to clean up.
+    """
+    results: list[CheckResult] = []
+    saved_watchdog_timeout = _CALL_WATCHDOG_TIMEOUT
+    try:
+        ok, res = await _with_call_watchdog(
+            "long_task", "queued", _call_queued(client, "long_task", {"seconds": 8})
+        )
+        not_misclassified = "outer watchdog" not in str(res)
+        results.append(
+            CheckResult(
+                "4", "R48_ef59fbcd_positive_not_misclassified_as_watchdog",
+                STATUS_PASS if not_misclassified else STATUS_FAIL,
+                "" if not_misclassified else f"ok={ok!r} res={res!r}",
+            )
+        )
+        # `_call_queued` reports the failing envelope as a formatted
+        # diagnostic STRING ("non-success/incomplete envelope: {...!r}"),
+        # not the dict itself (see its own return statement) -- match on
+        # the dict's repr fragments embedded in that string instead of
+        # attempting a dict-shaped assertion here.
+        res_text = str(res)
+        job_ack_ok = (
+            "'job_id':" in res_text
+            and "'status': 'queued'" in res_text
+            and "'store': 'job_manager'" in res_text
+            and "'poll_with': 'job_status'" in res_text
+        )
+        results.append(
+            CheckResult(
+                "4", "R48_ef59fbcd_positive_job_acceptance_shape",
+                STATUS_PASS if job_ack_ok else STATUS_FAIL,
+                "" if job_ack_ok else f"ok={ok!r} res={res!r}",
+            )
+        )
+
+        configure_call_watchdog(0.05, grace_seconds=0.05)
+        ok2, res2 = await _with_call_watchdog(
+            "long_task", "queued", _call_queued(client, "long_task", {"seconds": 10})
+        )
+        trip_ok = ok2 is False and "outer watchdog exceeded" in str(res2)
+        results.append(
+            CheckResult(
+                "4", "R48_ef59fbcd_trip_outer_watchdog_exceeded",
+                STATUS_PASS if trip_ok else STATUS_FAIL,
+                "" if trip_ok else f"ok={ok2!r} res={res2!r}",
+            )
+        )
+    finally:
+        globals()["_CALL_WATCHDOG_TIMEOUT"] = saved_watchdog_timeout
+        restored_ok = _CALL_WATCHDOG_TIMEOUT == saved_watchdog_timeout
+        results.append(
+            CheckResult(
+                "4", "R48_ef59fbcd_watchdog_restored",
+                STATUS_PASS if restored_ok else STATUS_FAIL,
+                "" if restored_ok else f"expected {saved_watchdog_timeout!r}, got {_CALL_WATCHDOG_TIMEOUT!r}",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
