@@ -32,6 +32,22 @@ ERROR_CASES = {
         "message": "invalid anchor: {details}",
         "solution": "Supply a well-formed anchor referencing an existing plan/step/project/file target.",
     },
+    # Bug 74479c06 (group-4 fix): review_result_supersede guards.
+    "REVIEW_RESULT_SELF_SUPERSEDE": {
+        "description": "review_uuid and superseded_by_uuid are the same review result.",
+        "message": "review result {review_id} may not supersede itself",
+        "solution": "Supply a superseded_by_uuid that names a DIFFERENT review result.",
+    },
+    "REVIEW_RESULT_LINEAGE_MISMATCH": {
+        "description": "The replacement review result reviews a different object_type than the stale review, or (when both review execution attempts) the two reviewed attempts do not share a step.",
+        "message": "replacement review result does not share lineage with the stale review",
+        "solution": "Supply a superseded_by_uuid whose review reviews the same object_type and, for execution_attempt reviews, the same step.",
+    },
+    "REVIEW_RESULT_ALREADY_SUPERSEDED": {
+        "description": "The stale review result already carries a superseded_by_uuid pointing at a DIFFERENT replacement than the one supplied.",
+        "message": "review result is already superseded by a different replacement",
+        "solution": "Re-supersede with the SAME superseded_by_uuid already on file for an idempotent no-op, or leave the existing pointer in place.",
+    },
 }
 
 

@@ -145,6 +145,7 @@ def test_execution_attempt_to_payload_has_uniform_uuid_key() -> None:
         created_at=NOW,
         updated_at=NOW,
         deleted_at=None,
+        superseded_by_uuid=None,
     )
     payload = record.to_payload()
     assert payload["uuid"] == str(attempt_uuid)
@@ -175,6 +176,7 @@ def test_review_result_to_payload_has_uniform_uuid_key() -> None:
         created_at=NOW,
         updated_at=NOW,
         deleted_at=None,
+        superseded_by_uuid=None,
     )
     payload = record.to_payload()
     assert payload["uuid"] == str(review_uuid)

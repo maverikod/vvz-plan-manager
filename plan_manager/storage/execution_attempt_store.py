@@ -23,7 +23,7 @@ _COLUMNS = (
     "command_test_results", "resource_accounting", "error", "escalation_reason",
     "parent_attempt_uuid", "created_by", "created_at", "updated_at", "deleted_at",
     "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
-    "acct_cost_estimate", "transcript_ref",
+    "acct_cost_estimate", "transcript_ref", "superseded_by_uuid",
 )
 
 
@@ -67,6 +67,7 @@ def _row_to_record(row: tuple[Any, ...] | dict[str, Any]) -> ExecutionAttempt:
         created_at=data["created_at"].isoformat(),
         updated_at=data["updated_at"].isoformat(),
         deleted_at=data["deleted_at"].isoformat() if data["deleted_at"] is not None else None,
+        superseded_by_uuid=data["superseded_by_uuid"],
     )
 
 

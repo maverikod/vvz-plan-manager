@@ -524,6 +524,8 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "comment_reanchor": "reanchors a comment's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
     "calendar_entry_reanchor": "reanchors a calendar entry's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
     "escalation_reanchor": "reanchors an escalation's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
+    "execution_attempt_supersede": "records that a stale execution attempt was replaced by a specific later one; exercised end to end by its own R-check (R55: supersede lifecycle sets a forward pointer without rewriting the stale row's status, idempotent same-target repeat, refused different-target re-supersede, lineage guard), not by a generic Tier-2 probe",
+    "review_result_supersede": "records that a stale review result was replaced by a specific later one; exercised end to end by its own R-check (R55: supersede lifecycle sets a forward pointer without rewriting the stale row's status, lineage guard across object_type and shared step), not by a generic Tier-2 probe",
     "bug_reject": "terminal bug transition; not exercised beyond the create/confirm/close lifecycle",
     "bug_mark_duplicate": "requires a second bug to mark as a duplicate target; not exercised in this pass",
     "bug_reopen": "reopens a terminal bug; not exercised beyond the create/confirm/close lifecycle",
@@ -10129,6 +10131,328 @@ R55_BUG_REVIEW_UUID = "5a3c433f-4f19-4952-ada0-fdaf9e348f77"
 R55_BUG_ATTEMPT_ID = "33abe72c-c1bf-4c57-b696-459632a23ec8"
 
 
+# Named checks _run_r55_functional_supersede_lifecycle emits, in order. Used
+# both to drive that function's own CheckResults AND, when the functional
+# phase is gated off (either supersede command missing from the live
+# catalog), to emit the "unreachable: step 1/2 red" idiom for every name
+# below instead of silently producing fewer checks than a green run would.
+R55_FUNCTIONAL_CHECK_NAMES: tuple[str, ...] = (
+    "R55_74479c06_functional_plan_create",
+    "R55_74479c06_functional_repro_steps_created",
+    "R55_74479c06_functional_execution_attempt_create(stale)",
+    "R55_74479c06_functional_execution_attempt_create(replacement)",
+    "R55_74479c06_functional_execution_attempt_create(third)",
+    "R55_74479c06_functional_execution_attempt_supersede",
+    "R55_74479c06_functional_execution_attempt_get_pointer_and_status_unchanged",
+    "R55_74479c06_functional_execution_attempt_supersede_idempotent_same_target",
+    "R55_74479c06_functional_execution_attempt_supersede_different_target_refused",
+    "R55_74479c06_functional_review_result_create(stale)",
+    "R55_74479c06_functional_review_result_create(replacement)",
+    "R55_74479c06_functional_review_result_supersede",
+    "R55_74479c06_functional_review_result_get_pointer_and_status_unchanged",
+    "R55_74479c06_functional_review_result_supersede_missing_replacement_not_found",
+)
+
+
+async def _run_r55_functional_supersede_lifecycle(client: Any) -> list[CheckResult]:
+    """Functional half of R55 (bug 74479c06 group-4 fix). Only called once
+    the caller has confirmed BOTH review_result_supersede and
+    execution_attempt_supersede are present in the live catalog (assertions
+    1-2); this function itself assumes that and creates entities
+    unconditionally.
+
+    Recipe: plan_create -> context_common/step_create G (level 3) ->
+    context_common/step_create T (level 4, parent G) -> context_common/
+    step_create A (level 5, parent T) -- ONE atomic step, exactly like
+    R49/R50's throwaway hierarchy, shared by every attempt/review below so
+    the lineage guards (same step_uuid / same reviewed-attempt step) are
+    satisfied by construction. THREE execution attempts anchor to A:
+    stale, replacement, and third (third exists only to probe the
+    different-target refusal cheaply, without needing a real second
+    replacement candidate). Then:
+
+      * execution_attempt_supersede(stale -> replacement, changed_by=
+        "live-smoke") must succeed (already_superseded False); a follow-up
+        execution_attempt_get(stale) must show superseded_by_uuid ==
+        replacement AND status == the attempt's own creation-time status
+        ("failed", untouched by the supersede call).
+      * Repeating the SAME call must succeed as a no-op (already_superseded
+        True, pointer unchanged).
+      * Superseding stale with third instead (a DIFFERENT target than the
+        one already on file) must be refused
+        EXECUTION_ATTEMPT_ALREADY_SUPERSEDED, and a follow-up
+        execution_attempt_get(stale) must show the pointer UNCHANGED
+        (still replacement, not third).
+      * Two review results are created reviewing the stale/replacement
+        attempts (reviewer="live-smoke-reviewer", deliberately different
+        from the attempts' created_by="live-smoke-executor" -- reviewing
+        your own execution attempt is refused SELF_CERTIFICATION_FORBIDDEN,
+        see review_result_create_command.py). review_result_supersede
+        (stale review -> replacement review) must succeed, pointer set,
+        status unchanged from the stale review's own creation-time status
+        ("rejected").
+      * Negative control: review_result_supersede with a nonexistent
+        superseded_by_uuid must be refused REVIEW_RESULT_NOT_FOUND (the
+        replacement-lookup runs before the idempotency check, so this is
+        exercised even though the stale review already carries a pointer
+        by this point).
+
+    Any setup step failing short-circuits the remaining checks (same style
+    as R50/R53's own sequential builds) rather than declaring the rest
+    "unreachable" -- that idiom is reserved for the OUTER command-presence
+    gate the caller applies, not for internal step-to-step dependencies.
+
+    Cleanup: plan_delete(hard) in finally, unconditionally attempted once a
+    plan was created. Execution attempts and review results have no delete
+    command of their own; a hard plan delete is not guaranteed to cascade
+    them away (R28's own contract: bug_delete's dangling-anchor case shows
+    a hard plan delete can leave anchored rows behind rather than
+    cascading), so a live run may leave the three execution_attempt rows
+    (and, transitively, the two review_result rows referencing them)
+    dangling with a stale plan_uuid -- a tolerated orphan under that same
+    R28 contract, not a new risk this check introduces.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r55-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R55_74479c06_functional_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R55_74479c06_functional_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        # G -> T -> A: a single atomic step, shared by every attempt/review
+        # created below (exactly R49/R50's context_common-gated recipe).
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
+        a_id = _extract_step_id(res) if ok else None
+        if not ok or a_id is None:
+            results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
+            return results
+        results.append(
+            CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_id} A={a_id}")
+        )
+
+        # Three execution attempts anchored to the SAME atomic step: stale
+        # (superseded first), replacement (the eventual pointer target),
+        # and third (used only to probe the different-target refusal).
+        attempt_created_by = "live-smoke-executor"
+        attempt_uuid_by_tag: dict[str, str] = {}
+        attempt_status_by_tag = {"stale": "failed", "replacement": "succeeded", "third": "failed"}
+        for tag, status in attempt_status_by_tag.items():
+            ok, res = await call(
+                client, "execution_attempt_create",
+                {"plan": plan_uuid, "step": a_id, "status": status, "created_by": attempt_created_by},
+            )
+            attempt_uuid = res.get("attempt_uuid") if ok and isinstance(res, dict) else None
+            check_name = f"R55_74479c06_functional_execution_attempt_create({tag})"
+            if not ok or not attempt_uuid:
+                results.append(CheckResult("4", check_name, STATUS_FAIL, str(res)))
+                return results
+            attempt_uuid_by_tag[tag] = attempt_uuid
+            results.append(CheckResult("4", check_name, STATUS_PASS, f"uuid={attempt_uuid}"))
+        stale_attempt = attempt_uuid_by_tag["stale"]
+        replacement_attempt = attempt_uuid_by_tag["replacement"]
+        third_attempt = attempt_uuid_by_tag["third"]
+        stale_attempt_original_status = attempt_status_by_tag["stale"]
+
+        # --- execution_attempt_supersede: stale -> replacement. ---
+        ok, res = await call(
+            client, "execution_attempt_supersede",
+            {"attempt_id": stale_attempt, "superseded_by_uuid": replacement_attempt, "changed_by": "live-smoke"},
+        )
+        supersede_ok = ok and isinstance(res, dict) and res.get("already_superseded") is False
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_execution_attempt_supersede",
+                STATUS_PASS if supersede_ok else STATUS_FAIL,
+                "" if supersede_ok else f"ok={ok} res={res!r}",
+            )
+        )
+        if not supersede_ok:
+            return results
+
+        ok, res = await call(client, "execution_attempt_get", {"attempt_id": stale_attempt})
+        pointer_and_status_ok = (
+            ok and isinstance(res, dict)
+            and res.get("superseded_by_uuid") == replacement_attempt
+            and res.get("status") == stale_attempt_original_status
+        )
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_execution_attempt_get_pointer_and_status_unchanged",
+                STATUS_PASS if pointer_and_status_ok else STATUS_FAIL,
+                "" if pointer_and_status_ok
+                else (
+                    f"expected superseded_by_uuid={replacement_attempt} and "
+                    f"status={stale_attempt_original_status!r} (unchanged); got ok={ok} res={res!r}"
+                ),
+            )
+        )
+
+        # --- idempotent repeat: SAME target, success as a no-op. ---
+        ok, res = await call(
+            client, "execution_attempt_supersede",
+            {"attempt_id": stale_attempt, "superseded_by_uuid": replacement_attempt, "changed_by": "live-smoke"},
+        )
+        idempotent_ok = (
+            ok and isinstance(res, dict)
+            and res.get("already_superseded") is True
+            and res.get("superseded_by_uuid") == replacement_attempt
+        )
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_execution_attempt_supersede_idempotent_same_target",
+                STATUS_PASS if idempotent_ok else STATUS_FAIL,
+                "" if idempotent_ok else f"ok={ok} res={res!r}",
+            )
+        )
+
+        # --- different-target re-supersede: stale already points at
+        # replacement; pointing it at third instead is refused, and the
+        # pointer on file must stay exactly as it was. ---
+        ok, res = await call(
+            client, "execution_attempt_supersede",
+            {"attempt_id": stale_attempt, "superseded_by_uuid": third_attempt, "changed_by": "live-smoke"},
+        )
+        different_target_refused_ok = (not ok) and "EXECUTION_ATTEMPT_ALREADY_SUPERSEDED" in str(res)
+        if different_target_refused_ok:
+            ok2, res2 = await call(client, "execution_attempt_get", {"attempt_id": stale_attempt})
+            different_target_refused_ok = (
+                ok2 and isinstance(res2, dict) and res2.get("superseded_by_uuid") == replacement_attempt
+            )
+            detail = "" if different_target_refused_ok else f"pointer changed: ok={ok2} res={res2!r}"
+        else:
+            detail = f"expected EXECUTION_ATTEMPT_ALREADY_SUPERSEDED; got ok={ok} res={res!r}"
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_execution_attempt_supersede_different_target_refused",
+                STATUS_PASS if different_target_refused_ok else STATUS_FAIL,
+                detail,
+            )
+        )
+
+        # --- two review results, reviewing the stale/replacement attempts;
+        # reviewer != created_by, avoiding SELF_CERTIFICATION_FORBIDDEN. ---
+        review_uuid_by_tag: dict[str, str] = {}
+        review_status_by_tag = {"stale": "rejected", "replacement": "accepted"}
+        review_reviewed_attempt_by_tag = {"stale": stale_attempt, "replacement": replacement_attempt}
+        for tag, status in review_status_by_tag.items():
+            ok, res = await call(
+                client, "review_result_create",
+                {
+                    "plan": plan_uuid,
+                    "object_type": "execution_attempt",
+                    "reviewer": "live-smoke-reviewer",
+                    "status": status,
+                    "created_by": "live-smoke-reviewer",
+                    "reviewed_attempt_uuid": review_reviewed_attempt_by_tag[tag],
+                },
+            )
+            review_uuid = res.get("review_uuid") if ok and isinstance(res, dict) else None
+            check_name = f"R55_74479c06_functional_review_result_create({tag})"
+            if not ok or not review_uuid:
+                results.append(CheckResult("4", check_name, STATUS_FAIL, str(res)))
+                return results
+            review_uuid_by_tag[tag] = review_uuid
+            results.append(CheckResult("4", check_name, STATUS_PASS, f"uuid={review_uuid}"))
+        stale_review = review_uuid_by_tag["stale"]
+        replacement_review = review_uuid_by_tag["replacement"]
+        stale_review_original_status = review_status_by_tag["stale"]
+
+        ok, res = await call(
+            client, "review_result_supersede",
+            {"plan": plan_uuid, "review_uuid": stale_review, "superseded_by_uuid": replacement_review, "changed_by": "live-smoke"},
+        )
+        review_supersede_ok = ok and isinstance(res, dict) and res.get("already_superseded") is False
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_review_result_supersede",
+                STATUS_PASS if review_supersede_ok else STATUS_FAIL,
+                "" if review_supersede_ok else f"ok={ok} res={res!r}",
+            )
+        )
+        if not review_supersede_ok:
+            return results
+
+        ok, res = await call(client, "review_result_get", {"plan": plan_uuid, "review_uuid": stale_review})
+        review_pointer_and_status_ok = (
+            ok and isinstance(res, dict)
+            and res.get("superseded_by_uuid") == replacement_review
+            and res.get("status") == stale_review_original_status
+        )
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_review_result_get_pointer_and_status_unchanged",
+                STATUS_PASS if review_pointer_and_status_ok else STATUS_FAIL,
+                "" if review_pointer_and_status_ok
+                else (
+                    f"expected superseded_by_uuid={replacement_review} and "
+                    f"status={stale_review_original_status!r} (unchanged); got ok={ok} res={res!r}"
+                ),
+            )
+        )
+
+        # --- negative control: nonexistent replacement uuid is refused
+        # REVIEW_RESULT_NOT_FOUND (the replacement lookup runs before the
+        # idempotency check, so this fires even though stale_review already
+        # carries a pointer at this point). ---
+        ok, res = await call(
+            client, "review_result_supersede",
+            {
+                "plan": plan_uuid, "review_uuid": stale_review,
+                "superseded_by_uuid": str(uuid_mod.uuid4()), "changed_by": "live-smoke",
+            },
+        )
+        missing_replacement_ok = (not ok) and "REVIEW_RESULT_NOT_FOUND" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_functional_review_result_supersede_missing_replacement_not_found",
+                STATUS_PASS if missing_replacement_ok else STATUS_FAIL,
+                "" if missing_replacement_ok else f"expected REVIEW_RESULT_NOT_FOUND; got ok={ok} res={res!r}",
+            )
+        )
+    finally:
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            plan_deleted_ok = (
+                ok and isinstance(res, dict) and res.get("mode") == "hard"
+                and res.get("deleted") is True and res.get("uuid") == plan_uuid
+            )
+            results.append(
+                CheckResult(
+                    "4", "R55_74479c06_functional_cleanup",
+                    STATUS_PASS if plan_deleted_ok else STATUS_FAIL,
+                    "" if plan_deleted_ok else str(res),
+                )
+            )
+    return results
+
+
 async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]:
     """Bug 74479c06: neither review_result nor execution_attempt has any
     supersede lifecycle. When a stale review result or a stale execution
@@ -10160,6 +10484,39 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     superseded_by/replacement uuid parameter and a changed_by parameter,
     matching the approved fix shape.
 
+    FUNCTIONAL LIFECYCLE (gated on BOTH commands' own designated-RED
+    assertions 1-2 already passing -- command PRESENCE, not the shape
+    assertions 3-4, so a present-but-malformed schema still gets its
+    functional lifecycle attempted independently): delegated to
+    _run_r55_functional_supersede_lifecycle, which builds a throwaway
+    plan -> G -> T -> A hierarchy (context_common gate, exactly like
+    R49/R50) and anchors THREE execution attempts to the single atomic
+    step (stale/replacement/third), then: execution_attempt_supersede
+    (stale -> replacement) must succeed and execution_attempt_get(stale)
+    afterward must show superseded_by_uuid==replacement AND status
+    UNCHANGED from the attempt's own creation-time status; an idempotent
+    repeat (same target) must succeed as a no-op; re-supersede with a
+    DIFFERENT target (stale -> third, while already pointing at
+    replacement) must be refused EXECUTION_ATTEMPT_ALREADY_SUPERSEDED with
+    the pointer unchanged. The same shape is then run once for
+    review_result_supersede (two review results reviewing the stale/
+    replacement attempts, reviewer deliberately different from the
+    attempts' created_by to avoid SELF_CERTIFICATION_FORBIDDEN): supersede
+    succeeds, pointer set, status unchanged; a negative control supersedes
+    with a nonexistent superseded_by_uuid and expects REVIEW_RESULT_NOT_
+    FOUND. On a server missing the commands (e.g. live 0.1.111) this whole
+    phase is gated off and emits the same "unreachable: step 1/2 red"
+    idiom as assertions 3-4, per named check, creating NO entities.
+    Cleanup: plan_delete(hard) in finally. Execution attempts and review
+    results have no delete command of their own; plan_delete(hard) is NOT
+    guaranteed to cascade them away (R28's own contract: a hard plan
+    delete can leave anchored rows dangling rather than cascading), so a
+    live run against a fixed server may leave the three execution_attempt
+    rows (and, transitively, the two review_result rows referencing them)
+    behind with a dangling plan_uuid -- a tolerated orphan under the same
+    R28 contract bug_delete's dangling-anchor case already accepts, not a
+    new risk this check introduces.
+
     Assertion 5 (reproduction evidence, READ-ONLY, best-effort): the bug's
     own live example -- review_result_get(plan=R55_BUG_PLAN_UUID,
     review_uuid=R55_BUG_REVIEW_UUID) and
@@ -10176,17 +10533,6 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     superseded_by parameter -- supersede is meant to stay a dedicated
     command, never folded in as an update side-effect of the ordinary
     report path.
-
-    TODO(0.1.112 fix): once review_result_supersede / execution_attempt_
-    supersede ship, extend this check with a gated functional-lifecycle
-    phase -- create two throwaway execution attempts (or review results),
-    supersede the stale one, and assert the stale row's superseded_by_uuid
-    now points at the replacement while its status field is UNCHANGED from
-    before the supersede call, with its own cleanup. That phase stays
-    disabled (assertions 3-4's "unreachable" gate covers it) until the
-    commands exist.
-
-    No cleanup needed: nothing is created by this check.
     """
     results: list[CheckResult] = []
 
@@ -10243,6 +10589,22 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
                 ),
             )
         )
+
+    # --- FUNCTIONAL LIFECYCLE: gated on command PRESENCE (assertions 1-2
+    # for BOTH commands), not on the shape assertions (3-4) -- a present
+    # command with a malformed schema still gets its functional lifecycle
+    # attempted, so a shape regression and a functional regression are
+    # reported independently instead of one masking the other. See
+    # _run_r55_functional_supersede_lifecycle's own docstring for the full
+    # recipe. On a server missing either command this emits the same
+    # "unreachable: step 1/2 red" idiom as assertions 3-4, one FAIL per
+    # named check below, and creates NO entities. ---
+    functional_gate_ok = all(designated_red_ok_by_command[name] for name in supersede_commands)
+    if functional_gate_ok:
+        results += await _run_r55_functional_supersede_lifecycle(client)
+    else:
+        for gated_name in R55_FUNCTIONAL_CHECK_NAMES:
+            results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1/2 red"))
 
     # --- 5: reproduction evidence, read-only, best-effort against the
     # bug's own real live records. Never mutates anything. ---

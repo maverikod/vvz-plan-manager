@@ -125,7 +125,7 @@ def _review_result() -> ReviewResult:
         reviewed_revision_uuid=None, reviewer="tester", status="accepted",
         findings=_BIG_BODY, evidence={"k": _BIG_BODY}, verification_commands=["cmd"] * 50,
         escalation_target_uuid=None, created_by="tester", created_at=_TS, updated_at=_TS,
-        deleted_at=None,
+        deleted_at=None, superseded_by_uuid=None,
     )
 
 
@@ -180,7 +180,7 @@ def _execution_attempt() -> ExecutionAttempt:
         acct_provider="anthropic", acct_model="claude-sonnet", acct_wall_ms=1000,
         acct_cost_estimate=0.5, transcript_ref=_BIG_BODY, error=None,
         escalation_reason=None, parent_attempt_uuid=None, created_by="tester",
-        created_at=_TS, updated_at=_TS, deleted_at=None,
+        created_at=_TS, updated_at=_TS, deleted_at=None, superseded_by_uuid=None,
     )
 
 

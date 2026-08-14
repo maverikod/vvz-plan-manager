@@ -310,6 +310,8 @@ REVIEW_RESULT_COLUMNS = (
     "uuid", "object_type", "reviewed_attempt_uuid", "reviewed_revision_uuid",
     "reviewer", "status", "findings", "evidence", "verification_commands",
     "escalation_target_uuid", "created_by", "created_at", "updated_at", "deleted_at",
+    # Bug 74479c06 (group-4 fix, migration 0031): forward supersede pointer.
+    "superseded_by_uuid",
 )
 
 REVIEW_UUID = uuid.uuid4()
@@ -330,6 +332,7 @@ REVIEW_RESULT_TABLE_ROW = {
     "created_at": NOW,
     "updated_at": NOW,
     "deleted_at": None,
+    "superseded_by_uuid": None,
 }
 
 

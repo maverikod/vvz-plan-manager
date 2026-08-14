@@ -16,11 +16,15 @@ from plan_manager.storage.runtime_audit_store import record_runtime_change
 # Explicit read projection for every review_result SELECT in this module. Bug
 # 0798c162: SELECT * rows are fragile when tables add columns; selecting
 # exactly the columns _row_to_record consumes keeps the row shape pinned to
-# the unpack below, immune to future additive columns.
+# the unpack below, immune to future additive columns. _row_to_record itself
+# maps this tuple onto ReviewResult by COLUMN NAME (dict(zip(...))), not by
+# position, so appending a column here (as migration 0031 did for
+# superseded_by_uuid) never requires renumbering existing indices -- the same
+# unpack-safety technique plan_manager.storage.execution_attempt_store uses.
 _REVIEW_RESULT_SELECT_COLUMNS = """
     uuid, object_type, reviewed_attempt_uuid, reviewed_revision_uuid, reviewer,
     status, findings, evidence, verification_commands, escalation_target_uuid,
-    created_by, created_at, updated_at, deleted_at
+    created_by, created_at, updated_at, deleted_at, superseded_by_uuid
 """
 
 
@@ -111,6 +115,7 @@ def create_review_result(
         created_at=created_at.isoformat(),
         updated_at=updated_at.isoformat(),
         deleted_at=None,
+        superseded_by_uuid=None,
     )
 
 
@@ -187,32 +192,47 @@ def list_review_results(
     return [_row_to_record(row) for row in rows]
 
 
-def _row_to_record(row: Any) -> ReviewResult:
-    """Convert a database row tuple (in _REVIEW_RESULT_SELECT_COLUMNS order) to a ReviewResult dataclass instance.
+_REVIEW_RESULT_COLUMN_NAMES: tuple[str, ...] = (
+    "uuid", "object_type", "reviewed_attempt_uuid", "reviewed_revision_uuid", "reviewer",
+    "status", "findings", "evidence", "verification_commands", "escalation_target_uuid",
+    "created_by", "created_at", "updated_at", "deleted_at", "superseded_by_uuid",
+)
 
-    Row columns (in table order):
-    0: uuid, 1: object_type, 2: reviewed_attempt_uuid, 3: reviewed_revision_uuid,
-    4: reviewer, 5: status, 6: findings, 7: evidence, 8: verification_commands,
-    9: escalation_target_uuid, 10: created_by, 11: created_at, 12: updated_at, 13: deleted_at
+
+def _row_to_record(row: tuple[Any, ...]) -> ReviewResult:
+    """Convert a database row (in _REVIEW_RESULT_SELECT_COLUMNS order) to a ReviewResult dataclass instance.
+
+    Bug 0798c162 unpack-safety: the row is first zipped into a dict keyed by
+    _REVIEW_RESULT_COLUMN_NAMES (the exact same order the SELECT above uses),
+    then read back out BY NAME below -- never by positional index -- so a
+    future migration that appends another column here (as 0031 already did
+    for superseded_by_uuid) cannot silently shift every field one slot to the
+    right. Mirrors plan_manager.storage.execution_attempt_store._row_to_record.
 
     Converts:
-    - UUID columns (0,2,3,9): uuid.UUID or None (psycopg3 returns these natively)
-    - Timestamp columns (11,12,13): ISO format strings (or None for deleted_at if NULL)
-    - JSONB columns (7,8): Python dict/list or None (already deserialized by psycopg3)
+    - UUID columns (uuid, reviewed_attempt_uuid, reviewed_revision_uuid,
+      escalation_target_uuid, superseded_by_uuid): uuid.UUID or None (psycopg3
+      returns these natively)
+    - Timestamp columns (created_at, updated_at, deleted_at): ISO format
+      strings (or None for deleted_at if NULL)
+    - JSONB columns (evidence, verification_commands): Python dict/list or
+      None (already deserialized by psycopg3)
     """
+    data = dict(zip(_REVIEW_RESULT_COLUMN_NAMES, row))
     return ReviewResult(
-        review_uuid=row[0],
-        object_type=row[1],
-        reviewed_attempt_uuid=row[2],
-        reviewed_revision_uuid=row[3],
-        reviewer=row[4],
-        status=row[5],
-        findings=row[6],
-        evidence=row[7],
-        verification_commands=row[8],
-        escalation_target_uuid=row[9],
-        created_by=row[10],
-        created_at=row[11].isoformat(),
-        updated_at=row[12].isoformat(),
-        deleted_at=row[13].isoformat() if row[13] is not None else None,
+        review_uuid=data["uuid"],
+        object_type=data["object_type"],
+        reviewed_attempt_uuid=data["reviewed_attempt_uuid"],
+        reviewed_revision_uuid=data["reviewed_revision_uuid"],
+        reviewer=data["reviewer"],
+        status=data["status"],
+        findings=data["findings"],
+        evidence=data["evidence"],
+        verification_commands=data["verification_commands"],
+        escalation_target_uuid=data["escalation_target_uuid"],
+        created_by=data["created_by"],
+        created_at=data["created_at"].isoformat(),
+        updated_at=data["updated_at"].isoformat(),
+        deleted_at=data["deleted_at"].isoformat() if data["deleted_at"] is not None else None,
+        superseded_by_uuid=data["superseded_by_uuid"],
     )

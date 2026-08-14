@@ -35,8 +35,13 @@ class ReviewResult(DataclassEntity):
     COLUMNS = (
         "uuid", "object_type", "reviewed_attempt_uuid", "reviewed_revision_uuid", "reviewer",
         "status", "findings", "evidence", "verification_commands", "escalation_target_uuid",
-        "created_by", "created_at", "updated_at", "deleted_at",
+        "created_by", "created_at", "updated_at", "deleted_at", "superseded_by_uuid",
     )
+    # Bug 74479c06 (group-4 fix): the ONLY legal update path on an otherwise
+    # immutable review verdict -- review_result_supersede writes this one
+    # column via crud_update and never touches `status` (see
+    # plan_manager.storage.entity_supersede_store.supersede_review_result).
+    UPDATE_COLUMNS = ("superseded_by_uuid", "updated_at")
     OWNER_GAP = (
         "object_type discriminates reviewed_attempt_uuid vs "
         "reviewed_revision_uuid; no single owner column until the G-007 anchor "
@@ -48,6 +53,10 @@ class ReviewResult(DataclassEntity):
         # keys are the raw review_result DB columns (PK column is literally "uuid") — not the dataclass's
         # ENTITY_ID_FIELD name. A source_column of "review_uuid" here is a KeyError (bug e52daeab).
         ReferenceCheck("runtime_audit_log", "linked_review_id", "uuid"),
+        # Self-referencing, mirrors execution_attempt.parent_attempt_uuid's own
+        # registration (bug 74479c06 group-4 fix): a stale review_result row's
+        # superseded_by_uuid points at another review_result.
+        ReferenceCheck("review_result", "superseded_by_uuid", "uuid", live_column="deleted_at"),
     )
     # Compact view=summary projection (bug 8a13977d): drops findings, evidence,
     # and verification_commands.
@@ -67,6 +76,11 @@ class ReviewResult(DataclassEntity):
     created_at: str
     updated_at: str
     deleted_at: str | None
+    # Bug 74479c06 (group-4 fix): forward pointer to the replacement review
+    # result, written ONLY on the stale row. Never written by anything other
+    # than review_result_supersede; `status` above is never touched by that
+    # command -- the original verdict this row recorded stays intact.
+    superseded_by_uuid: uuid.UUID | None
 
     def to_payload(self) -> dict[str, Any]:
         """Render this record as a JSON-serializable dict. UUID fields become str or None;
@@ -88,6 +102,7 @@ class ReviewResult(DataclassEntity):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at,
+            "superseded_by_uuid": str(self.superseded_by_uuid) if self.superseded_by_uuid is not None else None,
         }
 
 

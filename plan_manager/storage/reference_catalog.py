@@ -159,6 +159,12 @@ REFERENCE_CATALOG: dict[tuple[str, str], CatalogEntry] = _entries(
     CatalogEntry("review_result", "reviewed_attempt_uuid", "execution_attempt", live_column=_LIVE),
     CatalogEntry("execution_attempt", "parent_attempt_uuid", "execution_attempt", live_column=_LIVE),
     CatalogEntry("answer_envelope", "attempt_uuid", "execution_attempt", live_column=_LIVE),
+    # ---- supersede-lifecycle forward pointers (bug 74479c06 group-4 fix,
+    # migration 0031): self-referencing, same shape as parent_attempt_uuid /
+    # linked_review_id directly above -- written ONLY on the stale row by
+    # plan_manager.storage.entity_supersede_store.
+    CatalogEntry("execution_attempt", "superseded_by_uuid", "execution_attempt", live_column=_LIVE),
+    CatalogEntry("review_result", "superseded_by_uuid", "review_result", live_column=_LIVE),
     # ---- references to review_result (bug e52daeab) ------------------------
     CatalogEntry("runtime_audit_log", "linked_review_id", "review_result"),
     CatalogEntry("runtime_audit_log", "linked_attempt_id", "execution_attempt"),

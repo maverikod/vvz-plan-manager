@@ -237,8 +237,8 @@ def crud_matrix() -> dict[str, Any]:
             "todo_link": {"create": "todo_link_add", "read": "via todo_get", "update": "none", "delete": "todo_link_remove (soft, idempotent)"},
             "comment": {"create": "comment_add", "read": "comment_get/comment_list", "update": "none (comments are immutable; comment_supersede appends a new record; comment_resolve toggles resolved)", "delete": "comment_delete (soft by default: recoverable, hidden from listings; hard=true irreversible; both modes gated by the inbound-reference integrity check - a live superseding comment refuses with DELETE_BLOCKED; dry_run previews references)"},
             "model_binding": {"create": "model_binding_set (create-only; not an upsert)", "read": "model_binding_get/model_binding_list/model_binding_resolve", "update": "model_binding_update (patches an existing binding's fields in place)", "delete": "model_binding_remove (soft)"},
-            "execution_attempt": {"create": "execution_attempt_create", "read": "execution_attempt_get/execution_attempt_list", "update": "execution_attempt_report (append/patch outcome fields)", "delete": "none (append-only history)"},
-            "review_result": {"create": "review_result_create", "read": "review_result_get/review_result_list", "update": "none (immutable verdict)", "delete": "none"},
+            "execution_attempt": {"create": "execution_attempt_create", "read": "execution_attempt_get/execution_attempt_list", "update": "execution_attempt_report (append/patch outcome fields); execution_attempt_supersede (bug 74479c06: writes ONLY the superseded_by_uuid forward pointer on the stale row, never status)", "delete": "none (append-only history)"},
+            "review_result": {"create": "review_result_create", "read": "review_result_get/review_result_list", "update": "status is immutable; review_result_supersede (bug 74479c06) writes ONLY the superseded_by_uuid forward pointer on the stale row", "delete": "none"},
             "escalation": {"create": "escalation_create", "read": "escalation_get/escalation_list", "update": "escalation_resolve (open->resolved)", "delete": "none"},
             "bug": {"create": "bug_create", "read": "bug_get/bug_list", "update": "bug_update (non-lifecycle fields); status via bug_confirm/bug_reject/bug_mark_duplicate/bug_reopen/bug_close", "delete": "bug_delete (soft by default: recoverable, hidden from listings; hard=true irreversible; both modes gated by the inbound-reference integrity check - live anchored comments, duplicate/child bugs, bug impacts, or bug fixes refuse with DELETE_BLOCKED; dry_run previews references)"},
             "bug_impact": {"create": "bug_impact_add/bug_impact_discover", "read": "bug_impact_list", "update": "bug_impact_update", "delete": "bug_impact_delete (soft by default: recoverable, hidden from listings; hard=true irreversible; both modes gated by the inbound-reference integrity check - a live bug fix propagation targeting the impact refuses with DELETE_BLOCKED; dry_run previews references)"},
@@ -317,10 +317,10 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     ],
     "execution_attempt": [
         "execution_attempt_create", "execution_attempt_report",
-        "execution_attempt_get", "execution_attempt_list",
+        "execution_attempt_get", "execution_attempt_list", "execution_attempt_supersede",
     ],
     "review_escalation": [
-        "review_result_create", "review_result_get", "review_result_list",
+        "review_result_create", "review_result_get", "review_result_list", "review_result_supersede",
         "escalation_create", "escalation_resolve", "escalation_reanchor", "escalation_get", "escalation_list",
     ],
     "bug": [

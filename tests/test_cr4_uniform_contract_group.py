@@ -55,8 +55,12 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 #   wish_reanchor/calendar_entry_reanchor/escalation_reanchor/comment_reanchor
 #   (the same guard_owner_update/direct-anchor-UPDATE re-anchor capability
 #   todo_reanchor/bug_reanchor already exposed, extended to the remaining
-#   anchor-bearing runtime entities).
-_PRE_CR4_INVENTORY_COUNT = 219
+#   anchor-bearing runtime entities), bringing the pinned total to 219.
+#   Group-4 supersede-lifecycle fix (bug 74479c06): +2 for
+#   review_result_supersede/execution_attempt_supersede (a forward
+#   superseded_by_uuid pointer written only on the stale row, migration 0031;
+#   plan_manager.storage.entity_supersede_store).
+_PRE_CR4_INVENTORY_COUNT = 221
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

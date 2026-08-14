@@ -140,10 +140,12 @@ INVENTORY: tuple[str, ...] = (
     "execution_attempt_report",
     "execution_attempt_get",
     "execution_attempt_list",
+    "execution_attempt_supersede",
     # runtime review & escalation
     "review_result_create",
     "review_result_get",
     "review_result_list",
+    "review_result_supersede",
     "escalation_create",
     "escalation_get",
     "escalation_list",
@@ -304,6 +306,9 @@ MUTATING: frozenset[str] = frozenset({
     "calendar_entry_delete",
     "escalation_reanchor",
     "comment_reanchor",
+    # supersede lifecycle for stale review results / execution attempts (bug 74479c06 group-4 fix)
+    "review_result_supersede",
+    "execution_attempt_supersede",
     # full bug-family delete surface (user CRUD order, todo 9b09c9b0)
     "bug_delete",
     "bug_impact_delete",

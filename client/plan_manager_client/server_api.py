@@ -141,9 +141,11 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "execution_attempt_report",
         "execution_attempt_get",
         "execution_attempt_list",
+        "execution_attempt_supersede",
         "review_result_create",
         "review_result_get",
         "review_result_list",
+        "review_result_supersede",
         "escalation_create",
         "escalation_get",
         "escalation_list",
@@ -291,6 +293,8 @@ MUTATING_COMMAND_NAMES: frozenset[str] = frozenset(
         "calendar_entry_delete",
         "escalation_reanchor",
         "comment_reanchor",
+        "review_result_supersede",
+        "execution_attempt_supersede",
     )
 )
 

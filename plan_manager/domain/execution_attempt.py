@@ -32,7 +32,8 @@ class ExecutionAttempt(DataclassEntity):
     # CR-7 G-003 (C-002, C-006): ownership declaration and completed descriptor.
     OWNER_COLUMN = "step_uuid"  # todo- and bug-fix-driven attempts leave step_uuid NULL (ownerless rows)
     ID_COLUMN: ClassVar[str] = "uuid"
-    # Columns in CREATE TABLE order (0012) followed by ALTER TABLE ADD columns (0021).
+    # Columns in CREATE TABLE order (0012) followed by ALTER TABLE ADD columns
+    # (0021, then 0031 for superseded_by_uuid -- bug 74479c06 group-4 fix).
     COLUMNS: ClassVar[tuple[str, ...]] = (
         "uuid", "plan_uuid", "revision_uuid", "step_uuid", "step_path", "todo_uuid",
         "bug_fix_uuid", "assigned_binding_uuid", "assigned_provider", "assigned_model",
@@ -41,7 +42,7 @@ class ExecutionAttempt(DataclassEntity):
         "command_test_results", "resource_accounting", "error", "escalation_reason",
         "parent_attempt_uuid", "created_by", "created_at", "updated_at", "deleted_at",
         "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
-        "acct_cost_estimate", "transcript_ref",
+        "acct_cost_estimate", "transcript_ref", "superseded_by_uuid",
     )
     # Every column except deleted_at. uuid, created_at and updated_at ARE insertable: none
     # carries a DB default, and the store supplies all three explicitly. Omitting them would
@@ -66,6 +67,11 @@ class ExecutionAttempt(DataclassEntity):
         "input_context_hash", "transcript_ref", "updated_at", "finished_at",
         "acct_tokens_in", "acct_tokens_out", "acct_provider", "acct_model", "acct_wall_ms",
         "acct_cost_estimate",
+        # Bug 74479c06 (group-4 fix): the sole column execution_attempt_supersede
+        # writes, via ExecutionAttempt.crud_update directly -- never through
+        # report_execution_attempt, and never together with "status" in the
+        # same call (see plan_manager.storage.entity_supersede_store).
+        "superseded_by_uuid",
     )
     # No searchable columns for execution_attempt.
     SEARCH_COLUMNS: ClassVar[tuple[str, ...]] = ()
@@ -82,6 +88,10 @@ class ExecutionAttempt(DataclassEntity):
         ReferenceCheck("runtime_comment", "anchor_ref_id", "uuid", live_column="deleted_at"),
         ReferenceCheck("review_result", "reviewed_attempt_uuid", "uuid", live_column="deleted_at"),
         ReferenceCheck("execution_attempt", "parent_attempt_uuid", "uuid", live_column="deleted_at"),
+        # Self-referencing, same shape as parent_attempt_uuid directly above
+        # (bug 74479c06 group-4 fix): a stale execution_attempt row's
+        # superseded_by_uuid points at another execution_attempt.
+        ReferenceCheck("execution_attempt", "superseded_by_uuid", "uuid", live_column="deleted_at"),
     )
 
     attempt_uuid: uuid.UUID
@@ -120,6 +130,11 @@ class ExecutionAttempt(DataclassEntity):
     created_at: str
     updated_at: str
     deleted_at: str | None
+    # Bug 74479c06 (group-4 fix): forward pointer to the replacement execution
+    # attempt, written ONLY on the stale row by execution_attempt_supersede.
+    # `status` above is never touched by that command -- the original run
+    # outcome this row recorded stays intact.
+    superseded_by_uuid: uuid.UUID | None
 
     def to_payload(self) -> dict[str, Any]:
         """Render this record as a JSON-safe dict: uuid fields become str or None,
@@ -165,6 +180,7 @@ class ExecutionAttempt(DataclassEntity):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted_at": self.deleted_at,
+            "superseded_by_uuid": str(self.superseded_by_uuid) if self.superseded_by_uuid is not None else None,
         }
 
 

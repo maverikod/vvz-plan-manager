@@ -18,6 +18,22 @@ EXECUTION_ERROR_CASES = {
         "message": "invalid anchor: {details}",
         "solution": "Supply a step that belongs to the given plan and, if a revision is given, to that revision.",
     },
+    # Bug 74479c06 (group-4 fix): execution_attempt_supersede guards.
+    "EXECUTION_ATTEMPT_SELF_SUPERSEDE": {
+        "description": "attempt_id and superseded_by_uuid are the same execution attempt.",
+        "message": "execution attempt {attempt_id} may not supersede itself",
+        "solution": "Supply a superseded_by_uuid that names a DIFFERENT execution attempt.",
+    },
+    "EXECUTION_ATTEMPT_LINEAGE_MISMATCH": {
+        "description": "The replacement execution attempt belongs to a different step than the stale attempt being superseded.",
+        "message": "replacement execution attempt belongs to a different step",
+        "solution": "Supply a superseded_by_uuid whose execution attempt shares the stale attempt's step_uuid.",
+    },
+    "EXECUTION_ATTEMPT_ALREADY_SUPERSEDED": {
+        "description": "The stale execution attempt already carries a superseded_by_uuid pointing at a DIFFERENT replacement than the one supplied.",
+        "message": "execution attempt is already superseded by a different replacement",
+        "solution": "Re-supersede with the SAME superseded_by_uuid already on file for an idempotent no-op, or leave the existing pointer in place.",
+    },
 }
 
 

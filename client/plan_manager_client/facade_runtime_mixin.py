@@ -194,6 +194,10 @@ class RuntimeCommandsMixin:
         """List a paginated page of execution attempts filtered by plan, step, status, and parent attempt lineage."""
         return await self._call("execution_attempt_list", params)
 
+    async def execution_attempt_supersede(self, **params: Any) -> Any:
+        """Record that a stale execution attempt was replaced by a specific later attempt, without touching the stale attempt's own status."""
+        return await self._call("execution_attempt_supersede", params)
+
     async def review_result_create(self, **params: Any) -> Any:
         """Create a review result recording the outcome of reviewing an execution attempt or revision."""
         return await self._call("review_result_create", params)
@@ -205,6 +209,10 @@ class RuntimeCommandsMixin:
     async def review_result_list(self, **params: Any) -> Any:
         """List a paginated page of review results scoped by reviewed execution attempt and status."""
         return await self._call("review_result_list", params)
+
+    async def review_result_supersede(self, **params: Any) -> Any:
+        """Record that a stale review result was replaced by a specific later review result, without touching the stale review's own status."""
+        return await self._call("review_result_supersede", params)
 
     async def escalation_create(self, **params: Any) -> Any:
         """Create an escalation raised to the owner of the next level up."""
