@@ -520,6 +520,10 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "todo_reanchor": "reanchors a todo's primary anchor; not exercised beyond the create/delete lifecycle",
     "todo_promote_to_cascade_request": "promotes a todo into a cascade request; not exercised in this pass",
     "bug_reanchor": "reanchors a bug's primary source; not exercised beyond the create/confirm/close lifecycle",
+    "wish_reanchor": "exercised end to end by its own R-check (R53: create/reanchor-in-place/identity-preserved/negative-control), not by a generic Tier-2 probe",
+    "comment_reanchor": "reanchors a comment's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
+    "calendar_entry_reanchor": "reanchors a calendar entry's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
+    "escalation_reanchor": "reanchors an escalation's primary anchor; help()/schema probed end to end by its own R-check (R54: reanchor symmetry across anchored entities), not exercised via a live reanchor call in this pass",
     "bug_reject": "terminal bug transition; not exercised beyond the create/confirm/close lifecycle",
     "bug_mark_duplicate": "requires a second bug to mark as a duplicate target; not exercised in this pass",
     "bug_reopen": "reopens a terminal bug; not exercised beyond the create/confirm/close lifecycle",
@@ -9809,6 +9813,510 @@ async def run_r52_bug_update_plan_guard_ack_26107e40(client: Any, project_id: st
                     "" if deleted_ok else str(res),
                 )
             )
+    return results
+
+
+async def run_r53_wish_reanchor_in_place_5c0ddc16(client: Any, project_id: str) -> list[CheckResult]:
+    """Bug 5c0ddc16: a wish's primary anchor is documented as immutable
+    after creation (see wish_create_command.py's best_practices note "The
+    wish's primary anchor is immutable after creation") and wish_update's
+    schema (wish_update_command.py) carries no anchor_* parameter at all --
+    but every other anchored runtime entity that predates the wish/calendar
+    layer (todo, bug) exposes a dedicated *_reanchor command
+    (todo_reanchor_command.py, bug_reanchor_command.py) so its anchor CAN
+    move in place, preserving identity (uuid, created_at) while only the
+    anchor fields change. Wishes have no such command: today a wish's
+    anchor genuinely cannot move without a delete+recreate, silently
+    dropping identity and history. Fixed: a wish_reanchor command exists,
+    following the same new_anchor_* parameter shape as todo_reanchor, and
+    moves the wish's primary anchor in place.
+
+    DESIGNATED RED (assertion 1): help(cmdname="wish_reanchor") must answer
+    with a non-empty schema (schema.properties non-empty). Today the
+    command is unknown -- help() still succeeds (ok=True; the platform
+    help_command.py never fails for an unknown cmdname, it returns
+    commands_info={"commands": {}, "error": "Command '...' not found", ...})
+    but the response carries no "schema" key at all, so this assertion is
+    RED without a call() failure to key off of; the exact "error" string is
+    captured in the FAIL detail instead.
+
+    Sub-assertions 2-6 each run only if assertion 1 passed (the
+    "unreachable: step 1 red" idiom -- see R50): create a throwaway plan,
+    wish_create anchored to that plan, capture uuid/created_at, then
+    wish_reanchor the wish to anchor_type="none" (the simplest documented
+    target -- no project/plan/file context needed) with
+    changed_by="live-smoke"; assert wish_get afterward reports the SAME
+    wish_uuid and the SAME created_at (identity/history preserved across
+    the move) while the anchor fields themselves reflect anchor_type=none.
+    A negative control (independent of assertion 1, PASS today and after
+    the fix): wish_update's schema still exposes NO anchor_* parameter --
+    reanchoring is wish_reanchor's job alone, wish_update never grows an
+    anchor side-channel.
+
+    Cleanup: wish_delete(hard) then plan_delete(hard), each with its own
+    verified CheckResult, tolerant of entities that were never created.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    wish_uuid: Optional[str] = None
+    try:
+        # --- 1: DESIGNATED RED -- wish_reanchor must be a known command
+        # with a non-empty schema. ---
+        ok, res = await call(client, "help", {"cmdname": "wish_reanchor"})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step1_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        results.append(
+            CheckResult(
+                "4", "R53_5c0ddc16_wish_reanchor_help_schema",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    f"expected help(cmdname='wish_reanchor') to answer with a non-empty "
+                    f"schema.properties; ok={ok} error={res.get('error') if isinstance(res, dict) else None!r} "
+                    f"full={res!r}"
+                ),
+            )
+        )
+
+        # --- 2-6: gated on assertion 1; each reported as an explicit
+        # "unreachable" FAIL, never silently skipped, while the command is
+        # missing. ---
+        if not step1_ok:
+            for gated_name in (
+                "R53_5c0ddc16_plan_create",
+                "R53_5c0ddc16_wish_create",
+                "R53_5c0ddc16_wish_reanchor_in_place",
+                "R53_5c0ddc16_wish_get_identity_preserved",
+                "R53_5c0ddc16_control_wish_update_no_anchor_param",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r53-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R53_5c0ddc16_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R53_5c0ddc16_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(
+            client,
+            "wish_create",
+            {
+                "title": unique_suffix("r53-wish"),
+                "description": "R53 wish_reanchor in-place probe.",
+                "kind": "feature",
+                "priority_nice": -4,
+                "created_by": "live-smoke",
+                "anchor_type": "plan",
+                "anchor_plan_uuid": plan_uuid,
+            },
+        )
+        if not ok or not isinstance(res, dict) or not res.get("wish_uuid"):
+            results.append(CheckResult("4", "R53_5c0ddc16_wish_create", STATUS_FAIL, str(res)))
+            return results
+        wish_uuid = res["wish_uuid"]
+        original_created_at = res.get("created_at")
+        anchored_ok = res.get("primary_anchor_type") == "plan" and res.get("anchor_plan_uuid") == plan_uuid
+        results.append(
+            CheckResult(
+                "4", "R53_5c0ddc16_wish_create",
+                STATUS_PASS if anchored_ok else STATUS_FAIL,
+                f"uuid={wish_uuid} created_at={original_created_at!r}" if anchored_ok else str(res),
+            )
+        )
+        if not anchored_ok:
+            return results
+
+        ok, res = await call(
+            client,
+            "wish_reanchor",
+            {"wish": wish_uuid, "changed_by": "live-smoke", "new_anchor_type": "none"},
+        )
+        reanchor_ok = (
+            ok and isinstance(res, dict)
+            and res.get("wish_uuid") == wish_uuid
+            and res.get("created_at") == original_created_at
+        )
+        results.append(
+            CheckResult(
+                "4", "R53_5c0ddc16_wish_reanchor_in_place",
+                STATUS_PASS if reanchor_ok else STATUS_FAIL,
+                "" if reanchor_ok
+                else f"expected same wish_uuid={wish_uuid} and created_at={original_created_at!r}, got ok={ok} {res!r}",
+            )
+        )
+        if not reanchor_ok:
+            return results
+
+        ok, res = await call(client, "wish_get", {"wish": wish_uuid})
+        identity_ok = (
+            ok and isinstance(res, dict)
+            and res.get("wish_uuid") == wish_uuid
+            and res.get("created_at") == original_created_at
+            and res.get("primary_anchor_type") == "none"
+        )
+        results.append(
+            CheckResult(
+                "4", "R53_5c0ddc16_wish_get_identity_preserved",
+                STATUS_PASS if identity_ok else STATUS_FAIL,
+                "" if identity_ok
+                else (
+                    f"expected wish_uuid={wish_uuid}, created_at={original_created_at!r}, "
+                    f"primary_anchor_type='none'; got ok={ok} {res!r}"
+                ),
+            )
+        )
+
+        # --- Negative control: wish_update's schema still has NO anchor
+        # parameter -- reanchoring stays wish_reanchor's job alone. ---
+        ok, res = await call(client, "help", {"cmdname": "wish_update"})
+        update_properties = None
+        if ok and isinstance(res, dict):
+            update_schema = res.get("schema")
+            if isinstance(update_schema, dict):
+                update_properties = update_schema.get("properties")
+        no_anchor_param_ok = isinstance(update_properties, dict) and not any(
+            key == "anchor_type" or key.startswith("anchor_") or key.startswith("new_anchor_")
+            for key in update_properties
+        )
+        results.append(
+            CheckResult(
+                "4", "R53_5c0ddc16_control_wish_update_no_anchor_param",
+                STATUS_PASS if no_anchor_param_ok else STATUS_FAIL,
+                "" if no_anchor_param_ok else f"wish_update schema.properties={update_properties!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if wish_uuid is not None:
+            ok, res = await call(client, "wish_delete", {"wish": wish_uuid, "changed_by": "live-smoke", "hard": True})
+            wish_deleted_ok = ok and isinstance(res, dict) and res.get("mode") == "hard" and res.get("deleted_uuid") == wish_uuid
+            cleanup_ok = cleanup_ok and wish_deleted_ok
+            results.append(
+                CheckResult(
+                    "4", "R53_5c0ddc16_wish_delete(hard)",
+                    STATUS_PASS if wish_deleted_ok else STATUS_FAIL,
+                    "" if wish_deleted_ok else str(res),
+                )
+            )
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            plan_deleted_ok = (
+                ok and isinstance(res, dict) and res.get("mode") == "hard"
+                and res.get("deleted") is True and res.get("uuid") == plan_uuid
+            )
+            cleanup_ok = cleanup_ok and plan_deleted_ok
+            results.append(
+                CheckResult(
+                    "4", "R53_5c0ddc16_plan_delete(hard)",
+                    STATUS_PASS if plan_deleted_ok else STATUS_FAIL,
+                    "" if plan_deleted_ok else str(res),
+                )
+            )
+    return results
+
+
+R54_REANCHOR_CANDIDATE_COMMANDS: tuple[str, ...] = (
+    "comment_reanchor",
+    "calendar_entry_reanchor",
+    "escalation_reanchor",
+)
+
+R54_BASELINE_REANCHOR_COMMANDS: tuple[str, ...] = ("todo_reanchor", "bug_reanchor")
+
+
+async def run_r54_reanchor_symmetry_all_entities_2c568c0c(client: Any) -> list[CheckResult]:
+    """Bug 2c568c0c: todo_reanchor and bug_reanchor are the only two
+    anchored runtime entities that expose a dedicated command to move
+    their primary anchor in place; comment, calendar_entry, and escalation
+    are each anchored the same way (a primary_anchor_type plus the same
+    family of anchor_* columns -- see reanchor_guard.py's own note that
+    todo_reanchor/bug_reanchor already route through
+    guard_reanchor_target_not_frozen) but have no reanchor command of
+    their own, an asymmetry with no principled reason: every anchored
+    entity should be reanchorable the same way, with the same uniform
+    new_anchor_* parameter shape todo_reanchor already documents (new_
+    anchor_type, new_anchor_project_id, new_anchor_file_path, new_anchor_
+    plan_uuid, new_anchor_revision_uuid, new_anchor_step_uuid, new_anchor_
+    step_path, new_anchor_ref_id). Fixed: comment_reanchor, calendar_
+    entry_reanchor, and escalation_reanchor exist, each following that
+    same shape.
+
+    DESIGNATED RED (assertions 1-3): help(cmdname=X) answers with a
+    non-empty schema for X in comment_reanchor, calendar_entry_reanchor,
+    escalation_reanchor. Today all three are unknown commands -- help()
+    still succeeds (ok=True) but returns no "schema" key (same shape as
+    R53's assertion 1); the exact "error" string is captured per-command
+    in the FAIL detail.
+
+    Sub-assertions 4-6 (each gated on its OWN command's assertion 1-3,
+    independently -- the "unreachable: step N red" idiom, per-command
+    rather than all-or-nothing since the three commands ship
+    independently): the schema found for X exposes "new_anchor_type"
+    among schema.properties, matching todo_reanchor's uniform shape.
+
+    Assertion 7 (baseline control, PASS today and after the fix):
+    help(cmdname="todo_reanchor") and help(cmdname="bug_reanchor") both
+    answer with a schema -- the two pre-existing reanchor commands this
+    fix is establishing parity with.
+
+    No entities are created and nothing needs cleanup -- every assertion
+    here is a pure help()/schema probe.
+    """
+    results: list[CheckResult] = []
+    schema_by_command: dict[str, Optional[dict]] = {}
+    designated_red_ok_by_command: dict[str, bool] = {}
+
+    for command_name in R54_REANCHOR_CANDIDATE_COMMANDS:
+        ok, res = await call(client, "help", {"cmdname": command_name})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        schema_by_command[command_name] = schema if step_ok else None
+        designated_red_ok_by_command[command_name] = step_ok
+        results.append(
+            CheckResult(
+                "4", f"R54_2c568c0c_{command_name}_help_schema",
+                STATUS_PASS if step_ok else STATUS_FAIL,
+                "" if step_ok
+                else (
+                    f"expected help(cmdname='{command_name}') to answer with a non-empty "
+                    f"schema.properties; ok={ok} error={res.get('error') if isinstance(res, dict) else None!r} "
+                    f"full={res!r}"
+                ),
+            )
+        )
+
+    for command_name in R54_REANCHOR_CANDIDATE_COMMANDS:
+        check_name = f"R54_2c568c0c_{command_name}_new_anchor_type_shape"
+        if not designated_red_ok_by_command[command_name]:
+            results.append(CheckResult("4", check_name, STATUS_FAIL, "unreachable: step 1 red"))
+            continue
+        schema = schema_by_command[command_name]
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        shape_ok = isinstance(properties, dict) and "new_anchor_type" in properties
+        results.append(
+            CheckResult(
+                "4", check_name,
+                STATUS_PASS if shape_ok else STATUS_FAIL,
+                "" if shape_ok else f"expected 'new_anchor_type' in schema.properties, got {properties!r}",
+            )
+        )
+
+    baseline_ok = True
+    baseline_details: list[str] = []
+    for command_name in R54_BASELINE_REANCHOR_COMMANDS:
+        ok, res = await call(client, "help", {"cmdname": command_name})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        command_ok = ok and isinstance(schema, dict) and bool(schema.get("properties"))
+        baseline_ok = baseline_ok and command_ok
+        if not command_ok:
+            baseline_details.append(f"{command_name}: ok={ok} res={res!r}")
+    results.append(
+        CheckResult(
+            "4", "R54_2c568c0c_baseline_todo_bug_reanchor_present",
+            STATUS_PASS if baseline_ok else STATUS_FAIL,
+            "" if baseline_ok else "; ".join(baseline_details),
+        )
+    )
+    return results
+
+
+R55_BUG_PLAN_UUID = "b847fc0b-7180-4430-a1a3-820d93d8261c"
+R55_BUG_REVIEW_UUID = "5a3c433f-4f19-4952-ada0-fdaf9e348f77"
+R55_BUG_ATTEMPT_ID = "33abe72c-c1bf-4c57-b696-459632a23ec8"
+
+
+async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]:
+    """Bug 74479c06: neither review_result nor execution_attempt has any
+    supersede lifecycle. When a stale review result or a stale execution
+    attempt is replaced by a newer one, nothing on the original row ever
+    records that replacement -- the stale row just sits there forever with
+    its original terminal-ish status (needs_owner_decision,
+    needs_escalation, ...) and no forward pointer to whatever replaced it.
+    Anyone reading the stale row in isolation has no way to discover it was
+    superseded. expected_behavior (the approved fix shape this check pins):
+    two new commands, review_result_supersede and
+    execution_attempt_supersede, each set a forward pointer ON THE STALE
+    ROW (a superseded_by_uuid field pointing at the replacing review/
+    attempt) while NEVER changing the original row's status -- recording
+    replacement linkage without falsifying the original outcome. Both are
+    guarded (the replacement must exist) and write an audit record.
+
+    DESIGNATED RED (assertions 1-2): help(cmdname="review_result_supersede")
+    and help(cmdname="execution_attempt_supersede") must each answer with a
+    non-empty schema (schema.properties non-empty). Today both are unknown
+    commands -- help() still succeeds (ok=True; the platform help_command.py
+    never fails for an unknown cmdname) but the response carries no
+    "schema" key at all, so each assertion is RED without a call() failure
+    to key off of; the exact "error" string is captured in the FAIL detail
+    (same technique as R53/R54).
+
+    Sub-assertions 3-4 (each gated on its OWN command's designated-RED
+    assertion -- the "unreachable: step N red" idiom, per-command since the
+    two commands ship independently): the schema found for X exposes a
+    superseded_by/replacement uuid parameter and a changed_by parameter,
+    matching the approved fix shape.
+
+    Assertion 5 (reproduction evidence, READ-ONLY, best-effort): the bug's
+    own live example -- review_result_get(plan=R55_BUG_PLAN_UUID,
+    review_uuid=R55_BUG_REVIEW_UUID) and
+    execution_attempt_get(attempt_id=R55_BUG_ATTEMPT_ID). Asserts the stale
+    records still exist with their stale statuses (needs_owner_decision /
+    needs_escalation) AND that their payloads carry NO superseded_by field
+    today. If either record is gone (historical records removed), this
+    emits SKIP with a reason instead of FAIL -- their disappearance is not
+    itself evidence for or against the bug. STRICTLY READ-ONLY: no mutation
+    of anything, and this check creates NO entities at all pre-fix.
+
+    Assertion 6 (control, PASS today and after the fix):
+    help(cmdname="execution_attempt_report") schema has NO supersede/
+    superseded_by parameter -- supersede is meant to stay a dedicated
+    command, never folded in as an update side-effect of the ordinary
+    report path.
+
+    TODO(0.1.112 fix): once review_result_supersede / execution_attempt_
+    supersede ship, extend this check with a gated functional-lifecycle
+    phase -- create two throwaway execution attempts (or review results),
+    supersede the stale one, and assert the stale row's superseded_by_uuid
+    now points at the replacement while its status field is UNCHANGED from
+    before the supersede call, with its own cleanup. That phase stays
+    disabled (assertions 3-4's "unreachable" gate covers it) until the
+    commands exist.
+
+    No cleanup needed: nothing is created by this check.
+    """
+    results: list[CheckResult] = []
+
+    # --- 1-2: DESIGNATED RED -- review_result_supersede and
+    # execution_attempt_supersede must each be known commands with a
+    # non-empty schema. ---
+    supersede_commands = ("review_result_supersede", "execution_attempt_supersede")
+    schema_by_command: dict[str, Optional[dict]] = {}
+    designated_red_ok_by_command: dict[str, bool] = {}
+    for command_name in supersede_commands:
+        ok, res = await call(client, "help", {"cmdname": command_name})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        schema_by_command[command_name] = schema if step_ok else None
+        designated_red_ok_by_command[command_name] = step_ok
+        results.append(
+            CheckResult(
+                "4", f"R55_74479c06_{command_name}_help_schema",
+                STATUS_PASS if step_ok else STATUS_FAIL,
+                "" if step_ok
+                else (
+                    f"expected help(cmdname='{command_name}') to answer with a non-empty "
+                    f"schema.properties; ok={ok} error={res.get('error') if isinstance(res, dict) else None!r} "
+                    f"full={res!r}"
+                ),
+            )
+        )
+
+    # --- 3-4: gated per-command on that command's own designated-RED
+    # assertion; each reported as an explicit "unreachable" FAIL, never
+    # silently skipped, while the command is missing. ---
+    for command_name in supersede_commands:
+        check_name = f"R55_74479c06_{command_name}_shape"
+        if not designated_red_ok_by_command[command_name]:
+            results.append(CheckResult("4", check_name, STATUS_FAIL, "unreachable: step 1/2 red"))
+            continue
+        schema = schema_by_command[command_name]
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        has_pointer_param = isinstance(properties, dict) and any(
+            key == "superseded_by_uuid" or key.startswith("superseded_by") or key.startswith("replacement")
+            for key in properties
+        )
+        has_changed_by_param = isinstance(properties, dict) and "changed_by" in properties
+        shape_ok = has_pointer_param and has_changed_by_param
+        results.append(
+            CheckResult(
+                "4", check_name,
+                STATUS_PASS if shape_ok else STATUS_FAIL,
+                "" if shape_ok
+                else (
+                    f"expected a superseded_by/replacement uuid parameter and 'changed_by' "
+                    f"in schema.properties, got {properties!r}"
+                ),
+            )
+        )
+
+    # --- 5: reproduction evidence, read-only, best-effort against the
+    # bug's own real live records. Never mutates anything. ---
+    ok, res = await call(client, "review_result_get", {"plan": R55_BUG_PLAN_UUID, "review_uuid": R55_BUG_REVIEW_UUID})
+    if ok and isinstance(res, dict) and res.get("review_uuid") == R55_BUG_REVIEW_UUID:
+        stale_status_ok = res.get("status") == "needs_owner_decision"
+        no_pointer_ok = "superseded_by_uuid" not in res and "superseded_by" not in res
+        evidence_ok = stale_status_ok and no_pointer_ok
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_review_result_reproduction_evidence",
+                STATUS_PASS if evidence_ok else STATUS_FAIL,
+                "" if evidence_ok
+                else (
+                    f"expected status='needs_owner_decision' and no superseded_by field on "
+                    f"review_uuid={R55_BUG_REVIEW_UUID}; got {res!r}"
+                ),
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_review_result_reproduction_evidence", STATUS_SKIP,
+                f"historical review_result {R55_BUG_REVIEW_UUID} on plan {R55_BUG_PLAN_UUID} no longer "
+                f"available to inspect (removed or reassigned); ok={ok} res={res!r}",
+            )
+        )
+
+    ok, res = await call(client, "execution_attempt_get", {"attempt_id": R55_BUG_ATTEMPT_ID})
+    if ok and isinstance(res, dict) and res.get("attempt_uuid") == R55_BUG_ATTEMPT_ID:
+        stale_status_ok = res.get("status") == "needs_escalation"
+        no_pointer_ok = "superseded_by_uuid" not in res and "superseded_by" not in res
+        evidence_ok = stale_status_ok and no_pointer_ok
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_execution_attempt_reproduction_evidence",
+                STATUS_PASS if evidence_ok else STATUS_FAIL,
+                "" if evidence_ok
+                else (
+                    f"expected status='needs_escalation' and no superseded_by field on "
+                    f"attempt_id={R55_BUG_ATTEMPT_ID}; got {res!r}"
+                ),
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "4", "R55_74479c06_execution_attempt_reproduction_evidence", STATUS_SKIP,
+                f"historical execution_attempt {R55_BUG_ATTEMPT_ID} no longer available to inspect "
+                f"(removed or reassigned); ok={ok} res={res!r}",
+            )
+        )
+
+    # --- 6: control -- execution_attempt_report's schema has no
+    # supersede/superseded_by parameter; supersede stays a dedicated
+    # command, never an update side-effect of the ordinary report path.
+    # Independent of assertions 1-4, PASS today and after the fix. ---
+    ok, res = await call(client, "help", {"cmdname": "execution_attempt_report"})
+    report_properties = None
+    if ok and isinstance(res, dict):
+        report_schema = res.get("schema")
+        if isinstance(report_schema, dict):
+            report_properties = report_schema.get("properties")
+    control_ok = isinstance(report_properties, dict) and not any(
+        "supersede" in key for key in report_properties
+    )
+    results.append(
+        CheckResult(
+            "4", "R55_74479c06_control_execution_attempt_report_no_supersede_param",
+            STATUS_PASS if control_ok else STATUS_FAIL,
+            "" if control_ok else f"execution_attempt_report schema.properties={report_properties!r}",
+        )
+    )
+
     return results
 
 

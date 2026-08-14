@@ -211,6 +211,27 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "silently touching the anchor (bug 26107e40)",
         needs_project=True,
     ),
+    LiveSmokeTestSpec(
+        "r53",
+        "run_r53_wish_reanchor_in_place_5c0ddc16",
+        "wish_reanchor exists and moves a wish's primary anchor in place, "
+        "preserving uuid/created_at (bug 5c0ddc16)",
+        needs_project=True,
+    ),
+    LiveSmokeTestSpec(
+        "r54",
+        "run_r54_reanchor_symmetry_all_entities_2c568c0c",
+        "comment/calendar_entry/escalation expose reanchor commands with the "
+        "uniform new_anchor_* parameter shape, closing the per-entity "
+        "anchoring asymmetry (bug 2c568c0c)",
+    ),
+    LiveSmokeTestSpec(
+        "r55",
+        "run_r55_supersede_lifecycle_74479c06",
+        "review_result_supersede / execution_attempt_supersede exist and mark "
+        "a stale record superseded by a forward pointer without falsifying "
+        "its original status (bug 74479c06)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

@@ -82,6 +82,10 @@ class RuntimeCommandsMixin:
         """Update mutable fields of a runtime wish item."""
         return await self._call("wish_update", params)
 
+    async def wish_reanchor(self, **params: Any) -> Any:
+        """Move a wish item's primary anchor to a new target, with an audit record."""
+        return await self._call("wish_reanchor", params)
+
     async def wish_delete(self, **params: Any) -> Any:
         """Delete a runtime wish item: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
         return await self._call("wish_delete", params)
@@ -101,6 +105,10 @@ class RuntimeCommandsMixin:
     async def calendar_entry_update(self, **params: Any) -> Any:
         """Update mutable fields of a calendar-based work entry."""
         return await self._call("calendar_entry_update", params)
+
+    async def calendar_entry_reanchor(self, **params: Any) -> Any:
+        """Move a calendar entry's primary anchor to a new target, with an audit record."""
+        return await self._call("calendar_entry_reanchor", params)
 
     async def calendar_entry_delete(self, **params: Any) -> Any:
         """Delete a calendar-based work entry: soft by default, hard=true available, dry_run previews."""
@@ -137,6 +145,10 @@ class RuntimeCommandsMixin:
     async def comment_resolve(self, **params: Any) -> Any:
         """Mark an existing runtime comment as resolved."""
         return await self._call("comment_resolve", params)
+
+    async def comment_reanchor(self, **params: Any) -> Any:
+        """Move a runtime comment's primary anchor to a new target, with an audit record."""
+        return await self._call("comment_reanchor", params)
 
     async def comment_delete(self, **params: Any) -> Any:
         """Delete a runtime comment: soft by default, hard=true gated by the inbound-reference integrity check, dry_run previews."""
@@ -209,6 +221,10 @@ class RuntimeCommandsMixin:
     async def escalation_resolve(self, **params: Any) -> Any:
         """Resolve an open escalation, recording the resolution and the resolving owner."""
         return await self._call("escalation_resolve", params)
+
+    async def escalation_reanchor(self, **params: Any) -> Any:
+        """Move an escalation's primary anchor to a new target, with an audit record."""
+        return await self._call("escalation_reanchor", params)
 
 
 __all__ = ["RuntimeCommandsMixin"]

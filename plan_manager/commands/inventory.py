@@ -107,12 +107,14 @@ INVENTORY: tuple[str, ...] = (
     "wish_get",
     "wish_list",
     "wish_update",
+    "wish_reanchor",
     "wish_delete",
     # runtime calendar graph
     "calendar_entry_create",
     "calendar_entry_get",
     "calendar_entry_list",
     "calendar_entry_update",
+    "calendar_entry_reanchor",
     "calendar_entry_delete",
     # runtime links (C-012)
     "runtime_link_add",
@@ -124,6 +126,7 @@ INVENTORY: tuple[str, ...] = (
     "comment_list",
     "comment_supersede",
     "comment_resolve",
+    "comment_reanchor",
     "comment_delete",
     # runtime models
     "model_binding_set",
@@ -145,6 +148,7 @@ INVENTORY: tuple[str, ...] = (
     "escalation_get",
     "escalation_list",
     "escalation_resolve",
+    "escalation_reanchor",
     # runtime bugs
     "bug_create",
     "bug_get",
@@ -292,10 +296,14 @@ MUTATING: frozenset[str] = frozenset({
     "todo_reanchor",
     "wish_create",
     "wish_update",
+    "wish_reanchor",
     "wish_delete",
     "calendar_entry_create",
     "calendar_entry_update",
+    "calendar_entry_reanchor",
     "calendar_entry_delete",
+    "escalation_reanchor",
+    "comment_reanchor",
     # full bug-family delete surface (user CRUD order, todo 9b09c9b0)
     "bug_delete",
     "bug_impact_delete",

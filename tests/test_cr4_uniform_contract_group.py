@@ -51,7 +51,12 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 #   CR-6 (planmgr-cr6-entity-identity-crud): +1 for project_uuid_reserve.
 #   CR-7 (G-006/T-002/A-002): +1 for reference_repair (repair-store command
 #   surface: find/clear/delete_carriers over reference_repair_store).
-_PRE_CR4_INVENTORY_COUNT = 215
+#   Group-3 anchoring-symmetry fix (bugs 2c568c0c/5c0ddc16): +4 for
+#   wish_reanchor/calendar_entry_reanchor/escalation_reanchor/comment_reanchor
+#   (the same guard_owner_update/direct-anchor-UPDATE re-anchor capability
+#   todo_reanchor/bug_reanchor already exposed, extended to the remaining
+#   anchor-bearing runtime entities).
+_PRE_CR4_INVENTORY_COUNT = 219
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

@@ -302,15 +302,15 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "todo_resolve", "todo_close", "todo_delete", "todo_link_add", "todo_link_remove",
         "todo_queue", "todo_promote_to_cascade_request",
     ],
-    "wish": ["wish_create", "wish_get", "wish_list", "wish_update", "wish_delete"],
+    "wish": ["wish_create", "wish_get", "wish_list", "wish_update", "wish_reanchor", "wish_delete"],
     "calendar_entry": [
         "calendar_entry_create", "calendar_entry_get", "calendar_entry_list",
-        "calendar_entry_update", "calendar_entry_delete",
+        "calendar_entry_update", "calendar_entry_reanchor", "calendar_entry_delete",
     ],
     "runtime_link": [
         "runtime_link_add", "runtime_link_list", "runtime_link_remove",
     ],
-    "comment": ["comment_add", "comment_get", "comment_list", "comment_supersede", "comment_resolve", "comment_delete"],
+    "comment": ["comment_add", "comment_get", "comment_list", "comment_supersede", "comment_resolve", "comment_reanchor", "comment_delete"],
     "model_binding": [
         "model_binding_set", "model_binding_get", "model_binding_list",
         "model_binding_remove", "model_binding_resolve", "model_binding_update",
@@ -321,7 +321,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
     ],
     "review_escalation": [
         "review_result_create", "review_result_get", "review_result_list",
-        "escalation_create", "escalation_resolve", "escalation_get", "escalation_list",
+        "escalation_create", "escalation_resolve", "escalation_reanchor", "escalation_get", "escalation_list",
     ],
     "bug": [
         "bug_create", "bug_get", "bug_list", "bug_update", "bug_reanchor", "bug_triage",
