@@ -14,7 +14,11 @@ from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
 from plan_manager.commands.step_create_metadata import get_step_create_metadata
-from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
+from plan_manager.commands.step_ref import (
+    canonical_step_path,
+    canonical_step_paths,
+    resolve_step_ref,
+)
 from plan_manager.domain.project_binding import require_project_bound
 from plan_manager.domain.step_store import create_step, get_step
 from plan_manager.runtime.context import db_connection
@@ -211,15 +215,21 @@ class StepCreateCommand(Command):
                     normalized_project_id,
                 )
                 snapshot = step_snapshot(new_step, new_step.status)
+                # Bug fa15d288: the only path this write can affect is the new
+                # step's own; a parent's common block never embeds its children.
+                created_paths = canonical_step_paths(
+                    load_steps(conn, p.uuid), [new_step.uuid]
+                )
                 if rec is not None:
                     revision = cascade_write(
                         conn, p.uuid, rec, new_step.uuid, snapshot, [], "api",
-                        f"step_create: {new_step.step_id}",
+                        f"step_create: {new_step.step_id}", created_paths,
                     )
                 else:
                     revision = record_revision(
                         conn, p.uuid, "api", f"step_create: {new_step.step_id}",
                         [(new_step.uuid, snapshot)], p.head_revision_uuid, ref_name=None,
+                        carry_forward_paths=created_paths,
                     )
                 verified = get_step(conn, new_step.uuid)
                 data = {

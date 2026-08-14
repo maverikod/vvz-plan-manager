@@ -46,9 +46,17 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
             "is not frozen; otherwise the command returns CASCADE_REQUIRED, "
             "or CASCADE_CONFLICT when a cascade_uuid was supplied but does "
             "not admit the mutation, or FROZEN_ARTIFACT when the target is "
-            "frozen at or below the change point. The command verifies its "
-            "own result by re-reading the transitioned step after writing "
-            "the revision."
+            "frozen at or below the change point. Bug 957c2f6a carves out "
+            "exactly two exceptions, the execution transitions of an atomic "
+            "(level-5) step: frozen -> in_progress and in_progress -> done "
+            "are DIRECT and need no cascade, because executing a frozen "
+            "atomic step changes only its runtime lifecycle and never its "
+            "authored content; for those two, and only while the plan has no "
+            "open cascade, the status model is the sole judge. While a "
+            "cascade is open it is the plan's single write channel and the "
+            "execution transitions go through it too. The command verifies "
+            "its own result by re-reading the "
+            "transitioned step after writing the revision."
         ),
         "parameters": {
             "plan": {
@@ -175,7 +183,7 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
             "FROZEN_ARTIFACT": {
                 "description": "The target step is frozen at or below the change point and no admitting cascade was supplied.",
                 "message": "target is frozen at or below the change point",
-                "solution": "Begin a cascade to transition a frozen step.",
+                "solution": "Bug 957c2f6a: the two execution transitions of an atomic (level-5) step, frozen->in_progress and in_progress->done, are DIRECT and need no cascade even on frozen truth, as long as the plan has no open cascade. Every other frozen-truth mutation, including any other transition out of frozen, any transition of a level-3 or level-4 step, and any transition at all while a cascade is open, requires an admitting cascade: begin a cascade and retry with its cascade_uuid.",
             },
             "PLAN_COMPLETED": {
                 "description": "The plan is marked completed (bug c3950b83); every mutating command that resolves its plan is refused except plan_completed_set and plan_comment_set.",
@@ -187,5 +195,6 @@ def get_step_set_status_metadata(cls: type) -> dict[str, Any]:
             "Call step_get first to confirm the step's current status before requesting a transition.",
             "Never request needs_review directly; it is set only by cascade propagation and always yields INVALID_TRANSITION.",
             "Omit cascade_uuid for direct-mode transitions on non-frozen steps; supply it only when working inside an open cascade.",
+            "Execute a frozen atomic step directly: frozen -> in_progress and in_progress -> done need no cascade while none is open (bug 957c2f6a). A cascade is still required to reopen a frozen step for editing, and while a cascade is open every transition goes through it.",
         ],
     }

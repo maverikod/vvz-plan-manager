@@ -194,6 +194,9 @@ def record_revision(
     changes: list[tuple[uuid.UUID, dict]],
     parent_revision_uuid: uuid.UUID | None,
     ref_name: str | None,
+    *,
+    carry_forward_paths: list[str] | None = None,
+    cascade_uuid: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Record one mutation as one revision: write node versions, then the revision, then advance head or ref.
 
@@ -217,6 +220,18 @@ def record_revision(
         first revision of the plan.
     :param ref_name: name of the cascade ref to advance, or None to advance
         the plan head directly.
+    :param carry_forward_paths: bug fa15d288 -- canonical step paths this
+        mutation writes. When supplied (even as an empty list), the plan's
+        context blocks that provably cannot depend on those paths are
+        re-tagged from the old working revision pair onto the new one, so
+        a scoped step write no longer stales the whole plan's derived
+        context. When None (the default), no re-tagging happens and every
+        block goes stale exactly as before -- the correct behavior for
+        callers whose change scope in step-path terms is not established
+        (paragraph edits, import, maintenance normalization).
+    :param cascade_uuid: identity of the open cascade this revision is
+        recorded under, or None in direct mode; used only to build the
+        working revision pair for ``carry_forward_paths``.
     :return: uuid of the newly inserted revision row.
     """
     node_version_uuids = [
@@ -232,5 +247,22 @@ def record_revision(
         conn.execute(
             "UPDATE ref SET revision_uuid = %s WHERE plan_uuid = %s AND name = %s",
             (revision_uuid, plan_uuid, ref_name),
+        )
+    if carry_forward_paths is not None:
+        # Deferred import: views.context_blocks reaches this module for
+        # get_ref, so a module-level import would close a cycle.
+        from plan_manager.views.context_blocks import carry_forward_context_blocks
+
+        # parent_revision_uuid IS the working revision this write advances
+        # from: the plan head in direct mode, the cascade ref's current
+        # target in cascade mode.
+        carry_forward_context_blocks(
+            conn,
+            plan_uuid,
+            from_revision=parent_revision_uuid,
+            from_cascade=cascade_uuid,
+            to_revision=revision_uuid,
+            to_cascade=cascade_uuid,
+            changed_paths=carry_forward_paths,
         )
     return revision_uuid

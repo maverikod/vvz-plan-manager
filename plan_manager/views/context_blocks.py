@@ -702,6 +702,77 @@ def promote_cascade_blocks_to_head(
     return result.rowcount
 
 
+def carry_forward_context_blocks(
+    conn: psycopg.Connection,
+    plan_uuid: uuid.UUID,
+    *,
+    from_revision: uuid.UUID | None,
+    from_cascade: uuid.UUID | None,
+    to_revision: uuid.UUID | None,
+    to_cascade: uuid.UUID | None,
+    changed_paths: list[str],
+) -> int:
+    """Re-tag the blocks a scoped step write cannot have changed (bug fa15d288).
+
+    Block currency is a revision-identity predicate: every reader counts a
+    stored row as current only when its (revision_uuid, cascade_uuid) pair
+    equals the plan's working pair. Any step write bumps that pair, so
+    before this function EVERY context block of the plan went stale on
+    EVERY step write -- including the plan-level block, sibling branches,
+    and ancestors that the write provably cannot touch.
+
+    A block's content is a pure function of the node's OWN step fields
+    (`_step_definition_block`) plus plan material -- concepts, HRS
+    paragraphs, and relations (`compile_plan_material`), none of which a
+    step write mutates. So a row is invariant under a write scoped to
+    `changed_paths` unless it is anchored at one of those paths, or it
+    embeds a step_definition block for one of them. Both cases are
+    excluded here; everything else is moved from the old working pair to
+    the new one.
+
+    The second exclusion is what makes kind='compile' rows safe: a
+    compile row's subject step is not a column, but it IS recorded in the
+    stored row as the `path` of its step_definition content entry (the
+    same field `_compile_include_from_record` reads back), so it is
+    queryable in SQL and compile rows need no blanket exclusion.
+
+    The caller mints `to_revision` in the same transaction, so no row
+    exists at the destination pair yet and the re-tag cannot collide with
+    the `context_block_idempotent` unique index (migration 0023).
+
+    Args:
+        conn: open database connection.
+        plan_uuid: identity of the plan whose blocks are re-tagged.
+        from_revision: revision uuid of the old working pair.
+        from_cascade: cascade uuid of the old working pair (None in
+            direct mode).
+        to_revision: revision uuid of the new working pair.
+        to_cascade: cascade uuid of the new working pair (equal to
+            `from_cascade` for a cascade tip advance, None in direct
+            mode).
+        changed_paths: canonical step paths written by the mutation.
+
+    Returns:
+        The number of carried-forward rows.
+    """
+    if from_revision == to_revision and from_cascade == to_cascade:
+        return 0
+    paths = list(changed_paths)
+    result = conn.execute(
+        "UPDATE context_block SET revision_uuid = %s, cascade_uuid = %s "
+        "WHERE plan_uuid = %s "
+        "AND revision_uuid IS NOT DISTINCT FROM %s "
+        "AND cascade_uuid IS NOT DISTINCT FROM %s "
+        # Explicit text[] casts: an empty changed_paths list has no inferable
+        # element type on the wire.
+        "AND node_path != ALL(%s::text[]) "
+        "AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(content) AS entry "
+        "WHERE entry->>'type' = 'step_definition' AND entry->>'path' = ANY(%s::text[]))",
+        (to_revision, to_cascade, plan_uuid, from_revision, from_cascade, paths, paths),
+    )
+    return result.rowcount
+
+
 def get_context_block(
     conn: psycopg.Connection,
     plan_uuid: uuid.UUID,

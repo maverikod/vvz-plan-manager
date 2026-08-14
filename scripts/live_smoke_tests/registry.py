@@ -181,6 +181,20 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "budget, and a job outliving a tight watchdog fails with the specific "
         "'outer watchdog exceeded' diagnostic, never a misclassified RED (bug ef59fbcd)",
     ),
+    LiveSmokeTestSpec(
+        "r49",
+        "run_r49_step_update_scoped_block_currency_fa15d288",
+        "one step_update stales only the changed node's context blocks; "
+        "plan-level and sibling-branch blocks stay live and plan_validate "
+        "stays green for untouched scopes (bug fa15d288)",
+    ),
+    LiveSmokeTestSpec(
+        "r50",
+        "run_r50_frozen_atomic_direct_execution_transition_957c2f6a",
+        "a frozen atomic step accepts direct step_set_status "
+        "frozen->in_progress and in_progress->done per the published "
+        "legal_transitions matrix, without a cascade (bug 957c2f6a)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

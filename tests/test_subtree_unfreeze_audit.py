@@ -84,7 +84,7 @@ def _patch_common(monkeypatch, nodes) -> dict:
     )
     monkeypatch.setattr(step_transition_command, "get_ref", lambda conn, plan_uuid, name: HEAD_REV)
 
-    def _rev(conn, plan_uuid, actor, message, changes, parent, ref_name=None):
+    def _rev(conn, plan_uuid, actor, message, changes, parent, ref_name=None, **_kwargs):
         calls["revision"] = {
             "changes": changes, "parent": parent, "ref_name": ref_name, "message": message,
         }

@@ -16,6 +16,26 @@ def canonical_step_path(nodes: dict[uuid.UUID, Step], step: Step) -> str:
     return f"{parent_path(nodes, step)}/{step.step_id}"
 
 
+def canonical_step_paths(
+    nodes: dict[uuid.UUID, Step], step_uuids: list[uuid.UUID]
+) -> list[str]:
+    """Return the canonical paths of `step_uuids`, deduplicated, in order.
+
+    Steps absent from `nodes` are skipped: a mutation's change set may name
+    a step the loaded tree no longer holds (a just-deleted node), and the
+    caller only needs the paths it can name.
+    """
+    paths: list[str] = []
+    for step_uuid in step_uuids:
+        step = nodes.get(step_uuid)
+        if step is None:
+            continue
+        path = canonical_step_path(nodes, step)
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
 def parent_uuid(nodes: dict[uuid.UUID, Step], step: Step) -> str | None:
     """Return the parent UUID string for one step, if any."""
     if step.parent_step_uuid is None:

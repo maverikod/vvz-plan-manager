@@ -261,6 +261,10 @@ class StepTransitionCommand(Command):
                         )
                         for item in transitioned
                     ]
+                    # Bug fa15d288: a transition writes only status, and the
+                    # transitioned set already carries each step's canonical
+                    # path, so the blocks outside that set survive the bump.
+                    changed_paths = [item["path"] for item in transitioned]
                     if cascade is not None:
                         parent = get_ref(conn, p.uuid, cascade.name)
                         revision_uuid = record_revision(
@@ -271,6 +275,8 @@ class StepTransitionCommand(Command):
                             changes,
                             parent,
                             ref_name=cascade.name,
+                            carry_forward_paths=changed_paths,
+                            cascade_uuid=cascade.uuid,
                         )
                     else:
                         revision_uuid = record_revision(
@@ -281,6 +287,7 @@ class StepTransitionCommand(Command):
                             changes,
                             p.head_revision_uuid,
                             ref_name=None,
+                            carry_forward_paths=changed_paths,
                         )
 
                 return SuccessResult(

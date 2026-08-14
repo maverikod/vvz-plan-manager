@@ -93,7 +93,7 @@ def _patch_common(monkeypatch, *, has_common_block: bool) -> dict:
     monkeypatch.setattr(step_create_command, "get_step", lambda conn, step_uuid: new_step)
     monkeypatch.setattr(
         step_create_command, "record_revision",
-        lambda conn, plan_uuid, author, message, changes, parent_rev, ref_name: uuid.uuid4(),
+        lambda conn, plan_uuid, author, message, changes, parent_rev, ref_name, **_kwargs: uuid.uuid4(),
     )
     return calls
 

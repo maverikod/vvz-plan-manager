@@ -8921,6 +8921,465 @@ async def run_r48_queued_wait_watchdog_classification_ef59fbcd(client: Any) -> l
     return results
 
 
+def _plan_validate_finding_artifact_paths(report_json: Any, check_id: str) -> set[str]:
+    """Return the set of artifact_path values reported for one check_id in
+    plan_validate's JSON report string.
+
+    ``report_json`` is the raw ``report`` field of a plan_validate result (a
+    JSON-encoded string per plan_manager.verify.finding.render_json, shape
+    {"checks": [{"check_id": ..., "findings": [{"artifact_path": ...,
+    "severity": ..., "message": ...}, ...]}, ...]}) -- same idiom as R6's
+    _r6_report_flags_path. A non-string or unparseable value returns an
+    empty set so a malformed report surfaces as a FAIL on the caller's own
+    assertion rather than a spurious match here.
+    """
+    if not isinstance(report_json, str):
+        return set()
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return set()
+    paths: set[str] = set()
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if not isinstance(check, dict) or check.get("check_id") != check_id:
+            continue
+        for finding in check.get("findings", []) or []:
+            if isinstance(finding, dict) and isinstance(finding.get("artifact_path"), str):
+                paths.add(finding["artifact_path"])
+    return paths
+
+
+def _r49_live_common_node_paths(res: Any) -> Optional[set[str]]:
+    """Return the set of node_path values carrying an is_live=true common
+    context block in block_list's payload.
+
+    ``res`` is block_list's own payload, ``{"blocks": [{"node_path": ...,
+    "kind": ..., "is_live": ...}, ...], "total": ..., ...}`` (block_list_
+    command.py). Returns None when ``res`` is not shaped as expected (a
+    failed call, or a malformed payload) so a caller can distinguish "could
+    not determine liveness" from "determined liveness is empty".
+    """
+    if not isinstance(res, dict):
+        return None
+    blocks = res.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+    return {
+        entry["node_path"]
+        for entry in blocks
+        if isinstance(entry, dict) and entry.get("kind") == "common" and entry.get("is_live") is True
+        and isinstance(entry.get("node_path"), str)
+    }
+
+
+async def run_r49_step_update_scoped_block_currency_fa15d288(client: Any) -> list[CheckResult]:
+    """Bug fa15d288 (the context-economy CR, docs/cr7_acceptance_governance.
+    md section 5): block_list/block_list_command.py computes is_live by
+    comparing a stored block's own revision_uuid/cascade_uuid against the
+    PLAN'S SINGLE CURRENT WORKING REVISION (current_working_state) -- a
+    single global identity shared by every block in the plan, not a
+    per-node "last touched" identity. Since every mutating command
+    (including a single-field step_update on one leaf atomic step)
+    advances that same global head revision, EVERY previously-current
+    common block in the plan -- the plan-level block, every unrelated
+    sibling G/T branch's block, not just the changed node's own ancestry
+    -- goes stale in the same instant, regardless of whether that block's
+    scope was actually touched. The intended (post-fix) contract is scoped
+    currency: a step_update on one leaf should stale only that leaf's own
+    ancestry chain, leaving the plan-level block and untouched sibling
+    branches live, and plan_validate's context_coverage.common_current
+    check green for those untouched scopes.
+
+    Recipe (throwaway plan, two-branch hierarchy so an untouched sibling
+    branch exists to prove scoping, try/finally cleanup):
+
+        plan_create ->
+        context_common(plan,"plan",3) -> step_create G (level 3) ->
+        context_common(plan,G,4) -> step_create T1 (level 4, parent G) ->
+        context_common(plan,G,4) -> step_create T2 (level 4, parent G) ->
+        context_common(plan,T1,5) -> step_create A1 (level 5, parent T1) ->
+        context_common(plan,T2,5) -> step_create A2 (level 5, parent T2) ->
+        settle: recompile all four commons again at the now-static head
+        (plan,3), (G,4), (T1,5), (T2,5) ->
+        FIXTURE ASSERT: block_list(plan, limit=200) shows exactly those 4
+        freshly-recompiled blocks (plan, G, T1-path, T2-path) is_live=true ->
+        ONE local edit: step_update(plan, A2, fields={"description": ...}) ->
+        POST-FIX ASSERT (RED today): plan/G/T1's blocks are STILL is_live
+        (today they all flip false) ->
+        POST-FIX ASSERT (RED today): plan_validate reports NO context_
+        coverage.common_current finding for G's or T1's own artifact_path
+        (today it does, for both, since their blocks went stale) ->
+        CONTROL (PASS today and after): T2's own block -- the genuinely
+        affected scope, since A2 is T2's child -- is stale/absent from the
+        live set both before and after the fix.
+
+    Cleanup: plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r49-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R49_fa15d288_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R49_fa15d288_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_context_common(G,level4,before T1)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R49_fa15d288_step_create(T1)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_context_common(G,level4,before T2)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R49_fa15d288_step_create(T2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_context_common(T1,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R49_fa15d288_step_create(A1)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_context_common(T2,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R49_fa15d288_step_create(A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_id} T1={t1_id} T2={t2_id} A1={a1_id} A2={a2_id}",
+            )
+        )
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        # A1 and A2 share the local id "A-001" (same slug under different
+        # parents, per the fixture spec) -- a bare "A-001" step_id is
+        # AMBIGUOUS_STEP_ID, so the canonical full path is required to
+        # address A2 unambiguously in the step_update below.
+        a2_path = f"{t2_path}/{a2_id}"
+
+        # Settle: recompile all four commons at the now-static head (no
+        # further step_create/step_update between here and the fixture
+        # assert), so exactly these 4 rows are current.
+        settle_ok = True
+        for label, node, child_level in (
+            ("plan", "plan", 3), ("G", g_id, 4), ("T1", t1_id, 5), ("T2", t2_id, 5),
+        ):
+            ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": node, "child_level": child_level})
+            settle_ok = settle_ok and ok
+            if not ok:
+                results.append(CheckResult("4", f"R49_fa15d288_settle_context_common({label})", STATUS_FAIL, str(res)))
+        if not settle_ok:
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_settle_recompiled", STATUS_PASS))
+
+        # FIXTURE ASSERT (must PASS today): exactly the 4 freshly-recompiled
+        # commons are is_live=true.
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "limit": 200})
+        live_paths = _r49_live_common_node_paths(res)
+        expected_fixture_paths = {"plan", g_path, t1_path, t2_path}
+        fixture_ok = ok and live_paths == expected_fixture_paths
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_fixture_settle_all_four_live",
+                STATUS_PASS if fixture_ok else STATUS_FAIL,
+                "" if fixture_ok else f"expected live={expected_fixture_paths!r}, got ok={ok} live={live_paths!r} res={res!r}",
+            )
+        )
+        if not fixture_ok:
+            return results
+
+        # ONE local edit, on the leaf A2 alone.
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": a2_path, "fields": {"description": "r49 single local edit"}},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R49_fa15d288_step_update(A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_step_update(A2)", STATUS_PASS))
+
+        ok, res = await call(client, "block_list", {"plan": plan_uuid, "limit": 200})
+        post_edit_live_paths = _r49_live_common_node_paths(res)
+        if not ok or post_edit_live_paths is None:
+            results.append(CheckResult("4", "R49_fa15d288_block_list_post_edit", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_block_list_post_edit", STATUS_PASS))
+
+        # POST-FIX ASSERT (expected RED today): the plan-level block and
+        # the two UNTOUCHED-branch blocks (G, T1) must stay live -- today
+        # every one of them flips stale, since currency is compared against
+        # a single plan-wide head revision rather than the touched scope.
+        for label, node_path in (("plan", "plan"), ("G-001", g_path), ("G-001/T-001", t1_path)):
+            still_live = node_path in post_edit_live_paths
+            results.append(
+                CheckResult(
+                    "4", f"R49_fa15d288_unrelated_scope_stays_live({label})",
+                    STATUS_PASS if still_live else STATUS_FAIL,
+                    "" if still_live else f"node_path={node_path!r} expected is_live=true, live_paths={post_edit_live_paths!r}",
+                )
+            )
+
+        # CONTROL ASSERT (must PASS today AND after the fix): T2's own
+        # block -- the genuinely affected scope, since A2 is T2's child --
+        # is stale/absent from the live set. The fix must not carry this
+        # one forward as if it were unaffected.
+        t2_stale = t2_path not in post_edit_live_paths
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_control_touched_scope_goes_stale(G-001/T-002)",
+                STATUS_PASS if t2_stale else STATUS_FAIL,
+                "" if t2_stale else f"expected T2's own block stale/absent, still live: {post_edit_live_paths!r}",
+            )
+        )
+
+        # POST-FIX ASSERT (expected RED today): plan_validate must carry NO
+        # context_coverage.common_current finding for G's or T1's own
+        # artifact_path -- today it does, for both, since their blocks
+        # went stale purely as a side effect of A2's unrelated edit.
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R49_fa15d288_plan_validate", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R49_fa15d288_plan_validate", STATUS_PASS))
+        flagged_paths = _plan_validate_finding_artifact_paths(res.get("report"), "context_coverage.common_current")
+        for label, artifact_path in (("G-001", g_path), ("G-001/T-001", t1_path)):
+            not_flagged = artifact_path not in flagged_paths
+            results.append(
+                CheckResult(
+                    "4", f"R49_fa15d288_plan_validate_no_finding({label})",
+                    STATUS_PASS if not_flagged else STATUS_FAIL,
+                    "" if not_flagged else f"unexpected context_coverage.common_current finding for {artifact_path!r}, flagged={flagged_paths!r}",
+                )
+            )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R49_fa15d288_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r50_frozen_atomic_direct_execution_transition_957c2f6a(client: Any) -> list[CheckResult]:
+    """Bug 957c2f6a: step_set_status_metadata.py's own published contract
+    (legal_transitions.statuses.frozen.direct_targets, and the domain
+    status model plan_manager/domain/status_model.py's validate_transition,
+    which explicitly unions {"in_progress"} into a frozen ATOMIC step's
+    legal target set) both say a frozen atomic step accepts a direct
+    frozen -> in_progress transition with no cascade. But
+    step_set_status_command.py's execute() checks cascade admission
+    (cascade.regime.check_admission) BEFORE validate_transition ever runs:
+    check_admission's frozen_at_or_below gate has no atomic-step direct-
+    execution exception, so it raises CascadeError("step ... is not
+    directly mutable") for ANY frozen target with no cascade_uuid,
+    surfaced as ErrorResult domain_code=FROZEN_ARTIFACT -32000 -- the
+    validate_transition layer that *would* admit the direct move is never
+    reached. The published contract and the actual admission gate disagree.
+
+    Recipe (throwaway plan, single G->T branch with TWO atomic children so
+    a non-frozen sibling exists as a negative control, try/finally
+    cleanup): plan_create -> context_common/step_create G (level 3) ->
+    context_common/step_create T (level 4, parent G) -> context_common/
+    step_create A1 and A2 (level 5, parent T) -- BOTH atomics are built
+    BEFORE freezing anything, since freezing A1 makes its ancestors (G, T)
+    non-directly-mutable per frozen_at_or_below, which would block
+    building A2 afterwards. Then: step_set_status(A1, ready_for_review) ->
+    step_set_status(A1, frozen) (both must PASS today) -> CONTRACT MARKER:
+    help(cmdname="step_set_status").ai_metadata.legal_transitions.
+    statuses.frozen.direct_targets == ["in_progress"] (must PASS today --
+    the metadata itself is not wrong, only the runtime gate) ->
+    step_set_status(A1, in_progress) with no cascade_uuid (expected RED
+    today: FROZEN_ARTIFACT) -> if that succeeded, step_set_status(A1,
+    done) with no cascade_uuid (expected RED today, unreachable otherwise)
+    -> NEGATIVE CONTROL: step_set_status(A2, in_progress) -- A2 is still
+    draft, never frozen -- must FAIL INVALID_TRANSITION both today and
+    after the fix (draft has no direct path to in_progress; the fix must
+    not broaden direct execution beyond the one frozen->in_progress
+    exception).
+
+    Cleanup: plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r50-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R50_957c2f6a_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R50_957c2f6a_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R50_957c2f6a_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        # Both atomic siblings are built BEFORE any freeze: freezing A1
+        # would make T/G non-directly-mutable, blocking A2's creation.
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_context_common(T,level5,before A1)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R50_957c2f6a_step_create(A1)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_context_common(T,level5,before A2)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-002", "parent_step_id": t_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R50_957c2f6a_step_create(A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R50_957c2f6a_repro_steps_created", STATUS_PASS, f"G={g_id} T={t_id} A1={a1_id} A2={a2_id}"))
+
+        # Freeze A1 LAST, after both atomics already exist.
+        ok, res = await call(client, "step_set_status", {"plan": plan_uuid, "step_id": a1_id, "status": "ready_for_review"})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_step_set_status(A1,ready_for_review)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R50_957c2f6a_step_set_status(A1,ready_for_review)", STATUS_PASS))
+
+        ok, res = await call(client, "step_set_status", {"plan": plan_uuid, "step_id": a1_id, "status": "frozen"})
+        if not ok:
+            results.append(CheckResult("4", "R50_957c2f6a_step_set_status(A1,frozen)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R50_957c2f6a_step_set_status(A1,frozen)", STATUS_PASS))
+
+        # CONTRACT MARKER ASSERT (must PASS today): the published metadata
+        # itself already documents the direct frozen->in_progress target.
+        ok, res = await call(client, "help", {"cmdname": "step_set_status"})
+        ai_metadata = res.get("ai_metadata") if ok and isinstance(res, dict) else None
+        direct_targets = None
+        if isinstance(ai_metadata, dict):
+            statuses = ai_metadata.get("legal_transitions", {}).get("statuses", {})
+            if isinstance(statuses, dict):
+                frozen_entry = statuses.get("frozen")
+                if isinstance(frozen_entry, dict):
+                    direct_targets = frozen_entry.get("direct_targets")
+        marker_ok = ok and direct_targets == ["in_progress"]
+        results.append(
+            CheckResult(
+                "4", "R50_957c2f6a_contract_marker_frozen_direct_targets",
+                STATUS_PASS if marker_ok else STATUS_FAIL,
+                "" if marker_ok else f"expected direct_targets==['in_progress'], got ok={ok} direct_targets={direct_targets!r}",
+            )
+        )
+
+        # POST-FIX ASSERT (expected RED today): direct frozen->in_progress,
+        # no cascade_uuid. Today: -32000 domain_code=FROZEN_ARTIFACT.
+        ok, res = await call(client, "step_set_status", {"plan": plan_uuid, "step_id": a1_id, "status": "in_progress"})
+        step4_ok = ok and isinstance(res, dict) and res.get("status") == "in_progress"
+        results.append(
+            CheckResult(
+                "4", "R50_957c2f6a_direct_frozen_to_in_progress",
+                STATUS_PASS if step4_ok else STATUS_FAIL,
+                "" if step4_ok else f"ok={ok} res={res!r}",
+            )
+        )
+
+        # POST-FIX ASSERT (expected RED today, only attempted if the prior
+        # step actually landed A1 in in_progress; otherwise an explicit
+        # unreachable FAIL, never a silently-skipped assertion).
+        if step4_ok:
+            ok, res = await call(client, "step_set_status", {"plan": plan_uuid, "step_id": a1_id, "status": "done"})
+            step5_ok = ok and isinstance(res, dict) and res.get("status") == "done"
+            results.append(
+                CheckResult(
+                    "4", "R50_957c2f6a_direct_in_progress_to_done",
+                    STATUS_PASS if step5_ok else STATUS_FAIL,
+                    "" if step5_ok else f"ok={ok} res={res!r}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R50_957c2f6a_direct_in_progress_to_done",
+                    STATUS_FAIL, "unreachable: step 4 red",
+                )
+            )
+
+        # NEGATIVE CONTROL (must PASS today AND after the fix): A2 is
+        # still draft, never frozen -- draft->in_progress has no direct
+        # path regardless of the frozen-atomic exception.
+        ok, res = await call(client, "step_set_status", {"plan": plan_uuid, "step_id": a2_id, "status": "in_progress"})
+        control_ok = (not ok) and "INVALID_TRANSITION" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R50_957c2f6a_control_draft_to_in_progress_rejected",
+                STATUS_PASS if control_ok else STATUS_FAIL,
+                "" if control_ok else f"expected INVALID_TRANSITION, got ok={ok} res={res!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R50_957c2f6a_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

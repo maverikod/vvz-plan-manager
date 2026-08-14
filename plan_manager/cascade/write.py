@@ -102,6 +102,7 @@ def cascade_write(
     status_updates: list[tuple[uuid.UUID, str]],
     author: str,
     message: str,
+    carry_forward_paths: list[str] | None = None,
 ) -> uuid.UUID:
     """Record one revision in the version store (C-018) for an admitted
     in-cascade mutation, attributed to the cascade under its own
@@ -129,6 +130,13 @@ def cascade_write(
             the node mutation, in the order they must be applied.
         author: revision author.
         message: revision message.
+        carry_forward_paths: bug fa15d288 -- canonical step paths this
+            mutation writes, forwarded to `record_revision` so the
+            context blocks that cannot depend on them survive the
+            cascade tip advance. None (the default) keeps the previous
+            invalidate-everything behavior. Carried rows land on the new
+            tip under the same cascade, so `promote_cascade_blocks_to_head`
+            still promotes exactly the tip rows at commit.
 
     Returns:
         The uuid of the newly recorded revision.
@@ -141,7 +149,10 @@ def cascade_write(
     parent = get_ref(conn, plan_uuid, cascade.name)
     snaps = apply_status_updates(conn, status_updates)
     changes = [(node_uuid, node_snapshot)] + snaps
-    return record_revision(conn, plan_uuid, author, message, changes, parent, ref_name=cascade.name)
+    return record_revision(
+        conn, plan_uuid, author, message, changes, parent, ref_name=cascade.name,
+        carry_forward_paths=carry_forward_paths, cascade_uuid=cascade.uuid,
+    )
 
 
 def cascade_write_many(

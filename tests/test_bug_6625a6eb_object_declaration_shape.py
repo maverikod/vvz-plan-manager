@@ -112,7 +112,7 @@ def _patch_common(monkeypatch, nodes: dict[uuid.UUID, Step]) -> dict:
         step_update_command, "update_step_fields_and_concepts", _update_step_fields_and_concepts
     )
 
-    def _record_revision(conn, plan_uuid, actor, message, changes, parent_revision_uuid, ref_name=None):
+    def _record_revision(conn, plan_uuid, actor, message, changes, parent_revision_uuid, ref_name=None, **_kwargs):
         calls["record_revision"] = changes
         return uuid.UUID("00000000-0000-0000-0000-0000006625ff")
 

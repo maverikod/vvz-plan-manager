@@ -13,7 +13,7 @@ from plan_manager.cascade.write import cascade_write, step_snapshot
 from plan_manager.cascade.propagation import step_invalidation
 from plan_manager.commands.errors import DomainCommandError, domain_error, map_exception
 from plan_manager.commands.resolve import resolve_plan_guarded as resolve_plan
-from plan_manager.commands.step_ref import resolve_step_ref
+from plan_manager.commands.step_ref import canonical_step_paths, resolve_step_ref
 from plan_manager.commands.step_update_metadata import get_step_update_metadata
 from plan_manager.domain.concept import CONCEPT_ID_PATTERN
 from plan_manager.domain.concept_store import list_concept_ids
@@ -358,15 +358,21 @@ class StepUpdateCommand(Command):
                 patched = get_step(conn, target.uuid)
                 snapshot = step_snapshot(patched, patched.status)
                 if rec is not None:
-                    status_updates = step_invalidation(load_steps(conn, p.uuid), target.uuid)
+                    nodes_after = load_steps(conn, p.uuid)
+                    status_updates = step_invalidation(nodes_after, target.uuid)
+                    # Bug fa15d288: name the steps this write touches so blocks
+                    # that cannot depend on them survive the tip advance.
+                    touched = [target.uuid] + [s for s, _ in status_updates]
                     revision = cascade_write(
                         conn, p.uuid, rec, target.uuid, snapshot, status_updates, "api",
                         f"step_update: {patched.step_id}",
+                        canonical_step_paths(nodes_after, touched),
                     )
                 else:
                     revision = record_revision(
                         conn, p.uuid, "api", f"step_update: {patched.step_id}",
                         [(target.uuid, snapshot)], p.head_revision_uuid, ref_name=None,
+                        carry_forward_paths=canonical_step_paths(nodes, [target.uuid]),
                     )
                 verified = get_step(conn, target.uuid)
                 data = {

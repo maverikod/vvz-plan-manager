@@ -168,6 +168,7 @@ def lifecycle_matrices() -> dict[str, Any]:
                 "frozen->in_progress is a direct transition for atomic steps only.",
                 "step_transition applies draft->frozen as the multi-hop draft->ready_for_review->frozen in one batch revision.",
                 "Reopening a frozen step (frozen->draft/ready_for_review) requires an admitting cascade_uuid.",
+                "Bug 957c2f6a: step_set_status admits the two atomic execution transitions frozen->in_progress and in_progress->done directly, with no cascade_uuid, even on frozen truth, but only while the plan has no open cascade; every other frozen-truth mutation, and every transition made while a cascade is open, still requires an admitting cascade.",
             ],
         },
         "cascade": {

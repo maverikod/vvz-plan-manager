@@ -20,7 +20,11 @@ from plan_manager.cascade.record import CascadeError
 from plan_manager.cascade.regime import check_admission, frozen_at_or_below
 from plan_manager.cascade.write import step_snapshot
 from plan_manager.commands.errors import DomainCommandError
-from plan_manager.commands.step_ref import canonical_step_path, resolve_step_ref
+from plan_manager.commands.step_ref import (
+    canonical_step_path,
+    canonical_step_paths,
+    resolve_step_ref,
+)
 from plan_manager.domain.step import STEP_ID_PATTERNS, Step
 from plan_manager.domain.step_store import get_step, update_step_depends_on
 from plan_manager.storage.version_store import get_ref, record_revision
@@ -389,7 +393,13 @@ def persist_changes(
     else:
         parent = plan.head_revision_uuid
         ref_name = None
-    return record_revision(conn, plan.uuid, "api", message, changes, parent, ref_name)
+    # Bug fa15d288: the change set is exactly the steps whose depends_on was
+    # rewritten; no other step's context can depend on it.
+    return record_revision(
+        conn, plan.uuid, "api", message, changes, parent, ref_name,
+        carry_forward_paths=canonical_step_paths(nodes, list(new_by_uuid)),
+        cascade_uuid=rec.uuid if rec is not None else None,
+    )
 
 
 def head_revision_str(conn, plan) -> str | None:
