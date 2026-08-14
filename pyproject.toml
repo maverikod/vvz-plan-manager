@@ -8,12 +8,12 @@ version = "0.1.111"
 description = "Plan Manager server: hierarchical development plan storage, verification, and exchange service."
 requires-python = ">=3.12"
 dependencies = [
-    "mcp-proxy-adapter>=8.10.28",
+    "mcp-proxy-adapter>=8.10.29",
     "psycopg[binary]>=3",
     "pydantic>=2",
     "numpy",
     "PyYAML",
-    "embed-client>=4.0.16",
+    "embed-client>=4.0.18",
     "code-analysis-client>=1.6.111",
     "sqlglot>=25",
 ]
