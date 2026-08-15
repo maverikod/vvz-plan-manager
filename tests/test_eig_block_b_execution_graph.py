@@ -194,8 +194,15 @@ def test_verification_target_edge_from_creator_to_verifier() -> None:
     assert matches[0]["evidence"] == {"target": "src/widget.py"}
 
 
-def test_verification_target_falls_back_to_plain_owner_without_creator() -> None:
-    """No target_file owner carries operation 'create_file': every owner is used."""
+def test_verification_target_emits_no_edge_without_a_create_file_owner() -> None:
+    """No target_file owner carries operation 'create_file': zero edges, no fallback.
+
+    Regression for the post-0.1.117 fix: the old "every owner" fallback made
+    a later modify_file owner of a shared file a verification_target
+    producer pointing BACK at an earlier verifier, cycling against the
+    forward file_order edges that already order the modify chain. The file
+    is treated as pre-existing outside the plan instead.
+    """
     gs = make_step(3, "G-001", None)
     ts = make_step(4, "T-001", gs.uuid)
     owner = make_step(5, "A-001", ts.uuid, target="src/widget.py", operation="modify_file")
@@ -205,13 +212,88 @@ def test_verification_target_falls_back_to_plain_owner_without_creator() -> None
     )
     nodes = {x.uuid: x for x in (gs, ts, owner, verifier)}
     graph = build_execution_graph(nodes)
-    owner_path = _path(nodes, owner)
-    verifier_path = _path(nodes, verifier)
-    matches = [
-        e for e in graph["inferred_edges"]
-        if e["type"] == "verification_target" and e["from"] == owner_path and e["to"] == verifier_path
-    ]
-    assert len(matches) == 1
+    assert [e for e in graph["inferred_edges"] if e["type"] == "verification_target"] == []
+    assert graph["cycles"] == []
+
+
+def test_verification_target_cr7_shaped_modify_chain_yields_zero_edges_and_no_cycle() -> None:
+    """CR-7-shaped regression (live plan 99340015, block-B design flaw).
+
+    A chain of modify_file owners of ONE shared file, each carrying its own
+    verification.target == that same file, and NO create_file owner
+    anywhere in the plan: this used to fire the "every owner" fallback,
+    making each later modify_file owner a producer edge back to an earlier
+    verifier -- six 2-node cycles on the real CR-7 plan. With the fallback
+    removed, zero verification_target edges are emitted, zero cycles are
+    reported, and all execution_integrity checks stay green.
+    """
+    gs = make_step(3, "G-001", None)
+    ts1 = make_step(4, "T-001", gs.uuid)
+    # T-002/T-003 explicitly depend on their predecessor -- the forward
+    # file_order/explicit edges that, on the real CR-7 plan, already order
+    # this modify chain and would have cycled against the old fallback's
+    # backward verification_target edges.
+    ts2 = make_step(4, "T-002", gs.uuid, depends=["T-001"])
+    ts3 = make_step(4, "T-003", gs.uuid, depends=["T-002"])
+    a1 = make_step(
+        5, "A-001", ts1.uuid, target="src/shared.py", operation="modify_file",
+        verification={"type": "tests", "target": "src/shared.py", "expected": ""},
+    )
+    a2 = make_step(
+        5, "A-005", ts2.uuid, target="src/shared.py", operation="modify_file",
+        verification={"type": "tests", "target": "src/shared.py", "expected": ""},
+    )
+    a3 = make_step(
+        5, "A-002", ts3.uuid, target="src/shared.py", operation="modify_file",
+        verification={"type": "tests", "target": "src/shared.py", "expected": ""},
+    )
+    nodes = {x.uuid: x for x in (gs, ts1, ts2, ts3, a1, a2, a3)}
+    graph = build_execution_graph(nodes)
+    assert [e for e in graph["inferred_edges"] if e["type"] == "verification_target"] == []
+    assert graph["cycles"] == []
+
+
+def test_verification_target_create_file_owner_edges_every_distinct_verifier() -> None:
+    """A create_file owner present: exactly one edge to each distinct verifier, no self-loop."""
+    gs = make_step(3, "G-001", None)
+    ts = make_step(4, "T-001", gs.uuid)
+    creator = make_step(5, "A-001", ts.uuid, target="src/widget.py", operation="create_file")
+    verifier1 = make_step(
+        5, "A-002", ts.uuid, target="tests/test_widget_a.py", priority=2,
+        verification={"type": "tests", "target": "src/widget.py", "expected": ""},
+    )
+    verifier2 = make_step(
+        5, "A-003", ts.uuid, target="tests/test_widget_b.py", priority=3,
+        verification={"type": "tests", "target": "src/widget.py", "expected": ""},
+    )
+    # The creator itself also declares a (self-referential) verification
+    # target; it must never produce a self-loop edge.
+    creator_with_self_target = make_step(
+        5, "A-001", ts.uuid, target="src/widget.py", operation="create_file",
+        verification={"type": "tests", "target": "src/widget.py", "expected": ""},
+    )
+    nodes = {x.uuid: x for x in (gs, ts, creator, verifier1, verifier2)}
+    graph = build_execution_graph(nodes)
+    creator_path = _path(nodes, creator)
+    verifier1_path = _path(nodes, verifier1)
+    verifier2_path = _path(nodes, verifier2)
+    edges = {
+        (e["from"], e["to"])
+        for e in graph["inferred_edges"]
+        if e["type"] == "verification_target"
+    }
+    assert edges == {
+        (creator_path, verifier1_path),
+        (creator_path, verifier2_path),
+    }
+
+    # Self-loop check: a create_file step whose own verification.target
+    # names its own target_file must not produce an edge to itself.
+    solo_nodes = {x.uuid: x for x in (gs, ts, creator_with_self_target)}
+    solo_graph = build_execution_graph(solo_nodes)
+    assert [
+        e for e in solo_graph["inferred_edges"] if e["type"] == "verification_target"
+    ] == []
 
 
 def test_verification_string_field_yields_no_verification_target_edge() -> None:

@@ -16,6 +16,17 @@ from plan_manager.domain.step_objects import (
     normalize_as_object_declarations,
 )
 
+#: Declarations counted toward OWNERSHIP aggregation (owner_keys / modules,
+#: the drift signals behind coverage.object_multiple_owner_keys and
+#: coverage.object_multiple_modules): a role-less (legacy) declaration, or
+#: one whose role is producer-ish ("create"/"modify" -- PRODUCER_ROLES). A
+#: declaration whose role is a reference ("consume", "verify", "document",
+#: "package", "deploy") records that a step USES the object, not that it
+#: owns it, so it must never trip an ownership-drift finding; it stays
+#: fully visible in artifact_paths/declared_concepts/as_concepts/producers/
+#: consumers/roles and in concept coverage, only excluded from ownership.
+_OWNERSHIP_ROLES = PRODUCER_ROLES
+
 
 def module_of(target_file: str) -> str:
     """Derive the classification module of an object from its declaring file.
@@ -60,6 +71,18 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
     concept sets, and role-derived producer/consumer artifact paths
     contributed by every declaring level-5 step.
 
+    OWNERSHIP rule (owner_keys / modules only, post-0.1.117 defect fix): a
+    declaring entry counts toward `owner_keys`/`modules` only when its role
+    is producer-ish -- absent (legacy) or one of
+    `plan_manager.domain.step_objects.PRODUCER_ROLES` ("create", "modify").
+    An entry whose role is a reference role ("consume", "verify",
+    "document", "package", "deploy") records that the declaring step USES
+    the object, not that it owns it, so it is excluded from `owner_keys`/
+    `modules` (and therefore from the multiple_owner_keys/multiple_modules
+    drift findings `object_findings` derives from them) while remaining
+    fully present in `artifact_paths`, `declared_concepts`, `as_concepts`,
+    and the `producers`/`consumers`/`roles` maps below.
+
     Args:
         conn: Open psycopg 3 database connection to use for the query.
         plan_uuid: Identity of the plan to build the inventory for.
@@ -70,7 +93,9 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
                 two-element lists, deduplicated, where
                 tactical_step_path is "<GS step_id>/<TS step_id>" and
                 module is module_of(target_file) of the declaring
-                level-5 step's fields["target_file"].
+                level-5 step's fields["target_file"] -- restricted to
+                declarations whose role is absent or producer-ish (see
+                the OWNERSHIP rule above).
             "modules": sorted list of the distinct modules among this
                 object's owner_keys.
             "artifact_paths": sorted list of the distinct full artifact
@@ -143,11 +168,12 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
                     "roles": {},
                 },
             )
-            bucket["owner_keys"].add((module, ts_path))
+            role = declaration.get("role")
+            if role is None or role in _OWNERSHIP_ROLES:
+                bucket["owner_keys"].add((module, ts_path))
             bucket["artifact_paths"].add(artifact_path)
             bucket["declared_concepts"].update(declaration.get("concepts", []))
             bucket["as_concepts"].update(declaring_concepts)
-            role = declaration.get("role")
             if role is not None:
                 bucket["roles"][artifact_path] = role
                 if role in PRODUCER_ROLES:

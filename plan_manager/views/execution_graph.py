@@ -7,6 +7,19 @@ step_objects.py``): object producer/consumer pairs and target-file/
 verification-target pairs. Every function here is a read-only, pure
 projection over an already-loaded ``nodes`` dict: none of them touch the
 database or mutate their arguments.
+
+Evidence note (post-0.1.117 defect fix, live plan 99340015): the
+verification_target edge's producer side used to fall back to "every
+target_file owner" when no owner carried operation "create_file". That
+fallback made a later modify_file owner of a shared file a producer edge
+source pointing BACK at an earlier verifier of the same file, cycling
+against the forward file_order/explicit edges that already order the
+modify chain -- six 2-node cycles on that plan alone
+(``execution_integrity.execution_graph_acyclic``). The fallback is removed
+entirely: ``_verification_target_edges`` now emits an edge only from a
+target_file owner whose ``operation`` is "create_file"; a target with no
+create_file owner in-plan emits no edge (the file is treated as
+pre-existing outside the plan).
 """
 
 from __future__ import annotations
@@ -143,19 +156,31 @@ def _verification_target_edges(nodes: dict[uuid.UUID, Step]) -> list[dict[str, A
 
     An AS's ``verification`` field, when a dict with a non-empty ``target``
     string, is compared (exact match after trimming) against every other
-    AS's ``target_file``. The producer side prefers the target_file owner(s)
-    whose ``operation`` is "create_file" (the AS-level analogue of
-    domain.step_objects.PRODUCER_ROLES' "create"); when no owner of that
-    target_file carries "create_file", every owner of the target_file is
-    used instead (the plain "target_file owner" fallback).
+    AS's ``target_file``. The producer side is EXCLUSIVELY the target_file
+    owner(s) whose ``operation`` is "create_file" -- file creation is the
+    hard prerequisite a verifier's edge encodes; a chain of later
+    ``modify_file`` owners of the same file is already ordered relative to
+    each other by ``file_order`` edges (views.dependency_graph.build_edges's
+    same-file priority pass), so folding them in here as producers as well
+    is both redundant and unsafe: a later modify_file owner would gain a
+    verification_target edge pointing BACK at an earlier verifier of the
+    same file, cycling against the forward file_order/explicit edges that
+    already order the modify chain (CR-7 live evidence, plan 99340015: six
+    2-node cycles of exactly this shape). When no owner of the target_file
+    carries "create_file" in this plan, NO edge is emitted at all -- the
+    file is treated as pre-existing outside the plan, which is exactly what
+    ``check_no_orphan_verification`` (suppressed pending EIG block F) exists
+    to flag separately. There is no all-owners fallback.
     """
-    owners_by_file: dict[str, list[uuid.UUID]] = {}
+    creators_by_file: dict[str, list[uuid.UUID]] = {}
     for node_uuid, step in nodes.items():
         if step.level != 5:
             continue
+        if step.fields.get("operation") != "create_file":
+            continue
         target_file = step.fields.get("target_file")
         if isinstance(target_file, str) and target_file.strip():
-            owners_by_file.setdefault(target_file.strip(), []).append(node_uuid)
+            creators_by_file.setdefault(target_file.strip(), []).append(node_uuid)
 
     raw_edges: list[dict[str, Any]] = []
     for verifier_uuid, verifier in nodes.items():
@@ -168,15 +193,11 @@ def _verification_target_edges(nodes: dict[uuid.UUID, Step]) -> list[dict[str, A
         if not isinstance(target, str) or not target.strip():
             continue
         target = target.strip()
-        owner_uuids = owners_by_file.get(target)
-        if not owner_uuids:
+        creator_uuids = creators_by_file.get(target)
+        if not creator_uuids:
             continue
-        creator_uuids = [
-            u for u in owner_uuids if nodes[u].fields.get("operation") == "create_file"
-        ]
-        producer_uuids = creator_uuids if creator_uuids else owner_uuids
         verifier_path = _artifact_path(nodes, verifier)
-        for producer_uuid in producer_uuids:
+        for producer_uuid in creator_uuids:
             if producer_uuid == verifier_uuid:
                 continue
             raw_edges.append(

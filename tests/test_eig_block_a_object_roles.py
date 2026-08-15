@@ -25,7 +25,7 @@ from plan_manager.domain.step_objects import (
     normalize_as_object_declarations,
     validate_as_objects,
 )
-from plan_manager.views.objects import object_inventory
+from plan_manager.views.objects import object_findings, object_inventory
 
 
 PLAN_UUID = uuid.UUID("00000000-0000-0000-0000-0000287bdfa6")
@@ -226,3 +226,182 @@ def test_object_inventory_role_less_plan_existing_keys_byte_identical():
     assert widget["producers"] == []
     assert widget["consumers"] == []
     assert widget["roles"] == {}
+
+
+# ---------------------------------------------------------------------------
+# post-0.1.117 defect fix: consumer/reference roles must not trip legacy
+# coverage.object_multiple_owner_keys / coverage.object_multiple_modules
+# ownership-drift checks (block A / block-B collision, live evidence: a
+# plan with A1 {Widget, role=create} target src/widget.py and A2 {Widget,
+# role=consume} in a different module reds both checks even though A2 never
+# claims ownership of Widget).
+# ---------------------------------------------------------------------------
+
+
+def test_create_and_consume_in_different_modules_yields_zero_ownership_findings():
+    gs = uuid.uuid4()
+    ts = uuid.uuid4()
+    as_create = uuid.uuid4()
+    as_consume = uuid.uuid4()
+
+    conn = _InventoryConn(
+        gs_rows=[(gs, "G-001")],
+        ts_rows=[(ts, gs, "T-001")],
+        as_rows=[
+            (
+                ts,
+                "A-001",
+                _step_row(
+                    "src/widget.py",
+                    [{"name": "Widget", "concepts": [], "role": "create"}],
+                ),
+                [],
+            ),
+            (
+                ts,
+                "A-002",
+                _step_row(
+                    "src/consumer.py",
+                    [{"name": "Widget", "concepts": [], "role": "consume"}],
+                ),
+                [],
+            ),
+        ],
+    )
+
+    inventory = object_inventory(conn, PLAN_UUID)
+    widget = inventory["Widget"]
+    # Ownership is exclusively the create declaration: one owner key, one
+    # module -- the consume declaration is a reference, not an ownership
+    # claim.
+    assert widget["owner_keys"] == [["src.widget", "G-001/T-001"]]
+    assert widget["modules"] == ["src.widget"]
+    # Producers/consumers/roles and artifact_paths stay fully populated.
+    assert widget["producers"] == ["G-001/T-001/A-001"]
+    assert widget["consumers"] == ["G-001/T-001/A-002"]
+    assert widget["roles"] == {
+        "G-001/T-001/A-001": "create",
+        "G-001/T-001/A-002": "consume",
+    }
+    assert widget["artifact_paths"] == ["G-001/T-001/A-001", "G-001/T-001/A-002"]
+
+    findings = object_findings(inventory)
+    assert [f for f in findings if f["check"].startswith("multiple_")] == []
+
+
+def test_two_create_declarations_in_different_modules_still_flagged():
+    gs = uuid.uuid4()
+    ts = uuid.uuid4()
+    as1 = uuid.uuid4()
+    as2 = uuid.uuid4()
+
+    conn = _InventoryConn(
+        gs_rows=[(gs, "G-001")],
+        ts_rows=[(ts, gs, "T-001")],
+        as_rows=[
+            (
+                ts,
+                "A-001",
+                _step_row(
+                    "pkg/alpha.py",
+                    [{"name": "Widget", "concepts": [], "role": "create"}],
+                ),
+                [],
+            ),
+            (
+                ts,
+                "A-002",
+                _step_row(
+                    "pkg/beta.py",
+                    [{"name": "Widget", "concepts": [], "role": "modify"}],
+                ),
+                [],
+            ),
+        ],
+    )
+
+    inventory = object_inventory(conn, PLAN_UUID)
+    widget = inventory["Widget"]
+    assert widget["owner_keys"] == [
+        ["pkg.alpha", "G-001/T-001"],
+        ["pkg.beta", "G-001/T-001"],
+    ]
+    assert widget["modules"] == ["pkg.alpha", "pkg.beta"]
+
+    findings = object_findings(inventory)
+    checks = {f["check"] for f in findings}
+    assert "multiple_owner_keys" in checks
+    assert "multiple_modules" in checks
+
+
+def test_reference_roles_excluded_from_ownership_but_kept_elsewhere():
+    """document/package/deploy declarations are references, not ownership."""
+    gs = uuid.uuid4()
+    ts = uuid.uuid4()
+    as_create = uuid.uuid4()
+    as_document = uuid.uuid4()
+    as_package = uuid.uuid4()
+    as_deploy = uuid.uuid4()
+
+    conn = _InventoryConn(
+        gs_rows=[(gs, "G-001")],
+        ts_rows=[(ts, gs, "T-001")],
+        as_rows=[
+            (
+                ts,
+                "A-001",
+                _step_row(
+                    "src/widget.py",
+                    [{"name": "Widget", "concepts": [], "role": "create"}],
+                ),
+                [],
+            ),
+            (
+                ts,
+                "A-002",
+                _step_row(
+                    "docs/widget.md",
+                    [{"name": "Widget", "concepts": [], "role": "document"}],
+                ),
+                [],
+            ),
+            (
+                ts,
+                "A-003",
+                _step_row(
+                    "pkg/widget_pkg.py",
+                    [{"name": "Widget", "concepts": [], "role": "package"}],
+                ),
+                [],
+            ),
+            (
+                ts,
+                "A-004",
+                _step_row(
+                    "deploy/widget.yaml",
+                    [{"name": "Widget", "concepts": [], "role": "deploy"}],
+                ),
+                [],
+            ),
+        ],
+    )
+
+    inventory = object_inventory(conn, PLAN_UUID)
+    widget = inventory["Widget"]
+    assert widget["owner_keys"] == [["src.widget", "G-001/T-001"]]
+    assert widget["modules"] == ["src.widget"]
+    assert widget["roles"] == {
+        "G-001/T-001/A-001": "create",
+        "G-001/T-001/A-002": "document",
+        "G-001/T-001/A-003": "package",
+        "G-001/T-001/A-004": "deploy",
+    }
+    assert widget["artifact_paths"] == [
+        "G-001/T-001/A-001",
+        "G-001/T-001/A-002",
+        "G-001/T-001/A-003",
+        "G-001/T-001/A-004",
+    ]
+
+    findings = object_findings(inventory)
+    assert [f for f in findings if f["check"].startswith("multiple_")] == []

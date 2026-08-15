@@ -12219,11 +12219,20 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
         G-001 -> T-001 -> A1 (target_file="src/widget.py",
                                objects=[{"name": "Widget", "concepts": [],
                                          "role": "create"}])
-        G-001 -> T-002 -> A2 (objects=[{"name": "Widget", "concepts": [],
+        G-001 -> T-002 -> A2 (target_file="src/consumer.py",
+                               objects=[{"name": "Widget", "concepts": [],
                                         "role": "consume"}],
                                verification={"type": "pytest",
                                  "target": "tests/nonexistent_orphan_test.py",
                                  "expected": "green"})
+
+    A2 carries its own target_file (post-0.1.117 fix) purely so this
+    fixture provokes no unrelated parse/sanity noise; with the coverage.
+    object_* ownership-role fix also shipped in this release, A1's role=
+    create and A2's role=consume declaration of the same object name across
+    two different modules (src.widget vs src.consumer) must NOT trip
+    coverage.object_multiple_owner_keys/object_multiple_modules either --
+    role=consume is a reference, not an ownership claim.
 
     A2's verification.target is a deliberate orphan (it names no step's
     target_file anywhere in the plan) to prove execution_integrity.
@@ -12242,8 +12251,12 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
       2. execution_integrity.object_producer_before_consumer carries a
          finding whose artifact_path is A2's canonical path and whose
          message names object 'Widget' (EXEC_PRODUCER_UNORDERED, gate_
-         execution.check_object_producer_before_consumer), and the
-         report's top-level green is false.
+         execution.check_object_producer_before_consumer), AND that same
+         check_id itself reports passed=false. (The report's top-level
+         green is deliberately NOT asserted here -- it reflects the whole
+         gate across every group, not this check group's own contract, and
+         asserting it made the step depend on unrelated gate noise this
+         fixture never intended to provoke.)
       3. execution_integrity.no_orphan_verification reports passed=true
          (suppressed) despite A2's orphan verification.target -- the
          suppression pin.
@@ -12256,7 +12269,10 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
       5. plan_validate again: zero execution_integrity findings at all
          (the persisted explicit edge now orders A1 before A2, clearing
          object_producer_before_consumer/parallelization_safe; no_orphan_
-         verification stays suppressed) and report green=true.
+         verification stays suppressed) AND all four execution_integrity.*
+         check_ids individually report passed=true. (Top-level green is,
+         again, deliberately not the assertion here -- same reasoning as
+         step 2.)
 
     Cleanup: plan_delete(hard), verified with its own CheckResult
     regardless of where the run stopped.
@@ -12356,6 +12372,7 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
             {
                 "plan": plan_uuid, "step_id": a2_path,
                 "fields": {
+                    "target_file": "src/consumer.py",
                     "objects": [{"name": "Widget", "concepts": [], "role": "consume"}],
                     "verification": {
                         "type": "pytest",
@@ -12419,7 +12436,16 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
             return results
 
         # --- 2: object_producer_before_consumer must fire on A2, naming
-        # object 'Widget', and the report's top-level green must be false. ---
+        # object 'Widget', and the check itself must report passed=false.
+        # (Not asserted here: the report's top-level green -- with DEFECT-2
+        # fixed, A2's role=consume declaration of Widget in a different
+        # module than A1's role=create no longer trips the unrelated
+        # coverage.object_multiple_owner_keys/object_multiple_modules
+        # checks, but this fixture provokes no parse/sanity noise either
+        # way; the global green flag is not this check group's contract to
+        # assert and pinning it here made the assertion unreachable on
+        # otherwise-unrelated gate noise -- see EXEC_PRODUCER_UNORDERED and
+        # the specific check's own passed flag instead.) ---
         producer_findings = _plan_validate_findings_for_check(
             report, "execution_integrity.object_producer_before_consumer"
         )
@@ -12430,8 +12456,10 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
             ),
             None,
         )
-        green = res.get("green")
-        step2_ok = producer_finding is not None and green is False
+        producer_check_passed = _plan_validate_check_passed(
+            report, "execution_integrity.object_producer_before_consumer"
+        )
+        step2_ok = producer_finding is not None and producer_check_passed is False
         results.append(
             CheckResult(
                 "4", "R60_0f50b0df_producer_unordered_finding_and_report_red",
@@ -12439,8 +12467,9 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
                 "" if step2_ok
                 else (
                     f"expected an object_producer_before_consumer finding for {a2_path!r} naming "
-                    f"'Widget', and report green=false; producer_findings={producer_findings!r} "
-                    f"green={green!r}"
+                    "'Widget', and execution_integrity.object_producer_before_consumer passed=false; "
+                    f"producer_findings={producer_findings!r} "
+                    f"producer_check_passed={producer_check_passed!r}"
                 ),
             )
         )
@@ -12499,8 +12528,13 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
             )
             return results
 
-        # --- 5: plan_validate again -- zero execution_integrity findings
-        # at all, and the report's top-level green must be true. ---
+        # --- 5: plan_validate again -- zero execution_integrity findings at
+        # all, and every one of the four execution_integrity.* checks
+        # itself reports passed=true. (Not asserted here: the report's
+        # top-level green -- that flag reflects the WHOLE gate, every group,
+        # not just this check group's contract, and pinning it here made
+        # step 5 depend on unrelated gate noise this fixture never intended
+        # to provoke.) ---
         ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
         if not ok or not isinstance(res, dict):
             results.append(CheckResult("4", "R60_0f50b0df_gate_clears_after_apply", STATUS_FAIL, str(res)))
@@ -12511,16 +12545,21 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
             for check_id in sorted(expected_check_ids)
             for finding in _plan_validate_findings_for_check(report_after, check_id)
         ]
-        green_after = res.get("green")
-        step5_ok = not remaining_findings and green_after is True
+        checks_passed_after = {
+            check_id: _plan_validate_check_passed(report_after, check_id)
+            for check_id in sorted(expected_check_ids)
+        }
+        all_checks_passed = all(passed is True for passed in checks_passed_after.values())
+        step5_ok = not remaining_findings and all_checks_passed
         results.append(
             CheckResult(
                 "4", "R60_0f50b0df_gate_clears_after_apply",
                 STATUS_PASS if step5_ok else STATUS_FAIL,
                 "" if step5_ok
                 else (
-                    "expected zero execution_integrity findings and report green=true after the "
-                    f"applied dependency; remaining_findings={remaining_findings!r} green={green_after!r}"
+                    "expected zero execution_integrity findings and all four execution_integrity.* "
+                    f"checks passed=true after the applied dependency; remaining_findings="
+                    f"{remaining_findings!r} checks_passed={checks_passed_after!r}"
                 ),
             )
         )
