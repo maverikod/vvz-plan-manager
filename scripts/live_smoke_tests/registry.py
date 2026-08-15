@@ -240,6 +240,14 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "unknown roles with INVALID_STEP_FIELD_SHAPE; role-less entries "
         "keep legacy semantics (EIG block A, todo 287bdfa6)",
     ),
+    LiveSmokeTestSpec(
+        "r57",
+        "run_r57_execution_graph_typed_edges_eig_block_b",
+        "execution_graph reports typed explicit/file_order/object_producer/"
+        "verification_target edges with missing_producers/ambiguous_"
+        "dependencies/cycles over a role-annotated fixture plan (EIG block "
+        "B, todo 16853f27)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

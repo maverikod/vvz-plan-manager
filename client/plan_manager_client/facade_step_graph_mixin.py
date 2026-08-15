@@ -98,6 +98,10 @@ class StepGraphCommandsMixin:
         """Return a paginated page of the transitive dependency-edge closure of one step."""
         return await self._call("graph_dependents", params)
 
+    async def execution_graph(self, **params: Any) -> Any:
+        """Return a paginated page of the extended execution graph (explicit + inferred edges) of a plan's steps."""
+        return await self._call("execution_graph", params)
+
     async def step_dependency_list(self, **params: Any) -> Any:
         """List one step's top-level depends_on edges and the sibling steps that depend on it."""
         return await self._call("step_dependency_list", params)

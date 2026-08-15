@@ -68,6 +68,7 @@ COMMAND_NAMES: frozenset[str] = frozenset(
         "graph_order",
         "graph_parallel_map",
         "graph_impact",
+        "execution_graph",
         "step_dependency_list",
         "step_dependency_add",
         "step_dependency_remove",

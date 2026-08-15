@@ -546,6 +546,7 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "project_dependency_remove": "requires an existing dependency_uuid from project_dependency_add",
     "project_dependency_discover": "runs CA-backed dependency discovery; not exercised in this pass",
     "project_uuid_reserve": "exercised end to end by its own R-check (reserve/collision/resolve/release with cleanup), not by a generic Tier-2 probe",
+    "execution_graph": "exercised end to end by its own R-check (R57: typed execution graph over roles/deps/verification), not by a generic Tier-2 probe",
     "step_dependency_add": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
@@ -10929,6 +10930,396 @@ async def run_r56_object_role_contract_eig_block_a(client: Any) -> list[CheckRes
         results.append(
             CheckResult(
                 "4", "R56_287bdfa6_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r57_execution_graph_typed_edges_eig_block_b(client: Any) -> list[CheckResult]:
+    """EIG block B (todo 16853f27): execution_graph is a new read-only
+    command (plan_manager/commands/execution_graph_command.py, view logic
+    in plan_manager/views/execution_graph.py) that composes, over one
+    plan's steps, the declared/derived dependency edges (typed "explicit"
+    or "file_order") together with two INFERRED edge families read off
+    block-A object roles and AS verification/target_file pairs: typed
+    "object_producer" (from a producer AS whose fields.objects declares a
+    "create"/"modify" role for some object to every consumer AS declaring
+    "consume"/"verify" for that same object) and typed
+    "verification_target" (from the target_file's owning AS -- preferring
+    an "operation": "create_file" owner -- to every AS whose
+    fields.verification.target names that file). It also reports
+    "missing_producers" (objects consumed but never produced) and
+    "ambiguous_dependencies" (objects with more than one producer), plus a
+    cycle report, all canonically sorted so two builds over the same input
+    are byte-identical.
+
+    DESIGNATED RED (assertion 1): help(cmdname="execution_graph") must
+    answer with a non-empty schema (schema.properties non-empty) -- the
+    same R53 technique (see run_r53_wish_reanchor_in_place_5c0ddc16):
+    today the command is unknown to live 0.1.113, help() still succeeds
+    (ok=True) but carries no "schema" key, so this assertion is RED
+    without a call() failure to key off of; res.get("error") is captured
+    in the FAIL detail instead.
+
+    Sub-assertions 2+ each run only if assertion 1 passed (the
+    "unreachable: step 1 red" idiom -- see R49/R50/R53/R56): build a
+    throwaway fixture plan via the context_common gate (exactly like
+    R49/R56) with TWO tactical branches under one goal and THREE atomics:
+
+        G-001 -> T-001 -> A1 (fields: target_file="src/widget.py",
+                               operation="create_file" (already the
+                               step_create skeleton default for level 5,
+                               restated explicitly here since fields is a
+                               freeform additionalProperties patch),
+                               objects=[{"name": "Widget", "concepts": [],
+                                         "role": "create"}])
+        G-001 -> T-002 -> A2 (fields: objects=[{"name": "Widget",
+                                        "concepts": [], "role": "consume"},
+                                       {"name": "Orphan", "concepts": [],
+                                        "role": "consume"}])
+                        -> A3 (fields: verification={"type": "pytest",
+                                        "target": "src/widget.py",
+                                        "expected": "green"})
+
+    plus one explicit dependency, step_dependency_add(A2, depends_on=A1).
+    A2 and A3 keep their step_create-skeleton default empty target_file,
+    so build_edges's same-file grouping (views/dependency_graph.py:
+    target_file must be a non-empty string) never groups them with A1's
+    "src/widget.py" -- no AS_SAME_FILE_ORDER_AMBIGUOUS collision, and no
+    incidental file_order edge muddies the explicit-family count.
+
+    A1 and A2 share the bare local id "A-001" under different T parents
+    (same next_free_step_id scope-reset R49 already exercises), so every
+    step reference below uses the full canonical path, not the bare id.
+
+    Then execution_graph(plan=...) is called twice (determinism check) and
+    every sub-assertion below is checked against the first call's payload:
+      - an "explicit" edge A1->A2 (from step_dependency_add) is present;
+      - an "object_producer" edge A1->A2 is ALSO present with
+        evidence.object=="Widget" -- proving explicit and object_producer
+        coexist as distinct typed edges between the same pair rather than
+        collapsing into one;
+      - a "verification_target" edge A1->A3 is present with
+        evidence.target=="src/widget.py";
+      - missing_producers contains an entry for "Orphan" whose consumers
+        list contains A2's path (Orphan has a consumer, A2, but no AS
+        anywhere declares a producer role for it);
+      - cycles == [] and summary's four edge-derived counts
+        (explicit_edge_count/inferred_edge_count/missing_producer_count/
+        cycle_count) match the lengths of the corresponding lists in the
+        same payload;
+      - determinism: the second execution_graph call's edges/
+        missing_producers/ambiguous_dependencies/cycles/summary section,
+        JSON-dumped with sort_keys=True, is byte-identical to the first
+        call's (the view's canonical sort makes two builds over the same,
+        unchanged input identical regardless of internal dict/set
+        iteration order).
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        # --- 1: DESIGNATED RED -- execution_graph must be a known command
+        # with a non-empty schema. ---
+        ok, res = await call(client, "help", {"cmdname": "execution_graph"})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step1_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_execution_graph_help_schema",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    f"expected help(cmdname='execution_graph') to answer with a non-empty "
+                    f"schema.properties; ok={ok} error={res.get('error') if isinstance(res, dict) else None!r} "
+                    f"full={res!r}"
+                ),
+            )
+        )
+
+        # --- 2+: gated on assertion 1; each reported as an explicit
+        # "unreachable" FAIL, never silently skipped, while the command is
+        # missing. ---
+        if not step1_ok:
+            for gated_name in (
+                "R57_16853f27_plan_create",
+                "R57_16853f27_repro_hierarchy_created",
+                "R57_16853f27_step_dependency_add(A1->A2)",
+                "R57_16853f27_explicit_edge_A1_A2",
+                "R57_16853f27_object_producer_edge_A1_A2",
+                "R57_16853f27_verification_target_edge_A1_A3",
+                "R57_16853f27_missing_producer_orphan",
+                "R57_16853f27_cycles_empty_and_summary_consistent",
+                "R57_16853f27_determinism",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r57-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R57_16853f27_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R57_16853f27_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-002", "parent_step_id": t2_id})
+        a3_id = _extract_step_id(res) if ok else None
+        if not ok or a3_id is None:
+            results.append(CheckResult("4", "R57_16853f27_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        a1_path = f"{t1_path}/{a1_id}"
+        a2_path = f"{t2_path}/{a2_id}"
+        a3_path = f"{t2_path}/{a3_id}"
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T1={t1_path} T2={t2_path} A1={a1_path} A2={a2_path} A3={a3_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "target_file": "src/widget.py",
+                    "operation": "create_file",
+                    "objects": [{"name": "Widget", "concepts": [], "role": "create"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_step_update(A1)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "objects": [
+                        {"name": "Widget", "concepts": [], "role": "consume"},
+                        {"name": "Orphan", "concepts": [], "role": "consume"},
+                    ],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_step_update(A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a3_path,
+                "fields": {
+                    "verification": {"type": "pytest", "target": "src/widget.py", "expected": "green"},
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_step_update(A3)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R57_16853f27_step_update(A1,A2,A3)", STATUS_PASS))
+
+        ok, res = await call(
+            client, "step_dependency_add",
+            {"plan": plan_uuid, "step_id": a2_path, "depends_on": a1_path},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R57_16853f27_step_dependency_add(A1->A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R57_16853f27_step_dependency_add(A1->A2)", STATUS_PASS))
+
+        ok, res1 = await call(client, "execution_graph", {"plan": plan_uuid})
+        if not ok or not isinstance(res1, dict):
+            results.append(CheckResult("4", "R57_16853f27_execution_graph_call", STATUS_FAIL, str(res1)))
+            return results
+        results.append(CheckResult("4", "R57_16853f27_execution_graph_call", STATUS_PASS))
+
+        edges1 = res1.get("edges") if isinstance(res1.get("edges"), list) else []
+
+        def _find_edge(edges: list, frm: str, to: str, etype: str) -> Optional[dict]:
+            for edge in edges:
+                if (
+                    isinstance(edge, dict)
+                    and edge.get("from") == frm and edge.get("to") == to and edge.get("type") == etype
+                ):
+                    return edge
+            return None
+
+        explicit_edge = _find_edge(edges1, a1_path, a2_path, "explicit")
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_explicit_edge_A1_A2",
+                STATUS_PASS if explicit_edge is not None else STATUS_FAIL,
+                "" if explicit_edge is not None else f"expected an explicit A1->A2 edge in edges={edges1!r}",
+            )
+        )
+
+        object_producer_edge = _find_edge(edges1, a1_path, a2_path, "object_producer")
+        object_producer_ok = (
+            object_producer_edge is not None
+            and isinstance(object_producer_edge.get("evidence"), dict)
+            and object_producer_edge["evidence"].get("object") == "Widget"
+        )
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_object_producer_edge_A1_A2",
+                STATUS_PASS if object_producer_ok else STATUS_FAIL,
+                "" if object_producer_ok
+                else f"expected an object_producer A1->A2 edge with evidence.object=='Widget' in edges={edges1!r}",
+            )
+        )
+
+        verification_target_edge = _find_edge(edges1, a1_path, a3_path, "verification_target")
+        verification_target_ok = (
+            verification_target_edge is not None
+            and isinstance(verification_target_edge.get("evidence"), dict)
+            and verification_target_edge["evidence"].get("target") == "src/widget.py"
+        )
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_verification_target_edge_A1_A3",
+                STATUS_PASS if verification_target_ok else STATUS_FAIL,
+                "" if verification_target_ok
+                else (
+                    "expected a verification_target A1->A3 edge with evidence.target=='src/widget.py' "
+                    f"in edges={edges1!r}"
+                ),
+            )
+        )
+
+        missing_producers = res1.get("missing_producers") if isinstance(res1.get("missing_producers"), list) else []
+        orphan_missing = next(
+            (
+                entry for entry in missing_producers
+                if isinstance(entry, dict) and entry.get("object") == "Orphan"
+                and isinstance(entry.get("consumers"), list) and a2_path in entry["consumers"]
+            ),
+            None,
+        )
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_missing_producer_orphan",
+                STATUS_PASS if orphan_missing is not None else STATUS_FAIL,
+                "" if orphan_missing is not None
+                else f"expected missing_producers to contain object=='Orphan' with consumers including {a2_path!r}, got {missing_producers!r}",
+            )
+        )
+
+        cycles = res1.get("cycles")
+        summary = res1.get("summary") if isinstance(res1.get("summary"), dict) else {}
+        explicit_edges_count = sum(1 for e in edges1 if isinstance(e, dict) and e.get("provenance") == "explicit")
+        inferred_edges_count = sum(1 for e in edges1 if isinstance(e, dict) and e.get("provenance") == "inferred")
+        summary_consistent = (
+            cycles == []
+            and summary.get("explicit_edge_count") == explicit_edges_count
+            and summary.get("inferred_edge_count") == inferred_edges_count
+            and summary.get("missing_producer_count") == len(missing_producers)
+            and summary.get("cycle_count") == 0
+        )
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_cycles_empty_and_summary_consistent",
+                STATUS_PASS if summary_consistent else STATUS_FAIL,
+                "" if summary_consistent
+                else f"cycles={cycles!r} summary={summary!r} edges={edges1!r} missing_producers={missing_producers!r}",
+            )
+        )
+
+        ok, res2 = await call(client, "execution_graph", {"plan": plan_uuid})
+        if not ok or not isinstance(res2, dict):
+            results.append(CheckResult("4", "R57_16853f27_determinism", STATUS_FAIL, f"second execution_graph call failed: {res2!r}"))
+            return results
+
+        def _canonical_section(payload: dict) -> str:
+            section = {
+                key: payload.get(key)
+                for key in ("edges", "missing_producers", "ambiguous_dependencies", "cycles", "summary")
+            }
+            return json.dumps(section, sort_keys=True)
+
+        canonical1 = _canonical_section(res1)
+        canonical2 = _canonical_section(res2)
+        deterministic = canonical1 == canonical2
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_determinism",
+                STATUS_PASS if deterministic else STATUS_FAIL,
+                "" if deterministic
+                else f"expected two execution_graph calls to be byte-identical; first={canonical1!r} second={canonical2!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R57_16853f27_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
                 "" if cleanup_ok else "one or more scratch entities survived cleanup",
             )
         )

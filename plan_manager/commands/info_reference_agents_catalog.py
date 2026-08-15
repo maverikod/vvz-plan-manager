@@ -280,7 +280,7 @@ _COMMAND_CATEGORIES: dict[str, list[str]] = {
         "step_runtime_get", "step_runtime_report", "step_runtime_list",
     ],
     "step_report": ["step_list", "step_search", "files_report", "step_xref"],
-    "graph": ["graph_deps", "graph_order", "graph_parallel_map", "graph_impact", "graph_dependents"],
+    "graph": ["graph_deps", "graph_order", "graph_parallel_map", "graph_impact", "graph_dependents", "execution_graph"],
     "step_dependency": [
         "step_dependency_list", "step_dependency_add", "step_dependency_remove",
         "step_dependency_set", "step_dependency_clear", "step_dependency_preview",

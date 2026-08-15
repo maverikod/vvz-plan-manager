@@ -60,7 +60,11 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 #   review_result_supersede/execution_attempt_supersede (a forward
 #   superseded_by_uuid pointer written only on the stale row, migration 0031;
 #   plan_manager.storage.entity_supersede_store).
-_PRE_CR4_INVENTORY_COUNT = 221
+#   EIG block B (todo 16853f27): +1 for execution_graph (read-only extended
+#   execution graph: declared/derived edges decomposed by type from
+#   build_edges, plus block-A object-role-inferred object_producer/
+#   verification_target edges; views.execution_graph.build_execution_graph).
+_PRE_CR4_INVENTORY_COUNT = 222
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:
