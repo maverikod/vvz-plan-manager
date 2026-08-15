@@ -11326,6 +11326,400 @@ async def run_r57_execution_graph_typed_edges_eig_block_b(client: Any) -> list[C
     return results
 
 
+async def run_r58_parallel_map_extended_mode_eig_block_c(client: Any) -> list[CheckResult]:
+    """EIG block C (todo 12fd8a80): graph_parallel_map_command.py's
+    GraphParallelMapCommand grows an optional "mode" parameter
+    ("explicit", the unchanged default; "extended", implemented in
+    plan_manager/views/parallel_map_ext.py). mode="explicit" keeps
+    computing waves over only C-009's declared/derived edge set
+    (views/dependency_graph.py build_edges: depends_on plus same-file
+    priority order) and returns exactly the pre-existing payload shape --
+    waves/total/limit/offset, nothing added or removed. mode="extended"
+    instead computes waves over the COMBINED edge set block B's
+    execution_graph command exposes (explicit + file_order +
+    object_producer + verification_target -- see
+    run_r57_execution_graph_typed_edges_eig_block_b) via
+    parallel_map_ext.extended_edges, and additionally returns four
+    sections built on that same combined edge set: placement_reasons
+    (every step's pinning incoming edges), critical_path (one longest
+    dependency chain), wave_parallelism (full, unpaginated wave-size
+    list), and conflict_groups (same_file_writers / same_object_producers
+    groupings). On live 0.1.114 (pre-deploy) "mode" does not exist in the
+    schema at all (additionalProperties: False), so any call that names it
+    is rejected at the schema layer with -32602.
+
+    Recipe (throwaway plan, reusing R57's exact hierarchy shape, context_
+    common gate exactly like R56/R57, try/finally cleanup): plan_create ->
+    context_common(plan,"plan",3) -> step_create G-001 (level 3) ->
+    context_common(G,4) -> step_create T-001 (level 4, parent G) ->
+    context_common(G,4) -> step_create T-002 (level 4, parent G) ->
+    context_common(T-001,5) -> step_create A1 (level 5, parent T-001) ->
+    context_common(T-002,5) -> step_create A2 (level 5, parent T-002) ->
+    context_common(T-002,5) -> step_create A3 (level 5, parent T-002).
+    A1 and A2 share the bare local id "A-001" under different T parents
+    (same next_free_step_id scope-reset R49/R57 already exercise), so
+    every step reference below uses the full canonical path.
+
+    step_update sets: A1 fields={target_file: "src/widget.py", objects:
+    [{"name": "Widget", "concepts": [], "role": "create"}]} (operation
+    defaults to "create_file" -- the step_create skeleton default for
+    level 5, per R57's docstring); A2 fields={objects: [{"name": "Widget",
+    "concepts": [], "role": "consume"}]}; A3 fields={verification:
+    {"type": "pytest", "target": "src/widget.py", "expected": "green"}}.
+    Deliberately NO step_dependency_add between A1 and A2 (or anywhere
+    else) -- the whole point of this check is that the inferred
+    object_producer/verification_target edges alone, with zero explicit
+    deps, are enough to place A2 and A3 in strictly later waves than A1
+    under mode="extended".
+
+    Sub-assertion 1 -- CONTROL, must PASS today AND after deploy:
+    graph_parallel_map(plan) with "mode" OMITTED must return a payload
+    whose keys are EXACTLY {"waves", "total", "limit", "offset"} -- no
+    "mode" key, no extended-only sections, byte-compatible with every
+    caller written before "mode" existed. A1 and A2 may legitimately share
+    a wave here (no explicit dep, and the explicit/file_order-only edge
+    set never sees the inferred object_producer/verification_target
+    edges) -- that is expected and not asserted either way.
+
+    Sub-assertion 2 -- DESIGNATED RED today, PASS after deploy:
+    graph_parallel_map(plan, mode="extended") must SUCCEED. Today, live
+    0.1.114's schema has no "mode" parameter at all, so this call is
+    rejected -32602 "unknown parameter" -- that diagnostic is captured
+    verbatim in the FAIL detail, not paraphrased.
+
+    Sub-assertions 3-6 -- gated on assertion 2 itself (the "unreachable:
+    step 2 red" idiom, per R50/R55/R56/R57): only a genuine extended-mode
+    payload can be inspected for placement/critical-path/parallelism/
+    conflict-group correctness, so while assertion 2 stays RED each of
+    these reports an explicit "unreachable" FAIL instead of silently
+    skipping. Once reachable:
+      - A2's wave index is strictly greater than A1's (object_producer
+        A1->A2 pins A2 to a later wave than its producer);
+      - A3's wave index is strictly greater than A1's (verification_target
+        A1->A3 pins A3 to a later wave than the file's creator);
+      - placement_reasons[A2] contains an edge {"from": A1, "type":
+        "object_producer"} -- proving the pinning is attributed to the
+        right edge, not merely that A2 landed later for some other reason;
+      - critical_path is non-empty and its first entry is itself placed in
+        wave 0 (a chain must start at a root with no incoming pins);
+      - wave_parallelism is a list of ints summing to the total step count
+        spanned by the (here, single-page) waves list -- 6: G-001, T-001,
+        T-002, A1, A2, A3 -- and has one entry per wave, confirming the
+        full/unpaginated wave-size accounting is internally consistent
+        with the returned waves;
+      - conflict_groups is present as a list (this fixture has only one
+        writer per target_file and only one producer per object, so an
+        empty list is the CORRECT value here, not a check bug -- see
+        parallel_map_ext.build_conflict_groups's docstring).
+
+    Sub-assertion 7 -- CONTROL, must FAIL both today AND after deploy:
+    graph_parallel_map(plan, mode="banana") must never succeed. Today
+    "mode" itself is unknown to the schema, so this fails -32602 exactly
+    like assertion 2's designated-red probe; after deploy "mode" is known
+    but "banana" is not in MODE_VALUES, so GraphParallelMapCommand.execute
+    raises DomainCommandError("INVALID_EXECUTION_MODE", ...). This check
+    asserts loosely -- only that the call fails one way or the other --
+    since which of the two failure shapes appears depends on whether this
+    fix has shipped yet.
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r58-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R58_12fd8a80_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R58_12fd8a80_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-002", "parent_step_id": t2_id})
+        a3_id = _extract_step_id(res) if ok else None
+        if not ok or a3_id is None:
+            results.append(CheckResult("4", "R58_12fd8a80_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        a1_path = f"{t1_path}/{a1_id}"
+        a2_path = f"{t2_path}/{a2_id}"
+        a3_path = f"{t2_path}/{a3_id}"
+        results.append(
+            CheckResult(
+                "4", "R58_12fd8a80_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T1={t1_path} T2={t2_path} A1={a1_path} A2={a2_path} A3={a3_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "target_file": "src/widget.py",
+                    "objects": [{"name": "Widget", "concepts": [], "role": "create"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_step_update(A1)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "objects": [{"name": "Widget", "concepts": [], "role": "consume"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_step_update(A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a3_path,
+                "fields": {
+                    "verification": {"type": "pytest", "target": "src/widget.py", "expected": "green"},
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R58_12fd8a80_step_update(A3)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R58_12fd8a80_step_update(A1,A2,A3)", STATUS_PASS))
+        # No step_dependency_add here -- the inferred-edge placement over
+        # zero explicit deps is exactly what this check exercises.
+
+        # --- 1: CONTROL (must PASS today AND after deploy) -- omitting
+        # "mode" keeps the payload byte-compatible with every pre-existing
+        # caller: exactly the four classic keys, no new sections. A1 and A2
+        # may legitimately share a wave here (explicit-only mode never sees
+        # the inferred edges). ---
+        ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid})
+        classic_keys_ok = ok and isinstance(res, dict) and set(res) == {"waves", "total", "limit", "offset"}
+        results.append(
+            CheckResult(
+                "4", "R58_12fd8a80_control_no_mode_classic_keys",
+                STATUS_PASS if classic_keys_ok else STATUS_FAIL,
+                "" if classic_keys_ok
+                else f"expected exactly {{'waves','total','limit','offset'}}, got ok={ok} res={res!r}",
+            )
+        )
+
+        # --- 2: DESIGNATED RED today, PASS after deploy -- mode="extended"
+        # must succeed. Today live 0.1.114 has no "mode" parameter at all
+        # (schema additionalProperties=False), so this fails -32602
+        # "unknown parameter" -- captured verbatim in the FAIL detail. ---
+        ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid, "mode": "extended"})
+        step2_ok = ok and isinstance(res, dict)
+        results.append(
+            CheckResult(
+                "4", "R58_12fd8a80_designated_red_extended_mode_succeeds",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else f"expected graph_parallel_map(mode='extended') to succeed; ok={ok} res={res!r}",
+            )
+        )
+
+        # --- 3-6: gated on assertion 2 itself (the "unreachable: step 2
+        # red" idiom, per R50/R55/R56/R57). ---
+        if not step2_ok:
+            for gated_name in (
+                "R58_12fd8a80_extended_wave_a2_after_a1",
+                "R58_12fd8a80_extended_wave_a3_after_a1",
+                "R58_12fd8a80_extended_placement_reasons_a2_object_producer",
+                "R58_12fd8a80_extended_critical_path_starts_wave0",
+                "R58_12fd8a80_extended_wave_parallelism_sum",
+                "R58_12fd8a80_extended_conflict_groups_present",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 2 red"))
+        else:
+            waves_payload = res.get("waves") if isinstance(res.get("waves"), list) else []
+            wave_index: dict[str, int] = {}
+            for idx, wave in enumerate(waves_payload):
+                if isinstance(wave, list):
+                    for path in wave:
+                        wave_index[path] = idx
+
+            a1_wave = wave_index.get(a1_path)
+            a2_wave = wave_index.get(a2_path)
+            a3_wave = wave_index.get(a3_path)
+
+            a2_after_a1 = a1_wave is not None and a2_wave is not None and a2_wave > a1_wave
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_wave_a2_after_a1",
+                    STATUS_PASS if a2_after_a1 else STATUS_FAIL,
+                    "" if a2_after_a1
+                    else f"expected A2's wave strictly > A1's wave; a1_wave={a1_wave} a2_wave={a2_wave} waves={waves_payload!r}",
+                )
+            )
+
+            a3_after_a1 = a1_wave is not None and a3_wave is not None and a3_wave > a1_wave
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_wave_a3_after_a1",
+                    STATUS_PASS if a3_after_a1 else STATUS_FAIL,
+                    "" if a3_after_a1
+                    else f"expected A3's wave strictly > A1's wave; a1_wave={a1_wave} a3_wave={a3_wave} waves={waves_payload!r}",
+                )
+            )
+
+            placement_reasons = res.get("placement_reasons") if isinstance(res.get("placement_reasons"), dict) else {}
+            a2_reasons = placement_reasons.get(a2_path) if isinstance(placement_reasons.get(a2_path), list) else []
+            a2_has_object_producer_from_a1 = any(
+                isinstance(reason, dict) and reason.get("from") == a1_path and reason.get("type") == "object_producer"
+                for reason in a2_reasons
+            )
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_placement_reasons_a2_object_producer",
+                    STATUS_PASS if a2_has_object_producer_from_a1 else STATUS_FAIL,
+                    "" if a2_has_object_producer_from_a1
+                    else (
+                        f"expected placement_reasons[{a2_path!r}] to include an object_producer edge "
+                        f"from {a1_path!r}, got {a2_reasons!r}"
+                    ),
+                )
+            )
+
+            critical_path = res.get("critical_path") if isinstance(res.get("critical_path"), list) else []
+            critical_path_ok = (
+                bool(critical_path)
+                and isinstance(critical_path[0], str)
+                and wave_index.get(critical_path[0]) == 0
+            )
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_critical_path_starts_wave0",
+                    STATUS_PASS if critical_path_ok else STATUS_FAIL,
+                    "" if critical_path_ok
+                    else f"expected a non-empty critical_path starting at a wave-0 step, got critical_path={critical_path!r} waves={waves_payload!r}",
+                )
+            )
+
+            # 6 fixture steps in total: G-001, T-001, T-002, A1, A2, A3.
+            expected_step_count = 6
+            wave_parallelism = res.get("wave_parallelism") if isinstance(res.get("wave_parallelism"), list) else None
+            wave_parallelism_ok = (
+                isinstance(wave_parallelism, list)
+                and all(isinstance(n, int) for n in wave_parallelism)
+                and len(wave_parallelism) == len(waves_payload)
+                and sum(wave_parallelism) == expected_step_count
+            )
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_wave_parallelism_sum",
+                    STATUS_PASS if wave_parallelism_ok else STATUS_FAIL,
+                    "" if wave_parallelism_ok
+                    else (
+                        f"expected wave_parallelism to be a list of {len(waves_payload)} int(s) summing to "
+                        f"{expected_step_count}; wave_parallelism={wave_parallelism!r} waves={waves_payload!r}"
+                    ),
+                )
+            )
+
+            conflict_groups = res.get("conflict_groups", "__missing__")
+            conflict_groups_ok = isinstance(conflict_groups, list)
+            results.append(
+                CheckResult(
+                    "4", "R58_12fd8a80_extended_conflict_groups_present",
+                    STATUS_PASS if conflict_groups_ok else STATUS_FAIL,
+                    "" if conflict_groups_ok
+                    else f"expected conflict_groups to be present as a list (possibly empty), got {conflict_groups!r}",
+                )
+            )
+
+        # --- 7: CONTROL (must FAIL both today AND after deploy) -- an
+        # unrecognized mode value must never succeed. Today "mode" itself
+        # is unknown to the schema (-32602, same shape as assertion 2's
+        # designated-red probe); after deploy "mode" is known but "banana"
+        # is not in MODE_VALUES (INVALID_EXECUTION_MODE domain error).
+        # Assert loosely: only that the call fails one way or the other. ---
+        ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid, "mode": "banana"})
+        banana_rejected = not ok
+        results.append(
+            CheckResult(
+                "4", "R58_12fd8a80_control_invalid_mode_never_succeeds",
+                STATUS_PASS if banana_rejected else STATUS_FAIL,
+                "" if banana_rejected
+                else f"expected mode='banana' to fail (either -32602 pre-deploy or INVALID_EXECUTION_MODE post-deploy), but it SUCCEEDED: {res!r}",
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R58_12fd8a80_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

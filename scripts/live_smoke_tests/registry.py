@@ -248,6 +248,15 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "dependencies/cycles over a role-annotated fixture plan (EIG block "
         "B, todo 16853f27)",
     ),
+    LiveSmokeTestSpec(
+        "r58",
+        "run_r58_parallel_map_extended_mode_eig_block_c",
+        "graph_parallel_map mode=extended places consumers in strictly "
+        "later waves than producers over inferred object/verification "
+        "edges without explicit deps, with placement_reasons/critical_path/"
+        "wave_parallelism/conflict_groups; explicit mode stays "
+        "byte-compatible (EIG block C, todo 12fd8a80)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

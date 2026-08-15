@@ -1,7 +1,8 @@
-"""Metadata for the graph_parallel_map command (C-009, C-023)."""
+"""Metadata for the graph_parallel_map command (C-009, C-023, EIG block C)."""
 from __future__ import annotations
 
 from plan_manager.commands.runtime_filtering import pagination_metadata_params
+from plan_manager.views.parallel_map_ext import MODE_EXPLICIT, MODE_VALUES
 
 def get_graph_parallel_map_metadata(cls) -> dict:
     return {
@@ -30,15 +31,53 @@ def get_graph_parallel_map_metadata(cls) -> dict:
                 "required": True,
             },
             **pagination_metadata_params(),
+            "mode": {
+                "description": (
+                    "Wave computation mode. 'explicit' (default) computes waves over only the "
+                    "declared/derived dependency edges (C-009 build_edges); the payload is "
+                    "byte-identical to this command's payload before 'mode' existed -- "
+                    "waves/total/limit/offset only. 'extended' computes waves over the COMBINED "
+                    "edge set the execution_graph command exposes (explicit + file_order + "
+                    "object_producer + verification_target) and additionally returns "
+                    "placement_reasons, critical_path, wave_parallelism, and conflict_groups. "
+                    "One of: " + ", ".join(MODE_VALUES) + "."
+                ),
+                "type": "string",
+                "required": False,
+                "enum": list(MODE_VALUES),
+            },
         },
         "return_value": {
             "success": {
-                "description": "A page of the wave partition of the plan's steps by prerequisite depth, plus total/limit/offset.",
+                "description": (
+                    "A page of the wave partition of the plan's steps by prerequisite depth, "
+                    "plus total/limit/offset; mode='extended' additionally returns "
+                    "placement_reasons, critical_path, wave_parallelism, and conflict_groups."
+                ),
                 "data": {
                     "waves": "List of waves in the requested page; each wave is a list of artifact paths that may run in parallel.",
                     "total": "Count of the full wave list before pagination.",
                     "limit": "The limit actually applied.",
                     "offset": "The offset actually applied.",
+                    "placement_reasons": (
+                        "mode='extended' only. Dict from every step's artifact path to the "
+                        "list of {from, type} incoming edges (over the combined edge set) "
+                        "that pin it to its wave; empty for wave-0 steps."
+                    ),
+                    "critical_path": (
+                        "mode='extended' only. One longest dependency chain over the combined "
+                        "edge set, as an ordered list of artifact paths."
+                    ),
+                    "wave_parallelism": (
+                        "mode='extended' only. List of wave sizes, one entry per wave in the "
+                        "full (unpaginated) extended wave list."
+                    ),
+                    "conflict_groups": (
+                        "mode='extended' only. Generalized conflict groups: "
+                        "{type: 'same_file_writers', key: target_file, members} for target "
+                        "files with 2+ level-5 writers, and {type: 'same_object_producers', "
+                        "key: object, members} for block-B's ambiguous_dependencies."
+                    ),
                 },
                 "example": {
                     "waves": [
@@ -51,9 +90,9 @@ def get_graph_parallel_map_metadata(cls) -> dict:
                 },
             },
             "error": {
-                "description": "Domain error returned when the plan cannot be resolved, the graph contains a cycle, or pagination is invalid.",
-                "code": "PLAN_NOT_FOUND | CYCLE_DETECTED | INVALID_PAGINATION",
-                "message": "Human-readable message identifying the missing plan, cycle, or pagination error.",
+                "description": "Domain error returned when the plan cannot be resolved, the graph contains a cycle, mode is invalid, or pagination is invalid.",
+                "code": "PLAN_NOT_FOUND | CYCLE_DETECTED | INVALID_EXECUTION_MODE | INVALID_PAGINATION",
+                "message": "Human-readable message identifying the missing plan, cycle, mode, or pagination error.",
                 "details": "None for PLAN_NOT_FOUND; cycle diagnostics for CYCLE_DETECTED when available.",
             },
         },
@@ -62,7 +101,16 @@ def get_graph_parallel_map_metadata(cls) -> dict:
                 "description": "Get the first page of the parallel wave map of a plan.",
                 "command": {"plan": "plan_manager"},
                 "explanation": "Returns the first page (default limit 50) of waves that may be executed in parallel.",
-            }
+            },
+            {
+                "description": "Get the extended wave map with placement diagnostics.",
+                "command": {"plan": "plan_manager", "mode": "extended"},
+                "explanation": (
+                    "Returns waves computed over the combined explicit+file_order+"
+                    "object_producer+verification_target edge set, plus placement_reasons, "
+                    "critical_path, wave_parallelism, and conflict_groups."
+                ),
+            },
         ],
         "error_cases": {
         "AS_SAME_FILE_ORDER_AMBIGUOUS": {
@@ -76,9 +124,14 @@ def get_graph_parallel_map_metadata(cls) -> dict:
                 "solution": "List plans through the catalog command and retry with a valid plan identifier.",
             },
             "CYCLE_DETECTED": {
-                "description": "The dependency graph contains a cycle and cannot be partitioned into parallel waves.",
+                "description": "The dependency graph (explicit-only, or combined when mode='extended') contains a cycle and cannot be partitioned into parallel waves.",
                 "message": "cycle detected: {details}",
-                "solution": "Inspect graph_order or graph_deps output, break the cycle, and retry graph_parallel_map.",
+                "solution": "Inspect graph_order, graph_deps, or execution_graph output, break the cycle, and retry graph_parallel_map.",
+            },
+            "INVALID_EXECUTION_MODE": {
+                "description": "The supplied mode value is not one of the two recognized values.",
+                "message": "mode must be one of ['explicit', 'extended'], got {mode}",
+                "solution": "Supply one of 'explicit' or 'extended', or omit mode for the default 'explicit'.",
             },
             "INVALID_PAGINATION": {
                 "description": "limit or offset is out of range or not an integer.",
@@ -90,5 +143,6 @@ def get_graph_parallel_map_metadata(cls) -> dict:
             "Use graph_order instead when a single linear execution sequence is needed.",
             "Waves reflect prerequisite depth only; steps within one wave carry no further ordering guarantee.",
             "Compare offset+limit against total to detect additional pages of waves.",
+            "Use mode='extended' to see the same combined edge set execution_graph reports (object-role and verification inference), plus placement_reasons/critical_path/wave_parallelism/conflict_groups diagnostics; mode='explicit' (default) stays byte-compatible with callers written before mode existed.",
         ],
     }
