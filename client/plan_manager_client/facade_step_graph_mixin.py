@@ -102,6 +102,14 @@ class StepGraphCommandsMixin:
         """Return a paginated page of the extended execution graph (explicit + inferred edges) of a plan's steps."""
         return await self._call("execution_graph", params)
 
+    async def execution_dependency_suggest(self, **params: Any) -> Any:
+        """Propose depends_on additions for a plan's unambiguous inferred execution-graph edges; read-only."""
+        return await self._call("execution_dependency_suggest", params)
+
+    async def execution_dependency_apply(self, **params: Any) -> Any:
+        """Apply an execution_dependency_suggest proposal as depends_on additions, or dry-run it."""
+        return await self._call("execution_dependency_apply", params)
+
     async def step_dependency_list(self, **params: Any) -> Any:
         """List one step's top-level depends_on edges and the sibling steps that depend on it."""
         return await self._call("step_dependency_list", params)

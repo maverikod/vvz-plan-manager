@@ -31,6 +31,7 @@ PAGINATED_COMMANDS: tuple[PaginatedCommandSpec, ...] = (
     PaginatedCommandSpec("concept_list"),
     PaginatedCommandSpec("context_bundle"),
     PaginatedCommandSpec("execution_attempt_list"),
+    PaginatedCommandSpec("execution_dependency_suggest"),
     PaginatedCommandSpec("execution_graph"),
     PaginatedCommandSpec("escalation_list"),
     PaginatedCommandSpec("files_report"),

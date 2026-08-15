@@ -64,7 +64,13 @@ _CR4_MECHANISM_NAME_FRAGMENTS = (
 #   execution graph: declared/derived edges decomposed by type from
 #   build_edges, plus block-A object-role-inferred object_producer/
 #   verification_target edges; views.execution_graph.build_execution_graph).
-_PRE_CR4_INVENTORY_COUNT = 222
+#   EIG block D (todo 004cd507): +2 for execution_dependency_suggest
+#   (read-only: proposes depends_on additions from the unambiguous
+#   object_producer/verification_target inferred edges of block B, excluding
+#   ambiguous-object and already-implied edges) and execution_dependency_apply
+#   (mutating: applies such a proposal, explicit or server-recomputed, through
+#   the same step_dependency_ops engine step_dependency_apply uses).
+_PRE_CR4_INVENTORY_COUNT = 224
 
 
 def test_cr4_integration_commands_stay_mutating() -> None:

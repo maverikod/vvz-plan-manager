@@ -257,6 +257,14 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "wave_parallelism/conflict_groups; explicit mode stays "
         "byte-compatible (EIG block C, todo 12fd8a80)",
     ),
+    LiveSmokeTestSpec(
+        "r59",
+        "run_r59_execution_dependency_suggest_apply_eig_block_d",
+        "execution_dependency_suggest proposes unambiguous inferred edges as "
+        "apply-ready changes; execution_dependency_apply is dry-run by "
+        "default and persists confirmed edges in one revision, shifting "
+        "extended waves deterministically (EIG block D, todo 004cd507)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

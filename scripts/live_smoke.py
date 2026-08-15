@@ -547,6 +547,8 @@ KNOWN_SKIP_REASONS: dict[str, str] = {
     "project_dependency_discover": "runs CA-backed dependency discovery; not exercised in this pass",
     "project_uuid_reserve": "exercised end to end by its own R-check (reserve/collision/resolve/release with cleanup), not by a generic Tier-2 probe",
     "execution_graph": "exercised end to end by its own R-check (R57: typed execution graph over roles/deps/verification), not by a generic Tier-2 probe",
+    "execution_dependency_suggest": "read-only preview of unambiguous inferred-edge depends_on additions; exercised end to end by its own R-check (R59: suggest/apply lifecycle with dry-run default), not by a generic Tier-2 probe",
+    "execution_dependency_apply": "mutates depends_on by applying a suggested (or server-recomputed) inferred-edge proposal, dry-run by default; exercised end to end by its own R-check (R59: suggest/apply lifecycle with dry-run default), not by a generic Tier-2 probe",
     "step_dependency_add": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_remove": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
     "step_dependency_set": "covered by the R2 regression's dedicated step_dependency_apply lifecycle, not separately probed",
@@ -11714,6 +11716,407 @@ async def run_r58_parallel_map_extended_mode_eig_block_c(client: Any) -> list[Ch
         results.append(
             CheckResult(
                 "4", "R58_12fd8a80_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r59_execution_dependency_suggest_apply_eig_block_d(client: Any) -> list[CheckResult]:
+    """EIG block D (todo 004cd507): two new commands close the loop the
+    block-B/C read-only views (execution_graph, graph_parallel_map mode=
+    extended) opened but never let a caller act on --
+    execution_dependency_suggest (plan_manager/commands/
+    execution_dependency_suggest_command.py, read-only) computes the
+    unambiguous object_producer/verification_target inferred edges of a
+    plan that are not already implied by its explicit dependency graph
+    (plan_manager/commands/execution_dependency_ops.py
+    compute_suggested_changes) and returns them as a step_dependency_apply-
+    compatible depends_on proposal (proposed_changes); execution_dependency_
+    apply (execution_dependency_apply_command.py, mutating) applies an
+    explicit or server-recomputed such proposal through the SAME
+    step_dependency_ops engine step_dependency_apply uses (cycle-safe,
+    same-file-admission-checked), dry_run defaulting to True so a caller
+    must opt in to a real write.
+
+    DESIGNATED RED (assertions 1-2): help(cmdname=<name>) must answer with
+    a non-empty schema (schema.properties non-empty) for BOTH commands --
+    the same R53/R57/R58 technique. Today neither command is known to live
+    0.1.115: help() still succeeds (ok=True) but carries no "schema" key,
+    so both assertions are RED without a call() failure to key off of;
+    res.get("error") is captured in each FAIL detail instead.
+
+    Sub-assertions 3+ each run only if BOTH assertions 1 and 2 passed (the
+    "unreachable: step 1/2 red" idiom -- see R57/R58): build a throwaway
+    fixture plan via the context_common gate (R58's exact hierarchy shape,
+    trimmed to two atomics) with TWO tactical branches under one goal:
+
+        G-001 -> T-001 -> A1 (fields: target_file="src/widget.py",
+                               objects=[{"name": "Widget", "concepts": [],
+                                         "role": "create"}])
+        G-001 -> T-002 -> A2 (fields: objects=[{"name": "Widget",
+                                        "concepts": [], "role": "consume"}])
+
+    Deliberately NO step_dependency_add between A1 and A2 -- the whole
+    point is that execution_dependency_suggest/apply discover and persist
+    that edge from the inferred object_producer relationship alone. A1 and
+    A2 share the bare local id "A-001" under different T parents (same
+    next_free_step_id scope-reset R49/R57/R58 already exercise), so every
+    step reference below uses the full canonical path.
+
+    Then:
+      - execution_dependency_suggest(plan) must return a non-empty
+        proposed_changes and a proposed_edges entry for A1->A2 typed
+        "object_producer";
+      - execution_dependency_apply(plan, changes=<that proposal>) with
+        dry_run OMITTED must report dry_run=True/applied=False in its own
+        payload (the schema's documented default), and step_get(A2)
+        afterward must show depends_on UNCHANGED (still empty) -- proving
+        the dry-run default never mutates;
+      - execution_dependency_apply(plan, changes=<that proposal>,
+        dry_run=False) must report applied=True with a non-empty
+        revision_uuid;
+      - step_get(A2) afterward must show depends_on containing A1's
+        canonical path;
+      - graph_parallel_map(plan) in CLASSIC mode (no "mode" param) must
+        place A2's wave strictly after A1's -- the persisted explicit edge
+        now orders them without needing block C's extended mode at all;
+      - execution_dependency_suggest(plan) called again must no longer
+        propose the A1->A2 object_producer edge (compute_suggested_changes
+        excludes edges already implied by the explicit graph -- see its
+        own docstring -- and the edge is explicit now).
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        # --- 1-2: DESIGNATED RED -- both commands must be known with a
+        # non-empty schema. ---
+        ok, res = await call(client, "help", {"cmdname": "execution_dependency_suggest"})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step1_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_suggest_help_schema",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    f"expected help(cmdname='execution_dependency_suggest') to answer with a "
+                    f"non-empty schema.properties; ok={ok} "
+                    f"error={res.get('error') if isinstance(res, dict) else None!r} full={res!r}"
+                ),
+            )
+        )
+
+        ok, res = await call(client, "help", {"cmdname": "execution_dependency_apply"})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        schema_properties = schema.get("properties") if isinstance(schema, dict) else None
+        step2_ok = ok and isinstance(schema, dict) and isinstance(schema_properties, dict) and bool(schema_properties)
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_apply_help_schema",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else (
+                    f"expected help(cmdname='execution_dependency_apply') to answer with a "
+                    f"non-empty schema.properties; ok={ok} "
+                    f"error={res.get('error') if isinstance(res, dict) else None!r} full={res!r}"
+                ),
+            )
+        )
+
+        # --- 3+: gated on BOTH assertions 1 and 2; each reported as an
+        # explicit "unreachable" FAIL, never silently skipped, while either
+        # command is missing. ---
+        if not (step1_ok and step2_ok):
+            for gated_name in (
+                "R59_004cd507_plan_create",
+                "R59_004cd507_repro_hierarchy_created",
+                "R59_004cd507_step_update(A1,A2)",
+                "R59_004cd507_suggest_proposes_object_producer_edge",
+                "R59_004cd507_apply_dry_run_default_no_mutation",
+                "R59_004cd507_apply_dry_run_no_mutation_verified",
+                "R59_004cd507_apply_confirmed_persists",
+                "R59_004cd507_step_get_depends_on_updated",
+                "R59_004cd507_parallel_map_classic_wave_order",
+                "R59_004cd507_suggest_no_longer_proposes_after_apply",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1/2 red"))
+            return results
+
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r59-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R59_004cd507_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R59_004cd507_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R59_004cd507_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        a1_path = f"{t1_path}/{a1_id}"
+        a2_path = f"{t2_path}/{a2_id}"
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T1={t1_path} T2={t2_path} A1={a1_path} A2={a2_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "target_file": "src/widget.py",
+                    "objects": [{"name": "Widget", "concepts": [], "role": "create"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "objects": [{"name": "Widget", "concepts": [], "role": "consume"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R59_004cd507_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R59_004cd507_step_update(A1,A2)", STATUS_PASS))
+        # No step_dependency_add here -- suggest/apply must discover and
+        # persist the A1->A2 edge from the inferred object_producer
+        # relationship alone.
+
+        # --- 3: execution_dependency_suggest must propose the A1->A2
+        # object_producer edge as a non-empty apply-ready change set. ---
+        ok, res = await call(client, "execution_dependency_suggest", {"plan": plan_uuid})
+        proposed_changes = res.get("proposed_changes") if ok and isinstance(res, dict) else None
+        proposed_edges = res.get("proposed_edges") if ok and isinstance(res, dict) else None
+
+        def _find_edge(edges: Optional[list], frm: str, to: str, etype: str) -> Optional[dict]:
+            if not isinstance(edges, list):
+                return None
+            for edge in edges:
+                if (
+                    isinstance(edge, dict)
+                    and edge.get("from") == frm and edge.get("to") == to and edge.get("type") == etype
+                ):
+                    return edge
+            return None
+
+        proposed_edge = _find_edge(proposed_edges, a1_path, a2_path, "object_producer")
+        proposed_change_for_a2 = next(
+            (
+                change for change in (proposed_changes or [])
+                if isinstance(change, dict) and change.get("step_id") == a2_path
+                and a1_path in (change.get("depends_on") or [])
+            ),
+            None,
+        )
+        suggest_ok = (
+            ok and isinstance(proposed_changes, list) and bool(proposed_changes)
+            and proposed_edge is not None and proposed_change_for_a2 is not None
+        )
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_suggest_proposes_object_producer_edge",
+                STATUS_PASS if suggest_ok else STATUS_FAIL,
+                "" if suggest_ok
+                else (
+                    "expected a non-empty proposed_changes with an A1->A2 object_producer "
+                    f"proposed_edges entry; ok={ok} proposed_changes={proposed_changes!r} "
+                    f"proposed_edges={proposed_edges!r}"
+                ),
+            )
+        )
+        if not suggest_ok:
+            return results
+
+        # --- 4: execution_dependency_apply with dry_run OMITTED must stay
+        # a dry run (the schema's documented default) and mutate nothing. ---
+        ok, res = await call(
+            client, "execution_dependency_apply",
+            {"plan": plan_uuid, "changes": proposed_changes},
+        )
+        apply_dryrun_ok = (
+            ok and isinstance(res, dict) and res.get("dry_run") is True and res.get("applied") is False
+        )
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_apply_dry_run_default_no_mutation",
+                STATUS_PASS if apply_dryrun_ok else STATUS_FAIL,
+                "" if apply_dryrun_ok
+                else f"expected dry_run=True/applied=False with dry_run omitted; ok={ok} res={res!r}",
+            )
+        )
+        if apply_dryrun_ok:
+            ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a2_path})
+            depends_on_after_dryrun = res.get("depends_on") if ok and isinstance(res, dict) else None
+            unchanged = ok and depends_on_after_dryrun == []
+            results.append(
+                CheckResult(
+                    "4", "R59_004cd507_apply_dry_run_no_mutation_verified",
+                    STATUS_PASS if unchanged else STATUS_FAIL,
+                    "" if unchanged
+                    else f"expected A2 depends_on unchanged ([]) after a dry-run apply; got {depends_on_after_dryrun!r}",
+                )
+            )
+            if not unchanged:
+                return results
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R59_004cd507_apply_dry_run_no_mutation_verified",
+                    STATUS_FAIL, "unreachable: dry-run apply did not report dry_run=True/applied=False",
+                )
+            )
+            return results
+
+        # --- 5: execution_dependency_apply(dry_run=False) must persist and
+        # report a revision_uuid. ---
+        ok, res = await call(
+            client, "execution_dependency_apply",
+            {"plan": plan_uuid, "changes": proposed_changes, "dry_run": False},
+        )
+        apply_confirmed_ok = (
+            ok and isinstance(res, dict) and res.get("applied") is True and bool(res.get("revision_uuid"))
+        )
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_apply_confirmed_persists",
+                STATUS_PASS if apply_confirmed_ok else STATUS_FAIL,
+                "" if apply_confirmed_ok
+                else f"expected applied=True with a non-empty revision_uuid; ok={ok} res={res!r}",
+            )
+        )
+        if not apply_confirmed_ok:
+            return results
+
+        # --- 6: step_get(A2) must now show depends_on containing A1's
+        # canonical path. ---
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a2_path})
+        depends_on_after_apply = res.get("depends_on") if ok and isinstance(res, dict) else None
+        depends_on_updated = ok and isinstance(depends_on_after_apply, list) and a1_path in depends_on_after_apply
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_step_get_depends_on_updated",
+                STATUS_PASS if depends_on_updated else STATUS_FAIL,
+                "" if depends_on_updated
+                else f"expected A2 depends_on to contain {a1_path!r}; got {depends_on_after_apply!r}",
+            )
+        )
+        if not depends_on_updated:
+            return results
+
+        # --- 7: graph_parallel_map CLASSIC mode (no "mode" param) must now
+        # place A2 strictly after A1 -- the persisted explicit edge orders
+        # them without needing block C's extended mode. ---
+        ok, res = await call(client, "graph_parallel_map", {"plan": plan_uuid})
+        waves_payload = res.get("waves") if ok and isinstance(res, dict) and isinstance(res.get("waves"), list) else []
+        wave_index: dict[str, int] = {}
+        for idx, wave in enumerate(waves_payload):
+            if isinstance(wave, list):
+                for path in wave:
+                    wave_index[path] = idx
+        a1_wave = wave_index.get(a1_path)
+        a2_wave = wave_index.get(a2_path)
+        wave_order_ok = ok and a1_wave is not None and a2_wave is not None and a2_wave > a1_wave
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_parallel_map_classic_wave_order",
+                STATUS_PASS if wave_order_ok else STATUS_FAIL,
+                "" if wave_order_ok
+                else (
+                    f"expected A2's classic-mode wave strictly > A1's after the persisted edge; "
+                    f"ok={ok} a1_wave={a1_wave} a2_wave={a2_wave} waves={waves_payload!r}"
+                ),
+            )
+        )
+
+        # --- 8: execution_dependency_suggest called again must no longer
+        # propose the A1->A2 object_producer edge -- it is explicit now. ---
+        ok, res = await call(client, "execution_dependency_suggest", {"plan": plan_uuid})
+        proposed_edges_after = res.get("proposed_edges") if ok and isinstance(res, dict) else None
+        still_proposed = _find_edge(proposed_edges_after, a1_path, a2_path, "object_producer")
+        no_longer_proposed_ok = ok and still_proposed is None
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_suggest_no_longer_proposes_after_apply",
+                STATUS_PASS if no_longer_proposed_ok else STATUS_FAIL,
+                "" if no_longer_proposed_ok
+                else (
+                    "expected the A1->A2 object_producer edge to no longer be proposed once "
+                    f"explicit; ok={ok} proposed_edges={proposed_edges_after!r}"
+                ),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R59_004cd507_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
                 "" if cleanup_ok else "one or more scratch entities survived cleanup",
             )
         )
