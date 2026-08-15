@@ -40,7 +40,7 @@ import asyncio
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Any, Coroutine
+from typing import Any, Coroutine, TypeVar
 from urllib.parse import urlparse
 
 from code_analysis_client import CodeAnalysisAsyncClient
@@ -48,6 +48,8 @@ from code_analysis_client import CodeAnalysisAsyncClient
 # A file anchor confirmation makes at most this many sequential queued CA calls
 # (list_projects, then list_project_files); the overall guard is sized from it.
 _MAX_CA_CALLS_PER_CONFIRM = 2
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -68,20 +70,22 @@ class _CAUnavailable(Exception):
     """Internal signal that the CA transport failed; always folds to ca_unreachable."""
 
 
-def _run_blocking(coro: Coroutine[Any, Any, AnchorConfirmation], timeout: float) -> AnchorConfirmation:
+def _run_blocking(coro: Coroutine[Any, Any, _T], timeout: float) -> _T:
     """Run *coro* from synchronous command code, even inside a running event loop.
 
     Mirrors the bridging shape of ``plan_manager.scoring.embedding._run_async_blocking``
     (this module's callers are synchronous command code, same as the scoring
     path); kept as a local, CA-specific copy rather than a cross-package import
-    of that private helper.
+    of that private helper. Generic in the coroutine's result type so the
+    sibling EIG block F probe module (``runtime.ca_files_probe``) can reuse
+    this one bridge instead of copying it.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
 
-    result: list[AnchorConfirmation] = []
+    result: list[_T] = []
     error: list[BaseException] = []
 
     def runner() -> None:

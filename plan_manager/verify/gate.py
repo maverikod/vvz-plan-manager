@@ -1,9 +1,16 @@
 """Mechanical gate orchestrator (C-012).
 
 Fixed check-group order, byte-identical reports.
+
+``GATE_CHECK_SEMANTICS`` is defined in the sibling ``gate_semantics`` module
+and re-exported here unchanged: EIG block F's four registered check_ids
+pushed this file past the repository's hard ~400-line cap, and a pure data
+table is the cheapest thing to lift out (same cap-driven split rationale as
+``gate_execution_closure``/``gate_execution_existence``).
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 import psycopg
 
@@ -30,6 +37,9 @@ from plan_manager.verify.gate_refs import (
     check_uniqueness_priority,
     check_uniqueness_step_id,
 )
+from plan_manager.verify.gate_semantics import (
+    GATE_CHECK_SEMANTICS as GATE_CHECK_SEMANTICS,  # re-exported, see gate_semantics
+)
 from plan_manager.verify.gate_structure import (
     check_dependencies_same_file_order,
     check_identity_concept_id,
@@ -50,6 +60,9 @@ from plan_manager.views.coverage import (
     label_coverage,
     relation_coverage,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, keeps verify free of the CA transport
+    from plan_manager.runtime.ca_files_probe import ExternalFilesProbe
 
 GROUP_ORDER = [
     "parse", "identity", "uniqueness", "references", "coverage",
@@ -103,80 +116,14 @@ CHECK_IDS: dict[str, list[str]] = {
         "execution_integrity.release_artifact_closure",
         "execution_integrity.deployment_closure",
         "execution_integrity.no_unverified_production",
+        # EIG block F (todo 763ae29e): CA-backed existence checks. All four
+        # are silent unless run_gate is handed an external file probe --
+        # see verify.gate_execution_existence's degraded-policy matrix.
+        "execution_integrity.artifact_producer_exists",
+        "execution_integrity.verification_target_resolvable",
+        "execution_integrity.modify_file_context_available",
+        "execution_integrity.external_project_unverified",
     ],
-}
-
-# One-line semantic gloss per gate check, for embedding in command metadata/
-# help (todo d8849951) so a caller can interpret gate_report_json findings
-# without reading these check functions' docstrings. Every gloss states the
-# comparison direction explicitly (which side is "required" and which side
-# is "covering") to avoid the "missing" misreading that caused bugs 3de7a081
-# and a8c43201: the gate always evaluates the plan's LIVE, current state
-# (including any open cascade's working tip) -- never a stale or persisted
-# snapshot. Scope is the coverage.* family plus the references.* family
-# (the two families a caller is most likely to need explained to interpret
-# a finding; the remaining checks' messages are self-explanatory).
-GATE_CHECK_SEMANTICS: dict[str, str] = {
-    "coverage.concepts": (
-        "Every concept in the plan's concept table (MRS) must be declared "
-        "on at least one GS step's own concepts; flags a concept not "
-        "covered by any GS step, or a GS-declared concept with no matching "
-        "row in the concept table ('extra')."
-    ),
-    "coverage.gs": (
-        "Every concept a GS step declares on itself must be covered by the "
-        "union of its own level-4 (TS) children's concepts; flags a "
-        "GS-declared concept not covered by any child (TS) step's own "
-        "decomposition -- NOT a statement that the concept is missing from "
-        "the GS row itself (it is still there; it just is not yet covered "
-        "by a TS child)."
-    ),
-    "coverage.labels": (
-        "Every binding HRS paragraph label must be claimed by at least one "
-        "GS step's source_labels; flags an HRS label not covered by any GS "
-        "step, or a GS-claimed label with no matching binding HRS "
-        "paragraph ('extra')."
-    ),
-    "coverage.relations": (
-        "Every relation row in the plan's relation table (MRS) must be "
-        "implemented by at least one GS step's own relations field; flags "
-        "a relation not covered by any GS step, or a GS-declared relation "
-        "with no matching row in the relation table ('extra')."
-    ),
-    "coverage.object_multiple_owner_keys": (
-        "An object name declared by atomic steps must map to exactly one "
-        "owner key (module plus tactical-step path). The gate flags the "
-        "participating atomic steps when the same object name is defined "
-        "under more than one owner key."
-    ),
-    "coverage.object_multiple_modules": (
-        "An object name declared by atomic steps must stay within one "
-        "module. The gate flags the participating atomic steps when the "
-        "same object name drifts across multiple target-file-derived modules."
-    ),
-    "coverage.object_concepts_not_covered": (
-        "Every declared object's concept set must be a subset of the union "
-        "of the concept sets on the atomic steps that declare it. The gate "
-        "flags participating atomic steps when an object declaration names "
-        "concepts not covered by those atomic-step concept sets."
-    ),
-    "references.depends_on": (
-        "Every step's depends_on entries must resolve to a sibling step_id "
-        "(same level, same parent) that exists in the full plan tree."
-    ),
-    "references.concepts": (
-        "Every step's own concepts entries must resolve to a concept_id "
-        "defined in the plan's concept table (MRS)."
-    ),
-    "references.relations": (
-        "Every relation row in the plan's relation table (MRS) must have "
-        "both from_concept/to_concept resolve to a defined plan concept "
-        "and a type that is one of the supported relation types."
-    ),
-    "references.source_labels": (
-        "Every source_labels entry a step declares must resolve to a "
-        "binding HRS paragraph label defined in the plan."
-    ),
 }
 
 
@@ -289,6 +236,9 @@ def run_gate(
     plan_uuid: uuid.UUID,
     branch: BranchScope | None = None,
     fail_fast: bool = False,
+    *,
+    external_files: "ExternalFilesProbe | None" = None,
+    require_project_verification: bool = False,
 ) -> tuple[Report, Verdict]:
     """Run the mechanical gate (C-012) over ``plan_uuid``.
 
@@ -300,6 +250,16 @@ def run_gate(
     concept-coverage check, unaffected by how far the caller narrowed
     the selectors. The verdict's scope label names the deepest selector
     the caller supplied (gs, gs/ts, or gs/ts/as).
+
+    ``external_files`` (EIG block F, todo 763ae29e) is the live CA
+    project-file inventory of the plan's primary analysis-server project,
+    fetched by the CALLER (``runtime.ca_files_probe.list_project_files_probe``)
+    so this function stays synchronous and free of I/O; it is threaded
+    unchanged into the execution_integrity group.
+    ``require_project_verification`` is the operator policy deciding whether
+    an UNAVAILABLE probe is itself a finding. Both are keyword-only and
+    default to the silent case: a caller that passes neither gets byte-
+    identical reports to the pre-block-F gate.
     """
     tree = load_tree(conn, plan_uuid)
     steps = scope_steps(tree, branch)
@@ -368,7 +328,14 @@ def run_gate(
                 check_context_coverage_specific_subset(conn, plan_uuid, tree, steps)
             )
         elif group == "execution_integrity":
-            group_findings.extend(run_execution_integrity_checks(tree, steps))
+            group_findings.extend(
+                run_execution_integrity_checks(
+                    tree,
+                    steps,
+                    external_files=external_files,
+                    require_project_verification=require_project_verification,
+                )
+            )
         run_check_ids.extend(group_check_ids)
         findings.extend(group_findings)
         if fail_fast and group_findings:

@@ -283,6 +283,16 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "no_unverified_production; role-less contour untouched (EIG block "
         "E2, todo c6f541d0)",
     ),
+    LiveSmokeTestSpec(
+        "r62",
+        "run_r62_ca_existence_checks_eig_block_f",
+        "plan_validate with a primary CA project probes file existence: "
+        "missing modify_file target reds EXEC_MODIFY_TARGET_MISSING, orphan "
+        "verification.target reds EXEC_ORPHAN_VERIFICATION, existing repo "
+        "files pass; external_verification payload reports the probe status "
+        "(EIG block F, todo 763ae29e)",
+        needs_project=True,
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

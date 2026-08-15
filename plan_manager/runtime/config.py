@@ -71,6 +71,13 @@ class CodeAnalysisSection(BaseModel):
     ``"mtls://casmgr:15010"``), the same shape as ``EmbeddingSection.url``.
     ``cert``/``key``/``ca`` are mTLS client-identity and trust material paths,
     required only when ``url`` uses the ``mtls`` scheme.
+
+    ``require_project_verification`` (EIG block F, todo 763ae29e) is the
+    operator's policy for the mechanical gate's CA-backed existence checks:
+    when False (the default, preserving pre-block-F behaviour) a project
+    whose file listing cannot be read simply degrades the gate silently;
+    when True, that unreadable listing is itself reported as one
+    ``execution_integrity.external_project_unverified`` finding.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -80,6 +87,7 @@ class CodeAnalysisSection(BaseModel):
     cert: str | None = None
     key: str | None = None
     ca: str | None = None
+    require_project_verification: bool = False
 
 
 class ScoringSection(BaseModel):

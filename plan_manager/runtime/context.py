@@ -175,6 +175,13 @@ class AppConfig:
             are unavailable.
         concept_weight: The configured uniform per-concept weight used in
             scoring.
+        require_project_verification: Operator policy for the mechanical
+            gate's CA-backed existence checks (EIG block F): False (default)
+            degrades silently when the bound project's file listing cannot
+            be read; True turns that unreadable listing into one
+            ``execution_integrity.external_project_unverified`` finding.
+            Declared last, with a default, so every existing AppConfig
+            construction site keeps compiling unchanged.
     """
 
     embedding_url: str | None
@@ -189,6 +196,7 @@ class AppConfig:
     scoring_aggregation: str
     trust_floor: float
     concept_weight: float
+    require_project_verification: bool = False
 
 
 def app_config() -> AppConfig:
@@ -207,8 +215,10 @@ def app_config() -> AppConfig:
             ``export_root`` from ``section.export_root``,
             ``scoring_threshold`` from ``section.scoring.threshold``,
             ``scoring_aggregation`` from ``section.scoring.aggregation``,
-            ``trust_floor`` from ``section.scoring.trust_floor``, and
-            ``concept_weight`` from ``section.scoring.concept_weights``.
+            ``trust_floor`` from ``section.scoring.trust_floor``,
+            ``concept_weight`` from ``section.scoring.concept_weights``, and
+            ``require_project_verification`` from
+            ``section.code_analysis.require_project_verification``.
 
     Raises:
         RuntimeError: If ``init_runtime`` has not been called yet.
@@ -227,4 +237,5 @@ def app_config() -> AppConfig:
         scoring_aggregation=section.scoring.aggregation,
         trust_floor=section.scoring.trust_floor,
         concept_weight=section.scoring.concept_weights,
+        require_project_verification=section.code_analysis.require_project_verification,
     )

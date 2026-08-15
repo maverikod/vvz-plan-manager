@@ -22,10 +22,15 @@ checks are silently empty on it -- this is what keeps a legacy plan green
 (pinned by ``tests/test_eig_block_e1_gate_execution.py::
 test_legacy_role_less_plan_yields_zero_findings_from_all_four_checks``).
 
-The fourth check, ``no_orphan_verification``, is currently SUPPRESSED (see
-``ORPHAN_VERIFICATION_ENFORCEMENT`` below): its check_id stays registered
-and always reports passed=True, while its detection logic lives on,
-unit-tested directly, behind ``_detect_orphan_verification``.
+The fourth check, ``no_orphan_verification``, was SUPPRESSED through blocks
+E1/E2 and is ENFORCED again as of EIG block F (todo 763ae29e), which supplies
+the CA file-existence knowledge it always needed -- see
+``ORPHAN_VERIFICATION_ENFORCEMENT`` below and the rewritten
+``_detect_orphan_verification``. It stays silent unless the caller hands down
+an AVAILABLE external file probe, so every probe-less ``run_gate`` caller
+sees exactly the pre-block-F behaviour. Block F also adds four further checks
+to this same group, in a third module ``gate_execution_existence.py`` (same
+~400-line-cap reason), dispatched by the ``run_all`` below.
 
 Resolution universe is always the full plan tree (``tree.steps``), mirroring
 ``verify.gate_refs.check_references_depends_on``: a branch-scoped gate run
@@ -49,6 +54,8 @@ reported once.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from plan_manager.domain.step import Step
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
@@ -58,20 +65,28 @@ from plan_manager.verify.gate_execution_closure import (
     check_release_artifact_closure,
     check_test_coverage_present,
 )
+from plan_manager.verify.gate_execution_existence import (
+    run_all as run_existence_checks,
+)
 from plan_manager.views.dependency_graph import build_edges, waves
 from plan_manager.views.execution_graph import build_execution_graph
 from plan_manager.views.same_file_order import SameFileOrderAmbiguousError, reachable
 
-# Enforcement switch for check_no_orphan_verification (coordinator order,
-# 2026-08-15, post-review of EIG block E1): a verification.target routinely
-# names a legitimately pre-existing repo file (this check has no CA/
-# filesystem access to confirm existence either way), and Report.green
-# counts every finding regardless of severity (verify.finding.build_report),
-# so shipping this check live would false-red most real plans the moment it
-# deploys. Suppressed until EIG block F lands real CA existence knowledge
-# plus a require_project_verification policy to decide what "orphan" even
-# means for a given project. Flip to "enforced" only as part of that block.
-ORPHAN_VERIFICATION_ENFORCEMENT = "suppressed"  # flips in EIG block F
+if TYPE_CHECKING:  # pragma: no cover - typing only, keeps verify free of the CA transport
+    from plan_manager.runtime.ca_files_probe import ExternalFilesProbe
+
+# Enforcement switch for check_no_orphan_verification. It shipped
+# "suppressed" through EIG blocks E1/E2 (coordinator order, 2026-08-15): a
+# verification.target routinely names a legitimately pre-existing repo file,
+# that check had no CA/filesystem access to confirm existence either way, and
+# Report.green counts every finding regardless of severity
+# (verify.finding.build_report) -- so enforcing it then would have false-redded
+# most real plans on deploy. EIG block F (todo 763ae29e) removes the cause
+# rather than the check: the caller now hands run_gate a live CA file-existence
+# probe, and the detector below only speaks when that probe is present AND
+# available. With no probe the check is exactly as silent as it was while
+# suppressed, so flipping this switch cannot regress a probe-less caller.
+ORPHAN_VERIFICATION_ENFORCEMENT = "enforced"  # flipped by EIG block F
 
 
 def _path(tree: GateTree, step: Step) -> str:
@@ -252,41 +267,59 @@ def check_parallelization_safe(tree: GateTree, steps: list[Step]) -> list[Findin
     return findings
 
 
-def check_no_orphan_verification(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """An AS's verification.target must name some step's target_file -- SUPPRESSED.
+def check_no_orphan_verification(
+    tree: GateTree,
+    steps: list[Step],
+    external_files: "ExternalFilesProbe | None" = None,
+) -> list[Finding]:
+    """An AS's verification.target must exist externally or be a plan target_file.
 
-    Returns ``[]`` unconditionally while ``ORPHAN_VERIFICATION_ENFORCEMENT ==
-    "suppressed"``: verify.finding.build_report's Report.green counts every
-    finding regardless of severity, and a verification.target routinely
-    names a file that legitimately pre-exists in the repo (this check has no
-    CA/filesystem access to confirm existence either way), so enforcing it
-    live would false-red most real plans on deploy. The check_id stays
-    registered in CHECK_IDS/the execution_integrity group, so a report
-    always lists "execution_integrity.no_orphan_verification" with
-    passed=True until EIG block F adds real CA existence knowledge plus a
-    require_project_verification policy and flips the switch above. The
-    detection logic itself is not deleted -- it lives on in
-    ``_detect_orphan_verification`` below, unit-tested directly
-    (tests/test_eig_block_e1_gate_execution.py) so it does not rot while
-    suppressed.
+    ENFORCED since EIG block F (see ``ORPHAN_VERIFICATION_ENFORCEMENT``), but
+    only ever speaks when ``external_files`` is an AVAILABLE probe: a probe of
+    ``None`` (no project binding, or a caller that does not wire one -- every
+    ``run_gate`` caller except plan_validate, block-G residual) and an
+    unavailable probe both yield ``[]``, the same silence the suppressed
+    check had.
+
+    This check_id is the SINGLE reporting site for the "does the verified
+    file exist anywhere" question. Block F's own
+    ``execution_integrity.verification_target_resolvable`` asks exactly the
+    same question and is therefore MERGED into this one detector: it stays
+    registered for report-shape stability but is permanently empty, and its
+    code ``VERIFICATION_ARTIFACT_MISSING`` is never emitted -- see
+    ``gate_execution_existence.check_verification_target_resolvable``.
     """
     if ORPHAN_VERIFICATION_ENFORCEMENT == "suppressed":
         return []
-    return _detect_orphan_verification(tree, steps)
+    return _detect_orphan_verification(tree, steps, external_files)
 
 
-def _detect_orphan_verification(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """Raw detector for check_no_orphan_verification (block behind the switch above).
+def _detect_orphan_verification(
+    tree: GateTree,
+    steps: list[Step],
+    external_files: "ExternalFilesProbe | None" = None,
+) -> list[Finding]:
+    """Raw detector for check_no_orphan_verification, in block-F semantics.
 
-    Trimmed exact match of the dict-form ``verification.target`` string
-    against every atomic step's ``target_file`` in the FULL plan tree.
-    Severity is WARNING, not error: the named file may legitimately
-    pre-exist outside the plan (this check has no filesystem/CA access to
-    confirm either way). It only ever fires on a dict-shaped
-    ``verification`` field with a non-empty ``target``, so a legacy plan
-    (string-shaped or absent verification) yields zero findings from it,
-    same as the other three checks.
+    A dict-form ``verification.target`` is an ORPHAN only when BOTH sources
+    of existence fail it: it is absent from the live project file inventory
+    (``external_files.files``) AND it matches no atomic step's
+    ``target_file`` anywhere in the FULL plan tree. Severity is ERROR now
+    (it was WARNING while the pre-block-F detector could only guess): with
+    the probe available, "this file exists nowhere" is a fact, not a
+    suspicion.
+
+    Returns ``[]`` when the probe is missing or unavailable -- the degraded
+    policy shared with ``gate_execution_existence`` (see its module
+    docstring's matrix); an unreadable project never turns into per-step
+    verdicts. It only ever fires on a dict-shaped ``verification`` field
+    with a non-empty ``target``, so a legacy plan (string-shaped or absent
+    verification) yields zero findings from it even with a probe present,
+    same as the other three E1 checks.
     """
+    if external_files is None or not external_files.available:
+        return []
+    known_files = external_files.files
     target_files: set[str] = set()
     for step in tree.steps.values():
         if step.level != 5:
@@ -306,43 +339,61 @@ def _detect_orphan_verification(tree: GateTree, steps: list[Step]) -> list[Findi
         if not isinstance(target, str) or not target.strip():
             continue
         target = target.strip()
-        if target in target_files:
+        if target in known_files or target in target_files:
             continue
         path = _path(tree, step)
         findings.append(
             Finding(
                 check_id="execution_integrity.no_orphan_verification",
-                severity="warning",
+                severity="error",
                 artifact_path=path,
                 message=(
                     f"EXEC_ORPHAN_VERIFICATION: step_path={path!r}; target={target!r}; "
-                    "reason='verification target matches no target_file declared "
-                    "anywhere in the plan; the file may legitimately pre-exist "
-                    "outside the plan -- existence is not checked here, see "
-                    "EIG block F'"
+                    "reason='verification target exists neither in the bound "
+                    "project (live analysis-server file listing) nor as any "
+                    "target_file declared anywhere in the plan; this step "
+                    "verifies a file nothing produces and nothing already has'"
                 ),
             )
         )
     return findings
 
 
-def run_all(tree: GateTree, steps: list[Step]) -> list[Finding]:
-    """Run all eight execution_integrity checks (EIG blocks E1 + E2), in CHECK_IDS order.
+def run_all(
+    tree: GateTree,
+    steps: list[Step],
+    *,
+    external_files: "ExternalFilesProbe | None" = None,
+    require_project_verification: bool = False,
+) -> list[Finding]:
+    """Run all twelve execution_integrity checks (EIG blocks E1 + E2 + F), in CHECK_IDS order.
 
     ``gate.py`` dispatches the whole "execution_integrity" group through
     this single call so its own execution_integrity call site stays one
     line regardless of how many checks the group grows to: E1's four checks
-    (above, this module) plus E2's four closure checks
-    (``gate_execution_closure.py``), concatenated in the same order they
+    (above, this module), E2's four closure checks
+    (``gate_execution_closure.py``), and block F's four existence checks
+    (``gate_execution_existence.py``), concatenated in the same order they
     are registered in ``gate.CHECK_IDS["execution_integrity"]``.
+
+    ``external_files`` is the live CA project-file probe the CALLER fetched
+    (the gate never performs I/O); ``require_project_verification`` is the
+    operator policy that decides whether an UNAVAILABLE probe is itself a
+    finding. Both default to the degraded-but-silent case, so every existing
+    caller keeps exactly its pre-block-F behaviour.
     """
     findings: list[Finding] = []
     findings.extend(check_object_producer_before_consumer(tree, steps))
     findings.extend(check_execution_graph_acyclic(tree, steps))
     findings.extend(check_parallelization_safe(tree, steps))
-    findings.extend(check_no_orphan_verification(tree, steps))
+    findings.extend(check_no_orphan_verification(tree, steps, external_files))
     findings.extend(check_test_coverage_present(tree, steps))
     findings.extend(check_release_artifact_closure(tree, steps))
     findings.extend(check_deployment_closure(tree, steps))
     findings.extend(check_no_unverified_production(tree, steps))
+    findings.extend(
+        run_existence_checks(
+            tree, steps, external_files, require_project_verification
+        )
+    )
     return findings

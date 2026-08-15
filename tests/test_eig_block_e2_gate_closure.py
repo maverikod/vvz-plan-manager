@@ -3,7 +3,10 @@ the execution_integrity mechanical gate group
 (plan_manager.verify.gate_execution_closure), dispatched alongside EIG
 block E1's four checks (plan_manager.verify.gate_execution) through
 gate_execution.run_all and registered in plan_manager.verify.gate.
-CHECK_IDS["execution_integrity"] (now eight entries total).
+CHECK_IDS["execution_integrity"] (eight entries at the time of E2; EIG
+block F later appended four more -- see
+tests/test_eig_block_f_external_existence.py -- so the end-to-end pin below
+tracks E2's own four ids plus the group total rather than freezing 8).
 
 Mirrors tests/test_eig_block_e1_gate_execution.py's convention: pure
 check-function tests build Step objects in-memory and wrap them in a
@@ -445,7 +448,7 @@ def test_ordering_checks_do_not_raise_on_ambiguous_same_file_order():
 
 
 # ---------------------------------------------------------------------------
-# Group wiring + end-to-end run_gate: all eight execution_integrity
+# Group wiring + end-to-end run_gate: all registered execution_integrity
 # check_ids appear in a run_gate report.
 # ---------------------------------------------------------------------------
 
@@ -570,7 +573,7 @@ class _FullFakeConn:
         raise AssertionError(f"unexpected query in _FullFakeConn: {query!r}")
 
 
-def test_execution_integrity_group_appears_in_report_all_eight_check_ids_when_passing():
+def test_execution_integrity_group_appears_in_report_all_check_ids_when_passing():
     branch = BranchScope(
         plan_uuid=PLAN_UUID,
         depth="gs",
@@ -587,7 +590,8 @@ def test_execution_integrity_group_appears_in_report_all_eight_check_ids_when_pa
     report, verdict = run_gate(conn, PLAN_UUID, branch=branch, fail_fast=False)
 
     assert report.green is True, report.checks
-    assert len(CHECK_IDS["execution_integrity"]) == 8
+    # E1's four + E2's four + EIG block F's four existence checks.
+    assert len(CHECK_IDS["execution_integrity"]) == 12
     check_ids_present = {check.check_id for check in report.checks}
     expected = set(CHECK_IDS["execution_integrity"])
     assert expected <= check_ids_present

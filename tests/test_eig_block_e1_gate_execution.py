@@ -15,16 +15,20 @@ nodes dict):
     - object_producer_before_consumer (error)
     - execution_graph_acyclic (error)
     - parallelization_safe (error)
-    - no_orphan_verification (warning) -- SUPPRESSED (coordinator order,
-      2026-08-15): Report.green counts every finding regardless of
-      severity, and verification.target routinely names a legitimately
-      pre-existing repo file this check cannot confirm the existence of, so
-      shipping it live would false-red most real plans on deploy. The
-      public check_no_orphan_verification returns [] unconditionally while
-      gate_execution.ORPHAN_VERIFICATION_ENFORCEMENT == "suppressed"; the
-      raw detector (_detect_orphan_verification) is still tested directly
-      below so the would-be-finding logic does not rot before EIG block F
-      flips the switch.
+    - no_orphan_verification (error) -- ENFORCED since EIG block F (todo
+      763ae29e), which is exactly what the E1 suppression note anticipated.
+      It shipped suppressed because Report.green counts every finding
+      regardless of severity and verification.target routinely names a
+      legitimately pre-existing repo file that E1 could not confirm the
+      existence of. Block F removes the cause instead of the check: the
+      caller hands run_gate a live CA file-existence probe
+      (runtime.ca_files_probe.ExternalFilesProbe), and both the public check
+      and the raw detector stay silent unless that probe is present AND
+      available -- so a probe-less caller sees byte-identically the
+      suppressed behaviour. The tests below were rewritten from
+      "suppression" pins to "probe-gated enforcement" pins accordingly;
+      block F's own coverage lives in
+      tests/test_eig_block_f_external_existence.py.
 
 LEGACY SAFETY (hard requirement): all four checks only ever act on inferred-
 edge or dict-shaped verification data, so a role-less plan with no such data
@@ -292,25 +296,40 @@ def test_parallelization_safe_green_after_explicit_dep():
 
 
 # ---------------------------------------------------------------------------
-# no_orphan_verification: SUPPRESSED (coordinator order 2026-08-15, post-
-# review of EIG block E1). Report.green counts every finding regardless of
-# severity, and verification.target routinely names a legitimately
-# pre-existing repo file this check has no CA/filesystem access to confirm,
-# so shipping it live would false-red most real plans. The public check
-# must therefore return [] unconditionally, while the raw detector
-# (_detect_orphan_verification) is still directly unit-tested so the
-# would-be-finding logic does not rot before EIG block F flips
-# ORPHAN_VERIFICATION_ENFORCEMENT back to "enforced".
+# no_orphan_verification: ENFORCED since EIG block F (todo 763ae29e). E1
+# shipped it suppressed because it had no way to tell "the file pre-exists in
+# the repo" from "the file exists nowhere", and Report.green counts every
+# finding regardless of severity. Block F supplies that knowledge as a live
+# CA file probe passed down by the caller, so the check now speaks -- but ONLY
+# when an available probe is present. With no probe (every run_gate caller
+# except plan_validate, and every legacy fixture below) the behaviour is
+# byte-identical to the suppressed era, which is what makes flipping
+# ORPHAN_VERIFICATION_ENFORCEMENT safe.
 # ---------------------------------------------------------------------------
 
 
-def test_orphan_verification_enforcement_switch_is_currently_suppressed():
-    assert ORPHAN_VERIFICATION_ENFORCEMENT == "suppressed"
+class _Probe:
+    """Minimal structural stand-in for runtime.ca_files_probe.ExternalFilesProbe.
+
+    The gate only ever reads ``.available`` and ``.files``, and verify/ imports
+    the real dataclass under TYPE_CHECKING only, so these pure check tests stay
+    free of the CA transport import. The real dataclass is exercised in
+    tests/test_eig_block_f_external_existence.py.
+    """
+
+    def __init__(self, *, available: bool, files: frozenset[str] = frozenset()):
+        self.available = available
+        self.reason = None if available else "ca_unreachable"
+        self.files = files
 
 
-def test_detect_orphan_verification_red_when_target_matches_nothing():
-    """The raw detector still flags a mismatched target -- pins the logic
-    the public check will use again once EIG block F enforces it."""
+def test_orphan_verification_enforcement_switch_is_enforced_since_block_f():
+    assert ORPHAN_VERIFICATION_ENFORCEMENT == "enforced"
+
+
+def test_detect_orphan_verification_red_when_target_exists_nowhere():
+    """With an available probe, a target in neither the project nor the plan
+    is a hard error (it was a warning while E1 could only guess)."""
     gs = make_step(3, "G-001", None)
     ts = make_step(4, "T-001", gs.uuid)
     owner = make_step(5, "A-001", ts.uuid, target="src/widget.py", operation="create_file")
@@ -321,12 +340,14 @@ def test_detect_orphan_verification_red_when_target_matches_nothing():
     nodes = {x.uuid: x for x in (gs, ts, owner, verifier)}
     tree = _tree(nodes)
 
-    findings = _detect_orphan_verification(tree, list(nodes.values()))
+    findings = _detect_orphan_verification(
+        tree, list(nodes.values()), _Probe(available=True, files=frozenset({"src/other.py"}))
+    )
 
     assert len(findings) == 1
     finding = findings[0]
     assert finding.check_id == "execution_integrity.no_orphan_verification"
-    assert finding.severity == "warning"
+    assert finding.severity == "error"
     assert finding.artifact_path == _path(nodes, verifier)
     assert "EXEC_ORPHAN_VERIFICATION" in finding.message
     assert "src/does_not_exist.py" in finding.message
@@ -343,7 +364,9 @@ def test_detect_orphan_verification_green_when_target_matches_a_target_file():
     nodes = {x.uuid: x for x in (gs, ts, owner, verifier)}
     tree = _tree(nodes)
 
-    assert _detect_orphan_verification(tree, list(nodes.values())) == []
+    assert _detect_orphan_verification(
+        tree, list(nodes.values()), _Probe(available=True)
+    ) == []
 
 
 def test_detect_orphan_verification_ignores_legacy_string_verification():
@@ -356,13 +379,15 @@ def test_detect_orphan_verification_ignores_legacy_string_verification():
     nodes = {x.uuid: x for x in (gs, ts, verifier)}
     tree = _tree(nodes)
 
-    assert _detect_orphan_verification(tree, list(nodes.values())) == []
+    assert _detect_orphan_verification(
+        tree, list(nodes.values()), _Probe(available=True)
+    ) == []
 
 
-def test_check_no_orphan_verification_is_suppressed_even_when_detector_would_flag():
-    """The public check must return [] while suppressed, even on a fixture
-    where the raw detector below would find a real mismatch -- proves the
-    suppression is actually masking something, not vacuously true."""
+def test_check_no_orphan_verification_is_silent_without_a_probe():
+    """The enforced check must still return [] for a probe-less caller, on a
+    fixture where the same call WITH a probe finds a real mismatch -- proves
+    the probe gate is actually masking something, not vacuously true."""
     gs = make_step(3, "G-001", None)
     ts = make_step(4, "T-001", gs.uuid)
     owner = make_step(5, "A-001", ts.uuid, target="src/widget.py", operation="create_file")
@@ -374,18 +399,19 @@ def test_check_no_orphan_verification_is_suppressed_even_when_detector_would_fla
     tree = _tree(nodes)
     steps = list(nodes.values())
 
-    # The detector, called directly, would flag this.
-    assert len(_detect_orphan_verification(tree, steps)) == 1
+    # With an available probe the public check flags it.
+    assert len(check_no_orphan_verification(tree, steps, _Probe(available=True))) == 1
 
-    # The public, gate-wired check must not, while suppressed.
+    # Without a probe -- and with an unavailable one -- it must not.
     assert check_no_orphan_verification(tree, steps) == []
+    assert check_no_orphan_verification(tree, steps, _Probe(available=False)) == []
 
 
-def test_no_orphan_verification_suppression_keeps_report_green():
-    """Pins the actual fix: a plan that would trip the detector must still
-    come back green through the public check/report path, since
-    Report.green counts every finding regardless of severity and this check
-    has no CA/filesystem access to confirm a target file's existence."""
+def test_no_orphan_verification_stays_green_for_a_probe_less_run():
+    """Pins what makes the block-F switch flip safe: a plan that trips the
+    detector under a probe must still come back green through the public
+    check/report path when no probe is wired, since Report.green counts every
+    finding regardless of severity."""
     gs = make_step(3, "G-001", None)
     ts = make_step(4, "T-001", gs.uuid)
     owner = make_step(5, "A-001", ts.uuid, target="src/widget.py", operation="create_file")
@@ -466,8 +492,10 @@ def test_graph_checks_do_not_raise_on_ambiguous_same_file_order():
 
 def test_execution_integrity_group_registered():
     # EIG block E2 (todo c6f541d0) appended four closure checks
-    # (gate_execution_closure.py) to this same group -- see
-    # tests/test_eig_block_e2_gate_closure.py for their own coverage.
+    # (gate_execution_closure.py) and block F (todo 763ae29e) four existence
+    # checks (gate_execution_existence.py) to this same group -- see
+    # tests/test_eig_block_e2_gate_closure.py and
+    # tests/test_eig_block_f_external_existence.py for their own coverage.
     assert "execution_integrity" in GROUP_ORDER
     assert CHECK_IDS["execution_integrity"] == [
         "execution_integrity.object_producer_before_consumer",
@@ -478,6 +506,10 @@ def test_execution_integrity_group_registered():
         "execution_integrity.release_artifact_closure",
         "execution_integrity.deployment_closure",
         "execution_integrity.no_unverified_production",
+        "execution_integrity.artifact_producer_exists",
+        "execution_integrity.verification_target_resolvable",
+        "execution_integrity.modify_file_context_available",
+        "execution_integrity.external_project_unverified",
     ]
 
 

@@ -13026,6 +13026,489 @@ async def run_r61_gate_closure_checks_eig_block_e2(client: Any) -> list[CheckRes
     return results
 
 
+# Every check_id gate.CHECK_IDS["execution_integrity"] declares, EIG blocks
+# E1 + E2 + F combined -- used by R62's final "repair clears the whole
+# group" assertion (step 6) to prove not just the four new block-F checks
+# but the ENTIRE execution_integrity group is silent once the fixture's
+# only defects are fixed, since this fixture declares no object roles at
+# all and so never touches the E1/E2 role-driven checks either way.
+R62_ALL_EXECUTION_INTEGRITY_CHECK_IDS: tuple[str, ...] = (
+    "execution_integrity.object_producer_before_consumer",
+    "execution_integrity.execution_graph_acyclic",
+    "execution_integrity.parallelization_safe",
+    "execution_integrity.no_orphan_verification",
+    "execution_integrity.test_coverage_present",
+    "execution_integrity.release_artifact_closure",
+    "execution_integrity.deployment_closure",
+    "execution_integrity.no_unverified_production",
+    "execution_integrity.artifact_producer_exists",
+    "execution_integrity.verification_target_resolvable",
+    "execution_integrity.modify_file_context_available",
+    "execution_integrity.external_project_unverified",
+)
+
+
+async def run_r62_ca_existence_checks_eig_block_f(client: Any, project_id: str) -> list[CheckResult]:
+    """EIG block F (todo 763ae29e): plan_validate grows a live CA-backed
+    existence probe (plan_manager/runtime/ca_files_probe.py, wired in by
+    plan_manager/commands/plan_validate_command.py's resolve_external_files)
+    over the plan's PRIMARY project's project-relative file inventory, and
+    the mechanical gate grows four new execution_integrity.* check_ids
+    (plan_manager/verify/gate_execution_existence.py):
+    artifact_producer_exists, verification_target_resolvable (a permanently-
+    empty merged alias -- its question is answered by no_orphan_verification
+    instead, see that module's docstring), modify_file_context_available,
+    external_project_unverified. Block F also flips
+    gate_execution.ORPHAN_VERIFICATION_ENFORCEMENT from "suppressed" to
+    "enforced": no_orphan_verification now actually fires once a probe is
+    available. On live 0.1.119 (pre-deploy) none of this exists -- gate.
+    CHECK_IDS carries no block-F entries and plan_validate's response has no
+    "external_verification" key at all -- so plan_validate's report JSON
+    never lists any of the four new check_ids: DESIGNATED RED.
+
+    Fixture (R60/R61 shape, trimmed to one goal/one tactical/two atomics --
+    no object roles anywhere, since this block's checks are role-agnostic
+    file-existence probes and a role-less fixture keeps the E1/E2 checks
+    silent throughout, exactly the isolation step 6 below relies on):
+
+        G-001 -> T-001 -> A1 (operation="modify_file",
+                               target_file="plan_manager/commands/
+                                 inventory.py" -- EXISTS in the bound CA
+                                 project,
+                               verification={"type": "manual",
+                                 "target": "plan_manager/commands/
+                                   registration.py", -- EXISTS too
+                                 "expected": "x"})
+                        -> A2 (operation="modify_file",
+                               target_file="src/r62_nonexistent_target.py"
+                                 -- exists NOWHERE (no create_file owner
+                                 either),
+                               verification={"type": "pytest",
+                                 "target": "tests/r62_nonexistent_test.py",
+                                 "expected": "green"} -- names no step's
+                                 target_file anywhere: an orphan)
+
+    plan_project_attach binds ``project_id`` (this project's own CAS-
+    registered id, the caller's --project) to the fixture plan, then
+    plan_project_set_primary promotes it to primary -- resolve_external_
+    files only ever probes plan.primary_project_id, so attach alone (without
+    promotion) would leave the probe skipped ("no_primary_project") and every
+    block-F assertion below vacuously silent.
+
+    Sub-assertions, each gated on the previous ("unreachable: step N red"
+    idiom, see R57/R58/R59/R60/R61) since a RED designated assertion here
+    means every later one is meaningless against this server:
+
+      1. DESIGNATED RED: plan_validate's report JSON lists all four block-F
+         execution_integrity.* check_ids -- absent entirely on 0.1.119.
+      2. plan_validate's response carries external_verification with
+         status=="ok" -- the probe actually reached the real CA project
+         (proves the fixture's project binding, not just the check_ids'
+         registration, is exercised).
+      3. execution_integrity.modify_file_context_available reports
+         passed==false with an EXEC_MODIFY_TARGET_MISSING finding naming
+         A2's path and its target_file (total absence: the file exists
+         neither in the bound project nor as any in-plan create_file
+         owner).
+      4. execution_integrity.no_orphan_verification reports passed==false
+         with an EXEC_ORPHAN_VERIFICATION finding naming A2's orphan
+         verification.target ("tests/r62_nonexistent_test.py"), AND
+         execution_integrity.verification_target_resolvable itself reports
+         passed==true (the permanently-empty merged alias -- see gate_
+         execution_existence.check_verification_target_resolvable).
+      5. NO finding under any block-F check_id or no_orphan_verification
+         names A1's path -- both of A1's referenced files genuinely exist
+         in the bound project, so the probe clears it cleanly.
+      6. Repair: step_update(A2, target_file -> A1's existing target_file,
+         verification.target -> A1's existing verification.target) so A2
+         now names only files the probe confirms exist; plan_validate again
+         -- all four block-F check_ids individually report passed==true,
+         AND zero findings remain under ANY of the twelve execution_
+         integrity.* check_ids (R62_ALL_EXECUTION_INTEGRITY_CHECK_IDS) --
+         this role-less fixture never touches the E1/E2 role-driven checks
+         either way, so the whole group, not just block F, is silent.
+
+    Cleanup: best-effort plan_project_clear_primary and plan_project_detach
+    (neither gates cleanup_ok -- plan_delete(hard) cascades the project
+    binding away regardless of whether these two succeed; they are invoked
+    only to exercise their live happy path, per KNOWN_SKIP_REASONS which
+    otherwise marks both "not exercised in this pass"), then plan_delete
+    (hard), verified with its own CheckResult regardless of where the run
+    stopped.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r62-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R62_763ae29e_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R62_763ae29e_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-002", "parent_step_id": t_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R62_763ae29e_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t_path = f"{g_id}/{t_id}"
+        a1_path = f"{t_path}/{a1_id}"
+        a2_path = f"{t_path}/{a2_id}"
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T={t_path} A1={a1_path} A2={a2_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "plan_project_attach", {"plan": plan_uuid, "project_id": project_id}
+        )
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_project_attach", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R62_763ae29e_project_attach", STATUS_PASS))
+
+        ok, res = await call(
+            client, "plan_project_set_primary", {"plan": plan_uuid, "project_id": project_id}
+        )
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_project_set_primary", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R62_763ae29e_project_set_primary", STATUS_PASS))
+
+        existing_target_file = "plan_manager/commands/inventory.py"
+        existing_verification_target = "plan_manager/commands/registration.py"
+        orphan_target_file = "src/r62_nonexistent_target.py"
+        orphan_verification_target = "tests/r62_nonexistent_test.py"
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "operation": "modify_file",
+                    "target_file": existing_target_file,
+                    "verification": {
+                        "type": "manual",
+                        "target": existing_verification_target,
+                        "expected": "x",
+                    },
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "operation": "modify_file",
+                    "target_file": orphan_target_file,
+                    "verification": {
+                        "type": "pytest",
+                        "target": orphan_verification_target,
+                        "expected": "green",
+                    },
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R62_763ae29e_step_update(A1,A2)", STATUS_PASS))
+
+        expected_check_ids = {
+            "execution_integrity.artifact_producer_exists",
+            "execution_integrity.verification_target_resolvable",
+            "execution_integrity.modify_file_context_available",
+            "execution_integrity.external_project_unverified",
+        }
+
+        # --- 1: DESIGNATED RED -- plan_validate's report must list all four
+        # block-F execution_integrity.* check_ids. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R62_763ae29e_gate_group_checks_present", STATUS_FAIL, str(res)))
+            for gated_name in (
+                "R62_763ae29e_external_verification_ok",
+                "R62_763ae29e_modify_target_missing_A2",
+                "R62_763ae29e_orphan_verification_A2_and_resolvable_alias",
+                "R62_763ae29e_no_finding_names_A1",
+                "R62_763ae29e_repair_clears_gate",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        report = res.get("report")
+        check_ids_present = _plan_validate_check_ids_present(report)
+        step1_ok = expected_check_ids.issubset(check_ids_present)
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_gate_group_checks_present",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    "expected plan_validate's report to list all four block-F execution_integrity.* "
+                    f"check_ids; missing={sorted(expected_check_ids - check_ids_present)!r} "
+                    f"present={sorted(check_ids_present)!r}"
+                ),
+            )
+        )
+        if not step1_ok:
+            for gated_name in (
+                "R62_763ae29e_external_verification_ok",
+                "R62_763ae29e_modify_target_missing_A2",
+                "R62_763ae29e_orphan_verification_A2_and_resolvable_alias",
+                "R62_763ae29e_no_finding_names_A1",
+                "R62_763ae29e_repair_clears_gate",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        # --- 2: external_verification must report status=="ok" -- the probe
+        # actually reached the real CA project. ---
+        external_verification = res.get("external_verification")
+        external_status = (
+            external_verification.get("status") if isinstance(external_verification, dict) else None
+        )
+        step2_ok = external_status == "ok"
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_external_verification_ok",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else (
+                    "expected plan_validate's external_verification.status=='ok'; "
+                    f"got {external_verification!r}"
+                ),
+            )
+        )
+        if not step2_ok:
+            for gated_name in (
+                "R62_763ae29e_modify_target_missing_A2",
+                "R62_763ae29e_orphan_verification_A2_and_resolvable_alias",
+                "R62_763ae29e_no_finding_names_A1",
+                "R62_763ae29e_repair_clears_gate",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 2 red"))
+            return results
+
+        # --- 3: modify_file_context_available must fire on A2 (total
+        # absence: no probe hit, no in-plan create_file owner), passed=false. ---
+        context_findings = _plan_validate_findings_for_check(
+            report, "execution_integrity.modify_file_context_available"
+        )
+        context_finding = next(
+            (
+                f for f in context_findings
+                if f.get("artifact_path") == a2_path and orphan_target_file in str(f.get("message", ""))
+            ),
+            None,
+        )
+        context_check_passed = _plan_validate_check_passed(
+            report, "execution_integrity.modify_file_context_available"
+        )
+        step3_ok = context_finding is not None and context_check_passed is False
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_modify_target_missing_A2",
+                STATUS_PASS if step3_ok else STATUS_FAIL,
+                "" if step3_ok
+                else (
+                    f"expected a modify_file_context_available finding for {a2_path!r} naming "
+                    f"{orphan_target_file!r}, and execution_integrity.modify_file_context_available "
+                    f"passed=false; context_findings={context_findings!r} "
+                    f"context_check_passed={context_check_passed!r}"
+                ),
+            )
+        )
+        if not step3_ok:
+            for gated_name in (
+                "R62_763ae29e_orphan_verification_A2_and_resolvable_alias",
+                "R62_763ae29e_no_finding_names_A1",
+                "R62_763ae29e_repair_clears_gate",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 3 red"))
+            return results
+
+        # --- 4: no_orphan_verification must fire on A2's orphan
+        # verification.target, passed=false; verification_target_resolvable
+        # (the permanently-empty merged alias) must report passed=true. ---
+        orphan_findings = _plan_validate_findings_for_check(
+            report, "execution_integrity.no_orphan_verification"
+        )
+        orphan_finding = next(
+            (f for f in orphan_findings if orphan_verification_target in str(f.get("message", ""))),
+            None,
+        )
+        orphan_check_passed = _plan_validate_check_passed(report, "execution_integrity.no_orphan_verification")
+        resolvable_alias_passed = _plan_validate_check_passed(
+            report, "execution_integrity.verification_target_resolvable"
+        )
+        step4_ok = (
+            orphan_finding is not None
+            and orphan_check_passed is False
+            and resolvable_alias_passed is True
+        )
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_orphan_verification_A2_and_resolvable_alias",
+                STATUS_PASS if step4_ok else STATUS_FAIL,
+                "" if step4_ok
+                else (
+                    f"expected a no_orphan_verification finding naming {orphan_verification_target!r} "
+                    "with passed=false, and execution_integrity.verification_target_resolvable "
+                    f"passed=true; orphan_findings={orphan_findings!r} "
+                    f"orphan_check_passed={orphan_check_passed!r} "
+                    f"resolvable_alias_passed={resolvable_alias_passed!r}"
+                ),
+            )
+        )
+        if not step4_ok:
+            for gated_name in (
+                "R62_763ae29e_no_finding_names_A1",
+                "R62_763ae29e_repair_clears_gate",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 4 red"))
+            return results
+
+        # --- 5: A1's target_file and verification.target both genuinely
+        # exist in the bound project -- no finding under any block-F check_id
+        # or no_orphan_verification may name A1's path. ---
+        a1_relevant_findings = [
+            finding
+            for check_id in sorted(expected_check_ids | {"execution_integrity.no_orphan_verification"})
+            for finding in _plan_validate_findings_for_check(report, check_id)
+            if finding.get("artifact_path") == a1_path
+        ]
+        step5_ok = not a1_relevant_findings
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_no_finding_names_A1",
+                STATUS_PASS if step5_ok else STATUS_FAIL,
+                "" if step5_ok
+                else (
+                    f"expected no block-F/no_orphan_verification finding naming A1 ({a1_path!r}); "
+                    f"got {a1_relevant_findings!r}"
+                ),
+            )
+        )
+        if not step5_ok:
+            results.append(
+                CheckResult("4", "R62_763ae29e_repair_clears_gate", STATUS_FAIL, "unreachable: step 5 red")
+            )
+            return results
+
+        # --- 6: repair A2 to name only files the probe confirms exist;
+        # plan_validate again -- all four block-F checks passed=true, and
+        # zero findings remain under ANY of the twelve execution_integrity.*
+        # check_ids (role-less fixture: E1/E2 stay silent regardless). ---
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "target_file": existing_target_file,
+                    "verification": {
+                        "type": "pytest",
+                        "target": existing_verification_target,
+                        "expected": "green",
+                    },
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R62_763ae29e_repair_clears_gate", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R62_763ae29e_repair_clears_gate", STATUS_FAIL, str(res)))
+            return results
+        report_after = res.get("report")
+        remaining_findings = [
+            finding
+            for check_id in R62_ALL_EXECUTION_INTEGRITY_CHECK_IDS
+            for finding in _plan_validate_findings_for_check(report_after, check_id)
+        ]
+        checks_passed_after = {
+            check_id: _plan_validate_check_passed(report_after, check_id)
+            for check_id in sorted(expected_check_ids)
+        }
+        all_expected_passed = all(passed is True for passed in checks_passed_after.values())
+        step6_ok = not remaining_findings and all_expected_passed
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_repair_clears_gate",
+                STATUS_PASS if step6_ok else STATUS_FAIL,
+                "" if step6_ok
+                else (
+                    "expected zero findings under any of the twelve execution_integrity.* check_ids "
+                    "and all four block-F checks passed=true after the repair; remaining_findings="
+                    f"{remaining_findings!r} checks_passed={checks_passed_after!r}"
+                ),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            # Best-effort: neither gates cleanup_ok -- plan_delete(hard)
+            # cascades the project binding away regardless. Invoked only to
+            # exercise their live happy path (KNOWN_SKIP_REASONS otherwise
+            # marks both "not exercised in this pass").
+            await call(client, "plan_project_clear_primary", {"plan": plan_uuid})
+            await call(client, "plan_project_detach", {"plan": plan_uuid, "project_id": project_id})
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R62_763ae29e_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

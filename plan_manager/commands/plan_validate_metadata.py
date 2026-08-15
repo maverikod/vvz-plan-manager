@@ -138,6 +138,20 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "String UUID of the plan's open cascade, or null "
                         "when the plan has no open cascade."
                     ),
+                    "external_verification": (
+                        "Object {status, reason} reporting whether the gate's "
+                        "CA-backed existence checks (the "
+                        "execution_integrity.artifact_producer_exists / "
+                        "modify_file_context_available / "
+                        "no_orphan_verification family) could run at all. "
+                        "status is 'ok' when the primary bound project's file "
+                        "listing was read from the analysis server, "
+                        "'unavailable' (reason 'ca_unreachable') when it "
+                        "could not be, and 'skipped' (reason "
+                        "'no_primary_project') when the plan has no primary "
+                        "project binding to check against. Those checks emit "
+                        "nothing at all unless status is 'ok'."
+                    ),
                     "format": "The output format actually used: 'text' or 'json'.",
                     "report": (
                         "The rendered report body as a string, in the "
@@ -159,6 +173,10 @@ def get_plan_validate_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "cascade_uuid": None,
                     "format": "json",
                     "report": "{\"checks\": [], \"green\": true}",
+                    "external_verification": {
+                        "status": "skipped",
+                        "reason": "no_primary_project",
+                    },
                 },
             },
             "error": {
