@@ -465,12 +465,19 @@ def test_graph_checks_do_not_raise_on_ambiguous_same_file_order():
 
 
 def test_execution_integrity_group_registered():
+    # EIG block E2 (todo c6f541d0) appended four closure checks
+    # (gate_execution_closure.py) to this same group -- see
+    # tests/test_eig_block_e2_gate_closure.py for their own coverage.
     assert "execution_integrity" in GROUP_ORDER
     assert CHECK_IDS["execution_integrity"] == [
         "execution_integrity.object_producer_before_consumer",
         "execution_integrity.execution_graph_acyclic",
         "execution_integrity.parallelization_safe",
         "execution_integrity.no_orphan_verification",
+        "execution_integrity.test_coverage_present",
+        "execution_integrity.release_artifact_closure",
+        "execution_integrity.deployment_closure",
+        "execution_integrity.no_unverified_production",
     ]
 
 

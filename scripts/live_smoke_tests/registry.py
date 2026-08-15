@@ -274,6 +274,15 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "apply; no_orphan_verification stays suppressed (EIG block E1, "
         "todo 0f50b0df)",
     ),
+    LiveSmokeTestSpec(
+        "r61",
+        "run_r61_gate_closure_checks_eig_block_e2",
+        "plan_validate reports the four closure checks: unordered "
+        "package->verify reds release_artifact_closure and clears after "
+        "execution_dependency_apply; package without any verify role reds "
+        "no_unverified_production; role-less contour untouched (EIG block "
+        "E2, todo c6f541d0)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

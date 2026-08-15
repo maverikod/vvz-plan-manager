@@ -1,5 +1,12 @@
 """Execution-integrity checks for the mechanical gate (EIG block E1, todo 0f50b0df).
 
+EIG block E2 (todo c6f541d0) adds four further closure checks to this same
+``execution_integrity`` group, kept in the sibling module
+``gate_execution_closure.py`` purely to stay under this file's ~400-line
+budget; ``run_all`` below is the single entry point ``gate.py`` dispatches
+through so its own call site stays one line no matter how many checks this
+group grows to.
+
 Four checks over the extended execution graph (EIG block B,
 ``views.execution_graph.build_execution_graph``): every INFERRED
 ``object_producer``/``verification_target`` edge is cross-checked against the
@@ -45,6 +52,12 @@ from __future__ import annotations
 from plan_manager.domain.step import Step
 from plan_manager.verify.finding import Finding
 from plan_manager.verify.gate_data import GateTree, artifact_path_of
+from plan_manager.verify.gate_execution_closure import (
+    check_deployment_closure,
+    check_no_unverified_production,
+    check_release_artifact_closure,
+    check_test_coverage_present,
+)
 from plan_manager.views.dependency_graph import build_edges, waves
 from plan_manager.views.execution_graph import build_execution_graph
 from plan_manager.views.same_file_order import SameFileOrderAmbiguousError, reachable
@@ -310,4 +323,26 @@ def _detect_orphan_verification(tree: GateTree, steps: list[Step]) -> list[Findi
                 ),
             )
         )
+    return findings
+
+
+def run_all(tree: GateTree, steps: list[Step]) -> list[Finding]:
+    """Run all eight execution_integrity checks (EIG blocks E1 + E2), in CHECK_IDS order.
+
+    ``gate.py`` dispatches the whole "execution_integrity" group through
+    this single call so its own execution_integrity call site stays one
+    line regardless of how many checks the group grows to: E1's four checks
+    (above, this module) plus E2's four closure checks
+    (``gate_execution_closure.py``), concatenated in the same order they
+    are registered in ``gate.CHECK_IDS["execution_integrity"]``.
+    """
+    findings: list[Finding] = []
+    findings.extend(check_object_producer_before_consumer(tree, steps))
+    findings.extend(check_execution_graph_acyclic(tree, steps))
+    findings.extend(check_parallelization_safe(tree, steps))
+    findings.extend(check_no_orphan_verification(tree, steps))
+    findings.extend(check_test_coverage_present(tree, steps))
+    findings.extend(check_release_artifact_closure(tree, steps))
+    findings.extend(check_deployment_closure(tree, steps))
+    findings.extend(check_no_unverified_production(tree, steps))
     return findings

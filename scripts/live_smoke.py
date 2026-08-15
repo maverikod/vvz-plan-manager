@@ -12577,6 +12577,455 @@ async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[Che
     return results
 
 
+async def run_r61_gate_closure_checks_eig_block_e2(client: Any) -> list[CheckResult]:
+    """EIG block E2 (todo c6f541d0): four further closure checks join the
+    "execution_integrity" gate group (plan_manager/verify/gate_execution_
+    closure.py), dispatched alongside E1's four (gate_execution.run_all)
+    and registered in gate.CHECK_IDS["execution_integrity"]:
+    test_coverage_present, release_artifact_closure, deployment_closure,
+    no_unverified_production. On pre-deploy live (0.1.118, before this
+    block ships) the group carries only E1's original four check_ids, so
+    plan_validate's report JSON never lists any of the four NEW ones:
+    DESIGNATED RED.
+
+    Fixture (R60 shape, trimmed to two atomics under one goal, no explicit
+    dependency -- the whole point is that "package" is NOT a PRODUCER_ROLE
+    (domain.step_objects.PRODUCER_ROLES == {create, modify}), so the
+    inferred object_producer edge the E1 fixtures rely on does not even
+    exist here; release_artifact_closure reads the EXPLICIT graph only):
+
+        G-001 -> T-001 -> A1 (target_file="src/pkg.py",
+                               objects=[{"name": "Wheel", "concepts": [],
+                                         "role": "package"}])
+        G-001 -> T-002 -> A2 (target_file="src/check.py",
+                               objects=[{"name": "Wheel", "concepts": [],
+                                         "role": "verify"}])
+
+    Sub-assertions, each gated on the previous ("unreachable: step N red"
+    idiom, see R57-R60):
+
+      1. DESIGNATED RED: plan_validate's report JSON lists all four NEW
+         execution_integrity.* check_ids (test_coverage_present,
+         release_artifact_closure, deployment_closure, no_unverified_
+         production) -- absent entirely on 0.1.118.
+      2. execution_integrity.release_artifact_closure carries a finding
+         naming object 'Wheel' (EXEC_RELEASE_BEFORE_BUILD, gate_execution_
+         closure.check_release_artifact_closure -- A2's verify-role
+         declaration of Wheel is not ordered after A1's package-role
+         declaration in the explicit graph) AND that check itself reports
+         passed=false.
+      3. execution_integrity.no_unverified_production reports passed=true
+         -- Wheel already HAS a verify-role declaration (A2), so the
+         unconditional package/deploy-without-verify rule does not fire.
+      4. Establish the missing order: execution_dependency_suggest is
+         checked first -- PRODUCER_ROLES excludes "package", so the
+         inferred object_producer edge this pair would need is never
+         proposed; when suggest proposes nothing for the A1->A2 pair, the
+         explicit dependency is added directly via step_dependency_add
+         (A2 depends_on A1) instead of execution_dependency_apply, and
+         which path ran is recorded in the CheckResult detail either way.
+      5. plan_validate again: zero execution_integrity findings at all AND
+         all eight execution_integrity.* check_ids (E1's four plus E2's
+         four) individually report passed=true, now that the explicit
+         A1->A2 edge orders package before verify.
+      6. Second scenario, same plan: step_update(A2, objects=[{"name":
+         "Wheel", "concepts": [], "role": "consume"}]) removes Wheel's only
+         verify-role declaration, leaving A1's package-role declaration
+         unverified. plan_validate: execution_integrity.no_unverified_
+         production reports passed=false with an EXEC_UNVERIFIED_
+         PRODUCTION finding naming object 'Wheel'.
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult
+    regardless of where the run stopped.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r61-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R61_c6f541d0_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R61_c6f541d0_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R61_c6f541d0_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        # A1 and A2 share the bare local id "A-001" under different T
+        # parents -- a bare "A-001" step_id is AMBIGUOUS_STEP_ID, so every
+        # step reference below uses the full canonical path (same
+        # next_free_step_id scope-reset R49/R57-R60 already exercise).
+        a1_path = f"{t1_path}/{a1_id}"
+        a2_path = f"{t2_path}/{a2_id}"
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T1={t1_path} T2={t2_path} A1={a1_path} A2={a2_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "target_file": "src/pkg.py",
+                    "objects": [{"name": "Wheel", "concepts": [], "role": "package"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "target_file": "src/check.py",
+                    "objects": [{"name": "Wheel", "concepts": [], "role": "verify"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R61_c6f541d0_step_update(A1,A2)", STATUS_PASS))
+        # No step_dependency_add here -- the whole point is to let the
+        # unordered package->verify pair reach plan_validate uncorrected.
+
+        expected_new_check_ids = {
+            "execution_integrity.test_coverage_present",
+            "execution_integrity.release_artifact_closure",
+            "execution_integrity.deployment_closure",
+            "execution_integrity.no_unverified_production",
+        }
+        all_eight_check_ids = expected_new_check_ids | {
+            "execution_integrity.object_producer_before_consumer",
+            "execution_integrity.execution_graph_acyclic",
+            "execution_integrity.parallelization_safe",
+            "execution_integrity.no_orphan_verification",
+        }
+
+        # --- 1: DESIGNATED RED -- plan_validate's report must list all
+        # four NEW execution_integrity.* check_ids. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R61_c6f541d0_new_check_ids_present", STATUS_FAIL, str(res)))
+            for gated_name in (
+                "R61_c6f541d0_release_artifact_closure_red",
+                "R61_c6f541d0_no_unverified_production_green_pre",
+                "R61_c6f541d0_dependency_established",
+                "R61_c6f541d0_gate_clears_after_dependency",
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        report = res.get("report")
+        check_ids_present = _plan_validate_check_ids_present(report)
+        step1_ok = expected_new_check_ids.issubset(check_ids_present)
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_new_check_ids_present",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    "expected plan_validate's report to list all four NEW execution_integrity.* "
+                    f"check_ids; missing={sorted(expected_new_check_ids - check_ids_present)!r} "
+                    f"present={sorted(check_ids_present)!r}"
+                ),
+            )
+        )
+        if not step1_ok:
+            for gated_name in (
+                "R61_c6f541d0_release_artifact_closure_red",
+                "R61_c6f541d0_no_unverified_production_green_pre",
+                "R61_c6f541d0_dependency_established",
+                "R61_c6f541d0_gate_clears_after_dependency",
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        # --- 2: release_artifact_closure must fire on the unordered
+        # package->verify pair, naming object 'Wheel', and the check itself
+        # must report passed=false. ---
+        release_closure_findings = _plan_validate_findings_for_check(
+            report, "execution_integrity.release_artifact_closure"
+        )
+        release_closure_finding = next(
+            (f for f in release_closure_findings if "Wheel" in str(f.get("message", ""))),
+            None,
+        )
+        release_closure_passed = _plan_validate_check_passed(report, "execution_integrity.release_artifact_closure")
+        step2_ok = release_closure_finding is not None and release_closure_passed is False
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_release_artifact_closure_red",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else (
+                    "expected an execution_integrity.release_artifact_closure finding naming "
+                    "'Wheel', and the check itself passed=false; "
+                    f"release_closure_findings={release_closure_findings!r} "
+                    f"release_closure_passed={release_closure_passed!r}"
+                ),
+            )
+        )
+        if not step2_ok:
+            for gated_name in (
+                "R61_c6f541d0_no_unverified_production_green_pre",
+                "R61_c6f541d0_dependency_established",
+                "R61_c6f541d0_gate_clears_after_dependency",
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 2 red"))
+            return results
+
+        # --- 3: no_unverified_production must report passed=true --
+        # Wheel already has a verify-role declaration (A2), so the
+        # unconditional package/deploy-without-verify rule stays quiet. ---
+        no_unverified_passed_pre = _plan_validate_check_passed(report, "execution_integrity.no_unverified_production")
+        step3_ok = no_unverified_passed_pre is True
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_no_unverified_production_green_pre",
+                STATUS_PASS if step3_ok else STATUS_FAIL,
+                "" if step3_ok
+                else (
+                    "expected execution_integrity.no_unverified_production passed=true "
+                    f"(Wheel already has a verify-role declaration); got {no_unverified_passed_pre!r}"
+                ),
+            )
+        )
+        if not step3_ok:
+            for gated_name in (
+                "R61_c6f541d0_dependency_established",
+                "R61_c6f541d0_gate_clears_after_dependency",
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 3 red"))
+            return results
+
+        # --- 4: establish the missing order. "package" is not a
+        # PRODUCER_ROLE (domain.step_objects.PRODUCER_ROLES == {create,
+        # modify}), so execution_dependency_suggest's inferred object_
+        # producer edge never covers this pair -- check what it actually
+        # proposes first, and only fall back to the explicit step_
+        # dependency_add(A2, depends_on=A1) path when it proposes nothing
+        # for A1->A2. Either way, which path ran is recorded below. ---
+        ok, res = await call(client, "execution_dependency_suggest", {"plan": plan_uuid})
+        suggest_proposed_changes = res.get("proposed_changes") if ok and isinstance(res, dict) else None
+        suggest_proposed_a1_a2 = any(
+            isinstance(change, dict) and change.get("step_id") == a2_path
+            and a1_path in (change.get("depends_on") or [])
+            for change in (suggest_proposed_changes or [])
+        )
+
+        if suggest_proposed_a1_a2:
+            ok, res = await call(
+                client, "execution_dependency_apply",
+                {"plan": plan_uuid, "confirm": True, "dry_run": False},
+            )
+            dependency_ok = ok and isinstance(res, dict) and res.get("applied") is True and bool(res.get("revision_uuid"))
+            dependency_detail = (
+                f"path=execution_dependency_apply (suggest proposed A1->A2); "
+                f"applied={dependency_ok} ok={ok} res={res!r}"
+            )
+        else:
+            ok, res = await call(
+                client, "step_dependency_add",
+                {"plan": plan_uuid, "step_id": a2_path, "depends_on": a1_path},
+            )
+            dependency_ok = bool(ok)
+            dependency_detail = (
+                "path=step_dependency_add fallback (execution_dependency_suggest proposed "
+                f"nothing for the A1->A2 package->verify pair; suggest_proposed_changes="
+                f"{suggest_proposed_changes!r}); ok={ok} res={res!r}"
+            )
+
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_dependency_established",
+                STATUS_PASS if dependency_ok else STATUS_FAIL,
+                dependency_detail,
+            )
+        )
+        if not dependency_ok:
+            for gated_name in (
+                "R61_c6f541d0_gate_clears_after_dependency",
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 4 red"))
+            return results
+
+        # --- 5: plan_validate again -- zero execution_integrity findings
+        # at all, and all eight execution_integrity.* checks (E1's four
+        # plus E2's four) individually report passed=true. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R61_c6f541d0_gate_clears_after_dependency", STATUS_FAIL, str(res)))
+            for gated_name in (
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 5 red"))
+            return results
+        report_after = res.get("report")
+        remaining_findings = [
+            finding
+            for check_id in sorted(all_eight_check_ids)
+            for finding in _plan_validate_findings_for_check(report_after, check_id)
+        ]
+        checks_passed_after = {
+            check_id: _plan_validate_check_passed(report_after, check_id)
+            for check_id in sorted(all_eight_check_ids)
+        }
+        all_checks_passed = all(passed is True for passed in checks_passed_after.values())
+        step5_ok = not remaining_findings and all_checks_passed
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_gate_clears_after_dependency",
+                STATUS_PASS if step5_ok else STATUS_FAIL,
+                "" if step5_ok
+                else (
+                    "expected zero execution_integrity findings and all eight execution_integrity.* "
+                    f"checks passed=true after the established dependency; remaining_findings="
+                    f"{remaining_findings!r} checks_passed={checks_passed_after!r}"
+                ),
+            )
+        )
+        if not step5_ok:
+            for gated_name in (
+                "R61_c6f541d0_step_update(A2_consume)",
+                "R61_c6f541d0_no_unverified_production_red_after_consume",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 5 red"))
+            return results
+
+        # --- 6: second scenario, same plan -- remove Wheel's only
+        # verify-role declaration (A2's role becomes "consume"), leaving
+        # A1's package-role declaration unverified. ---
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "objects": [{"name": "Wheel", "concepts": [], "role": "consume"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R61_c6f541d0_step_update(A2_consume)", STATUS_FAIL, str(res)))
+            results.append(
+                CheckResult(
+                    "4", "R61_c6f541d0_no_unverified_production_red_after_consume", STATUS_FAIL,
+                    "unreachable: step_update(A2_consume) red",
+                )
+            )
+            return results
+        results.append(CheckResult("4", "R61_c6f541d0_step_update(A2_consume)", STATUS_PASS))
+
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(
+                CheckResult("4", "R61_c6f541d0_no_unverified_production_red_after_consume", STATUS_FAIL, str(res))
+            )
+            return results
+        report_final = res.get("report")
+        unverified_findings_final = _plan_validate_findings_for_check(
+            report_final, "execution_integrity.no_unverified_production"
+        )
+        unverified_finding_final = next(
+            (f for f in unverified_findings_final if "Wheel" in str(f.get("message", ""))),
+            None,
+        )
+        unverified_passed_final = _plan_validate_check_passed(report_final, "execution_integrity.no_unverified_production")
+        step6_ok = unverified_finding_final is not None and unverified_passed_final is False
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_no_unverified_production_red_after_consume",
+                STATUS_PASS if step6_ok else STATUS_FAIL,
+                "" if step6_ok
+                else (
+                    "expected execution_integrity.no_unverified_production passed=false with an "
+                    "EXEC_UNVERIFIED_PRODUCTION finding naming 'Wheel' once its only verify-role "
+                    f"declaration is removed; unverified_findings={unverified_findings_final!r} "
+                    f"unverified_passed={unverified_passed_final!r}"
+                ),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R61_c6f541d0_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],
