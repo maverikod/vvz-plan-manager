@@ -8958,6 +8958,81 @@ def _plan_validate_finding_artifact_paths(report_json: Any, check_id: str) -> se
     return paths
 
 
+def _plan_validate_check_ids_present(report_json: Any) -> set[str]:
+    """Return the set of check_id values enumerated in plan_validate's JSON
+    report string, regardless of pass/fail.
+
+    Same idiom and shape assumptions as _plan_validate_finding_artifact_
+    paths: ``report_json`` is the raw ``report`` field of a plan_validate
+    result (plan_manager.verify.finding.render_json), {"checks": [
+    {"check_id": ..., "passed": ..., "findings": [...]}, ...]} -- every
+    check_id gate.CHECK_IDS declares for a group is enumerated whether or
+    not it has findings (verify.finding.build_report), so this is how a
+    caller detects whether a whole check GROUP exists on the server at
+    all (R60_0f50b0df's designated-RED assertion) rather than merely
+    whether it currently has findings. A non-string or unparseable value
+    returns an empty set, so a malformed report surfaces as a FAIL on the
+    caller's own assertion rather than a spurious match here.
+    """
+    if not isinstance(report_json, str):
+        return set()
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return set()
+    return {
+        check["check_id"]
+        for check in (payload.get("checks", []) if isinstance(payload, dict) else [])
+        if isinstance(check, dict) and isinstance(check.get("check_id"), str)
+    }
+
+
+def _plan_validate_check_passed(report_json: Any, check_id: str) -> Optional[bool]:
+    """Return the ``passed`` flag for one check_id in plan_validate's JSON
+    report string, or None if that check_id is not enumerated at all.
+
+    Same idiom as _plan_validate_finding_artifact_paths/
+    _plan_validate_check_ids_present.
+    """
+    if not isinstance(report_json, str):
+        return None
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return None
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if isinstance(check, dict) and check.get("check_id") == check_id:
+            passed = check.get("passed")
+            return passed if isinstance(passed, bool) else None
+    return None
+
+
+def _plan_validate_findings_for_check(report_json: Any, check_id: str) -> list[dict]:
+    """Return every finding dict (artifact_path/severity/message) for one
+    check_id in plan_validate's JSON report string.
+
+    Same idiom as _plan_validate_finding_artifact_paths, but returning
+    the full finding dict instead of only its artifact_path -- needed
+    where a caller must also inspect the finding's message (e.g. R60_
+    0f50b0df's EXEC_PRODUCER_UNORDERED object-name assertion). A non-
+    string or unparseable value returns an empty list.
+    """
+    if not isinstance(report_json, str):
+        return []
+    try:
+        payload = json.loads(report_json)
+    except ValueError:
+        return []
+    out: list[dict] = []
+    for check in payload.get("checks", []) if isinstance(payload, dict) else []:
+        if not isinstance(check, dict) or check.get("check_id") != check_id:
+            continue
+        for finding in check.get("findings", []) or []:
+            if isinstance(finding, dict):
+                out.append(finding)
+    return out
+
+
 def _r49_live_common_node_paths(res: Any) -> Optional[set[str]]:
     """Return the set of node_path values carrying an is_live=true common
     context block in block_list's payload.
@@ -12117,6 +12192,346 @@ async def run_r59_execution_dependency_suggest_apply_eig_block_d(client: Any) ->
         results.append(
             CheckResult(
                 "4", "R59_004cd507_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
+async def run_r60_gate_execution_integrity_eig_block_e1(client: Any) -> list[CheckResult]:
+    """EIG block E1 (todo 0f50b0df): the mechanical gate (verify.gate.
+    run_gate) grows a new check group, "execution_integrity" (plan_
+    manager/verify/gate_execution.py), with four check_ids run over the
+    extended execution graph (EIG block B, views.execution_graph.
+    build_execution_graph) cross-checked against the explicit graph (EIG
+    block D's views.dependency_graph.build_edges/waves):
+    object_producer_before_consumer, execution_graph_acyclic,
+    parallelization_safe, no_orphan_verification. On live 0.1.116 (pre-
+    deploy) the group does not exist at all -- gate.GROUP_ORDER/CHECK_IDS
+    carry no "execution_integrity" entry -- so plan_validate's report
+    JSON never lists any of the four check_ids: DESIGNATED RED.
+
+    Fixture (R58/R59 shape, trimmed to two atomics under one goal, no
+    explicit dependency -- the whole point is to let the inferred
+    object_producer edge go unordered so the new check group has
+    something to catch):
+
+        G-001 -> T-001 -> A1 (target_file="src/widget.py",
+                               objects=[{"name": "Widget", "concepts": [],
+                                         "role": "create"}])
+        G-001 -> T-002 -> A2 (objects=[{"name": "Widget", "concepts": [],
+                                        "role": "consume"}],
+                               verification={"type": "pytest",
+                                 "target": "tests/nonexistent_orphan_test.py",
+                                 "expected": "green"})
+
+    A2's verification.target is a deliberate orphan (it names no step's
+    target_file anywhere in the plan) to prove execution_integrity.
+    no_orphan_verification stays SUPPRESSED (gate_execution.
+    ORPHAN_VERIFICATION_ENFORCEMENT == "suppressed", check_no_orphan_
+    verification) even though its raw detector (_detect_orphan_
+    verification) would otherwise fire on it.
+
+    Sub-assertions, each gated on the previous ("unreachable: step N red"
+    idiom, see R57/R58/R59) since a RED designated assertion here means
+    every later one is meaningless against this server:
+
+      1. DESIGNATED RED: plan_validate's report JSON lists all four
+         execution_integrity.* check_ids (gate.CHECK_IDS["execution_
+         integrity"]) -- absent entirely on 0.1.116.
+      2. execution_integrity.object_producer_before_consumer carries a
+         finding whose artifact_path is A2's canonical path and whose
+         message names object 'Widget' (EXEC_PRODUCER_UNORDERED, gate_
+         execution.check_object_producer_before_consumer), and the
+         report's top-level green is false.
+      3. execution_integrity.no_orphan_verification reports passed=true
+         (suppressed) despite A2's orphan verification.target -- the
+         suppression pin.
+      4. execution_dependency_apply(plan, confirm=true, dry_run=false)
+         (no explicit "changes" -- the server recomputes the current
+         execution_dependency_suggest proposal, which is exactly the
+         A1->A2 object_producer edge here, per execution_dependency_
+         apply_command.py's confirm=true path) succeeds: applied=true,
+         a non-empty revision_uuid.
+      5. plan_validate again: zero execution_integrity findings at all
+         (the persisted explicit edge now orders A1 before A2, clearing
+         object_producer_before_consumer/parallelization_safe; no_orphan_
+         verification stays suppressed) and report green=true.
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult
+    regardless of where the run stopped.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r60-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R60_0f50b0df_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R60_0f50b0df_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t1_id = _extract_step_id(res) if ok else None
+        if not ok or t1_id is None:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-002", "parent_step_id": g_id})
+        t2_id = _extract_step_id(res) if ok else None
+        if not ok or t2_id is None:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t1_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t1_id})
+        a1_id = _extract_step_id(res) if ok else None
+        if not ok or a1_id is None:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t2_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t2_id})
+        a2_id = _extract_step_id(res) if ok else None
+        if not ok or a2_id is None:
+            results.append(CheckResult("4", "R60_0f50b0df_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t1_path = f"{g_id}/{t1_id}"
+        t2_path = f"{g_id}/{t2_id}"
+        # A1 and A2 share the bare local id "A-001" under different T
+        # parents -- a bare "A-001" step_id is AMBIGUOUS_STEP_ID, so every
+        # step reference below uses the full canonical path (same
+        # next_free_step_id scope-reset R49/R57/R58/R59 already exercise).
+        a1_path = f"{t1_path}/{a1_id}"
+        a2_path = f"{t2_path}/{a2_id}"
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T1={t1_path} T2={t2_path} A1={a1_path} A2={a2_path}",
+            )
+        )
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a1_path,
+                "fields": {
+                    "target_file": "src/widget.py",
+                    "objects": [{"name": "Widget", "concepts": [], "role": "create"}],
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a2_path,
+                "fields": {
+                    "objects": [{"name": "Widget", "concepts": [], "role": "consume"}],
+                    "verification": {
+                        "type": "pytest",
+                        "target": "tests/nonexistent_orphan_test.py",
+                        "expected": "green",
+                    },
+                },
+            },
+        )
+        if not ok:
+            results.append(CheckResult("4", "R60_0f50b0df_step_update(A1,A2)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R60_0f50b0df_step_update(A1,A2)", STATUS_PASS))
+        # No step_dependency_add here -- the inferred object_producer edge
+        # must go unordered so the new check group has something to catch.
+
+        expected_check_ids = {
+            "execution_integrity.object_producer_before_consumer",
+            "execution_integrity.execution_graph_acyclic",
+            "execution_integrity.parallelization_safe",
+            "execution_integrity.no_orphan_verification",
+        }
+
+        # --- 1: DESIGNATED RED -- plan_validate's report must list all
+        # four execution_integrity.* check_ids. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R60_0f50b0df_gate_group_checks_present", STATUS_FAIL, str(res)))
+            for gated_name in (
+                "R60_0f50b0df_producer_unordered_finding_and_report_red",
+                "R60_0f50b0df_orphan_verification_suppressed",
+                "R60_0f50b0df_execution_dependency_apply_confirm",
+                "R60_0f50b0df_gate_clears_after_apply",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        report = res.get("report")
+        check_ids_present = _plan_validate_check_ids_present(report)
+        step1_ok = expected_check_ids.issubset(check_ids_present)
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_gate_group_checks_present",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    "expected plan_validate's report to list all four execution_integrity.* "
+                    f"check_ids; missing={sorted(expected_check_ids - check_ids_present)!r} "
+                    f"present={sorted(check_ids_present)!r}"
+                ),
+            )
+        )
+        if not step1_ok:
+            for gated_name in (
+                "R60_0f50b0df_producer_unordered_finding_and_report_red",
+                "R60_0f50b0df_orphan_verification_suppressed",
+                "R60_0f50b0df_execution_dependency_apply_confirm",
+                "R60_0f50b0df_gate_clears_after_apply",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        # --- 2: object_producer_before_consumer must fire on A2, naming
+        # object 'Widget', and the report's top-level green must be false. ---
+        producer_findings = _plan_validate_findings_for_check(
+            report, "execution_integrity.object_producer_before_consumer"
+        )
+        producer_finding = next(
+            (
+                f for f in producer_findings
+                if f.get("artifact_path") == a2_path and "Widget" in str(f.get("message", ""))
+            ),
+            None,
+        )
+        green = res.get("green")
+        step2_ok = producer_finding is not None and green is False
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_producer_unordered_finding_and_report_red",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else (
+                    f"expected an object_producer_before_consumer finding for {a2_path!r} naming "
+                    f"'Widget', and report green=false; producer_findings={producer_findings!r} "
+                    f"green={green!r}"
+                ),
+            )
+        )
+        if not step2_ok:
+            for gated_name in (
+                "R60_0f50b0df_orphan_verification_suppressed",
+                "R60_0f50b0df_execution_dependency_apply_confirm",
+                "R60_0f50b0df_gate_clears_after_apply",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 2 red"))
+            return results
+
+        # --- 3: no_orphan_verification must report passed=true
+        # (suppressed) despite A2's verification.target naming no
+        # target_file anywhere in the plan. ---
+        no_orphan_passed = _plan_validate_check_passed(report, "execution_integrity.no_orphan_verification")
+        step3_ok = no_orphan_passed is True
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_orphan_verification_suppressed",
+                STATUS_PASS if step3_ok else STATUS_FAIL,
+                "" if step3_ok
+                else (
+                    "expected execution_integrity.no_orphan_verification passed=true "
+                    f"(suppressed); got {no_orphan_passed!r}"
+                ),
+            )
+        )
+        if not step3_ok:
+            for gated_name in (
+                "R60_0f50b0df_execution_dependency_apply_confirm",
+                "R60_0f50b0df_gate_clears_after_apply",
+            ):
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 3 red"))
+            return results
+
+        # --- 4: execution_dependency_apply(confirm=true, dry_run=false),
+        # "changes" omitted -- the server recomputes the current proposal
+        # (the A1->A2 object_producer edge) and applies it in one revision. ---
+        ok, res = await call(
+            client, "execution_dependency_apply",
+            {"plan": plan_uuid, "confirm": True, "dry_run": False},
+        )
+        apply_ok = ok and isinstance(res, dict) and res.get("applied") is True and bool(res.get("revision_uuid"))
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_execution_dependency_apply_confirm",
+                STATUS_PASS if apply_ok else STATUS_FAIL,
+                "" if apply_ok
+                else f"expected applied=true with a non-empty revision_uuid; ok={ok} res={res!r}",
+            )
+        )
+        if not apply_ok:
+            results.append(
+                CheckResult("4", "R60_0f50b0df_gate_clears_after_apply", STATUS_FAIL, "unreachable: step 4 red")
+            )
+            return results
+
+        # --- 5: plan_validate again -- zero execution_integrity findings
+        # at all, and the report's top-level green must be true. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        if not ok or not isinstance(res, dict):
+            results.append(CheckResult("4", "R60_0f50b0df_gate_clears_after_apply", STATUS_FAIL, str(res)))
+            return results
+        report_after = res.get("report")
+        remaining_findings = [
+            finding
+            for check_id in sorted(expected_check_ids)
+            for finding in _plan_validate_findings_for_check(report_after, check_id)
+        ]
+        green_after = res.get("green")
+        step5_ok = not remaining_findings and green_after is True
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_gate_clears_after_apply",
+                STATUS_PASS if step5_ok else STATUS_FAIL,
+                "" if step5_ok
+                else (
+                    "expected zero execution_integrity findings and report green=true after the "
+                    f"applied dependency; remaining_findings={remaining_findings!r} green={green_after!r}"
+                ),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R60_0f50b0df_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
                 "" if cleanup_ok else "one or more scratch entities survived cleanup",
             )
         )

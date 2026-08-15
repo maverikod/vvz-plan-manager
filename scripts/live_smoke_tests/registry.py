@@ -265,6 +265,15 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "default and persists confirmed edges in one revision, shifting "
         "extended waves deterministically (EIG block D, todo 004cd507)",
     ),
+    LiveSmokeTestSpec(
+        "r60",
+        "run_r60_gate_execution_integrity_eig_block_e1",
+        "plan_validate reports the execution_integrity gate group: "
+        "unordered producer/consumer roles red the gate with "
+        "EXEC_PRODUCER_UNORDERED and clear after execution_dependency_"
+        "apply; no_orphan_verification stays suppressed (EIG block E1, "
+        "todo 0f50b0df)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

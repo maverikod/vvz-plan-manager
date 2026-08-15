@@ -14,6 +14,12 @@ from plan_manager.verify.gate_context import (
     check_context_coverage_specific_subset,
 )
 from plan_manager.verify.gate_data import artifact_path_of, load_tree, scope_steps
+from plan_manager.verify.gate_execution import (
+    check_execution_graph_acyclic,
+    check_no_orphan_verification,
+    check_object_producer_before_consumer,
+    check_parallelization_safe,
+)
 from plan_manager.verify.gate_objects import (
     check_object_concepts_not_covered,
     check_object_multiple_modules,
@@ -50,7 +56,10 @@ from plan_manager.views.coverage import (
     relation_coverage,
 )
 
-GROUP_ORDER = ["parse", "identity", "uniqueness", "references", "coverage", "embedded_code", "context_coverage"]
+GROUP_ORDER = [
+    "parse", "identity", "uniqueness", "references", "coverage",
+    "embedded_code", "context_coverage", "execution_integrity",
+]
 
 CHECK_IDS: dict[str, list[str]] = {
     "parse": [
@@ -89,6 +98,12 @@ CHECK_IDS: dict[str, list[str]] = {
     "context_coverage": [
         "context_coverage.common_current",
         "context_coverage.specific_subset",
+    ],
+    "execution_integrity": [
+        "execution_integrity.object_producer_before_consumer",
+        "execution_integrity.execution_graph_acyclic",
+        "execution_integrity.parallelization_safe",
+        "execution_integrity.no_orphan_verification",
     ],
 }
 
@@ -353,6 +368,11 @@ def run_gate(
             group_findings.extend(
                 check_context_coverage_specific_subset(conn, plan_uuid, tree, steps)
             )
+        elif group == "execution_integrity":
+            group_findings.extend(check_object_producer_before_consumer(tree, steps))
+            group_findings.extend(check_execution_graph_acyclic(tree, steps))
+            group_findings.extend(check_parallelization_safe(tree, steps))
+            group_findings.extend(check_no_orphan_verification(tree, steps))
         run_check_ids.extend(group_check_ids)
         findings.extend(group_findings)
         if fail_fast and group_findings:
