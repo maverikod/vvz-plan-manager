@@ -10250,7 +10250,8 @@ async def _run_r55_functional_supersede_lifecycle(client: Any) -> list[CheckResu
             return results
         ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
         a_id = _extract_step_id(res) if ok else None
-        if not ok or a_id is None:
+        a_uuid = res.get("uuid") if ok and isinstance(res, dict) else None
+        if not ok or a_id is None or not a_uuid:
             results.append(CheckResult("4", "R55_74479c06_functional_repro_steps_created", STATUS_FAIL, str(res)))
             return results
         results.append(
@@ -10266,7 +10267,7 @@ async def _run_r55_functional_supersede_lifecycle(client: Any) -> list[CheckResu
         for tag, status in attempt_status_by_tag.items():
             ok, res = await call(
                 client, "execution_attempt_create",
-                {"plan": plan_uuid, "step": a_id, "status": status, "created_by": attempt_created_by},
+                {"plan": plan_uuid, "step": a_uuid, "status": status, "created_by": attempt_created_by},
             )
             attempt_uuid = res.get("attempt_uuid") if ok and isinstance(res, dict) else None
             check_name = f"R55_74479c06_functional_execution_attempt_create({tag})"
@@ -10520,13 +10521,17 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     Assertion 5 (reproduction evidence, READ-ONLY, best-effort): the bug's
     own live example -- review_result_get(plan=R55_BUG_PLAN_UUID,
     review_uuid=R55_BUG_REVIEW_UUID) and
-    execution_attempt_get(attempt_id=R55_BUG_ATTEMPT_ID). Asserts the stale
-    records still exist with their stale statuses (needs_owner_decision /
-    needs_escalation) AND that their payloads carry NO superseded_by field
-    today. If either record is gone (historical records removed), this
+    execution_attempt_get(attempt_id=R55_BUG_ATTEMPT_ID). Post-fix contract:
+    these historical stale records still exist with their ORIGINAL,
+    unchanged statuses (needs_owner_decision / needs_escalation -- the fix
+    must never rewrite a stale row's own status) AND their payloads now
+    carry a superseded_by_uuid key whose value is None, since nobody ever
+    superseded them -- the field's presence (not its absence) is the
+    post-fix signal; a payload missing the key entirely would mean the fix
+    regressed. If either record is gone (historical records removed), this
     emits SKIP with a reason instead of FAIL -- their disappearance is not
     itself evidence for or against the bug. STRICTLY READ-ONLY: no mutation
-    of anything, and this check creates NO entities at all pre-fix.
+    of anything, and this check creates NO entities.
 
     Assertion 6 (control, PASS today and after the fix):
     help(cmdname="execution_attempt_report") schema has NO supersede/
@@ -10611,16 +10616,16 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     ok, res = await call(client, "review_result_get", {"plan": R55_BUG_PLAN_UUID, "review_uuid": R55_BUG_REVIEW_UUID})
     if ok and isinstance(res, dict) and res.get("review_uuid") == R55_BUG_REVIEW_UUID:
         stale_status_ok = res.get("status") == "needs_owner_decision"
-        no_pointer_ok = "superseded_by_uuid" not in res and "superseded_by" not in res
-        evidence_ok = stale_status_ok and no_pointer_ok
+        pointer_field_ok = "superseded_by_uuid" in res and res.get("superseded_by_uuid") is None
+        evidence_ok = stale_status_ok and pointer_field_ok
         results.append(
             CheckResult(
                 "4", "R55_74479c06_review_result_reproduction_evidence",
                 STATUS_PASS if evidence_ok else STATUS_FAIL,
                 "" if evidence_ok
                 else (
-                    f"expected status='needs_owner_decision' and no superseded_by field on "
-                    f"review_uuid={R55_BUG_REVIEW_UUID}; got {res!r}"
+                    f"expected status='needs_owner_decision' (unchanged) and superseded_by_uuid=None "
+                    f"(present, unsuperseded) on review_uuid={R55_BUG_REVIEW_UUID}; got {res!r}"
                 ),
             )
         )
@@ -10636,16 +10641,16 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     ok, res = await call(client, "execution_attempt_get", {"attempt_id": R55_BUG_ATTEMPT_ID})
     if ok and isinstance(res, dict) and res.get("attempt_uuid") == R55_BUG_ATTEMPT_ID:
         stale_status_ok = res.get("status") == "needs_escalation"
-        no_pointer_ok = "superseded_by_uuid" not in res and "superseded_by" not in res
-        evidence_ok = stale_status_ok and no_pointer_ok
+        pointer_field_ok = "superseded_by_uuid" in res and res.get("superseded_by_uuid") is None
+        evidence_ok = stale_status_ok and pointer_field_ok
         results.append(
             CheckResult(
                 "4", "R55_74479c06_execution_attempt_reproduction_evidence",
                 STATUS_PASS if evidence_ok else STATUS_FAIL,
                 "" if evidence_ok
                 else (
-                    f"expected status='needs_escalation' and no superseded_by field on "
-                    f"attempt_id={R55_BUG_ATTEMPT_ID}; got {res!r}"
+                    f"expected status='needs_escalation' (unchanged) and superseded_by_uuid=None "
+                    f"(present, unsuperseded) on attempt_id={R55_BUG_ATTEMPT_ID}; got {res!r}"
                 ),
             )
         )
