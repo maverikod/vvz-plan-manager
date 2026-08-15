@@ -1,7 +1,6 @@
 """Command PlanValidateCommand: run the mechanical gate (C-012) as a pure read."""
 from __future__ import annotations
 
-import uuid
 from typing import Any, Dict
 
 from plan_manager.commands.base_command import Command
@@ -12,64 +11,22 @@ from plan_manager.cascade.record import get_open_cascade
 from plan_manager.commands.errors import domain_error, map_exception
 from plan_manager.commands.plan_validate_metadata import get_plan_validate_metadata
 from plan_manager.commands.resolve import resolve_plan
-from plan_manager.runtime.ca_files_probe import ExternalFilesProbe, list_project_files_probe
-from plan_manager.runtime.context import app_config, db_connection
+from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.external_verification import (
+    # EIG block G: the probe resolution moved to the runtime layer so every
+    # run_gate caller (cascade, scoring, the freeze gate) can reach it; this
+    # command's own public name is unchanged by the move.
+    resolve_external_files as resolve_external_files,
+)
 from plan_manager.storage.version_store import get_ref
 from plan_manager.verify.finding import render_text, render_json
 from plan_manager.verify.gate import run_gate
+from plan_manager.verify.gate_contours import (
+    contours_payload,
+    partition_contours,
+    semantic_contour,
+)
 from plan_manager.views.branch import resolve_branch_scope
-
-
-def resolve_external_files(plan: Any) -> tuple[ExternalFilesProbe | None, bool, dict[str, Any]]:
-    """Fetch the live CA file inventory of ``plan``'s PRIMARY project (EIG block F).
-
-    plan_validate is the only ``run_gate`` caller wired to the probe in this
-    block; step_transition, cascade close, plan_prompt_chain, plan_status and
-    the scoring index deliberately stay probe-less (block-G residual), so
-    their gate runs keep exactly their pre-block-F behaviour.
-
-    Returns ``(probe, require_project_verification, payload)`` where
-    ``payload`` is the additive ``external_verification`` response key:
-
-    - ``{"status": "skipped", "reason": "no_primary_project"}`` when the plan
-      has no primary project binding (``plan.primary_project_id``), or that
-      binding is not a UUID. No probe is fetched and ``probe`` is None, so
-      every block-F check stays silent -- a plan bound to nothing is never
-      redded for it.
-    - ``{"status": "unavailable", "reason": "ca_unreachable"}`` when the
-      probe was attempted but the listing could not be read.
-    - ``{"status": "ok", "reason": None}`` when the full inventory was read.
-
-    Never raises: ``list_project_files_probe`` already folds every transport
-    failure into an unavailable probe, and a runtime whose configuration is
-    not initialized (``app_config`` raising) is treated the same way -- the
-    gate must degrade, never fail a read-only validate call. ``getattr`` is
-    used for ``primary_project_id`` so a caller-supplied plan projection that
-    predates project bindings is a "skipped", not an AttributeError.
-    """
-    primary = getattr(plan, "primary_project_id", None)
-    if not primary:
-        return None, False, {"status": "skipped", "reason": "no_primary_project"}
-    try:
-        project_id = uuid.UUID(str(primary))
-        config = app_config()
-        probe = list_project_files_probe(
-            ca_url=config.code_analysis_url,
-            project_id=project_id,
-            timeout=config.code_analysis_timeout,
-            cert=config.code_analysis_cert,
-            key=config.code_analysis_key,
-            ca=config.code_analysis_ca,
-        )
-        require = config.require_project_verification
-    except ValueError:
-        return None, False, {"status": "skipped", "reason": "no_primary_project"}
-    except Exception:
-        probe = ExternalFilesProbe(available=False, reason="ca_unreachable")
-        require = False
-    if probe.available:
-        return probe, require, {"status": "ok", "reason": None}
-    return probe, require, {"status": "unavailable", "reason": probe.reason}
 
 
 class PlanValidateCommand(Command):
@@ -217,9 +174,12 @@ class PlanValidateCommand(Command):
         :type kwargs: Any
         :returns: A SuccessResult with data {green, scope, revision_uuid,
             tip_revision_uuid, cascade_uuid, format, report,
-            external_verification} on success (external_verification reports
+            external_verification, contours} on success
+            (external_verification reports
             whether the CA-backed existence checks could run for this plan --
-            see resolve_external_files)
+            see resolve_external_files; contours is the EIG block G
+            three-contour view of the SAME report -- structural, execution,
+            and a semantic contour that is always "not_evaluated" here)
             (tip_revision_uuid/cascade_uuid are populated when the plan has
             an open cascade, null otherwise -- revision_uuid always names
             the last COMMITTED head, a label, not the scanned data: the
@@ -287,6 +247,17 @@ class PlanValidateCommand(Command):
                     "format": output_format,
                     "report": rendered,
                     "external_verification": external_payload,
+                    # EIG block G: the three-contour view of this same report.
+                    # plan_validate never runs the scoring layer, so its
+                    # semantic contour is always "not_evaluated".
+                    "contours": contours_payload(
+                        partition_contours(report),
+                        semantic_contour(
+                            "not_evaluated",
+                            "plan_validate runs the mechanical gate only; "
+                            "semantic completeness is measured by plan_score.",
+                        ),
+                    ),
                 }
                 return SuccessResult(data=data)
         except Exception as exc:

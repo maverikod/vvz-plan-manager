@@ -232,6 +232,9 @@ class _GreenReport:
 
 class _RedReport:
     class _Check:
+        # check_id added for EIG block G: the freeze gate now partitions the
+        # report into structural/execution contours, which reads check_id.
+        check_id = "parse.required_fields"
         findings = [object()]
 
     green = False
@@ -262,7 +265,7 @@ def test_scoped_freeze_gate_succeeds_and_names_tip_when_cascade_open_and_tip_is_
     nodes, atomic = _tree_with_one_branch()
     conn = _FakeConn(cascade_row=_cascade_row(), ref_revision=TIP_REVISION)
 
-    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False: (_GreenReport(), _Verdict()))
+    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False, **_kw: (_GreenReport(), _Verdict()))
 
     result = mod._run_transition_gate(conn, PLAN_UUID, nodes, [atomic], "G-001", HEAD_REVISION)
 
@@ -280,7 +283,7 @@ def test_scoped_freeze_gate_unchanged_without_a_cascade() -> None:
         paragraph_rows=[(uuid.uuid4(), PLAN_UUID, "aaaa", "text", 0)],
     )
 
-    def fake_run_gate(conn, plan_uuid, branch=None, fail_fast=False):
+    def fake_run_gate(conn, plan_uuid, branch=None, fail_fast=False, **_kw):
         assert branch.hrs_slice, "hrs_slice must be resolved, not hardcoded empty"
         return _GreenReport(), _Verdict()
 
@@ -302,7 +305,7 @@ def test_scoped_freeze_gate_still_refuses_when_actually_red_at_tip(monkeypatch) 
     nodes, atomic = _tree_with_one_branch()
     conn = _FakeConn(cascade_row=_cascade_row(), ref_revision=TIP_REVISION)
 
-    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False: (_RedReport(), _Verdict()))
+    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False, **_kw: (_RedReport(), _Verdict()))
 
     result = mod._run_transition_gate(conn, PLAN_UUID, nodes, [atomic], "G-001", HEAD_REVISION)
 
@@ -318,7 +321,7 @@ def test_whole_plan_freeze_gate_names_tip_when_cascade_open(monkeypatch) -> None
     nodes, atomic = _tree_with_one_branch()
     conn = _FakeConn(cascade_row=_cascade_row(), ref_revision=TIP_REVISION)
 
-    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False: (_GreenReport(), _Verdict()))
+    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, branch=None, fail_fast=False, **_kw: (_GreenReport(), _Verdict()))
 
     result = mod._run_transition_gate(conn, PLAN_UUID, nodes, list(nodes.values()), "whole_plan", HEAD_REVISION)
 

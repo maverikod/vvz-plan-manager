@@ -34,6 +34,11 @@ from plan_manager.commands.plan_validate_command import (
     PlanValidateCommand,
     resolve_external_files,
 )
+# EIG block G moved resolve_external_files' implementation to the runtime
+# layer so cascade/scoring/step_transition can wire the same probe;
+# plan_validate_command still re-exports the name (imported above, asserted
+# below), but the probe/config seams now live in this module.
+from plan_manager.runtime import external_verification as external_verification_module
 from plan_manager.domain.paragraph import Paragraph
 from plan_manager.domain.step import Step
 from plan_manager.runtime.ca_files_probe import ExternalFilesProbe
@@ -75,8 +80,12 @@ def _patch_probe(monkeypatch, probe: ExternalFilesProbe, *, require: bool = Fals
         calls.append(kwargs)
         return probe
 
-    monkeypatch.setattr(plan_validate_command, "list_project_files_probe", _fake_probe)
-    monkeypatch.setattr(plan_validate_command, "app_config", lambda: _FakeConfig(require))
+    monkeypatch.setattr(
+        external_verification_module, "list_project_files_probe", _fake_probe
+    )
+    monkeypatch.setattr(
+        external_verification_module, "app_config", lambda: _FakeConfig(require)
+    )
     return calls
 
 
@@ -89,7 +98,7 @@ def test_no_primary_project_binding_skips_the_probe(monkeypatch):
     def _boom(**kwargs: Any):
         raise AssertionError("no probe may be fetched without a primary project binding")
 
-    monkeypatch.setattr(plan_validate_command, "list_project_files_probe", _boom)
+    monkeypatch.setattr(external_verification_module, "list_project_files_probe", _boom)
 
     probe, require, payload = resolve_external_files(_FakePlan(uuid.uuid4()))
 
@@ -130,8 +139,8 @@ def test_non_uuid_primary_project_binding_is_skipped(monkeypatch):
     def _boom(**kwargs: Any):
         raise AssertionError("no probe may be fetched for an unparseable project binding")
 
-    monkeypatch.setattr(plan_validate_command, "list_project_files_probe", _boom)
-    monkeypatch.setattr(plan_validate_command, "app_config", lambda: _FakeConfig())
+    monkeypatch.setattr(external_verification_module, "list_project_files_probe", _boom)
+    monkeypatch.setattr(external_verification_module, "app_config", lambda: _FakeConfig())
 
     probe, _require, payload = resolve_external_files(
         _FakePlan(uuid.uuid4(), primary="not-a-uuid")
@@ -145,7 +154,7 @@ def test_uninitialized_runtime_degrades_instead_of_raising(monkeypatch):
     def _uninitialized():
         raise RuntimeError("runtime not initialized")
 
-    monkeypatch.setattr(plan_validate_command, "app_config", _uninitialized)
+    monkeypatch.setattr(external_verification_module, "app_config", _uninitialized)
 
     probe, require, payload = resolve_external_files(
         _FakePlan(uuid.uuid4(), primary=str(PROJECT_ID))
@@ -219,6 +228,8 @@ def test_execute_response_keeps_every_pre_block_f_key(monkeypatch):
         "format",
         "report",
         "external_verification",
+        # EIG block G addition: additive, like external_verification before it.
+        "contours",
     }
     assert data["green"] is True
     assert data["revision_uuid"] == "00000000-0000-0000-0000-0000000000aa"

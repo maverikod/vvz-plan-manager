@@ -13509,6 +13509,266 @@ async def run_r62_ca_existence_checks_eig_block_f(client: Any, project_id: str) 
     return results
 
 
+async def run_r63_three_contour_gate_model_eig_block_g(client: Any) -> list[CheckResult]:
+    """EIG block G (todo e902db52): the mechanical gate's single report is
+    partitioned into three contours -- STRUCTURAL (the original parse/
+    identity/uniqueness/references/coverage/embedded_code/context_coverage
+    groups), EXECUTION (the EIG block E1/E2/F execution_integrity.* checks),
+    and SEMANTIC (the scoring layer's own verdict, which runs no gate check
+    at all) -- surfaced additively as a "contours" key by plan_validate,
+    plan_status's gate block, and plan_prompt_chain's GATE_RED refusal data
+    (plan_manager/verify/gate_contours.py, wired into plan_validate_command.
+    py / plan_status_command.py / plan_prompt_chain_command.py). plan_
+    prompt_chain also grows a "diagnostic_override" boolean parameter: when
+    the STRUCTURAL contour is red the refusal is unconditional GATE_RED
+    (never overridable); only when just the EXECUTION contour is red does
+    diagnostic_override=true admit the chain anyway, with an execution_
+    findings summary. On live 0.1.120 (pre-deploy) none of this exists --
+    plan_validate/plan_status carry no "contours" key at all, and plan_
+    prompt_chain's schema has no "diagnostic_override" property -- so this
+    is DESIGNATED RED.
+
+    Fixture: a minimal throwaway plan, single G-001 -> T-001 -> A-001
+    branch, built with context_common exactly like R56/R60/R61/R62 -- but
+    with NO field patches applied to A-001 at all. That bare authoring
+    skeleton is expected to be STRUCTURALLY red on its own (missing
+    target_file/objects/verification -- ordinary coverage/context_coverage
+    noise, not anything this check provokes deliberately), and this test
+    exploits that rather than works around it: a structurally-red fixture
+    is exactly what proves the STRUCTURAL contour differs from the
+    EXECUTION contour, and exactly what plan_prompt_chain must refuse
+    unconditionally regardless of diagnostic_override.
+
+    Sub-assertions, all gated on (1) (the "unreachable: step 1 red" idiom,
+    see R56/R60/R61/R62) since a RED designated assertion here means every
+    later one is meaningless against this server:
+
+      1. DESIGNATED RED: plan_validate(plan)'s response carries a
+         "contours" key with "structural" and "execution" sub-objects, each
+         carrying a "green" bool and a "findings_count" int. Absent
+         entirely on 0.1.120.
+      2. Partition invariant on the SAME plan_validate response (no second
+         call): (contours.structural.green AND contours.execution.green)
+         == the response's own top-level "green" flag -- gate_contours.py's
+         own documented invariant, checked here against the live server
+         rather than merely assumed.
+      3. plan_status(plan)'s response carries a "contours" key inside its
+         "gate" block too, plus a semantic entry -- gate.contours.semantic
+         per plan_status_command.py, or (loosely, since the exact shape is
+         this test's own discovery, not a pinned contract) anywhere else in
+         the payload such as the existing "scoring" block. Presence is
+         asserted; the exact shape observed is reported verbatim in the
+         detail either way.
+      4. help(cmdname="plan_prompt_chain").schema.properties carries a
+         "diagnostic_override" key of type "boolean".
+      5. plan_prompt_chain(plan, scope="whole_plan", role="coder",
+         include_statuses=["frozen"], limit=1) -- mirroring exactly how R42
+         calls plan_prompt_chain -- against this structurally-red fixture is
+         refused: ok is False, the diagnostic names domain_code GATE_RED,
+         AND the same diagnostic carries a "contours" key in the refusal's
+         error data -- the new post-block-G key in the refusal payload.
+
+    Cleanup: plan_delete(hard), verified with its own CheckResult
+    regardless of where the run stopped.
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r63-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R63_e902db52_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+        results.append(CheckResult("4", "R63_e902db52_plan_create", STATUS_PASS, f"uuid={plan_uuid}"))
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g-001"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t-001", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a-001", "parent_step_id": t_id})
+        a_id = _extract_step_id(res) if ok else None
+        if not ok or a_id is None:
+            results.append(CheckResult("4", "R63_e902db52_repro_hierarchy_created", STATUS_FAIL, str(res)))
+            return results
+
+        g_path = g_id
+        t_path = f"{g_id}/{t_id}"
+        a_path = f"{t_path}/{a_id}"
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_repro_hierarchy_created", STATUS_PASS,
+                f"G={g_path} T={t_path} A={a_path} (no field patches -- deliberately "
+                "structurally red from authoring-skeleton noise)",
+            )
+        )
+
+        gated_names = (
+            "R63_e902db52_partition_invariant",
+            "R63_e902db52_plan_status_gate_contours",
+            "R63_e902db52_prompt_chain_schema_diagnostic_override",
+            "R63_e902db52_prompt_chain_gate_red_contours",
+        )
+
+        # --- 1: DESIGNATED RED -- plan_validate's response must carry a
+        # "contours" key with "structural"/"execution" sub-objects, each
+        # carrying green + findings_count. ---
+        ok, res = await call(client, "plan_validate", {"plan": plan_uuid})
+        contours = res.get("contours") if ok and isinstance(res, dict) else None
+        structural = contours.get("structural") if isinstance(contours, dict) else None
+        execution = contours.get("execution") if isinstance(contours, dict) else None
+        step1_ok = (
+            ok
+            and isinstance(res, dict)
+            and isinstance(structural, dict)
+            and isinstance(execution, dict)
+            and isinstance(structural.get("green"), bool)
+            and isinstance(structural.get("findings_count"), int)
+            and isinstance(execution.get("green"), bool)
+            and isinstance(execution.get("findings_count"), int)
+        )
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_plan_validate_contours_present",
+                STATUS_PASS if step1_ok else STATUS_FAIL,
+                "" if step1_ok
+                else (
+                    "expected plan_validate's response to carry contours.structural/"
+                    "execution, each with green+findings_count; got "
+                    f"ok={ok} contours={contours!r}"
+                ),
+            )
+        )
+        if not step1_ok:
+            for gated_name in gated_names:
+                results.append(CheckResult("4", gated_name, STATUS_FAIL, "unreachable: step 1 red"))
+            return results
+
+        # --- 2: partition invariant on the SAME response (no second call):
+        # structural.green AND execution.green == top-level green. ---
+        top_green = res.get("green")
+        step2_ok = (
+            isinstance(top_green, bool)
+            and (bool(structural["green"]) and bool(execution["green"])) == top_green
+        )
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_partition_invariant",
+                STATUS_PASS if step2_ok else STATUS_FAIL,
+                "" if step2_ok
+                else (
+                    "expected (structural.green and execution.green) == green; "
+                    f"structural.green={structural.get('green')!r} "
+                    f"execution.green={execution.get('green')!r} top-level green={top_green!r}"
+                ),
+            )
+        )
+
+        # --- 3: plan_status's gate block must carry contours too, plus a
+        # semantic entry somewhere in the payload (exact shape not pinned
+        # here -- reported verbatim either way). ---
+        ok, res = await call(client, "plan_status", {"plan": plan_uuid})
+        gate_block = res.get("gate") if ok and isinstance(res, dict) else None
+        status_contours = gate_block.get("contours") if isinstance(gate_block, dict) else None
+        semantic_in_contours = isinstance(status_contours, dict) and "semantic" in status_contours
+        scoring_block = res.get("scoring") if ok and isinstance(res, dict) else None
+        semantic_present = semantic_in_contours or bool(scoring_block)
+        step3_ok = ok and isinstance(status_contours, dict) and semantic_present
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_plan_status_gate_contours",
+                STATUS_PASS if step3_ok else STATUS_FAIL,
+                (
+                    f"observed: gate.contours={status_contours!r} scoring={scoring_block!r} "
+                    f"(semantic found inside contours={semantic_in_contours})"
+                ) if ok else f"plan_status call failed: ok={ok} res={res!r}",
+            )
+        )
+
+        # --- 4: help(cmdname="plan_prompt_chain").schema.properties carries
+        # a "diagnostic_override" property of type "boolean". ---
+        ok, res = await call(client, "help", {"cmdname": "plan_prompt_chain"})
+        schema = res.get("schema") if ok and isinstance(res, dict) else None
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        diagnostic_override_prop = (
+            properties.get("diagnostic_override") if isinstance(properties, dict) else None
+        )
+        step4_ok = (
+            ok
+            and isinstance(diagnostic_override_prop, dict)
+            and diagnostic_override_prop.get("type") == "boolean"
+        )
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_prompt_chain_schema_diagnostic_override",
+                STATUS_PASS if step4_ok else STATUS_FAIL,
+                "" if step4_ok
+                else (
+                    "expected help(cmdname='plan_prompt_chain').schema.properties."
+                    "diagnostic_override to be present with type=='boolean'; "
+                    f"got ok={ok} "
+                    f"properties_keys={sorted(properties) if isinstance(properties, dict) else properties!r} "
+                    f"diagnostic_override_prop={diagnostic_override_prop!r}"
+                ),
+            )
+        )
+
+        # --- 5: plan_prompt_chain against this structurally-red fixture,
+        # called exactly as R42 calls it, must be refused with domain_code
+        # GATE_RED AND the refusal's error data must carry a "contours" key. ---
+        ok, res = await call(
+            client, "plan_prompt_chain",
+            {
+                "plan": plan_uuid, "scope": "whole_plan", "role": "coder",
+                "include_statuses": ["frozen"], "limit": 1,
+            },
+        )
+        diagnostic = str(res)
+        step5_ok = (not ok) and "GATE_RED" in diagnostic and "contours" in diagnostic
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_prompt_chain_gate_red_contours",
+                STATUS_PASS if step5_ok else STATUS_FAIL,
+                "" if step5_ok
+                else (
+                    "expected plan_prompt_chain to be refused with domain_code GATE_RED and "
+                    f"'contours' present in the refusal data; got ok={ok} res={res!r}"
+                ),
+            )
+        )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R63_e902db52_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

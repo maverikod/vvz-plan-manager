@@ -22,9 +22,17 @@ from plan_manager.domain.status_model import validate_transition
 from plan_manager.domain.step import Step
 from plan_manager.cascade.write import step_snapshot
 from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.external_verification import resolve_external_files_for_plan
 from plan_manager.storage.runtime_audit_store import record_runtime_change
 from plan_manager.storage.version_store import get_ref, record_revision
 from plan_manager.verify.gate import run_gate
+from plan_manager.verify.gate_contours import (
+    contours_payload,
+    empty_partition,
+    merge_partitions,
+    partition_contours,
+    structural_partition,
+)
 from plan_manager.views.branch import BranchScope
 from plan_manager.views.dependency_graph import load_steps
 
@@ -424,12 +432,15 @@ def _plan_transitions(
 
 
 def _unchecked_gate(scope_label: str, head_revision_uuid: uuid.UUID | None) -> dict[str, Any]:
+    # No gate ran, so there is no report to partition: "contours" is null
+    # rather than an invented all-green partition (EIG block G).
     return {
         "green": None,
         "scope": scope_label,
         "revision_uuid": str(head_revision_uuid) if head_revision_uuid else None,
         "required": False,
         "checked": False,
+        "contours": None,
     }
 
 
@@ -509,9 +520,20 @@ def _run_transition_gate(
     # the same state plan_validate_command evaluates -- not the plan HEAD,
     # which is the cascade's BASE and never moves while a cascade is open.
     live_revision_uuid = _live_working_revision(conn, plan_uuid, head_revision_uuid)
+    # EIG block G: the freeze gate is wired to the live CA file probe like
+    # every other run_gate caller. Resolved ONCE and reused for every scoped
+    # pass below, so a scope with many atomic steps still makes one CA read.
+    external_files, require_verification, _payload = resolve_external_files_for_plan(
+        conn, plan_uuid
+    )
 
     if scope_label == "whole_plan":
-        report, verdict = run_gate(conn, plan_uuid)
+        report, verdict = run_gate(
+            conn,
+            plan_uuid,
+            external_files=external_files,
+            require_project_verification=require_verification,
+        )
         return {
             "green": report.green,
             "scope": scope_label,
@@ -519,6 +541,7 @@ def _run_transition_gate(
             "required": True,
             "checked": True,
             "finding_count": _finding_count(report),
+            "contours": contours_payload(partition_contours(report)),
         }
 
     atomics = [step for step in selected if step.level == 5]
@@ -531,10 +554,14 @@ def _run_transition_gate(
             "checked": True,
             "finding_count": 1,
             "reason": "scope contains no atomic steps",
+            # An empty scope is refused before any check runs, so neither
+            # gate contour has an observation behind it.
+            "contours": None,
         }
 
     green = True
     finding_count = 0
+    partition = empty_partition()
     hrs_slices: dict[uuid.UUID, list[Any]] = {}
     for atomic in atomics:
         ts = nodes.get(atomic.parent_step_uuid)
@@ -542,6 +569,9 @@ def _run_transition_gate(
         if ts is None or gs is None:
             green = False
             finding_count += 1
+            # A broken ancestry is a STRUCTURAL defect counted here rather
+            # than by any check: the gate cannot even be scoped to it.
+            partition = merge_partitions(partition, structural_partition(1))
             continue
         if gs.uuid not in hrs_slices:
             hrs_slices[gs.uuid] = _hrs_slice_for(conn, plan_uuid, gs)
@@ -561,9 +591,12 @@ def _run_transition_gate(
                 atomic=atomic,
                 hrs_slice=hrs_slices[gs.uuid],
             ),
+            external_files=external_files,
+            require_project_verification=require_verification,
         )
         green = green and report.green
         finding_count += _finding_count(report)
+        partition = merge_partitions(partition, partition_contours(report))
     return {
         "green": green,
         "scope": scope_label,
@@ -572,6 +605,9 @@ def _run_transition_gate(
         "checked": True,
         "finding_count": finding_count,
         "branch_count": len(atomics),
+        # Summed across every scoped pass, so the contours describe the whole
+        # transitioned scope rather than its last atomic branch.
+        "contours": contours_payload(partition),
     }
 
 

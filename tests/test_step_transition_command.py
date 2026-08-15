@@ -174,7 +174,7 @@ def test_run_transition_gate_passes_branch_scope_with_depth(monkeypatch) -> None
     class _Verdict:
         revision_uuid = None
 
-    def fake_run_gate(conn, plan_uuid, branch=None, fail_fast=False):
+    def fake_run_gate(conn, plan_uuid, branch=None, fail_fast=False, **_kw):
         assert isinstance(branch, BranchScope)
         # Touch the attributes gate.py actually reads (gate.py scope labeling
         # and gate_data.scope_steps) so a regression to the old Branch view

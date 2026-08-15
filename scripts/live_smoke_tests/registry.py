@@ -293,6 +293,14 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "(EIG block F, todo 763ae29e)",
         needs_project=True,
     ),
+    LiveSmokeTestSpec(
+        "r63",
+        "run_r63_three_contour_gate_model_eig_block_g",
+        "plan_validate/plan_status expose the structural/execution/semantic "
+        "contours partition; plan_prompt_chain documents diagnostic_override "
+        "and carries contours in its GATE_RED refusal data (EIG block G, "
+        "todo e902db52)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

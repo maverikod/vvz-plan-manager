@@ -7,6 +7,7 @@ import psycopg
 from plan_manager.cascade.record import CascadeError, close_cascade, get_open_cascade
 from plan_manager.cascade.restore import restore_state
 from plan_manager.domain.plan import set_head_revision
+from plan_manager.runtime.external_verification import resolve_external_files_for_plan
 from plan_manager.storage.plan_lock import acquire_plan_lock, release_plan_lock
 from plan_manager.storage.version_store import delete_ref, get_ref
 from plan_manager.verify.gate import Verdict, run_gate
@@ -21,7 +22,9 @@ def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
 
     Acquires the per-plan advisory lock, resolves the plan's open cascade
     record (raising ``CascadeError("plan has no open cascade")`` when none
-    exists), and runs a fresh mechanical gate over the plan. When the gate
+    exists), and runs a fresh mechanical gate over the plan -- wired, since
+    EIG block G, to the live CA external-file probe when the plan has a
+    primary project binding and the analysis server answers. When the gate
     report is not green, raises ``CommitRefusedError`` carrying the total
     finding count summed across all checks in the report, leaving the
     cascade open and the plan unchanged. When the gate report is green,
@@ -42,7 +45,18 @@ def commit_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> Verdict:
         rec = get_open_cascade(conn, plan_uuid)
         if rec is None:
             raise CascadeError("plan has no open cascade")
-        report, verdict = run_gate(conn, plan_uuid)
+        # EIG block G: the commit gate is wired to the live CA file probe
+        # like every other run_gate caller. Degrades silently to the
+        # pre-block-G verdict when no probe can be resolved.
+        external_files, require_verification, _payload = (
+            resolve_external_files_for_plan(conn, plan_uuid)
+        )
+        report, verdict = run_gate(
+            conn,
+            plan_uuid,
+            external_files=external_files,
+            require_project_verification=require_verification,
+        )
         if not report.green:
             finding_count = sum(len(c.findings) for c in report.checks)
             raise CommitRefusedError(

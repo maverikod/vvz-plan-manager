@@ -16,6 +16,7 @@ from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.scoring.index import (
     ScoringConfig,
     branch_summary,
+    contours_block,
     embedding_block,
     score_branch,
     score_plan,
@@ -220,6 +221,10 @@ class PlanScoreCommand(Command):
                             score.embedding_state, score.embedding_detail
                         ),
                         "revision_uuid": str(score.revision_uuid),
+                        # EIG block G: the three-contour view of the gate run
+                        # that admitted this score, plus the semantic contour
+                        # this command itself just produced.
+                        "contours": contours_block(score.contours),
                     }
                     return SuccessResult(data=data)
                 try:
@@ -242,6 +247,7 @@ class PlanScoreCommand(Command):
                         bs.embedding_state, bs.embedding_detail
                     ),
                     "revision_uuid": str(bs.revision_uuid),
+                    "contours": contours_block(bs.contours),
                 }
                 return SuccessResult(data=data)
         except Exception as exc:

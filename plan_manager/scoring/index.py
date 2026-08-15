@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from plan_manager.scoring.blocks import (  # re-exported, see scoring.blocks
+    _readiness_detail,
+    branch_summary as branch_summary,
+    contours_block as contours_block,
+    embedding_block as embedding_block,
+)
 from plan_manager.scoring.embedding import (
     EmbeddingUnavailable,
     READINESS_READY,
@@ -29,7 +35,9 @@ from plan_manager.scoring.types import (
     ScoreRefusedError,
     ScoringConfig,
 )
+from plan_manager.runtime.external_verification import resolve_external_files_for_plan
 from plan_manager.verify.gate import run_gate
+from plan_manager.verify.gate_contours import partition_contours
 from plan_manager.verify.verdict import current_head_revision
 from plan_manager.views.branch import resolve_branch, resolve_branch_scope
 from plan_manager.views.dependency_graph import load_steps
@@ -40,25 +48,6 @@ def _branch_required_texts(branch, concept_rows) -> list[str]:
     return [branch_text(branch)] + [
         definition for _concept_id, definition, _source_labels in concept_rows
     ]
-
-
-def _readiness_detail(health: dict) -> str:
-    """Explain, for a not-ready health verdict, why scoring cannot embed.
-
-    ``health`` is the detail dict returned by ``embedding_health`` (the same
-    probe the platform ``health`` command uses), so the scoring diagnostic and
-    the health surface always agree on why the model is unusable.
-    """
-    state = health.get("state")
-    if state == READINESS_UNCONFIGURED:
-        return "embedding service is not configured"
-    if state == READINESS_UNREACHABLE:
-        return "embedding health endpoint did not answer within the configured timeout"
-    status = health.get("model_status")
-    return (
-        "embedding transport reachable but model is not ready "
-        f"(model_status={status!r})"
-    )
 
 
 def _resolve_vectors(
@@ -219,12 +208,25 @@ def score_branch(
     if progress is not None:
         progress(pct=0, message=f"Scoring branch {branch_path}")
 
-    report, _verdict = run_gate(conn, plan_uuid, branch=branch)
+    # EIG block G: scoring's own gate run is wired to the live CA file probe
+    # like every other run_gate caller; it degrades silently to the
+    # pre-block-G verdict when no probe can be resolved.
+    external_files, require_verification, _payload = resolve_external_files_for_plan(
+        conn, plan_uuid
+    )
+    report, _verdict = run_gate(
+        conn,
+        plan_uuid,
+        branch=branch,
+        external_files=external_files,
+        require_project_verification=require_verification,
+    )
     if not report.green:
         raise ScoreRefusedError(
             f"{branch_path} refused: mechanical gate not green "
             f"({sum(len(c.findings) for c in report.checks)} findings)"
         )
+    contours = partition_contours(report)
     if progress is not None:
         progress(pct=10, message="Mechanical gate green")
 
@@ -251,6 +253,7 @@ def score_branch(
         revision_uuid,
         model_output,
     )
+    score.contours = contours
     if progress is not None:
         progress(pct=100, message="Done")
     return score
@@ -275,12 +278,23 @@ def score_plan(
     if progress is not None:
         progress(pct=0, message="Semantic scoring started")
 
-    report, _verdict = run_gate(conn, plan_uuid, branch=None)
+    # EIG block G: see score_branch's note on probe wiring and degradation.
+    external_files, require_verification, _payload = resolve_external_files_for_plan(
+        conn, plan_uuid
+    )
+    report, _verdict = run_gate(
+        conn,
+        plan_uuid,
+        branch=None,
+        external_files=external_files,
+        require_project_verification=require_verification,
+    )
     if not report.green:
         raise ScoreRefusedError(
             f"plan {plan_uuid} refused: mechanical gate not green "
             f"({sum(len(c.findings) for c in report.checks)} findings)"
         )
+    contours = partition_contours(report)
     if progress is not None:
         progress(pct=5, message="Mechanical gate green")
 
@@ -367,33 +381,5 @@ def score_plan(
         revision_uuid=revision_uuid,
         embedding_state=embedding_state,
         embedding_detail=embedding_detail,
+        contours=contours,
     )
-
-
-def embedding_block(embedding_state: str, embedding_detail: str | None) -> dict:
-    """Build the scoring commands' ``embedding`` status block."""
-    block: dict = {
-        "available": embedding_state == READINESS_READY,
-        "state": embedding_state,
-    }
-    if embedding_detail is not None:
-        block["detail"] = embedding_detail
-    return block
-
-
-def branch_summary(score: BranchScore, verbose: bool = False) -> dict:
-    """Build the output-discipline summary dict for one BranchScore."""
-    summary: dict = {
-        "branch_path": score.branch_path,
-        "index": score.index,
-        "color": score.color,
-    }
-    if score.below_threshold or verbose:
-        summary["estimator_vector"] = score.estimator_vector
-        summary["trust"] = score.trust
-        if score.coverage is not None:
-            summary["coverage"] = {
-                "value": score.estimator_vector.get("coverage"),
-                **score.coverage,
-            }
-    return summary

@@ -6,6 +6,7 @@ from typing import Any
 import psycopg
 
 from plan_manager.cascade.record import CascadeError, get_open_cascade
+from plan_manager.runtime.external_verification import resolve_external_files_for_plan
 from plan_manager.storage.version_store import get_ref
 from plan_manager.storage.version_ops import diff
 from plan_manager.storage.identity import resolve_entity_identities_batch
@@ -13,6 +14,11 @@ from plan_manager.views.dependency_graph import load_steps
 from plan_manager.domain.step import Step
 from plan_manager.verify.gate_data import artifact_path_of
 from plan_manager.verify.gate import run_gate
+from plan_manager.verify.gate_contours import (
+    contours_payload,
+    partition_contours,
+    semantic_contour,
+)
 from plan_manager.verify.finding import render_json
 
 # Deterministic category order for the unified detail-entries collection
@@ -206,6 +212,13 @@ def preview_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict:
             detail entries built by build_preview_entries(); the
             cascade_preview command paginates and filters THIS key by
             default rather than embedding the RAW keys above.
+        "contours": dict -- the EIG block G three-contour view of the same
+            gate report (structural / execution / semantic); the semantic
+            contour is always "not_evaluated" here because a preview never
+            runs the scoring layer.
+        "external_verification": dict -- whether the CA-backed existence
+            checks could run for this plan (see
+            runtime.external_verification.resolve_external_files).
 
     Raises:
         CascadeError: if the plan has no open cascade.
@@ -217,7 +230,18 @@ def preview_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict:
     change_set = diff(conn, plan_uuid, rec.base_revision_uuid, tip)
     nodes = load_steps(conn, plan_uuid)
     blast = [artifact_path_of(nodes, s) for s in needs_review_steps(nodes)]
-    report, verdict = run_gate(conn, plan_uuid)
+    # EIG block G: the preview's gate run is wired to the live CA file probe
+    # like every other run_gate caller. Degrades silently to the pre-block-G
+    # verdict when there is no project binding or the CA cannot be read.
+    external_files, require_verification, external_payload = (
+        resolve_external_files_for_plan(conn, plan_uuid)
+    )
+    report, verdict = run_gate(
+        conn,
+        plan_uuid,
+        external_files=external_files,
+        require_project_verification=require_verification,
+    )
     entries = build_preview_entries(conn, nodes, change_set, report)
     return {
         "cascade_uuid": str(rec.uuid),
@@ -228,4 +252,13 @@ def preview_cascade(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict:
         "gate_green": report.green,
         "gate_report_json": render_json(report),
         "entries": entries,
+        "contours": contours_payload(
+            partition_contours(report),
+            semantic_contour(
+                "not_evaluated",
+                "cascade_preview runs the mechanical gate only; semantic "
+                "completeness is measured by plan_score.",
+            ),
+        ),
+        "external_verification": external_payload,
     }

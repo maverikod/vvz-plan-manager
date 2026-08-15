@@ -97,6 +97,11 @@ class BranchScore:
             concepts, declared concepts, missing concepts, extra declared
             concepts, source labels used for traceability, scope source,
             and the coverage formula.
+        contours: EIG block G structural/execution partition of the gate
+            report this score was admitted by, or None when the score was
+            built outside score_branch. A score only ever exists past a
+            GREEN gate, so None is read as "both contours green" by the
+            command surfaces (verify.gate_contours.contours_payload).
     """
 
     branch_path: str
@@ -109,6 +114,7 @@ class BranchScore:
     embedding_state: str = READINESS_UNCONFIGURED
     embedding_detail: str | None = None
     coverage: dict | None = None
+    contours: dict | None = None
 
 
 @dataclasses.dataclass
@@ -128,6 +134,9 @@ class PlanScore:
         embedding_detail: a precise diagnostic explaining why the embedding
             estimator did not contribute when ``embedding_state`` is not
             "ready"; ``None`` when the embedding estimator contributed.
+        contours: EIG block G structural/execution partition of the
+            plan-level gate report this aggregation was admitted by; see
+            BranchScore.contours for the None case.
     """
 
     index: float
@@ -137,3 +146,4 @@ class PlanScore:
     revision_uuid: uuid.UUID | None
     embedding_state: str = READINESS_UNCONFIGURED
     embedding_detail: str | None = None
+    contours: dict | None = None

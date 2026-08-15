@@ -38,6 +38,9 @@ from plan_manager.commands.info_reference_delivery import (
     export_delivery_agent_reference,
     export_delivery_capabilities,
 )
+from plan_manager.commands.info_reference_execution import (
+    execution_integrity_capabilities,
+)
 from plan_manager.commands.info_reference_integrity import (
     structure_integrity_agent_reference,
     structure_integrity_capabilities,
@@ -216,6 +219,7 @@ class InfoCommand(Command):
                 "runtime_audit": runtime_audit_capabilities(),
                 "verification_observability": verification_observability_capabilities(),
                 "structure_integrity": structure_integrity_capabilities(),
+                "execution_integrity": execution_integrity_capabilities(),
             }
         if section == "agent_reference":
             data = agent_reference()

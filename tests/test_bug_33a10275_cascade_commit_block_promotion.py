@@ -62,7 +62,7 @@ def _wire(monkeypatch, rec: CascadeRecord, events: list, report=_Report):
     monkeypatch.setattr(close_mod, "acquire_plan_lock", lambda conn, p: None)
     monkeypatch.setattr(close_mod, "release_plan_lock", lambda conn, p: None)
     monkeypatch.setattr(close_mod, "get_open_cascade", lambda conn, p: rec)
-    monkeypatch.setattr(close_mod, "run_gate", lambda conn, p: (report(), _Verdict()))
+    monkeypatch.setattr(close_mod, "run_gate", lambda conn, p, **_kw: (report(), _Verdict()))
     monkeypatch.setattr(close_mod, "get_ref", lambda conn, p, name: TIP_REV)
     monkeypatch.setattr(
         close_mod, "set_head_revision",

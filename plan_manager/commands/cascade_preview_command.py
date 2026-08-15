@@ -146,8 +146,11 @@ class CascadePreviewCommand(Command):
 
         Returns:
             A SuccessResult wrapping {cascade_uuid, base_revision_uuid,
-            tip_revision_uuid, gate_green, summary} (view=summary, the
-            default), plus {entries, total, limit, offset,
+            tip_revision_uuid, gate_green, summary, contours,
+            external_verification} (view=summary, the
+            default; contours is the EIG block G structural/execution/
+            semantic view of the same gate report), plus
+            {entries, total, limit, offset,
             gate_report_json, gate_findings_total, gate_findings_limit,
             gate_findings_offset} when view=full -- gate_report_json
             itself bounded to its own gate_findings_limit/offset page
@@ -180,6 +183,11 @@ class CascadePreviewCommand(Command):
                     "tip_revision_uuid": data["tip_revision_uuid"],
                     "gate_green": data["gate_green"],
                     "summary": summarize(data["entries"]),
+                    # EIG block G: compact enough for the default summary
+                    # view. .get keeps a caller-substituted preview_cascade
+                    # (tests, library reuse) from breaking the response.
+                    "contours": data.get("contours"),
+                    "external_verification": data.get("external_verification"),
                 }
                 if view_value == "full":
                     matched = filter_entries(

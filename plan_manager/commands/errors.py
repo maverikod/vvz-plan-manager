@@ -66,6 +66,12 @@ DOMAIN_CODES: frozenset[str] = frozenset({
     "DUPLICATE_ID",
     "CYCLE_DETECTED",
     "GATE_RED",
+    # EIG block G: the STRUCTURAL gate contour is green but the
+    # execution-integrity contour is not. Distinct from GATE_RED so a caller
+    # can tell "this plan is malformed" from "this plan is well-formed but
+    # its execution program is unordered/unclosed/ungrounded", and so the
+    # latter can be admitted deliberately via diagnostic_override.
+    "EXECUTION_RED",
     "VERDICT_STALE",
     "EMBEDDINGS_UNAVAILABLE",
     "DEPENDENCY_STEP_NOT_FOUND",

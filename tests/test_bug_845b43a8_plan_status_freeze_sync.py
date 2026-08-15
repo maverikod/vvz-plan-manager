@@ -361,7 +361,7 @@ def _patch_plan_status(monkeypatch, nodes, plan) -> None:
         revision_uuid = None
         scope = "plan"
 
-    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid: (_Report(), _Verdict()))
+    monkeypatch.setattr(mod, "run_gate", lambda conn, plan_uuid, **_kw: (_Report(), _Verdict()))
 
 
 def test_plan_status_reports_consistent_when_stored_status_matches_tree(monkeypatch) -> None:

@@ -64,6 +64,19 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                 "default": ["frozen", "ready_for_review"],
                 "items": {"type": "string", "enum": ["frozen", "ready_for_review"]},
             },
+            "diagnostic_override": {
+                "description": (
+                    "Proceed even when the execution-integrity contour is red "
+                    "(EXECUTION_RED), as long as the structural contour is "
+                    "green. The payload then carries diagnostic_override=true "
+                    "and an execution_findings summary. A red structural "
+                    "contour is still refused with GATE_RED and is never "
+                    "overridable."
+                ),
+                "type": "boolean",
+                "required": False,
+                "default": False,
+            },
             **pagination_metadata_params(),
         },
         "return_value": {
@@ -81,6 +94,9 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                     "offset": "The offset actually applied.",
                     "assembly": "The requested page of the per-step manifest with wave, branch_path, priority, role, and use.",
                     "meta": "Counts, dag_source, include_statuses, and project bindings.",
+                    "contours": "EIG block G three-contour view of the gate report that admitted this assembly: structural, execution, and a semantic contour that is always 'not_evaluated' here.",
+                    "diagnostic_override": "Present and true ONLY when diagnostic_override admitted a red execution contour; absent otherwise.",
+                    "execution_findings": "Present only alongside diagnostic_override: {findings_count, top_findings} summarizing the execution-contour findings this payload was produced despite.",
                 },
                 "example": {
                     "plan": "plan_manager",
@@ -113,9 +129,9 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             },
             "error": {
                 "description": "Domain error returned when the plan, revision, scope, role, status filter, graph, or gate cannot be accepted.",
-                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | INVALID_SCOPE | INVALID_ROLE | INVALID_STATUS_FILTER | CYCLE_DETECTED | GATE_RED | INVALID_PAGINATION",
+                "code": "PLAN_NOT_FOUND | REVISION_NOT_FOUND | INVALID_SCOPE | INVALID_ROLE | INVALID_STATUS_FILTER | CYCLE_DETECTED | GATE_RED | EXECUTION_RED | INVALID_PAGINATION",
                 "message": "Human-readable explanation of the refused request.",
-                "details": "For GATE_RED, includes scope and findings_count.",
+                "details": "For GATE_RED and EXECUTION_RED, includes scope, findings_count, and contours; EXECUTION_RED additionally includes top_findings.",
             },
         },
         "usage_examples": [
@@ -175,6 +191,11 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
                 "message": "scope {scope} refused: mechanical gate not green ({findings_count} findings)",
                 "solution": "Fix the gate findings through the normal plan workflow, then call plan_prompt_chain again.",
             },
+            "EXECUTION_RED": {
+                "description": "The structural gate contour is green but the execution-integrity contour is not: the plan is a well-formed authoring artifact whose execution program is unordered, unclosed, or ungrounded.",
+                "message": "scope {scope} refused: execution-integrity contour not green ({findings_count} findings); the plan is structurally valid but its execution program is not",
+                "solution": "Close the execution findings (execution_dependency_suggest then execution_dependency_apply for ordering gaps), or pass diagnostic_override=true to receive the chain anyway with the findings reported in the payload.",
+            },
             "INVALID_PAGINATION": {
                 "description": "limit or offset is out of range or not an integer.",
                 "message": "limit must be between 1 and 200, got {limit}",
@@ -185,7 +206,8 @@ def get_plan_prompt_chain_metadata(cls) -> dict:
             "Use role=coder for execution: assembly.use intentionally contains only AS plus tool_instructions.",
             "Use review or conscience when the consumer must judge the AS against upper-layer context.",
             "Keep provider-specific wrappers outside this artifact; the output is model-neutral structured data.",
-            "Run plan_validate first for a predictable green-gate path.",
+            "Run plan_validate first for a predictable green-gate path; its contours key tells you in advance which contour would refuse.",
+            "Treat diagnostic_override as a diagnostic escape hatch, not a normal execution path: an artifact carrying diagnostic_override=true describes a plan whose execution order is not guaranteed.",
             "This command runs on the queue: the plan_prompt_chain call returns an enqueue acknowledgement with job_id, store='queuemgr', and poll_with='queue_get_job_status'. Poll completion with queue_get_job_status (which reports status plus created_at/started_at/completed_at); do NOT poll with the builtin job_status, which reads a separate in-memory JobManager store and will report the job as not found (returning its own poll_with='queue_get_job_status' hint).",
             "Pages carry block-key references only (used_block_keys), never the inlined block corpus; resolve references via para_get/concept_get/step_get, or read the full inline artifact through the export path.",
             "Compare offset+limit against total to detect additional pages of the assembly manifest.",

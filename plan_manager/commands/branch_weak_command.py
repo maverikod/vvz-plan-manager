@@ -12,6 +12,7 @@ from plan_manager.runtime.context import app_config, db_connection
 from plan_manager.scoring.index import (
     ScoringConfig,
     branch_summary,
+    contours_block,
     embedding_block,
     score_plan,
 )
@@ -114,7 +115,7 @@ class BranchWeakCommand(Command):
             branch_summary(branch, verbose=True). Defaults to False.
         :return: SuccessResult(data={"plan_index": float, "color": str,
             "aggregation": str, "weakest": list[dict],
-            "revision_uuid": str}) on success; ErrorResult from
+            "revision_uuid": str, "contours": dict}) on success; ErrorResult from
             map_exception(exc) for any exception, including a
             DomainCommandError with code PLAN_NOT_FOUND raised by
             resolve_plan when the plan does not resolve, a
@@ -155,6 +156,8 @@ class BranchWeakCommand(Command):
                             score.embedding_state, score.embedding_detail
                         ),
                         "revision_uuid": str(score.revision_uuid),
+                        # EIG block G three-contour view (see plan_score).
+                        "contours": contours_block(score.contours),
                     }
                 )
         except Exception as exc:

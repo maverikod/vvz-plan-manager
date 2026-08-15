@@ -10,7 +10,13 @@ from plan_manager.commands.plan_status_metadata import get_plan_status_metadata
 from plan_manager.commands.resolve import resolve_plan
 from plan_manager.domain.plan_status_sync import derive_plan_status
 from plan_manager.runtime.context import db_connection
+from plan_manager.runtime.external_verification import resolve_external_files_for_plan
 from plan_manager.verify.gate import run_gate
+from plan_manager.verify.gate_contours import (
+    contours_payload,
+    partition_contours,
+    semantic_contour,
+)
 from plan_manager.views.dependency_graph import load_steps
 
 
@@ -78,7 +84,11 @@ class PlanStatusCommand(Command):
         Returns:
             SuccessResult | ErrorResult: On success, data has "plan",
                 "counts_by_level", "status_distribution", "gate", and
-                "scoring". On failure, an ErrorResult produced by
+                "scoring". "gate" additionally carries the EIG block G
+                "contours" (structural/execution/semantic view of the same
+                gate report, the semantic contour restating "scoring") and
+                "external_verification" (whether the CA-backed existence
+                checks could run). On failure, an ErrorResult produced by
                 map_exception (e.g. PLAN_NOT_FOUND or
                 EMBEDDINGS_UNAVAILABLE).
         """
@@ -103,7 +113,19 @@ class PlanStatusCommand(Command):
                 # write-path bug would surface here as False before it ever
                 # reaches an operator through plan_list alone.
                 derived_status = derive_plan_status(step.status for step in nodes.values())
-                report, verdict = run_gate(conn, p.uuid)
+                # EIG block G: every run_gate caller wires the live CA file
+                # probe. Degrades silently -- no primary project binding, an
+                # unreadable plan row, or an unreachable CA all yield no probe
+                # and therefore exactly the pre-block-G verdict.
+                external_files, require_verification, external_payload = (
+                    resolve_external_files_for_plan(conn, p.uuid)
+                )
+                report, verdict = run_gate(
+                    conn,
+                    p.uuid,
+                    external_files=external_files,
+                    require_project_verification=require_verification,
+                )
                 gate_part = {
                     "green": report.green,
                     "scope": verdict.scope,
@@ -114,13 +136,18 @@ class PlanStatusCommand(Command):
                     ),
                 }
                 if report.green:
+                    deferred_reason = (
+                        "SemanticIndex scoring is queue-bound and is not "
+                        "computed synchronously by plan_status."
+                    )
                     scoring_part = {
                         "deferred": "plan_score",
-                        "reason": (
-                            "SemanticIndex scoring is queue-bound and is not "
-                            "computed synchronously by plan_status."
-                        ),
+                        "reason": deferred_reason,
                     }
+                    # The semantic contour restates the SAME scoring state
+                    # this dashboard already reports, in the uniform
+                    # three-contour vocabulary (EIG block G).
+                    semantic = semantic_contour("deferred", deferred_reason)
                 else:
                     findings = [
                         finding
@@ -137,6 +164,15 @@ class PlanStatusCommand(Command):
                         for finding in findings[:5]
                     ]
                     scoring_part = {"refused": "GATE_RED"}
+                    semantic = semantic_contour(
+                        "refused",
+                        "GATE_RED: scoring is never computed for a plan whose "
+                        "mechanical gate is not green.",
+                    )
+                gate_part["contours"] = contours_payload(
+                    partition_contours(report), semantic
+                )
+                gate_part["external_verification"] = external_payload
                 return SuccessResult(
                     data={
                         "plan": {
