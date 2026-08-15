@@ -10687,6 +10687,254 @@ async def run_r55_supersede_lifecycle_74479c06(client: Any) -> list[CheckResult]
     return results
 
 
+R56_VALID_OBJECTS_PATCH: list[dict[str, Any]] = [
+    {"name": "R56Widget", "concepts": [], "role": "create"},
+    {"name": "R56Reader", "concepts": [], "role": "consume"},
+    {"name": "R56Legacy", "concepts": []},
+]
+
+
+async def run_r56_object_role_contract_eig_block_a(client: Any) -> list[CheckResult]:
+    """EIG block A (todo 287bdfa6): a level-5 (AS) object declaration entry
+    in fields.objects now accepts an OPTIONAL "role" key drawn from a frozen
+    vocabulary -- create, modify, consume, verify, document, package, deploy
+    (plan_manager/domain/step_objects.py OBJECT_ROLES). An absent role is a
+    legacy entry with unchanged semantics. plan_manager/domain/step_objects.
+    py's normalize_as_object_declarations rejects any entry whose "role" key
+    is present but is either a non-string or not in OBJECT_ROLES, adding it
+    to the "problems" list; step_update_command.py's _validate_step_fields
+    (level 5) raises INVALID_STEP_FIELD_SHAPE atomically -- BEFORE any
+    write -- when validate_as_objects reports any problem, so a rejected
+    patch must leave the step's previously-stored fields.objects completely
+    untouched. On live 0.1.112 (pre-deploy) step_objects.py has no role
+    vocabulary at all: any "role" value, valid or not, is accepted and
+    stored verbatim with no validation.
+
+    Recipe (throwaway plan, single G->T->A branch, context_common gate
+    exactly like R49/R50, try/finally cleanup): plan_create ->
+    context_common(plan,"plan",3) -> step_create G (level 3) ->
+    context_common(G,4) -> step_create T (level 4, parent G) ->
+    context_common(T,5) -> step_create A (level 5, parent T) -- the single
+    atomic step every sub-assertion below targets.
+
+    Sub-assertion 2 -- CONTROL, must PASS today AND after the fix:
+    step_update(A, fields={"objects": R56_VALID_OBJECTS_PATCH}) -- two
+    entries carrying a role from the frozen vocabulary (create, consume)
+    plus one legacy role-less entry -- must succeed, and step_get(A)
+    afterward must return fields.objects equal to R56_VALID_OBJECTS_PATCH
+    verbatim (step_update_command.py persists the merged, UN-normalized
+    fields dict -- see _merge_step_fields -- so every key, including a
+    role-less entry's absence of "role", round-trips exactly as sent).
+    fields.objects storage is opaque on 0.1.112 (no role-aware code path
+    exists to reject or rewrite it), so this is expected to already PASS
+    pre-deploy; if it does not, that is a discovery to report, not a check
+    bug.
+
+    Sub-assertion 3 -- DESIGNATED RED today, PASS after deploy:
+    step_update(A, fields={"objects": [{"name": "R56Bad", "concepts": [],
+    "role": "banana"}]}) must be REJECTED, call() returning ok=False with
+    "INVALID_STEP_FIELD_SHAPE" in the formatted diagnostic (the same
+    queued-path domain-error-as-string idiom R4's malformed-item check
+    uses). On 0.1.112 the unknown role is silently accepted -> this
+    assertion is RED today. Gated on assertion 3 (the "unreachable: step 3
+    red" idiom, per R50/R55): only if the rejection actually happened is a
+    second check run, confirming step_get(A) still returns EXACTLY
+    R56_VALID_OBJECTS_PATCH from assertion 2 -- proving the rejected write
+    never touched the stored fields.objects. While assertion 3 stays RED
+    (today), this gated check reports an explicit "unreachable" FAIL
+    instead of silently skipping, since on 0.1.112 the banana entry is in
+    fact accepted and DOES overwrite the step's objects (a real, expected,
+    pre-deploy side effect -- not a check bug).
+
+    Sub-assertion 4 -- CONTROL, informational-tolerant, PASS both sides:
+    step_update(A, fields={"objects": [<role="create" marker entry>,
+    {"name": "R56NonStringRole", "concepts": [], "role": 7}]}) with a
+    NON-STRING role. The exact accept/reject contract for a non-string
+    role is pinned post-deploy by the unit suite, not this live check,
+    so this assertion only asserts internal consistency: capture
+    step_get(A) immediately BEFORE the call as the pre-state, then either
+    (a) the call is rejected (ok=False) and step_get(A) afterward still
+    equals the pre-state exactly (nothing corrupted by an atomic reject),
+    or (b) the call succeeds and step_get(A) afterward shows the marker
+    entry present with its role and concepts unchanged (round-tripped
+    without corrupting the other entry in the same patch). Either outcome
+    PASSes; only a third outcome -- corruption -- FAILs.
+
+    Cleanup: plan_delete(hard).
+    """
+    results: list[CheckResult] = []
+    plan_uuid: Optional[str] = None
+    try:
+        ok, res = await call(client, "plan_create", {"name": unique_suffix("r56-plan")})
+        if not ok or not isinstance(res, dict) or not res.get("uuid"):
+            results.append(CheckResult("4", "R56_287bdfa6_plan_create", STATUS_FAIL, str(res)))
+            return results
+        plan_uuid = res["uuid"]
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": "plan", "child_level": 3})
+        if not ok:
+            results.append(CheckResult("4", "R56_287bdfa6_context_common(plan,level3)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 3, "slug": "g"})
+        g_id = _extract_step_id(res) if ok else None
+        if not ok or g_id is None:
+            results.append(CheckResult("4", "R56_287bdfa6_step_create(G)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": g_id, "child_level": 4})
+        if not ok:
+            results.append(CheckResult("4", "R56_287bdfa6_context_common(G,level4)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 4, "slug": "t", "parent_step_id": g_id})
+        t_id = _extract_step_id(res) if ok else None
+        if not ok or t_id is None:
+            results.append(CheckResult("4", "R56_287bdfa6_step_create(T)", STATUS_FAIL, str(res)))
+            return results
+
+        ok, res = await call(client, "context_common", {"plan": plan_uuid, "node": t_id, "child_level": 5})
+        if not ok:
+            results.append(CheckResult("4", "R56_287bdfa6_context_common(T,level5)", STATUS_FAIL, str(res)))
+            return results
+        ok, res = await call(client, "step_create", {"plan": plan_uuid, "level": 5, "slug": "a", "parent_step_id": t_id})
+        a_id = _extract_step_id(res) if ok else None
+        if not ok or a_id is None:
+            results.append(CheckResult("4", "R56_287bdfa6_step_create(A)", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R56_287bdfa6_repro_hierarchy_created", STATUS_PASS, f"G={g_id} T={t_id} A={a_id}"))
+
+        # --- 2: CONTROL (must PASS today AND after the fix) -- a mix of
+        # frozen-vocabulary roles and one role-less legacy entry must
+        # persist verbatim. ---
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": a_id, "fields": {"objects": R56_VALID_OBJECTS_PATCH}},
+        )
+        if not ok:
+            results.append(CheckResult("4", "R56_287bdfa6_control_step_update_valid_roles", STATUS_FAIL, str(res)))
+            return results
+        results.append(CheckResult("4", "R56_287bdfa6_control_step_update_valid_roles", STATUS_PASS))
+
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_id})
+        objects_after_control = res.get("fields", {}).get("objects") if ok and isinstance(res, dict) else None
+        control_ok = ok and objects_after_control == R56_VALID_OBJECTS_PATCH
+        results.append(
+            CheckResult(
+                "4", "R56_287bdfa6_control_step_get_roles_preserved_verbatim",
+                STATUS_PASS if control_ok else STATUS_FAIL,
+                "" if control_ok
+                else f"expected fields.objects=={R56_VALID_OBJECTS_PATCH!r}, got ok={ok} objects={objects_after_control!r}",
+            )
+        )
+        if not control_ok:
+            return results
+
+        # --- 3: DESIGNATED RED today, PASS after deploy -- an unknown role
+        # string must be rejected atomically with INVALID_STEP_FIELD_SHAPE.
+        # call()/unwrap_envelope report a queued-path domain error as a
+        # formatted diagnostic STRING (not a dict), the same idiom R4's
+        # malformed-item check already uses; check the stable domain_code
+        # substring. ---
+        ok, res = await call(
+            client, "step_update",
+            {
+                "plan": plan_uuid, "step_id": a_id,
+                "fields": {"objects": [{"name": "R56Bad", "concepts": [], "role": "banana"}]},
+            },
+        )
+        red_rejected = (not ok) and "INVALID_STEP_FIELD_SHAPE" in str(res)
+        results.append(
+            CheckResult(
+                "4", "R56_287bdfa6_designated_red_unknown_role_rejected",
+                STATUS_PASS if red_rejected else STATUS_FAIL,
+                "" if red_rejected else f"expected rejection with INVALID_STEP_FIELD_SHAPE, got ok={ok} res={res!r}",
+            )
+        )
+
+        # Gated on assertion 3 itself (the "unreachable: step 3 red" idiom,
+        # per R50/R55): only a genuine rejection proves the write never
+        # landed. On 0.1.112 the banana entry is accepted and DOES
+        # overwrite the step's objects -- a real pre-deploy side effect,
+        # not a check bug -- so this reports an explicit unreachable FAIL
+        # instead of silently skipping while assertion 3 stays RED.
+        if red_rejected:
+            ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_id})
+            objects_after_red = res.get("fields", {}).get("objects") if ok and isinstance(res, dict) else None
+            not_overwritten = ok and objects_after_red == R56_VALID_OBJECTS_PATCH
+            results.append(
+                CheckResult(
+                    "4", "R56_287bdfa6_designated_red_objects_not_overwritten",
+                    STATUS_PASS if not_overwritten else STATUS_FAIL,
+                    "" if not_overwritten
+                    else f"expected fields.objects still =={R56_VALID_OBJECTS_PATCH!r}, got ok={ok} objects={objects_after_red!r}",
+                )
+            )
+        else:
+            results.append(
+                CheckResult(
+                    "4", "R56_287bdfa6_designated_red_objects_not_overwritten",
+                    STATUS_FAIL, "unreachable: step 3 red",
+                )
+            )
+
+        # --- 4: CONTROL, informational-tolerant, PASS both sides -- a
+        # non-string role must not corrupt sibling entries in the same
+        # patch, whichever way the call resolves. Capture the pre-state so
+        # both accept and reject outcomes can be checked against it. ---
+        ok, res = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_id})
+        pre_state = res.get("fields", {}).get("objects") if ok and isinstance(res, dict) else None
+        if not ok:
+            results.append(CheckResult("4", "R56_287bdfa6_control_non_string_role_step_get_pre", STATUS_FAIL, str(res)))
+            return results
+
+        marker_entry = {"name": "R56Marker", "concepts": [], "role": "create"}
+        non_string_patch = [marker_entry, {"name": "R56NonStringRole", "concepts": [], "role": 7}]
+        ok, res = await call(
+            client, "step_update",
+            {"plan": plan_uuid, "step_id": a_id, "fields": {"objects": non_string_patch}},
+        )
+        if ok:
+            ok2, res2 = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_id})
+            objects_after = res2.get("fields", {}).get("objects") if ok2 and isinstance(res2, dict) else None
+            round_tripped = ok2 and isinstance(objects_after, list) and marker_entry in objects_after
+            results.append(
+                CheckResult(
+                    "4", "R56_287bdfa6_control_non_string_role_observed",
+                    STATUS_PASS if round_tripped else STATUS_FAIL,
+                    (
+                        f"accepted (ok=True); round-tripped marker entry intact={round_tripped}; "
+                        f"objects={objects_after!r}"
+                    ) if round_tripped else
+                    f"accepted (ok=True) but marker entry NOT found intact afterward: objects={objects_after!r}",
+                )
+            )
+        else:
+            ok2, res2 = await call(client, "step_get", {"plan": plan_uuid, "step_id": a_id})
+            objects_after = res2.get("fields", {}).get("objects") if ok2 and isinstance(res2, dict) else None
+            untouched = ok2 and objects_after == pre_state
+            results.append(
+                CheckResult(
+                    "4", "R56_287bdfa6_control_non_string_role_observed",
+                    STATUS_PASS if untouched else STATUS_FAIL,
+                    (
+                        f"rejected (ok=False, res={res!r}); pre-state untouched={untouched}"
+                    ) if untouched else
+                    f"rejected (ok=False) but pre-state was NOT preserved: pre={pre_state!r} after={objects_after!r}",
+                )
+            )
+    finally:
+        cleanup_ok = True
+        if plan_uuid is not None:
+            ok, res = await call(client, "plan_delete", {"plan": plan_uuid, "hard": True})
+            cleanup_ok = cleanup_ok and ok
+        results.append(
+            CheckResult(
+                "4", "R56_287bdfa6_cleanup", STATUS_PASS if cleanup_ok else STATUS_FAIL,
+                "" if cleanup_ok else "one or more scratch entities survived cleanup",
+            )
+        )
+    return results
+
+
 async def run_selected_tests(
     client: Any,
     catalog_names: frozenset[str],

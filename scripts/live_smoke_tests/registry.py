@@ -232,6 +232,14 @@ LIVE_SMOKE_TEST_SPECS: tuple[LiveSmokeTestSpec, ...] = (
         "a stale record superseded by a forward pointer without falsifying "
         "its original status (bug 74479c06)",
     ),
+    LiveSmokeTestSpec(
+        "r56",
+        "run_r56_object_role_contract_eig_block_a",
+        "AS object declarations accept the frozen role vocabulary "
+        "(create/modify/consume/verify/document/package/deploy) and reject "
+        "unknown roles with INVALID_STEP_FIELD_SHAPE; role-less entries "
+        "keep legacy semantics (EIG block A, todo 287bdfa6)",
+    ),
 )
 
 LIVE_SMOKE_TEST_KEYS: tuple[str, ...] = tuple(spec.key for spec in LIVE_SMOKE_TEST_SPECS)

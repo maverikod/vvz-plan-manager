@@ -6,6 +6,17 @@ from typing import Any, Mapping
 
 from plan_manager.domain.step import CONCEPT_ID_PATTERN
 
+#: EIG block A (todo 287bdfa6): frozen vocabulary for the optional "role" key
+#: on a level-5 object declaration entry. Absent role = legacy entry, current
+#: semantics fully unchanged.
+OBJECT_ROLES = ("create", "modify", "consume", "verify", "document", "package", "deploy")
+
+#: Roles that mark a declaring step as producing an object.
+PRODUCER_ROLES = frozenset({"create", "modify"})
+
+#: Roles that mark a declaring step as consuming an object.
+CONSUMER_ROLES = frozenset({"consume", "verify"})
+
 
 def normalize_as_object_declarations(
     fields: Mapping[str, Any],
@@ -92,7 +103,23 @@ def normalize_as_object_declarations(
             normalized_concepts.append(concept_id)
         if concept_problem:
             continue
-        normalized.append({"name": name, "concepts": normalized_concepts})
+        entry: dict[str, Any] = {"name": name, "concepts": normalized_concepts}
+        role = item.get("role")
+        if role is not None:
+            if not isinstance(role, str) or role not in OBJECT_ROLES:
+                problems.append(
+                    {
+                        "field_name": "objects",
+                        "index": index,
+                        "message": (
+                            f"objects[{index}].role must be one of: "
+                            + ", ".join(OBJECT_ROLES)
+                        ),
+                    }
+                )
+                continue
+            entry["role"] = role
+        normalized.append(entry)
     return normalized, problems
 
 

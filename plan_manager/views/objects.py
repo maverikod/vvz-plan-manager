@@ -10,7 +10,11 @@ import uuid
 
 import psycopg
 
-from plan_manager.domain.step_objects import normalize_as_object_declarations
+from plan_manager.domain.step_objects import (
+    CONSUMER_ROLES,
+    PRODUCER_ROLES,
+    normalize_as_object_declarations,
+)
 
 
 def module_of(target_file: str) -> str:
@@ -49,10 +53,12 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
     step's tactical step path "<GS step_id>/<TS step_id>" and full
     artifact path "<GS step_id>/<TS step_id>/<AS step_id>". For every
     entry in each level-5 step's `fields.get("objects", [])` list -
-    each entry a dict with keys "name" (str) and "concepts"
-    (list[str]) - accumulates, per distinct object `name`, the owner
-    keys, artifact paths, and concept sets contributed by every
-    declaring level-5 step.
+    each entry a dict with keys "name" (str), "concepts" (list[str]),
+    and an optional "role" (one of
+    `plan_manager.domain.step_objects.OBJECT_ROLES`) - accumulates,
+    per distinct object `name`, the owner keys, artifact paths,
+    concept sets, and role-derived producer/consumer artifact paths
+    contributed by every declaring level-5 step.
 
     Args:
         conn: Open psycopg 3 database connection to use for the query.
@@ -76,6 +82,18 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
             "as_concepts": sorted list of the union of the `concepts`
                 column (text[]) of every level-5 step that declares
                 this object.
+            "producers": sorted list of the distinct artifact paths
+                whose declaration entry for this object carries role
+                "create" or "modify". Empty when no declaring entry
+                carries a role.
+            "consumers": sorted list of the distinct artifact paths
+                whose declaration entry for this object carries role
+                "consume" or "verify". Empty when no declaring entry
+                carries a role.
+            "roles": dict mapping artifact path to role string, one
+                entry per declaring artifact path whose entry for this
+                object carries any role. Empty when no declaring entry
+                carries a role.
         An object name absent from every level-5 step's
         fields["objects"] never appears as a key.
     """
@@ -101,7 +119,7 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
         (plan_uuid,),
     )
 
-    accum: dict[str, dict[str, set]] = {}
+    accum: dict[str, dict[str, object]] = {}
     for as_parent_uuid, as_step_id, as_fields, as_concepts in as_cur.fetchall():
         ts_path = ts_path_by_uuid[as_parent_uuid]
         artifact_path = f"{ts_path}/{as_step_id}"
@@ -120,12 +138,22 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
                     "artifact_paths": set(),
                     "declared_concepts": set(),
                     "as_concepts": set(),
+                    "producers": set(),
+                    "consumers": set(),
+                    "roles": {},
                 },
             )
             bucket["owner_keys"].add((module, ts_path))
             bucket["artifact_paths"].add(artifact_path)
             bucket["declared_concepts"].update(declaration.get("concepts", []))
             bucket["as_concepts"].update(declaring_concepts)
+            role = declaration.get("role")
+            if role is not None:
+                bucket["roles"][artifact_path] = role
+                if role in PRODUCER_ROLES:
+                    bucket["producers"].add(artifact_path)
+                if role in CONSUMER_ROLES:
+                    bucket["consumers"].add(artifact_path)
 
     inventory: dict[str, dict] = {}
     for name, bucket in accum.items():
@@ -135,6 +163,9 @@ def object_inventory(conn: psycopg.Connection, plan_uuid: uuid.UUID) -> dict[str
             "artifact_paths": sorted(bucket["artifact_paths"]),
             "declared_concepts": sorted(bucket["declared_concepts"]),
             "as_concepts": sorted(bucket["as_concepts"]),
+            "producers": sorted(bucket["producers"]),
+            "consumers": sorted(bucket["consumers"]),
+            "roles": dict(sorted(bucket["roles"].items())),
         }
     return inventory
 

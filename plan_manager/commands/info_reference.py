@@ -620,6 +620,17 @@ def planning_standards_reference() -> dict[str, Any]:
             "priority": "Integer unique among AS targeting the same file within the same TS; execution order is ascending.",
             "context_budget": "Token ceiling for AS execution context: MRS excerpt, parent GS, parent TS, current file content, and AS prompt.",
             "verification": "Structured expected check for an AS: type, target, expected.",
+            "objects": (
+                "fields.objects: list of {name, concepts, role} entries an AS declares "
+                "work against. role is OPTIONAL; absent role is a legacy entry with "
+                "unchanged semantics. When present, role is one of create, modify, "
+                "consume, verify, document, package, deploy (any other value is "
+                "rejected atomically at write time). object_inventory's computed view "
+                "derives, per object name, \"producers\" (declaring artifact paths with "
+                "role create or modify) and \"consumers\" (role consume or verify), "
+                "plus a \"roles\" map from artifact path to role; role-less entries "
+                "contribute to neither list."
+            ),
             "allowed_operations": ["create_file", "modify_file", "delete_file", "rename_file"],
             "file_size_limit": "Target code files should stay below 400 lines, recommended 350; violations escalate to TS design.",
         },
